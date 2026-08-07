@@ -1,0 +1,20 @@
+# Dependencies
+node_modules/
+
+# Baileys auth & session files (SENSITIVE)
+gateway/auth_info_baileys/
+
+# Environment variables
+.env
+.env.*
+
+# OS files
+Thumbs.db
+.DS_Store
+
+# IDE / Editor
+.vscode/
+.idea/
+
+# Gemini agent files
+.gemini/
