@@ -10,6 +10,7 @@ async function processAIChat(textMessage, remoteJid, metadata, sock) {
             headers: {
                 'Content-Type': 'application/json'
             },
+            signal: AbortSignal.timeout(15000),
             body: JSON.stringify({
                 user_id: remoteJid,
                 message: textMessage,

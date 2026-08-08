@@ -31,21 +31,28 @@ def safe_log(msg: str):
 async def generate_ai_response(system_instruction: str, message: str, memory_history: list, user_id: str):
     respuesta_texto = None
     provider_used = f"OpenRouter ({OPENROUTER_MODEL})"
+    
+    # Preparamos el historial para OpenAI/Groq
+    messages_for_openai = [{"role": "system", "content": system_instruction}]
+    messages_for_openai.extend(memory_history)
+    messages_for_openai.append({"role": "user", "content": message})
 
     # 🟢 INTENTO 1: OpenRouter (gpt-oss-20b:free) - PRINCIPAL
     try:
         if not openrouter_client:
             raise Exception("No hay API Key de OpenRouter configurada")
 
-        messages = [{"role": "system", "content": system_instruction}]
-        messages.append({"role": "user", "content": message})
-
         completion = openrouter_client.chat.completions.create(
             model=OPENROUTER_MODEL,
-            messages=messages
+            messages=messages_for_openai
         )
         respuesta_texto = completion.choices[0].message.content
-        return respuesta_texto, provider_used, memory_history
+        
+        new_history = memory_history + [
+            {"role": "user", "content": message},
+            {"role": "assistant", "content": respuesta_texto}
+        ]
+        return respuesta_texto, provider_used, new_history
 
     except Exception as openrouter_err:
         safe_log(f"\nOpenRouter saturado/fallo ({openrouter_err}). Cambiando a Fallback 1 (Groq - Llama 3.3)...")
@@ -55,30 +62,43 @@ async def generate_ai_response(system_instruction: str, message: str, memory_his
             if not groq_client:
                 raise Exception("No hay API Key de Groq configurada")
 
-            messages = [{"role": "system", "content": system_instruction}]
-            messages.append({"role": "user", "content": message})
-
             completion = groq_client.chat.completions.create(
                 model=GROQ_MODEL,
-                messages=messages
+                messages=messages_for_openai
             )
             respuesta_texto = completion.choices[0].message.content
             provider_used = f"Groq ({GROQ_MODEL})"
-            return respuesta_texto, provider_used, memory_history
+            
+            new_history = memory_history + [
+                {"role": "user", "content": message},
+                {"role": "assistant", "content": respuesta_texto}
+            ]
+            return respuesta_texto, provider_used, new_history
             
         except Exception as groq_err:
             safe_log(f"\nGroq fallo ({groq_err}). Cambiando a Fallback 2 (Gemini)...")
             
             # 🔴 INTENTO 3: Google Gemini - TERCER RESPALDO
             try:
+                # Convertimos el historial OpenAI-style a Gemini-style
+                gemini_history = []
+                for msg in memory_history:
+                    role = "user" if msg["role"] == "user" else "model"
+                    gemini_history.append({"role": role, "parts": [msg["content"]]})
+                
                 model = genai.GenerativeModel(
-                    model_name="gemini-flash-latest",
+                    model_name="gemini-1.5-flash",
                     system_instruction=system_instruction
                 )
-                chat = model.start_chat(history=memory_history)
+                chat = model.start_chat(history=gemini_history)
                 response = chat.send_message(message)
                 respuesta_texto = response.text
                 provider_used = "Google Gemini"
-                return respuesta_texto, provider_used, chat.history
+                
+                new_history = memory_history + [
+                    {"role": "user", "content": message},
+                    {"role": "assistant", "content": respuesta_texto}
+                ]
+                return respuesta_texto, provider_used, new_history
             except Exception as gemini_err:
                 raise Exception(f"Todos los proveedores fallaron. OpenRouter: {openrouter_err} | Groq: {groq_err} | Gemini: {gemini_err}")

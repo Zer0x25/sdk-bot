@@ -1,8 +1,22 @@
 const fs = require('fs');
+const fsPromises = require('fs/promises');
 const { ALLOWED_FILE_PATH, IGNORED_FILE_PATH, CONTACTS_FILE_PATH } = require('../config');
 
 // Almacén en memoria de contactos de la sesión
 const contactStore = new Map();
+
+// -------------------------------------------------------------
+// CACHÉ EN MEMORIA Y GUARDADO DIFERIDO (DEBOUNCE)
+// -------------------------------------------------------------
+let cachedAllowedNumbers = null;
+let cachedIgnoredNumbers = null;
+let cachedContactsDB = null;
+
+let saveContactsTimer = null;
+let saveAllowedTimer = null;
+let saveIgnoredTimer = null;
+
+const SAVE_DELAY_MS = 2000; // 2 segundos de debounce
 
 function isJunkJid(jid) {
     if (!jid) return true;
@@ -15,75 +29,124 @@ function isJunkJid(jid) {
     return false;
 }
 
-function getAllowedNumbers() {
+// -------------------------------------------------------------
+// INICIALIZACIÓN SÍNCRONA AL ARRANCAR EL SERVIDOR
+// -------------------------------------------------------------
+function loadDataOnStartup() {
+    console.log("📂 Cargando bases de datos en memoria...");
+    
     try {
         if (!fs.existsSync(ALLOWED_FILE_PATH)) {
             fs.writeFileSync(ALLOWED_FILE_PATH, JSON.stringify(["*"], null, 2));
-            return ["*"];
+            cachedAllowedNumbers = ["*"];
+        } else {
+            cachedAllowedNumbers = JSON.parse(fs.readFileSync(ALLOWED_FILE_PATH, 'utf8'));
         }
-        const fileData = fs.readFileSync(ALLOWED_FILE_PATH, 'utf8');
-        return JSON.parse(fileData);
     } catch (e) {
         console.error("Error al leer allowed_numbers.json:", e.message);
-        return ["*"];
+        cachedAllowedNumbers = ["*"];
     }
-}
 
-function saveAllowedNumbers(list) {
-    try {
-        fs.writeFileSync(ALLOWED_FILE_PATH, JSON.stringify(list, null, 2));
-        return true;
-    } catch (e) {
-        console.error("Error al guardar allowed_numbers.json:", e.message);
-        return false;
-    }
-}
-
-function getIgnoredNumbers() {
     try {
         if (!fs.existsSync(IGNORED_FILE_PATH)) {
             fs.writeFileSync(IGNORED_FILE_PATH, JSON.stringify([], null, 2));
-            return [];
+            cachedIgnoredNumbers = [];
+        } else {
+            cachedIgnoredNumbers = JSON.parse(fs.readFileSync(IGNORED_FILE_PATH, 'utf8'));
         }
-        const fileData = fs.readFileSync(IGNORED_FILE_PATH, 'utf8');
-        return JSON.parse(fileData);
     } catch (e) {
         console.error("Error al leer ignored_numbers.json:", e.message);
-        return [];
+        cachedIgnoredNumbers = [];
     }
-}
 
-function saveIgnoredNumbers(list) {
-    try {
-        fs.writeFileSync(IGNORED_FILE_PATH, JSON.stringify(list, null, 2));
-        return true;
-    } catch (e) {
-        console.error("Error al guardar ignored_numbers.json:", e.message);
-        return false;
-    }
-}
-
-function getContactsDB() {
     try {
         if (!fs.existsSync(CONTACTS_FILE_PATH)) {
             fs.writeFileSync(CONTACTS_FILE_PATH, JSON.stringify({}, null, 2));
-            return {};
+            cachedContactsDB = {};
+        } else {
+            cachedContactsDB = JSON.parse(fs.readFileSync(CONTACTS_FILE_PATH, 'utf8'));
         }
-        const fileData = fs.readFileSync(CONTACTS_FILE_PATH, 'utf8');
-        return JSON.parse(fileData);
     } catch (e) {
         console.error("Error al leer contacts_db.json:", e.message);
-        return {};
+        cachedContactsDB = {};
     }
 }
 
+// -------------------------------------------------------------
+// GETTERS (Retornan Caché)
+// -------------------------------------------------------------
+function getAllowedNumbers() {
+    if (!cachedAllowedNumbers) loadDataOnStartup();
+    return cachedAllowedNumbers;
+}
+
+function getIgnoredNumbers() {
+    if (!cachedIgnoredNumbers) loadDataOnStartup();
+    return cachedIgnoredNumbers;
+}
+
+function getContactsDB() {
+    if (!cachedContactsDB) loadDataOnStartup();
+    return cachedContactsDB;
+}
+
+// -------------------------------------------------------------
+// SETTERS ASÍNCRONOS CON DEBOUNCE (Para no bloquear Event Loop)
+// -------------------------------------------------------------
+function saveAllowedNumbers(list) {
+    cachedAllowedNumbers = list;
+    if (saveAllowedTimer) clearTimeout(saveAllowedTimer);
+    saveAllowedTimer = setTimeout(async () => {
+        try {
+            await fsPromises.writeFile(ALLOWED_FILE_PATH, JSON.stringify(cachedAllowedNumbers, null, 2));
+        } catch (e) {
+            console.error("Error al guardar allowed_numbers.json de forma asíncrona:", e.message);
+        }
+    }, SAVE_DELAY_MS);
+    return true;
+}
+
+function saveIgnoredNumbers(list) {
+    cachedIgnoredNumbers = list;
+    if (saveIgnoredTimer) clearTimeout(saveIgnoredTimer);
+    saveIgnoredTimer = setTimeout(async () => {
+        try {
+            await fsPromises.writeFile(IGNORED_FILE_PATH, JSON.stringify(cachedIgnoredNumbers, null, 2));
+        } catch (e) {
+            console.error("Error al guardar ignored_numbers.json de forma asíncrona:", e.message);
+        }
+    }, SAVE_DELAY_MS);
+    return true;
+}
+
 function saveContactsDB(db) {
+    cachedContactsDB = db;
+    if (saveContactsTimer) clearTimeout(saveContactsTimer);
+    saveContactsTimer = setTimeout(async () => {
+        try {
+            // Se puede implementar un atomic write aquí guardando a .tmp y renombrando si se quiere máxima seguridad.
+            const tmpPath = `${CONTACTS_FILE_PATH}.tmp`;
+            await fsPromises.writeFile(tmpPath, JSON.stringify(cachedContactsDB, null, 2));
+            await fsPromises.rename(tmpPath, CONTACTS_FILE_PATH);
+        } catch (e) {
+            console.error("Error al guardar contacts_db.json de forma asíncrona:", e.message);
+        }
+    }, SAVE_DELAY_MS);
+    return true;
+}
+
+// -------------------------------------------------------------
+// FUNCIÓN DE CIERRE SEGURO (Graceful Shutdown)
+// -------------------------------------------------------------
+function flushToDisk() {
+    console.log("💾 Guardando bases de datos a disco antes de cerrar...");
     try {
-        fs.writeFileSync(CONTACTS_FILE_PATH, JSON.stringify(db, null, 2));
-        return true;
+        if (cachedAllowedNumbers) fs.writeFileSync(ALLOWED_FILE_PATH, JSON.stringify(cachedAllowedNumbers, null, 2));
+        if (cachedIgnoredNumbers) fs.writeFileSync(IGNORED_FILE_PATH, JSON.stringify(cachedIgnoredNumbers, null, 2));
+        if (cachedContactsDB) fs.writeFileSync(CONTACTS_FILE_PATH, JSON.stringify(cachedContactsDB, null, 2));
+        console.log("✅ Datos guardados correctamente.");
     } catch (e) {
-        console.error("Error al guardar contacts_db.json:", e.message);
-        return false;
+        console.error("⚠️ Error durante el volcado síncrono a disco:", e.message);
     }
 }
 
@@ -164,18 +227,15 @@ function setContactHandoff(keyOrMetadata, handoffState = true) {
 function upsertContactMetadata(metadata) {
     const { phoneNumber, lid, savedName, pushName, verifiedName, country, isContact, bio, profilePicUrl, isBusiness, lastEnrichedAt } = metadata;
 
-    // Filtro de data basura (grupos, canales, broadcast)
     if (phoneNumber && isJunkJid(phoneNumber)) return null;
     if (lid && isJunkJid(lid)) return null;
     if (!phoneNumber && !lid) return null;
 
-    // No crear registros fantasma sin teléfono ni ningún nombre/foto
     const hasAnyIdentity = phoneNumber || (savedName && savedName.trim()) || (pushName && pushName !== 'Desconocido' && pushName.trim()) || verifiedName || profilePicUrl;
     if (!hasAnyIdentity) return null;
 
     const db = cleanContactsDB();
 
-    // Buscar si ya existe por teléfono o LID
     let existingKey = Object.keys(db).find(k => {
         const item = db[k];
         if (phoneNumber && item.phone === phoneNumber) return true;
@@ -183,10 +243,8 @@ function upsertContactMetadata(metadata) {
         return false;
     });
 
-    // Clave de destino preferida: Número de Teléfono
     let targetKey = phoneNumber || (existingKey && db[existingKey].phone ? db[existingKey].phone : lid);
 
-    // Si cambió la clave (ej. de LID a Teléfono), migrar datos y borrar la clave LID anterior
     if (existingKey && existingKey !== targetKey) {
         const oldData = db[existingKey];
         delete db[existingKey];
@@ -305,6 +363,9 @@ function bulkUpsertContactsMetadata(contactsList) {
     return count;
 }
 
+// Inicializar la carga explícita al arrancar
+loadDataOnStartup();
+
 module.exports = {
     contactStore,
     isJunkJid,
@@ -318,5 +379,7 @@ module.exports = {
     isContactHandoff,
     setContactHandoff,
     upsertContactMetadata,
-    bulkUpsertContactsMetadata
+    bulkUpsertContactsMetadata,
+    flushToDisk,
+    loadDataOnStartup
 };

@@ -2,7 +2,7 @@ const { default: makeWASocket, useMultiFileAuthState, DisconnectReason } = requi
 const pino = require('pino');
 const qrcode = require('qrcode-terminal');
 const { state } = require('./config');
-const { bulkUpsertContactsMetadata, isJunkJid, cleanContactsDB, contactStore } = require('./services/storageService');
+const { bulkUpsertContactsMetadata, isJunkJid, cleanContactsDB, contactStore, flushToDisk } = require('./services/storageService');
 const { getCountryFromPhone } = require('./services/metadataService');
 const { handleIncomingMessage, handlePresenceUpdate } = require('./handlers/messageHandler');
 
@@ -103,3 +103,15 @@ async function connectToWhatsApp () {
 }
 
 connectToWhatsApp();
+
+// -------------------------------------------------------------
+// CIERRE SEGURO (GRACEFUL SHUTDOWN)
+// -------------------------------------------------------------
+function handleExit() {
+    console.log('\n🛑 Señal de apagado recibida. Cerrando de forma segura...');
+    flushToDisk();
+    process.exit(0);
+}
+
+process.on('SIGINT', handleExit);
+process.on('SIGTERM', handleExit);

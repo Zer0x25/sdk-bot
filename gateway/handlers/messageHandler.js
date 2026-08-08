@@ -17,6 +17,22 @@ const activePresences = new Map();   // Mapa global en memoria RAM del estado de
 const DEBOUNCE_DELAY_MS = 8000;      // 8 segundos de silencio total pos-escritura
 const TYPING_TTL_MS = 5000;           // 5.0 segundos: el estado de tecleo expira si el teclado queda inactivo
 
+// 🧹 Limpieza automática de RAM para evitar memory leaks en activePresences
+const PRESENCE_CLEANUP_INTERVAL_MS = 10 * 60 * 1000; // 10 minutos
+const PRESENCE_MAX_AGE_MS = 15 * 60 * 1000; // 15 minutos
+
+setInterval(() => {
+    const now = Date.now();
+    let cleaned = 0;
+    for (const [key, value] of activePresences.entries()) {
+        if (now - value.time > PRESENCE_MAX_AGE_MS) {
+            activePresences.delete(key);
+            cleaned++;
+        }
+    }
+    if (cleaned > 0) console.log(`🧹 [LIMPIEZA RAM] Eliminados ${cleaned} registros de presencia antiguos.`);
+}, PRESENCE_CLEANUP_INTERVAL_MS);
+
 // Palabras clave para derivación automática a atención humana
 const HUMAN_REQUEST_KEYWORDS = [
     'hablar con una persona',
