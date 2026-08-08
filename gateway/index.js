@@ -4,7 +4,7 @@ const qrcode = require('qrcode-terminal');
 const { state } = require('./config');
 const { bulkUpsertContactsMetadata, isJunkJid, cleanContactsDB, contactStore } = require('./services/storageService');
 const { getCountryFromPhone } = require('./services/metadataService');
-const { handleIncomingMessage } = require('./handlers/messageHandler');
+const { handleIncomingMessage, handlePresenceUpdate } = require('./handlers/messageHandler');
 
 // Limpiar base de contactos al iniciar para remover data basura preexistente
 cleanContactsDB();
@@ -60,6 +60,11 @@ async function connectToWhatsApp () {
     // Capturar sincronización de historial completo inicial de WhatsApp Web
     sock.ev.on('messaging-history.set', ({ contacts }) => {
         if (contacts) handleContactSync(contacts);
+    });
+
+    // Capturar eventos de presencia (detección de escritura "composing" para reiniciar el timer de inactividad de 8s)
+    sock.ev.on('presence.update', ({ id, presences }) => {
+        handlePresenceUpdate(id, presences);
     });
 
     sock.ev.on('connection.update', (update) => {

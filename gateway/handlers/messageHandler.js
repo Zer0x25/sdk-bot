@@ -10,9 +10,9 @@ const {
 const { processAIChat } = require('../services/brainService');
 const { handleAdminCommand } = require('./commandHandler');
 
-// 🧠 DE-BOUNCE QUEUE (Acumulador Anti-Spam de mensajes ráfaga)
+// 🧠 DE-BOUNCE QUEUE REINICIABLE (Timer de Inactividad de 8 segundos)
 const messageBuffers = new Map();
-const DEBOUNCE_DELAY_MS = 2500; // 2.5 segundos de ventana de acumulación
+const DEBOUNCE_DELAY_MS = 8000; // 8 segundos de espera de inactividad
 
 // Palabras clave para derivación automática a atención humana
 const HUMAN_REQUEST_KEYWORDS = [
@@ -34,6 +34,29 @@ function checkHumanRequest(text) {
     if (!text) return false;
     const lower = text.toLowerCase();
     return HUMAN_REQUEST_KEYWORDS.some(keyword => lower.includes(keyword));
+}
+
+/**
+ * ⌨️ REINICIO DE TIMER POR DETECCIÓN DE ESCRITURA ("composing")
+ * Si el cliente está escribiendo en WhatsApp, reinicia el temporizador de 8s
+ */
+function handlePresenceUpdate(id, presences) {
+    if (!id || !presences) return;
+    
+    // Obtener estado de presencia del usuario
+    const userPresence = presences[id] || Object.values(presences)[0];
+    if (!userPresence) return;
+
+    const isTyping = userPresence.lastKnownPresence === 'composing' || userPresence.lastKnownPresence === 'recording';
+    
+    if (isTyping && messageBuffers.has(id)) {
+        const buffer = messageBuffers.get(id);
+        if (buffer && buffer.timer) {
+            clearTimeout(buffer.timer);
+            buffer.timer = setTimeout(buffer.onTimeout, DEBOUNCE_DELAY_MS);
+            console.log(`\n⌨️ [DE-BOUNCE RESET] Cliente en ${id} está escribiendo... Timer de 8s reiniciado.`);
+        }
+    }
 }
 
 async function handleIncomingMessage(m, sock) {
@@ -166,30 +189,40 @@ async function handleIncomingMessage(m, sock) {
     }
 
     // -------------------------------------------------------------
-    // 🧠 DE-BOUNCE QUEUE: ACUMULAR MENSAJES RÁFAGA ANTES DE LLAMAR A LA IA
+    // 🧠 DE-BOUNCE QUEUE CON TIMER DE INACTIVIDAD REINICIABLE (8 SEG)
     // -------------------------------------------------------------
     let existingBuffer = messageBuffers.get(remoteJid);
+
+    const onTimeout = async () => {
+        const buf = messageBuffers.get(remoteJid);
+        if (!buf) return;
+        
+        const fullBufferedText = buf.messages.join('\n');
+        messageBuffers.delete(remoteJid);
+
+        console.log(`\n📦 [DE-BOUNCE BATCH FINAL] 8s de inactividad cumplidos. Procesando ${buf.messages.length} mensaje(s) de ${displayName}: "${fullBufferedText}"`);
+        await processAIChat(fullBufferedText, remoteJid, metadata, sock);
+    };
 
     if (existingBuffer) {
         clearTimeout(existingBuffer.timer);
         existingBuffer.messages.push(textMessage);
+        existingBuffer.onTimeout = onTimeout;
+        existingBuffer.timer = setTimeout(onTimeout, DEBOUNCE_DELAY_MS);
+        console.log(`⏳ [DE-BOUNCE RESET] Nuevo mensaje de ${displayName}. Timer de 8s reiniciado.`);
     } else {
-        existingBuffer = {
+        const newBuffer = {
             messages: [textMessage],
+            onTimeout: onTimeout,
             timer: null
         };
-        messageBuffers.set(remoteJid, existingBuffer);
+        newBuffer.timer = setTimeout(onTimeout, DEBOUNCE_DELAY_MS);
+        messageBuffers.set(remoteJid, newBuffer);
+        console.log(`⏳ [DE-BOUNCE START] Primer mensaje de ${displayName}. Iniciando ventana de inactividad de 8s.`);
     }
-
-    existingBuffer.timer = setTimeout(async () => {
-        const fullBufferedText = existingBuffer.messages.join('\n');
-        messageBuffers.delete(remoteJid);
-
-        console.log(`\n📦 [DE-BOUNCE BATCH] Procesando ${existingBuffer.messages.length} mensaje(s) acumulados de ${displayName}: "${fullBufferedText}"`);
-        await processAIChat(fullBufferedText, remoteJid, metadata, sock);
-    }, DEBOUNCE_DELAY_MS);
 }
 
 module.exports = {
-    handleIncomingMessage
+    handleIncomingMessage,
+    handlePresenceUpdate
 };
