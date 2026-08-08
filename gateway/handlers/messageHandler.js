@@ -10,8 +10,9 @@ const {
 const { processAIChat } = require('../services/brainService');
 const { handleAdminCommand } = require('./commandHandler');
 
-// 🧠 DE-BOUNCE QUEUE CON SUSCRIPCIÓN ACTIVA A PRESENCIA EN TIEMPO REAL
+// 🧠 DE-BOUNCE QUEUE CON VERIFICACIÓN ACTIVA DE PRESENCIA Y LOOP DE ESPERA
 const messageBuffers = new Map();
+const activePresences = new Map();   // Mapa global de presencias en tiempo real
 const DEBOUNCE_DELAY_MS = 8000;      // 8 segundos de silencio total pos-escritura
 const TYPING_TTL_MS = 5000;           // 5.0 segundos: el estado de tecleo expira si el teclado queda inactivo
 
@@ -39,7 +40,7 @@ function checkHumanRequest(text) {
 
 /**
  * ⌨️ GESTIÓN DE PRESENCIA DE BAILEYS (composing / recording / paused / available)
- * Escucha eventos push de WhatsApp suscritos mediante sock.presenceSubscribe.
+ * Almacena el estado en activePresences y gestiona los buffers de mensajes.
  */
 function handlePresenceUpdate(id, presences) {
     if (!id || !presences) return;
@@ -50,7 +51,11 @@ function handlePresenceUpdate(id, presences) {
     const presenceState = userPresence.lastKnownPresence;
     const cleanId = id.split('@')[0].split(':')[0];
 
-    console.log(`📡 [PRESENCIA RECIBIDA DE WHATSAPP] ID: ${id} | Estado: "${presenceState}"`);
+    // Registrar en el mapa global de presencias en tiempo real
+    activePresences.set(id, { state: presenceState, time: Date.now() });
+    activePresences.set(cleanId, { state: presenceState, time: Date.now() });
+
+    console.log(`📡 [PRESENCIA RECIBIDA] ID: ${id} | Estado: "${presenceState}"`);
 
     const isTyping = presenceState === 'composing' || presenceState === 'recording';
     const isPaused = presenceState === 'paused' || presenceState === 'available';
@@ -230,7 +235,7 @@ async function handleIncomingMessage(m, sock) {
     }
 
     // -------------------------------------------------------------
-    // 🚪 PUERTA LÓGICA DE-BOUNCE CON VERIFICACIÓN ESTRICTA DE PRESENCIA
+    // 🧠 DE-BOUNCE QUEUE CON VERIFICACIÓN ACTIVA EN LOOP ANTES DE LLAMAR A LA IA
     // -------------------------------------------------------------
     let existingBuffer = messageBuffers.get(remoteJid);
 
@@ -238,24 +243,41 @@ async function handleIncomingMessage(m, sock) {
         const buf = messageBuffers.get(remoteJid);
         if (!buf) return;
 
-        // 🚪 PUERTA LÓGICA CRÍTICA: ¿El usuario está escribiendo o grabó audio recientemente?
-        const isCurrentlyTyping = buf.isTyping || (buf.lastTypingTime && (Date.now() - buf.lastTypingTime < TYPING_TTL_MS));
+        // 🧠 VERIFICACIÓN ACTIVA ANTES DE ENVIAR A LA IA
+        // 1. Solicitar presencia fresca a WhatsApp
+        sock.presenceSubscribe(remoteJid).catch(() => {});
+        if (phoneNumber) sock.presenceSubscribe(`${phoneNumber}@s.whatsapp.net`).catch(() => {});
+        if (lid) sock.presenceSubscribe(`${lid}@lid`).catch(() => {});
 
-        if (isCurrentlyTyping) {
-            console.log(`\n🛑 [PUERTA LÓGICA: BLOQUEADO] Se cumplieron 8s pero el cliente (${displayName}) SIGUE ESCRIBIENDO. Postergando 8s...`);
+        // 2. Breve pausa de 350ms para procesar tramas websocket en vuelo
+        await new Promise(r => setTimeout(r, 350));
+
+        // 3. Consultar mapa de presencia activa
+        const cleanPhone = phoneNumber;
+        const cleanLid = lid;
+
+        const p1 = activePresences.get(remoteJid);
+        const p2 = cleanPhone ? activePresences.get(cleanPhone) : null;
+        const p3 = cleanLid ? activePresences.get(cleanLid) : null;
+
+        const latestPresence = p1 || p2 || p3;
+        const isTypingNow = latestPresence && (latestPresence.state === 'composing' || latestPresence.state === 'recording') && (Date.now() - latestPresence.time < TYPING_TTL_MS);
+
+        if (isTypingNow || buf.isTyping) {
+            console.log(`\n🔄 [LOOP DE ESPERA REINICIADO] Verificación activa: El cliente (${displayName}) SIGUE ESCRIBIENDO (${latestPresence?.state || 'composing'}). Reiniciando timer de 8s...`);
             if (buf.timer) clearTimeout(buf.timer);
             buf.timer = setTimeout(buf.onTimeout, DEBOUNCE_DELAY_MS);
             return;
         }
 
-        // Limpiar timers secundarios
+        // 4. Si la verificación activa confirma que NO está tecleando -> Procesar y enviar a la IA
         if (buf.typingExpiryTimer) clearTimeout(buf.typingExpiryTimer);
         if (buf.timer) clearTimeout(buf.timer);
 
         const fullBufferedText = buf.messages.join('\n');
         messageBuffers.delete(remoteJid);
 
-        console.log(`\n📦 [DE-BOUNCE BATCH FINAL] 8s de silencio + No tecleando. Procesando ${buf.messages.length} mensaje(s) de ${displayName}: "${fullBufferedText}"`);
+        console.log(`\n📦 [DE-BOUNCE BATCH FINAL] 8s de silencio + Verificación activa OK. Procesando ${buf.messages.length} mensaje(s) de ${displayName}: "${fullBufferedText}"`);
         await processAIChat(fullBufferedText, remoteJid, metadata, sock);
     };
 
