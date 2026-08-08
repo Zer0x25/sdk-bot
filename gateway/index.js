@@ -1,6 +1,8 @@
-const { default: makeWASocket, useMultiFileAuthState, DisconnectReason } = require('@whiskeysockets/baileys');
+const { default: makeWASocket, useMultiFileAuthState, DisconnectReason, makeInMemoryStore } = require('@whiskeysockets/baileys');
 const pino = require('pino');
 const qrcode = require('qrcode-terminal');
+const path = require('path');
+const fs = require('fs');
 const { state } = require('./config');
 const { upsertContactMetadata, isJunkJid, cleanContactsDB } = require('./services/storageService');
 const { getCountryFromPhone } = require('./services/metadataService');
@@ -8,6 +10,32 @@ const { handleIncomingMessage } = require('./handlers/messageHandler');
 
 // Limpiar base de contactos al iniciar para remover data basura preexistente
 cleanContactsDB();
+
+// -------------------------------------------------------------
+// ALMACÉN EN MEMORIA PERSISTENTE DE BAILEYS (STORE DE CONTACTOS Y CHATS)
+// -------------------------------------------------------------
+const STORE_PATH = path.join(__dirname, 'auth_info_baileys', 'baileys_store.json');
+const store = makeInMemoryStore({ logger: pino({ level: 'silent' }) });
+
+try {
+    if (fs.existsSync(STORE_PATH)) {
+        store.readFromFile(STORE_PATH);
+    }
+} catch (e) {
+    console.error("No se pudo leer baileys_store.json (se creará uno nuevo):", e.message);
+}
+
+setInterval(() => {
+    try {
+        const storeDir = path.dirname(STORE_PATH);
+        if (!fs.existsSync(storeDir)) {
+            fs.mkdirSync(storeDir, { recursive: true });
+        }
+        store.writeToFile(STORE_PATH);
+    } catch (e) {
+        // Ignorar errores menores al escribir el store
+    }
+}, 10000);
 
 // -------------------------------------------------------------
 // CONEXIÓN PRINCIPAL CON BAILEYS (ENTRADA PRINCIPAL DEL GATEWAY)
@@ -21,6 +49,9 @@ async function connectToWhatsApp () {
         auth: authState,
         logger: pino({ level: 'silent' })
     });
+
+    // Enlazar eventos del socket con el almacén en memoria (Contacts & Chats Store)
+    store.bind(sock.ev);
 
     // Capturar eventos de sincronización de contactos de WhatsApp (Agenda del Teléfono)
     const handleContactSync = contacts => {
@@ -75,7 +106,7 @@ async function connectToWhatsApp () {
     });
 
     sock.ev.on('messages.upsert', async m => {
-        await handleIncomingMessage(m, sock);
+        await handleIncomingMessage(m, sock, store);
     });
     
     // Guardar estado de autenticación (sesión)

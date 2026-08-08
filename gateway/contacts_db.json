@@ -31,9 +31,9 @@
   },
   "56926426947": {
     "phone": "56926426947",
-    "lid": null,
+    "lid": "87123831046340",
     "savedName": null,
-    "pushName": null,
+    "pushName": "Jaime Mella",
     "verifiedName": null,
     "country": "Chile (+56)",
     "profilePicUrl": "https://pps.whatsapp.net/v/t61.24694-24/677191752_4585095948389857_6222648767295503829_n.jpg?ccb=11-4&oh=01_Q5Aa5QHegUOBlKRt3mBDgJ_KBV63todn5cVKlaKmjbLk0EvCaA&oe=6A83E546&_nc_sid=5e03e0&_nc_cat=111",
@@ -41,7 +41,8 @@
     "isBusiness": false,
     "isContact": false,
     "firstSeen": "2026-08-08T05:10:35.776Z",
-    "lastSeen": "2026-08-08T05:10:36.687Z",
-    "totalMessages": 12
+    "lastSeen": "2026-08-08T05:32:33.692Z",
+    "totalMessages": 18,
+    "lastEnrichedAt": "2026-08-08T05:25:33.543Z"
   }
 }
