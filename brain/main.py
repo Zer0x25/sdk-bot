@@ -2,7 +2,7 @@ from fastapi import FastAPI
 from pydantic import BaseModel
 from typing import Optional
 from config import PROFILES, OPENROUTER_MODEL, GROQ_MODEL
-from memory import get_history, update_history
+from memory import get_history, update_history, clear_history
 from providers import generate_ai_response, safe_log
 
 app = FastAPI(title="SDK-Bot Brain API (Modular Multi-Provider Router)")
@@ -20,6 +20,15 @@ class ChatRequest(BaseModel):
     language: Optional[str] = None
     bio: Optional[str] = None
     is_business: Optional[bool] = None
+
+class ResetMemoryRequest(BaseModel):
+    user_id: str
+
+@app.post("/reset-memory")
+async def reset_memory_endpoint(request: ResetMemoryRequest):
+    cleared = clear_history(request.user_id)
+    safe_log(f"🧹 [MEMORIA REINICIADA] Para usuario: {request.user_id} (Resultado: {cleared})")
+    return {"status": "ok", "cleared": cleared, "user_id": request.user_id}
 
 @app.post("/chat")
 async def chat_endpoint(request: ChatRequest):

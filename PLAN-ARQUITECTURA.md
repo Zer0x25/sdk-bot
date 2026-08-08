@@ -46,7 +46,7 @@ SDK-Bot/
 ### 1. 🤝 Derivación a Humano (Human Handoff & Pausa Quirúrgica)
 - **Detección Automática:** Cuando un cliente utiliza expresiones como `"hablar con una persona"`, `"asesor"`, `"ejecutivo"`, `"atención humana"`, el Gateway pausa la IA **exclusivamente para ese cliente**.
 - **Notificación en Self-Chat:** Alerta al Administrador en su chat privado de WhatsApp.
-- **Control por Comandos:** Comandos `/auto <num>` para reactivar la IA y `/handoff <num>` para pausarla individualmente.
+- **Control por Comandos:** Comandos `/ia` (o `/a`) para reactivar la IA, `/humano` (o `/h`) para pausarla individualmente, y `/limpiar` (o `/c`) para reiniciar la memoria conversacional del cliente.
 
 ### 2. 🧠 De-bounce Queue & Timer de Silencio Estocástico Adaptativo (Random sobre Random)
 - **Ventana de Silencio Estocástica Adaptativa:** En lugar de un temporizador fijo, el tiempo de silencio pos-escritura se calcula dinámicamente:

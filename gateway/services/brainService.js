@@ -200,6 +200,23 @@ async function processAIChat(textMessage, remoteJid, metadata, sock) {
     }
 }
 
+async function clearAIMemory(userJid) {
+    try {
+        const resetUrl = BRAIN_API_URL.replace('/chat', '/reset-memory');
+        const response = await fetch(resetUrl, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ user_id: userJid })
+        });
+        const data = await response.json();
+        return data && data.status === 'ok';
+    } catch (e) {
+        console.error("Error al resetear memoria en Brain:", e.message);
+        return false;
+    }
+}
+
 module.exports = {
-    processAIChat
+    processAIChat,
+    clearAIMemory
 };

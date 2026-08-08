@@ -2,11 +2,9 @@ const { state, isBotSentMessage, registerSentMessage } = require('../config');
 const { extractUserMetadata, enrichContactExtraData, isSelfChat } = require('../services/metadataService');
 const { 
     upsertContactMetadata, 
-    getIgnoredNumbers, 
-    getAllowedNumbers, 
+    getSettingsDB,
     getContactsDB,
-    isContactHandoff, 
-    setContactHandoff 
+    setNumberState 
 } = require('../services/storageService');
 const { processAIChat } = require('../services/brainService');
 const { handleAdminCommand } = require('./commandHandler');
@@ -203,7 +201,7 @@ async function handleIncomingMessage(m, sock) {
     if (lid) sock.presenceSubscribe(`${lid}@lid`).catch(e => console.error(`⚠️ Error al suscribir presencia (LID) de ${lid}:`, e.message));
 
     // 🗂️ GUARDAR / ACTUALIZAR CONTACTO EN BASE DE DATOS
-    upsertContactMetadata(metadata);
+    const contactRecord = upsertContactMetadata(metadata) || { estado: 'neutro' };
 
     // 🔄 Enriquecimiento asíncrono en segundo plano (Foto de Perfil & Bio)
     enrichContactExtraData(sock, remoteJid, metadata);
@@ -226,7 +224,7 @@ async function handleIncomingMessage(m, sock) {
     // -------------------------------------------------------------
     if (isSelf) {
         if (textMessage.trim().startsWith('/')) {
-            await handleAdminCommand(textMessage.trim(), remoteJid, sock, metadata);
+            await handleAdminCommand(textMessage.trim(), remoteJid, sock, metadata, msg);
             return;
         }
 
@@ -259,28 +257,27 @@ async function handleIncomingMessage(m, sock) {
         return;
     }
 
-    // 🛑 REGLA 1 (PRIORIDAD ALTA): COMPROBAR IGNORE_LIST (LISTA NEGRA)
-    const ignoredNumbers = getIgnoredNumbers();
-    const isIgnored = ignoredNumbers.some(num => {
-        const cleanNum = String(num).replace(/[^0-9]/g, '');
-        return candidateIds.some(cid => cid.includes(cleanNum));
-    });
+    // -------------------------------------------------------------
+    // 🛡️ REGLAS DE ESTADOS EN BASE DE DATOS (ContactsDB)
+    // -------------------------------------------------------------
+    const settings = getSettingsDB();
+    const estado = contactRecord.estado || 'neutro';
 
-    if (isIgnored) {
-        console.log(`\n🚫 [MENSAJE IGNORADO - IGNORELIST] De: ${displayName} | Teléfono: ${phoneNumber || 'N/A'} | LID: ${lid || 'N/A'} - Está en ignored_numbers.json`);
+    if (estado === 'ignorado') {
+        console.log(`\n🚫 [MENSAJE IGNORADO - ESTADO IGNORADO] De: ${displayName}`);
         return;
     }
 
-    // 🔒 REGLA 2: COMPROBAR ALLOWED_LIST (LISTA BLANCA)
-    const allowedNumbers = getAllowedNumbers();
-    const isAllowed = allowedNumbers.includes("*") || allowedNumbers.some(num => {
-        const cleanNum = String(num).replace(/[^0-9]/g, '');
-        return candidateIds.some(cid => cid.includes(cleanNum));
-    });
-
-    if (!isAllowed) {
-        console.log(`\n🚫 [MENSAJE IGNORADO - NO ALLOWED] De: ${displayName} | IDs: ${candidateIds.join(' / ')} - No está en allowed_numbers.json`);
-        return;
+    if (estado === 'permitido') {
+        console.log(`\n✅ [PERMITIDO EXPLÍCITAMENTE] De: ${displayName}`);
+        // Puede proceder, se salta la evaluación del modo global
+    } else if (estado === 'neutro') {
+        // Evaluar Modo Global
+        const globalMode = state.GLOBAL_MODE || settings.globalMode || 'allowed_all';
+        if (globalMode === 'ignored_all') {
+            console.log(`\n🚫 [MENSAJE IGNORADO - MODO GLOBAL ESTRICTO] De: ${displayName}`);
+            return;
+        }
     }
 
     // -------------------------------------------------------------
@@ -291,14 +288,18 @@ async function handleIncomingMessage(m, sock) {
     const wantsHuman = checkHumanRequest(textMessage);
     if (wantsHuman) {
         console.log(`\n🚨 [HANDOFF ACTIVADO] Cliente ${displayName} (${phoneNumber || lid}) solicitó atención humana.`);
-        setContactHandoff(metadata, true);
+        const targetId = phoneNumber || lid;
+        setNumberState(targetId, 'handoff');
 
         // 1. Notificar al Admin en Self-Chat
-        const adminNotify = `🚨 **SOLICITUD DE ATENCIÓN HUMANA:**\n` +
-            `- **Cliente:** ${displayName}\n` +
-            `- **Teléfono:** ${phoneNumber || 'N/A'} | LID: ${lid || 'N/A'}\n` +
-            `- **Mensaje:** "${textMessage}"\n\n` +
-            `ℹ️ *La IA se ha pausado ÚNICAMENTE para este cliente.* Usa \`/auto ${phoneNumber || lid}\` para reanudar la IA para este usuario.`;
+        const adminNotify = `🚨 *SOLICITUD DE ATENCIÓN HUMANA*\n\n` +
+            `• *Cliente:* ${displayName}\n` +
+            `• *Teléfono:* \`${phoneNumber || 'N/A'}\`\n` +
+            `• *LID:* \`${lid || 'N/A'}\`\n` +
+            `• *Mensaje:* "${textMessage}"\n\n` +
+            `📋 *Comando para reanudar IA (Toca para copiar):*\n` +
+            `\`\`\`/auto ${targetId}\`\`\`\n\n` +
+            `💡 *Tip:* También puedes responder (citar) a esta alerta escribiendo solo \`/auto\` o \`/a\`.`;
 
         if (state.ADMIN_PHONE || state.ADMIN_LID) {
             const adminJid = state.ADMIN_PHONE ? `${state.ADMIN_PHONE}@s.whatsapp.net` : `${state.ADMIN_LID}@lid`;
@@ -313,7 +314,7 @@ async function handleIncomingMessage(m, sock) {
     }
 
     // B) Verificar si el cliente ya tiene Handoff Activo (pausado individualmente)
-    if (isContactHandoff(metadata)) {
+    if (estado === 'handoff') {
         console.log(`\n🙈 [HANDOFF ACTIVO] IA pausada para cliente individual: ${displayName} (${phoneNumber || lid})`);
         return;
     }

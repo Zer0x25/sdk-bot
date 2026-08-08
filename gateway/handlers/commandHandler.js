@@ -1,10 +1,8 @@
 const { state, registerSentMessage } = require('../config');
 const { getCountryFromPhone } = require('../services/metadataService');
+const { clearAIMemory } = require('../services/brainService');
 const { 
-    getAllowedNumbers, 
-    saveAllowedNumbers, 
-    getIgnoredNumbers, 
-    saveIgnoredNumbers, 
+    getSettingsDB,
     getContactsDB,
     saveContactsDB,
     cleanContactsDB,
@@ -12,188 +10,231 @@ const {
     bulkUpsertContactsMetadata,
     isJunkJid,
     contactStore,
-    setContactHandoff
+    setNumberState,
+    ignoreAllAgendaContacts
 } = require('../services/storageService');
 
-async function handleAdminCommand(textMessage, remoteJid, sock, metadata) {
-    const args = textMessage.trim().split(' ');
+/**
+ * 🧹 Normalizar cualquier formato de teléfono (+56 9 4252 3669 -> 56942523669) o LID
+ */
+function parsePhoneOrLid(input) {
+    if (!input) return "";
+    const str = String(input).trim();
+    if (str === "*") return "*";
+    
+    // Extraer solo dígitos
+    const digits = str.replace(/[^0-9]/g, '');
+    
+    // Si tiene 7 o más dígitos, es un teléfono o LID válido
+    if (digits.length >= 7) {
+        return digits;
+    }
+    return str;
+}
+
+/**
+ * 🔤 Parsear comando /nombre tolerando teléfonos formateados nativos (ej: /nombre +56 9 4252 3669 Pedro)
+ */
+function parseNameArgs(queryParam) {
+    if (!queryParam) return { targetId: null, customName: null };
+    const str = queryParam.trim();
+    
+    // Matchear teléfono o LID al inicio incluso con espacios o símbolos (ej: "+56 9 4252 3669 Pedro Pizzería")
+    const phoneMatch = str.match(/^(\+?[\d\s\-\(\)]{7,25})\s+(.+)$/);
+    if (phoneMatch) {
+        const rawPhone = phoneMatch[1].trim();
+        const customName = phoneMatch[2].trim();
+        return { targetId: parsePhoneOrLid(rawPhone), customName };
+    }
+
+    // Fallback: separación por primer espacio
+    const firstSpaceIndex = str.indexOf(' ');
+    if (firstSpaceIndex !== -1) {
+        const rawTarget = str.substring(0, firstSpaceIndex).trim();
+        const customName = str.substring(firstSpaceIndex + 1).trim();
+        return { targetId: parsePhoneOrLid(rawTarget), customName };
+    }
+
+    return { targetId: null, customName: null };
+}
+
+async function handleAdminCommand(textMessage, remoteJid, sock, metadata, rawMsg = null) {
+    const args = textMessage.trim().split(/\s+/);
     const command = args[0].toLowerCase();
-    const queryParam = args.slice(1).join(' ').trim();
+    let queryParam = args.slice(1).join(' ').trim();
+
+    // 💡 EXTRACCIÓN AUTOMÁTICA DE ID SI EL ADMIN RESPONDE (CITA) A UN MENSAJE DE ALERTA O CONTACTO
+    if (!queryParam && rawMsg?.message?.extendedTextMessage?.contextInfo?.quotedMessage) {
+        const context = rawMsg.message.extendedTextMessage.contextInfo;
+        const quotedText = context.quotedMessage?.conversation || 
+                           context.quotedMessage?.extendedTextMessage?.text || 
+                           "";
+        
+        // Buscar un número de teléfono (con espacios, guiones o llano) o LID en el texto citado
+        const phoneMatch = quotedText.match(/(?:\+?\d[\d\s\-]{6,20}\d|\b\d{7,16}\b)/);
+        if (phoneMatch) {
+            queryParam = parsePhoneOrLid(phoneMatch[0]);
+            console.log(`📌 [CITA DETECTADA] Extraído objetivo automáticamente del mensaje citado: ${queryParam}`);
+        }
+    }
 
     console.log(`\n👑 [COMANDO ADMIN EN SELF-CHAT]: ${command} ${queryParam || ''}`);
 
     let adminResponse = "";
 
     switch (command) {
-        case '/pause':
-            if (queryParam) {
-                // Pausa individual para un cliente específico
-                const record = setContactHandoff(queryParam, true);
-                if (record) {
-                    adminResponse = `⏸️ **IA Pausada para el cliente:** ${record.savedName || record.pushName || queryParam} (${record.phone || record.lid}).`;
-                } else {
-                    adminResponse = `⚠️ No se encontró al cliente **${queryParam}** en la base de datos.`;
-                }
-            } else {
-                // Pausa global
-                state.IS_BOT_PAUSED = true;
-                adminResponse = "⏸️ **Bot Pausado Globalmente.** El auto-respondedor de IA ha sido desactivado para todos.";
-            }
-            break;
+        // -------------------------------------------------------------
+        // 🌐 CATEGORÍA 1: CONTROL DE CHAT E IA POR CLIENTE
+        // -------------------------------------------------------------
 
-        case '/resume':
-        case '/start':
-            if (queryParam) {
-                const record = setContactHandoff(queryParam, false);
-                if (record) {
-                    adminResponse = `▶️ **IA Reanudada para el cliente:** ${record.savedName || record.pushName || queryParam} (${record.phone || record.lid}).`;
-                } else {
-                    adminResponse = `⚠️ No se encontró al cliente **${queryParam}** en la base de datos.`;
-                }
-            } else {
-                state.IS_BOT_PAUSED = false;
-                adminResponse = "▶️ **Bot Reanudado Globalmente.** El auto-respondedor de IA está activo.";
-            }
-            break;
-
+        case '/ia':
+        case '/a':
         case '/auto':
         case '/unpause':
             if (!queryParam) {
-                adminResponse = "⚠️ Uso: `/auto <numero_o_lid>`\nEjemplo: `/auto 56912345678` para reactivar IA a un cliente en handoff.";
+                adminResponse = "⚠️ *Uso:* `/ia <numero_o_lid>` o responde (cita) un mensaje del cliente.\n\n*Ejemplo copiable:*\n```/a +56 9 4252 3669```";
             } else {
-                const record = setContactHandoff(queryParam, false);
-                if (record) {
-                    adminResponse = `🤖 **IA Reactivada para el cliente:** ${record.savedName || record.pushName || queryParam} (${record.phone || record.lid}).`;
+                const targetId = parsePhoneOrLid(queryParam);
+                const res = setNumberState(targetId, 'neutral');
+                if (res.success) {
+                    adminResponse = `🤖 *IA Reactivada para el cliente:*\n\`${res.target}\`. (Pasó a estado: ${res.state})`;
                 } else {
-                    adminResponse = `⚠️ No se encontró al cliente **${queryParam}** en la base de datos.`;
+                    adminResponse = `⚠️ Error al reactivar IA para *${targetId}*.`;
                 }
             }
             break;
 
+        case '/humano':
+        case '/h':
         case '/handoff':
             if (!queryParam) {
-                adminResponse = "⚠️ Uso: `/handoff <numero_o_lid>`\nEjemplo: `/handoff 56912345678` para pausar IA a ese cliente.";
+                adminResponse = "⚠️ *Uso:* `/humano <numero_o_lid>` o responde (cita) un mensaje del cliente.\n\n*Ejemplo copiable:*\n```/h +56 9 4252 3669```";
             } else {
-                const record = setContactHandoff(queryParam, true);
-                if (record) {
-                    adminResponse = `🤝 **Atención Humana (Handoff) activada para:** ${record.savedName || record.pushName || queryParam}. La IA permanecerá en silencio para este chat.`;
+                const targetId = parsePhoneOrLid(queryParam);
+                const res = setNumberState(targetId, 'handoff');
+                if (res.success) {
+                    adminResponse = `🤝 *Atención Humana activada para:*\n\`${res.target}\`.\nLa IA permanecerá en silencio para este chat.`;
                 } else {
-                    adminResponse = `⚠️ No se encontró al cliente **${queryParam}** en la base de datos.`;
+                    adminResponse = `⚠️ Error al activar atención humana para *${targetId}*.`;
                 }
             }
             break;
 
-        case '/allow':
+        case '/limpiar':
+        case '/c':
+        case '/reset':
             if (!queryParam) {
-                adminResponse = "⚠️ Uso: `/allow <numero_o_lid>`\nEjemplo: `/allow 56912345678` o `/allow *`";
+                adminResponse = "⚠️ *Uso:* `/limpiar <numero_o_lid>` o responde (cita) un mensaje del cliente.\n\n*Ejemplo copiable:*\n```/c +56 9 4252 3669```";
             } else {
-                const list = getAllowedNumbers();
-                if (!list.includes(queryParam)) {
-                    list.push(queryParam);
-                    saveAllowedNumbers(list);
-                    adminResponse = `✅ ID/Número **${queryParam}** agregado a la lista de permitidos.`;
+                const targetId = parsePhoneOrLid(queryParam);
+                const db = getContactsDB();
+                const record = Object.values(db).find(c => (c.phone && c.phone.includes(targetId)) || (c.lid && c.lid.includes(targetId)));
+                
+                const targetJid = record ? (record.phone ? `${record.phone}@s.whatsapp.net` : `${record.lid}@lid`) : (targetId.length < 15 ? `${targetId}@s.whatsapp.net` : `${targetId}@lid`);
+                const success = await clearAIMemory(targetJid);
+                
+                if (success) {
+                    adminResponse = `🧹 *Memoria de IA borrada con éxito para:*\n${record ? (record.savedName || record.pushName || targetId) : targetId}. El historial conversacional ha sido reiniciado.`;
                 } else {
-                    adminResponse = `ℹ️ El ID/Número **${queryParam}** ya estaba en la lista de permitidos.`;
+                    adminResponse = `⚠️ No había memoria previa registrada o no se pudo limpiar para *${targetId}*.`;
                 }
             }
             break;
 
-        case '/revoke':
-        case '/remove':
-            if (!queryParam) {
-                adminResponse = "⚠️ Uso: `/remove <numero_o_lid>`";
-            } else {
-                let list = getAllowedNumbers();
-                if (list.includes(queryParam)) {
-                    list = list.filter(item => item !== queryParam);
-                    saveAllowedNumbers(list);
-                    adminResponse = `🗑️ ID/Número **${queryParam}** removido de la lista de permitidos.`;
-                } else {
-                    adminResponse = `ℹ️ El ID/Número **${queryParam}** no se encontró en la lista de permitidos.`;
-                }
-            }
-            break;
+        // -------------------------------------------------------------
+        // 🛡️ CATEGORÍA 2: SEGURIDAD Y LISTAS (PERMITIDOS Y BLOQUEADOS)
+        // -------------------------------------------------------------
 
+        case '/ignorar':
+        case '/bloquear':
+        case '/i':
+        case '/b':
         case '/ignore':
             if (!queryParam) {
-                adminResponse = "⚠️ Uso: `/ignore <numero_o_lid>`\nEjemplo: `/ignore 56912345678` o `/ignore 10982374619283`";
+                adminResponse = "⚠️ *Uso:* `/ignorar <num|agenda|*>`\n\n*Ejemplos copiables:*\n```/i +56 9 4252 3669```\n```/i agenda```\n```/i *```";
+            } else if (queryParam.toLowerCase() === 'agenda') {
+                const res = ignoreAllAgendaContacts();
+                adminResponse = `🚫 *Ignorado Masivo de Agenda Ejecutado:*\nSe agregaron *${res.addedCount}* contactos de tu libreta a la Lista de Ignorados.\nTotal ignorados en lista: *${res.totalIgnored}*.`;
+            } else if (queryParam === '*' || queryParam.toLowerCase() === 'all') {
+                const res = setNumberState('*', 'ignored');
+                adminResponse = `🔒 *Modo Global Cambiado:* ${res.message}.\nLa IA estará en *Modo Estricto (Whitelist)*. Solo responderá a los números explícitamente permitidos.`;
             } else {
-                const list = getIgnoredNumbers();
-                if (!list.includes(queryParam)) {
-                    list.push(queryParam);
-                    saveIgnoredNumbers(list);
-                    adminResponse = `🚫 ID/Número **${queryParam}** agregado a la **IgnoreList** (el bot nunca le responderá).`;
-                } else {
-                    adminResponse = `ℹ️ El ID/Número **${queryParam}** ya estaba en la IgnoreList.`;
-                }
+                const targetId = parsePhoneOrLid(queryParam);
+                const res = setNumberState(targetId, 'ignored');
+                adminResponse = `🚫 ID/Número \`${res.target}\` asignado a la *Lista de Ignorados* (reubicado de permitidos si existía).`;
             }
             break;
 
-        case '/unignore':
+        case '/permitir':
+        case '/p':
+        case '/allow':
             if (!queryParam) {
-                adminResponse = "⚠️ Uso: `/unignore <numero_o_lid>`";
+                adminResponse = "⚠️ *Uso:* `/permitir <numero_o_lid|*>`\n\n*Ejemplos copiables:*\n```/p +56 9 4252 3669```\n```/p *```";
+            } else if (queryParam === '*' || queryParam.toLowerCase() === 'all') {
+                const res = setNumberState('*', 'allowed');
+                adminResponse = `🌐 *Modo Global Cambiado:* ${res.message}.\nLa IA responderá a todos los clientes por defecto (excepto los que estén en la Lista de Ignorados).`;
             } else {
-                let list = getIgnoredNumbers();
-                if (list.includes(queryParam)) {
-                    list = list.filter(item => item !== queryParam);
-                    saveIgnoredNumbers(list);
-                    adminResponse = `✅ ID/Número **${queryParam}** removido de la **IgnoreList**.`;
-                } else {
-                    adminResponse = `ℹ️ El ID/Número **${queryParam}** no se encontró en la IgnoreList.`;
-                }
+                const targetId = parsePhoneOrLid(queryParam);
+                const res = setNumberState(targetId, 'allowed');
+                adminResponse = `✅ ID/Número \`${res.target}\` asignado a la *Lista de Permitidos* (reubicado de ignorados si existía).`;
             }
             break;
 
-        case '/ignorelist':
-            const currentIgnored = getIgnoredNumbers();
-            if (currentIgnored.length === 0) {
-                adminResponse = `📋 **IgnoreList (Lista Negra) vacía.** No hay números ni LIDs ignorados.`;
+        case '/quitar':
+        case '/q':
+        case '/remove':
+        case '/revoke':
+        case '/rem':
+            if (!queryParam) {
+                adminResponse = "⚠️ *Uso:* `/quitar <numero_o_lid|*>`\n\n*Ejemplo copiable:*\n```/q +56 9 4252 3669```";
+            } else if (queryParam === '*') {
+                const res = setNumberState('*', 'neutral');
+                adminResponse = `🔄 Comodín (\`*\`) removido de ambas listas. Transición a estado neutro.`;
             } else {
-                adminResponse = `🚫 **IgnoreList (Contactos / LIDs Ignorados):**\n\n${currentIgnored.map(n => `- ${n}`).join('\n')}`;
+                const targetId = parsePhoneOrLid(queryParam);
+                const res = setNumberState(targetId, 'neutral');
+                adminResponse = `🔄 ID/Número \`${res.target}\` removido de ambas listas. Regresado a *Estado 0 (Neutro)*.`;
             }
             break;
 
+        case '/listas':
+        case '/lista':
+        case '/l':
         case '/list':
-            const currentList = getAllowedNumbers();
-            adminResponse = `📋 **Lista de Permitidos (AllowedList):**\n\n${currentList.map(n => `- ${n}`).join('\n')}`;
+            const dbListas = getContactsDB();
+            const settings = getSettingsDB();
+
+            const globalMode = state.GLOBAL_MODE || settings.globalMode || 'allowed_all';
+            let modeStr = "🌐 *Permitir a Todos por Defecto* (Atención Libre)";
+            if (globalMode === 'ignored_all') modeStr = "🔒 *Ignorar a Todos por Defecto* (Modo Estricto / Whitelist)";
+
+            const listIgnored = Object.values(dbListas).filter(c => c.estado === 'ignorado');
+            const listAllowed = Object.values(dbListas).filter(c => c.estado === 'permitido');
+
+            const ignoredText = listIgnored.length ? listIgnored.map(c => {
+                return `• \`${c.phone || c.lid}\`${c.savedName ? ` (${c.savedName})` : ''}`;
+            }).join('\n') : "Ninguno";
+
+            const allowedText = listAllowed.length ? listAllowed.map(c => {
+                return `• \`${c.phone || c.lid}\`${c.savedName ? ` (${c.savedName})` : ''}`;
+            }).join('\n') : "Ninguno";
+
+            adminResponse = `📋 *ESTADO DE LISTAS DE ATENCIÓN*\n━━━━━━━━━━━━━━━━━━━━━━\n` +
+                `⚙️ **Modo Global:** ${modeStr}\n\n` +
+                `🚫 **Lista de Ignorados (${listIgnored.length}):**\n${ignoredText}\n\n` +
+                `✅ **Lista de Permitidos Explícitos (${listAllowed.length}):**\n${allowedText}\n━━━━━━━━━━━━━━━━━━━━━━\n` +
+                `💡 *Usa \`/i <num|agenda|*>\`, \`/p <num|*>\` o \`/q <num|*>\`.*`;
             break;
 
-        case '/name':
-        case '/alias':
-            if (!queryParam || !queryParam.includes(' ')) {
-                adminResponse = "⚠️ Uso: `/name <numero_o_lid> <nombre_agenda>`\nEjemplo: `/name 56944323815 Pedro Pizzería`";
-            } else {
-                const targetId = args[1].trim();
-                const customName = args.slice(2).join(' ').trim();
-                const db = getContactsDB();
-                
-                const existingKey = Object.keys(db).find(k => {
-                    const item = db[k];
-                    if (item.phone && item.phone.includes(targetId)) return true;
-                    if (item.lid && item.lid.includes(targetId)) return true;
-                    return k === targetId;
-                });
+        // -------------------------------------------------------------
+        // 🔍 CATEGORÍA 3: LIBRETA Y AGENDA DE CONTACTOS
+        // -------------------------------------------------------------
 
-                if (existingKey) {
-                    db[existingKey].savedName = customName;
-                    saveContactsDB(db);
-                    adminResponse = `✅ Contacto **${db[existingKey].phone || existingKey}** asignado con el nombre de agenda: **"${customName}"**.`;
-                } else {
-                    const newRecord = upsertContactMetadata({
-                        phoneNumber: targetId.length < 15 ? targetId : null,
-                        lid: targetId.length >= 15 ? targetId : null,
-                        savedName: customName,
-                        isContact: true
-                    });
-                    adminResponse = `✅ Nuevo contacto registrado en agenda: **"${customName}"** (${targetId}).`;
-                }
-            }
-            break;
-
-        case '/search':
         case '/buscar':
+        case '/s':
+        case '/search':
             if (!queryParam) {
-                adminResponse = "⚠️ Uso: `/search <nombre_tel_o_lid>`\nEjemplo: `/search Mamá` o `/search 569`";
+                adminResponse = "⚠️ *Uso:* `/buscar <nombre_tel_o_lid>`\n\n*Ejemplos copiables:*\n```/s Pedro```\n```/s +56 9 4252 3669```";
             } else {
                 const db = getContactsDB();
                 const cleanQuery = queryParam.toLowerCase().replace(/[^a-z0-9]/g, '');
@@ -209,37 +250,106 @@ async function handleAdminCommand(textMessage, remoteJid, sock, metadata) {
                 if (matches.length === 0) {
                     adminResponse = `🔍 No se encontraron contactos coincidiendo con "${queryParam}".`;
                 } else {
-                    const resultsText = matches.slice(0, 10).map(c => 
-                        `👤 **${c.savedName ? `${c.savedName} (Agenda)` : (c.pushName || 'Sin Nombre')}**\n` +
-                        `  • Nombre Público: ${c.pushName || 'N/A'}\n` +
-                        `  • Teléfono: ${c.phone || 'N/A'}\n` +
-                        `  • LID: ${c.lid || 'N/A'}\n` +
-                        `  • País: ${c.country}\n` +
-                        `  • Atención Humana (Handoff): ${c.handoff ? 'Sí 🚨' : 'No (IA) 🤖'}\n` +
-                        `  • Mensajes: ${c.totalMessages || 1}`
-                    ).join('\n\n');
+                    const resultsText = matches.slice(0, 10).map(c => {
+                        const targetNum = c.phone || c.lid;
+                        return `👤 *${c.savedName ? `${c.savedName} (Agenda)` : (c.pushName || 'Sin Nombre')}*\n` +
+                        `  • Teléfono: \`${c.phone || 'N/A'}\` | LID: \`${c.lid || 'N/A'}\`\n` +
+                        `  • Estado Actual: \`${c.estado}\` ${c.estado === 'handoff' ? '🚨' : '🤖'}\n` +
+                        `  • Reanudar IA: \`\`\`/a ${targetNum}\`\`\`\n` +
+                        `  • Atención Humana: \`\`\`/h ${targetNum}\`\`\`\n` +
+                        `  • Limpiar IA: \`\`\`/c ${targetNum}\`\`\``;
+                    }).join('\n\n');
                     
-                    adminResponse = `🔍 **Coincidencias Encontradas (${matches.length}):**\n\n${resultsText}`;
+                    adminResponse = `🔍 *Coincidencias Encontradas (${matches.length}):*\n\n${resultsText}`;
                 }
             }
             break;
 
-        case '/contacts':
+        case '/nombre':
+        case '/n':
+        case '/name':
+        case '/alias':
+            const { targetId: nameTarget, customName } = parseNameArgs(queryParam);
+            if (!nameTarget || !customName) {
+                adminResponse = "⚠️ *Uso:* `/nombre <numero_o_lid> <nombre_agenda>`\n\n*Ejemplo copiable:*\n```/n +56 9 4252 3669 Pedro Pizzería```";
+            } else {
+                const db = getContactsDB();
+                
+                const existingKey = Object.keys(db).find(k => {
+                    const item = db[k];
+                    const cleanPhone = item.phone ? item.phone.replace(/[^0-9]/g, '') : '';
+                    const cleanLid = item.lid ? item.lid.replace(/[^0-9]/g, '') : '';
+                    if (cleanPhone && cleanPhone.includes(nameTarget)) return true;
+                    if (cleanLid && cleanLid.includes(nameTarget)) return true;
+                    return k === nameTarget;
+                });
+
+                if (existingKey) {
+                    db[existingKey].savedName = customName;
+                    saveContactsDB(db);
+                    adminResponse = `✅ Contacto \`${db[existingKey].phone || existingKey}\` asignado con el nombre de agenda: *"${customName}"*.`;
+                } else {
+                    const newRecord = upsertContactMetadata({
+                        phoneNumber: nameTarget.length < 15 ? nameTarget : null,
+                        lid: nameTarget.length >= 15 ? nameTarget : null,
+                        savedName: customName,
+                        isContact: true
+                    });
+                    adminResponse = `✅ Nuevo contacto registrado en agenda: *"${customName}"* (\`${nameTarget}\`).`;
+                }
+            }
+            break;
+
         case '/contactos':
+        case '/lc':
+        case '/contacts':
             const contactsDB = getContactsDB();
             const totalContacts = Object.keys(contactsDB).length;
             const inAgenda = Object.values(contactsDB).filter(c => c.isContact || c.savedName).length;
-            const inHandoff = Object.values(contactsDB).filter(c => c.handoff).length;
+            const inHandoff = Object.values(contactsDB).filter(c => c.estado === 'handoff').length;
             const recent = Object.values(contactsDB).sort((a, b) => new Date(b.lastSeen) - new Date(a.lastSeen)).slice(0, 5);
             
-            adminResponse = `📇 **Base de Contactos Registrados:**\n` +
-                `- **Total registrados:** ${totalContacts}\n` +
-                `- **En tu agenda telefónica:** ${inAgenda}\n` +
-                `- **En atención humana (Handoff):** ${inHandoff}\n\n` +
-                `📌 **Últimos activos:**\n` +
-                (recent.length ? recent.map(c => `• ${c.savedName ? `${c.savedName} (Agenda)` : (c.pushName || 'Anónimo')} (${c.phone || c.lid || 'Sin ID'}) ${c.handoff ? '[🚨 Humano]' : ''}`).join('\n') : 'Sin registros');
+            adminResponse = `📇 *Base de Contactos Registrados:*\n` +
+                `• *Total registrados:* ${totalContacts}\n` +
+                `• *En tu agenda:* ${inAgenda}\n` +
+                `• *En atención humana (Handoff):* ${inHandoff}\n\n` +
+                `📌 *Últimos activos:*\n` +
+                (recent.length ? recent.map(c => `• ${c.savedName ? `${c.savedName} (Agenda)` : (c.pushName || 'Anónimo')} (\`${c.phone || c.lid || 'Sin ID'}\`) ${c.estado === 'handoff' ? '[🚨 Humano]' : ''}`).join('\n') : 'Sin registros');
             break;
 
+        // -------------------------------------------------------------
+        // ⚙️ CATEGORÍA 4: CONTROL GLOBAL DEL SISTEMA
+        // -------------------------------------------------------------
+
+        case '/pausar':
+        case '/pg':
+        case '/pause':
+        case '/stop':
+            state.IS_BOT_PAUSED = true;
+            adminResponse = "⏸️ *Bot Pausado Globalmente.* El auto-respondedor de IA ha sido desactivado para todos los chats.";
+            break;
+
+        case '/reanudar':
+        case '/ag':
+        case '/resume':
+        case '/start':
+        case '/run':
+            state.IS_BOT_PAUSED = false;
+            adminResponse = "▶️ *Bot Reanudado Globalmente.* El auto-respondedor de IA está activo.";
+            break;
+
+        case '/perfil':
+        case '/pf':
+        case '/profile':
+            if (!queryParam) {
+                adminResponse = `⚠️ *Uso:* \`/perfil <default|lucia|mateo>\`\nPerfil actual: *${state.CURRENT_PROFILE}*`;
+            } else {
+                state.CURRENT_PROFILE = queryParam.toLowerCase();
+                adminResponse = `🎭 Perfil de bot cambiado a: *${state.CURRENT_PROFILE}*`;
+            }
+            break;
+
+        case '/sincronizar':
         case '/sync':
         case '/resync':
             const contactsList = Array.from(contactStore.values());
@@ -266,69 +376,90 @@ async function handleAdminCommand(textMessage, remoteJid, sock, metadata) {
             const cleanDb = cleanContactsDB();
             const totalCount = Object.keys(cleanDb).length;
             
-            adminResponse = `🔄 **Sincronización Incremental Ejecutada:**\n` +
-                `- Contactos procesados de la sesión: **${syncedCount}**\n` +
-                `- Total contactos activos en base de datos: **${totalCount}**\n` +
-                `- Caché persistente actualizada en \`contacts_db.json\`.`;
+            adminResponse = `🔄 *Sincronización Incremental Ejecutada:*\n` +
+                `• Contactos procesados de la sesión: *${syncedCount}*\n` +
+                `• Total contactos activos en base de datos: *${totalCount}*\n` +
+                `• Caché persistente actualizada en \`contacts_db.json\`.`;
             break;
 
+        case '/exportar':
         case '/export':
             const dbExport = getContactsDB();
             const exportList = Object.values(dbExport).map(c => 
-                `• ${c.savedName ? `[Agenda] ${c.savedName}` : (c.pushName || 'Desconocido')} -> Tel: ${c.phone || 'N/A'} | LID: ${c.lid || 'N/A'} ${c.handoff ? '[🚨 Handoff]' : ''}`
+                `• ${c.savedName ? `[Agenda] ${c.savedName}` : (c.pushName || 'Desconocido')} -> Tel: \`${c.phone || 'N/A'}\` | LID: \`${c.lid || 'N/A'}\` [${c.estado.toUpperCase()}]`
             );
-            adminResponse = `📤 **Exportación de Libreta (${exportList.length}):**\n\n` + exportList.join('\n');
-            break;
-
-        case '/profile':
-            if (!queryParam) {
-                adminResponse = `⚠️ Uso: \`/profile <default|lucia|mateo>\`\nPerfil actual: *${state.CURRENT_PROFILE}*`;
-            } else {
-                state.CURRENT_PROFILE = queryParam.toLowerCase();
-                adminResponse = `🎭 Perfil de bot cambiado a: **${state.CURRENT_PROFILE}**`;
-            }
+            adminResponse = `📤 *Exportación de Libreta (${exportList.length}):*\n\n` + exportList.join('\n');
             break;
 
         case '/info':
         case '/whoami':
-            adminResponse = `📱 **Información de Conexión Admin:**\n` +
-                `- **Teléfono Admin:** ${state.ADMIN_PHONE || 'No detectado'}\n` +
-                `- **LID Admin:** ${state.ADMIN_LID || 'No detectado'}\n` +
-                `- **País:** ${getCountryFromPhone(state.ADMIN_PHONE)}\n` +
-                `- **JID Actual:** ${remoteJid}\n\n` +
-                `💡 *Consejo:* Usa \`/search <nombre>\` para buscar cualquier contacto en tu libreta.`;
+            adminResponse = `📱 *Información de Conexión Admin:*\n` +
+                `• *Teléfono Admin:* \`${state.ADMIN_PHONE || 'No detectado'}\`\n` +
+                `• *LID Admin:* \`${state.ADMIN_LID || 'No detectado'}\`\n` +
+                `• *País:* ${getCountryFromPhone(state.ADMIN_PHONE)}\n` +
+                `• *JID Actual:* \`${remoteJid}\`\n\n` +
+                `💡 *Consejo:* Usa \`/buscar <nombre>\` para buscar cualquier contacto en tu libreta.`;
             break;
 
+        case '/estado':
+        case '/e':
+        case '/menu':
         case '/status':
         case '/help':
-            adminResponse = `🤖 **Estado del SDK-Bot:**\n` +
-                `- **Estado Bot Global:** ${state.IS_BOT_PAUSED ? '⏸️ Pausado' : '▶️ Activo'}\n` +
-                `- **Perfil IA:** ${state.CURRENT_PROFILE}\n` +
-                `- **Permitidos (Allowed):** ${getAllowedNumbers().length} regla(s)\n` +
-                `- **Ignorados (IgnoreList):** ${getIgnoredNumbers().length} usuario(s)\n` +
-                `- **Base de Contactos:** ${Object.keys(getContactsDB()).length} registrado(s)\n\n` +
-                `📌 **Comandos Admin:**\n` +
-                `• \`/auto <num/lid>\` - Devolver control del chat a la IA\n` +
-                `• \`/handoff <num/lid>\` - Activar atención humana (pausar IA para ese cliente)\n` +
-                `• \`/name <num> <nombre>\` - Asignar o renombrar contacto en agenda\n` +
-                `• \`/search <query>\` - Buscar en agenda (Nombre Agenda ↔ Nombre Público ↔ Phone ↔ LID)\n` +
-                `• \`/sync\` - Ejecutar sincronización incremental de contactos\n` +
-                `• \`/contacts\` - Resumen de contactos en BD\n` +
-                `• \`/export\` - Exportar libreta de contactos\n` +
-                `• \`/ignore <num/lid>\` - Agregar a IgnoreList\n` +
-                `• \`/unignore <num/lid>\` - Quitar de IgnoreList\n` +
-                `• \`/ignorelist\` - Ver ignorados\n` +
-                `• \`/allow <num/lid/*>\` - Permitir usuario\n` +
-                `• \`/remove <num/lid>\` - Remover permitido\n` +
-                `• \`/list\` - Ver permitidos\n` +
-                `• \`/pause\` / \`/resume\` - Pausar/Reanudar IA globalmente\n` +
-                `• \`/profile <nombre>\` - Cambiar personalidad\n` +
-                `• \`/info\` - Ver datos de Admin\n` +
-                `• \`/status\` - Ver este menú`;
+        case '/admin':
+            const stateDb = getContactsDB();
+            adminResponse = `🤖 *Estado del SDK-Bot:*\n` +
+                `• *Estado Bot Global:* ${state.IS_BOT_PAUSED ? '⏸️ Pausado' : '▶️ Activo'}\n` +
+                `• *Perfil IA:* ${state.CURRENT_PROFILE}\n` +
+                `• *Permitidos (Allowed):* ${Object.values(stateDb).filter(c => c.estado === 'permitido').length} usuario(s)\n` +
+                `• *Lista Negra (Ignorados):* ${Object.values(stateDb).filter(c => c.estado === 'ignorado').length} usuario(s)\n` +
+                `• *Base de Contactos:* ${Object.keys(stateDb).length} registrado(s)\n\n` +
+                `📌 *MENÚ DE COMANDOS:*\n\n` +
+                `🤖 *Control Individual (Chat):*\n` +
+                `• \`/a <num>\` -> Activar IA\n` +
+                `• \`/h <num>\` -> Atención Humana (Pausar IA)\n` +
+                `• \`/c <num>\` -> Limpiar Memoria de IA\n\n` +
+                `🛡️ *Modos y Reglas (Listas):*\n` +
+                `• \`/i <num|agenda|*>\` -> Ignorar (Lista Negra)\n` +
+                `• \`/p <num|*>\` -> Permitir (Lista Blanca)\n` +
+                `• \`/q <num|*>\` -> Quitar de listas (Neutro)\n` +
+                `• \`/l\` -> Ver listas de reglas actuales\n\n` +
+                `📇 *Contactos y Agenda:*\n` +
+                `• \`/s <texto>\` -> Buscar contacto\n` +
+                `• \`/n <num> <nombre>\` -> Guardar nombre\n` +
+                `• \`/lc\` -> Resumen de libreta\n` +
+                `• \`/sync\` -> Sincronizar memoria RAM\n` +
+                `• \`/export\` -> Exportar toda la libreta\n\n` +
+                `⚙️ *Sistema y Config:*\n` +
+                `• \`/pg\` / \`/ag\` -> Pausar/Arrancar bot globalmente\n` +
+                `• \`/pf <perfil>\` -> Cambiar prompt IA\n` +
+                `• \`/info\` -> Datos de depuración\n` +
+                `• \`/init\` -> 📚 Leer guía rápida de inicio`;
+            break;
+
+        case '/init':
+        case '/startguide':
+        case '/guia':
+            adminResponse = `🚀 *GUÍA RÁPIDA DE INICIO - SDK BOT*\n\n` +
+                `¡Hola Admin! Tu bot está listo. Aquí tienes cómo funciona la lógica principal:\n\n` +
+                `*1️⃣ MODO GLOBAL (Quién habla con el bot)*\n` +
+                `Por defecto, el bot responde a **todos**. Si quieres que solo hable con ciertos clientes, envíame \`/i *\` (Ignorar a todos). El bot se volverá estricto y solo responderá a la "Lista Blanca".\n\n` +
+                `*2️⃣ PERMITIR E IGNORAR INDIVIDUALMENTE*\n` +
+                `Para saltar el Modo Global, puedes usar reglas individuales:\n` +
+                `• \`/p +56912345678\` -> El bot SIEMPRE le responderá.\n` +
+                `• \`/i +56912345678\` -> El bot NUNCA le responderá.\n` +
+                `• \`/q +56912345678\` -> Quita la regla y vuelve al comportamiento por defecto.\n\n` +
+                `*3️⃣ ATENCIÓN HUMANA (HANDOFF)*\n` +
+                `Si un cliente quiere hablar contigo, el bot te avisará aquí. Si respondes a esa alerta con \`/a\` (o envías \`/a <num>\`), la IA vuelve a tomar el control. Si envías \`/h <num>\`, silencias a la IA y hablas tú.\n\n` +
+                `*4️⃣ ATAJOS (CITAS)*\n` +
+                `¡No necesitas escribir el número de teléfono todo el tiempo! Solo **responde (cita)** el mensaje del cliente en este chat y escribe \`/a\`, \`/h\` o \`/c\`.\n\n` +
+                `*5️⃣ EL BOTÓN DE PÁNICO*\n` +
+                `Si necesitas apagar el bot por completo, usa \`/pg\` (Pause Global). Para prenderlo, \`/ag\` (Arranque Global).\n\n` +
+                `Para ver todos los comandos de nuevo, envía \`/e\`.`;
             break;
 
         default:
-            adminResponse = `⚠️ Comando no reconocido: ${command}. Usa \`/help\` para ver la lista.`;
+            adminResponse = `⚠️ Comando no reconocido: *${command}*. Usa \`/e\` o \`/estado\` para ver el menú.`;
             break;
     }
 

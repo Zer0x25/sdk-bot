@@ -14,3 +14,9 @@ def update_history(user_id: str, history: list):
         memory_db[user_id] = history[-MAX_HISTORY_MESSAGES:]
     else:
         memory_db[user_id] = history
+
+def clear_history(user_id: str):
+    if user_id in memory_db:
+        del memory_db[user_id]
+        return True
+    return False

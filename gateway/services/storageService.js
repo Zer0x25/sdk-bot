@@ -1,6 +1,6 @@
 const fs = require('fs');
 const fsPromises = require('fs/promises');
-const { ALLOWED_FILE_PATH, IGNORED_FILE_PATH, CONTACTS_FILE_PATH } = require('../config');
+const { SETTINGS_FILE_PATH, CONTACTS_FILE_PATH, state } = require('../config');
 
 // Almacén en memoria de contactos de la sesión
 const contactStore = new Map();
@@ -8,13 +8,11 @@ const contactStore = new Map();
 // -------------------------------------------------------------
 // CACHÉ EN MEMORIA Y GUARDADO DIFERIDO (DEBOUNCE)
 // -------------------------------------------------------------
-let cachedAllowedNumbers = null;
-let cachedIgnoredNumbers = null;
+let cachedSettingsDB = null;
 let cachedContactsDB = null;
 
 let saveContactsTimer = null;
-let saveAllowedTimer = null;
-let saveIgnoredTimer = null;
+let saveSettingsTimer = null;
 
 const SAVE_DELAY_MS = 2000; // 2 segundos de debounce
 
@@ -36,27 +34,21 @@ function loadDataOnStartup() {
     console.log("📂 Cargando bases de datos en memoria...");
     
     try {
-        if (!fs.existsSync(ALLOWED_FILE_PATH)) {
-            fs.writeFileSync(ALLOWED_FILE_PATH, JSON.stringify(["*"], null, 2));
-            cachedAllowedNumbers = ["*"];
+        if (!fs.existsSync(SETTINGS_FILE_PATH)) {
+            const defaultSettings = { globalMode: 'allowed_all' };
+            fs.writeFileSync(SETTINGS_FILE_PATH, JSON.stringify(defaultSettings, null, 2));
+            cachedSettingsDB = defaultSettings;
         } else {
-            cachedAllowedNumbers = JSON.parse(fs.readFileSync(ALLOWED_FILE_PATH, 'utf8'));
+            cachedSettingsDB = JSON.parse(fs.readFileSync(SETTINGS_FILE_PATH, 'utf8'));
+        }
+        // Sincronizar con el state global
+        if (cachedSettingsDB.globalMode) {
+            state.GLOBAL_MODE = cachedSettingsDB.globalMode;
         }
     } catch (e) {
-        console.error("Error al leer allowed_numbers.json:", e.message);
-        cachedAllowedNumbers = ["*"];
-    }
-
-    try {
-        if (!fs.existsSync(IGNORED_FILE_PATH)) {
-            fs.writeFileSync(IGNORED_FILE_PATH, JSON.stringify([], null, 2));
-            cachedIgnoredNumbers = [];
-        } else {
-            cachedIgnoredNumbers = JSON.parse(fs.readFileSync(IGNORED_FILE_PATH, 'utf8'));
-        }
-    } catch (e) {
-        console.error("Error al leer ignored_numbers.json:", e.message);
-        cachedIgnoredNumbers = [];
+        console.error("Error al leer settings_db.json:", e.message);
+        cachedSettingsDB = { globalMode: 'allowed_all' };
+        state.GLOBAL_MODE = 'allowed_all';
     }
 
     try {
@@ -75,14 +67,9 @@ function loadDataOnStartup() {
 // -------------------------------------------------------------
 // GETTERS (Retornan Caché)
 // -------------------------------------------------------------
-function getAllowedNumbers() {
-    if (!cachedAllowedNumbers) loadDataOnStartup();
-    return cachedAllowedNumbers;
-}
-
-function getIgnoredNumbers() {
-    if (!cachedIgnoredNumbers) loadDataOnStartup();
-    return cachedIgnoredNumbers;
+function getSettingsDB() {
+    if (!cachedSettingsDB) loadDataOnStartup();
+    return cachedSettingsDB;
 }
 
 function getContactsDB() {
@@ -93,27 +80,14 @@ function getContactsDB() {
 // -------------------------------------------------------------
 // SETTERS ASÍNCRONOS CON DEBOUNCE (Para no bloquear Event Loop)
 // -------------------------------------------------------------
-function saveAllowedNumbers(list) {
-    cachedAllowedNumbers = list;
-    if (saveAllowedTimer) clearTimeout(saveAllowedTimer);
-    saveAllowedTimer = setTimeout(async () => {
+function saveSettingsDB(settings) {
+    cachedSettingsDB = settings;
+    if (saveSettingsTimer) clearTimeout(saveSettingsTimer);
+    saveSettingsTimer = setTimeout(async () => {
         try {
-            await fsPromises.writeFile(ALLOWED_FILE_PATH, JSON.stringify(cachedAllowedNumbers, null, 2));
+            await fsPromises.writeFile(SETTINGS_FILE_PATH, JSON.stringify(cachedSettingsDB, null, 2));
         } catch (e) {
-            console.error("Error al guardar allowed_numbers.json de forma asíncrona:", e.message);
-        }
-    }, SAVE_DELAY_MS);
-    return true;
-}
-
-function saveIgnoredNumbers(list) {
-    cachedIgnoredNumbers = list;
-    if (saveIgnoredTimer) clearTimeout(saveIgnoredTimer);
-    saveIgnoredTimer = setTimeout(async () => {
-        try {
-            await fsPromises.writeFile(IGNORED_FILE_PATH, JSON.stringify(cachedIgnoredNumbers, null, 2));
-        } catch (e) {
-            console.error("Error al guardar ignored_numbers.json de forma asíncrona:", e.message);
+            console.error("Error al guardar settings_db.json de forma asíncrona:", e.message);
         }
     }, SAVE_DELAY_MS);
     return true;
@@ -141,8 +115,7 @@ function saveContactsDB(db) {
 function flushToDisk() {
     console.log("💾 Guardando bases de datos a disco antes de cerrar...");
     try {
-        if (cachedAllowedNumbers) fs.writeFileSync(ALLOWED_FILE_PATH, JSON.stringify(cachedAllowedNumbers, null, 2));
-        if (cachedIgnoredNumbers) fs.writeFileSync(IGNORED_FILE_PATH, JSON.stringify(cachedIgnoredNumbers, null, 2));
+        if (cachedSettingsDB) fs.writeFileSync(SETTINGS_FILE_PATH, JSON.stringify(cachedSettingsDB, null, 2));
         if (cachedContactsDB) fs.writeFileSync(CONTACTS_FILE_PATH, JSON.stringify(cachedContactsDB, null, 2));
         console.log("✅ Datos guardados correctamente.");
     } catch (e) {
@@ -193,36 +166,11 @@ function cleanContactsDB() {
     return db;
 }
 
-function isContactHandoff(metadata) {
-    const { phoneNumber, lid } = metadata;
-    const db = getContactsDB();
-    const existingKey = Object.keys(db).find(k => {
-        const item = db[k];
-        if (phoneNumber && item.phone === phoneNumber) return true;
-        if (lid && item.lid === lid) return true;
-        return false;
-    });
-    return existingKey ? Boolean(db[existingKey].handoff) : false;
-}
-
-function setContactHandoff(keyOrMetadata, handoffState = true) {
-    const db = getContactsDB();
-    let targetKey = typeof keyOrMetadata === 'string' ? keyOrMetadata : (keyOrMetadata.phoneNumber || keyOrMetadata.lid);
-
-    const existingKey = Object.keys(db).find(k => {
-        const item = db[k];
-        if (targetKey && item.phone && item.phone.includes(targetKey)) return true;
-        if (targetKey && item.lid && item.lid.includes(targetKey)) return true;
-        return k === targetKey;
-    });
-
-    if (existingKey) {
-        db[existingKey].handoff = Boolean(handoffState);
-        saveContactsDB(db);
-        return db[existingKey];
-    }
-    return null;
-}
+    // -----------------------------------------------------------------
+    // NOTA: isContactHandoff y setContactHandoff han sido reemplazados 
+    // por la nueva arquitectura de 'estado' en contacts_db.json, 
+    // que se maneja a través de setNumberState().
+    // -----------------------------------------------------------------
 
 function upsertContactMetadata(metadata) {
     const { phoneNumber, lid, savedName, pushName, verifiedName, country, language, isContact, bio, profilePicUrl, isBusiness, lastEnrichedAt } = metadata;
@@ -264,7 +212,7 @@ function upsertContactMetadata(metadata) {
         bio: bio || null,
         isBusiness: isBusiness || false,
         isContact: isContact || false,
-        handoff: false,
+        estado: "neutro", // Estado por defecto: "neutro", "handoff", "ignorado", "permitido"
         lastEnrichedAt: lastEnrichedAt || null,
         firstSeen: now,
         lastSeen: now,
@@ -336,7 +284,7 @@ function bulkUpsertContactsMetadata(contactsList) {
             bio: bio || null,
             isBusiness: isBusiness || false,
             isContact: isContact || false,
-            handoff: false,
+            estado: "neutro", // Estado por defecto
             lastEnrichedAt: lastEnrichedAt || null,
             firstSeen: now,
             lastSeen: now,
@@ -365,21 +313,103 @@ function bulkUpsertContactsMetadata(contactsList) {
     return count;
 }
 
+/**
+ * 🔄 GESTIÓN DE ESTADOS EN CONTACTS_DB (ignorado ↔ permitido ↔ handoff ↔ neutro)
+ * @param {string} targetId - Teléfono, LID o "*"
+ * @param {'allowed' | 'ignored' | 'handoff' | 'neutral'} stateType
+ */
+function setNumberState(targetId, stateType) {
+    if (targetId === '*') {
+        const settings = getSettingsDB();
+        if (stateType === 'allowed' || stateType === 'neutral') {
+            settings.globalMode = 'allowed_all';
+            state.GLOBAL_MODE = 'allowed_all';
+            saveSettingsDB(settings);
+            return { success: true, mode: 'allowed_all', message: "Modo 'Permitir a Todos por Defecto'" };
+        } else if (stateType === 'ignored') {
+            settings.globalMode = 'ignored_all';
+            state.GLOBAL_MODE = 'ignored_all';
+            saveSettingsDB(settings);
+            return { success: true, mode: 'ignored_all', message: "Modo 'Ignorar a Todos por Defecto' (Estricto)" };
+        }
+    }
+
+    const cleanTarget = String(targetId).replace(/[^0-9]/g, '');
+    if (!cleanTarget) return { success: false, message: "ID no válido" };
+
+    const db = getContactsDB();
+    const existingKey = Object.keys(db).find(k => {
+        const item = db[k];
+        const cleanPhone = item.phone ? item.phone.replace(/[^0-9]/g, '') : '';
+        const cleanLid = item.lid ? item.lid.replace(/[^0-9]/g, '') : '';
+        return cleanPhone.includes(cleanTarget) || cleanLid.includes(cleanTarget) || k === cleanTarget;
+    });
+
+    if (existingKey) {
+        // Mapeo del stateType al campo "estado" string
+        const stateMap = {
+            'allowed': 'permitido',
+            'ignored': 'ignorado',
+            'handoff': 'handoff',
+            'neutral': 'neutro'
+        };
+        db[existingKey].estado = stateMap[stateType] || 'neutro';
+        saveContactsDB(db);
+        return { success: true, target: db[existingKey].phone || existingKey, state: db[existingKey].estado };
+    }
+
+    // Si el contacto no existe, creamos uno básico para guardar el estado
+    const newKey = cleanTarget;
+    db[newKey] = {
+        phone: newKey,
+        lid: null,
+        estado: stateType === 'allowed' ? 'permitido' : (stateType === 'ignored' ? 'ignorado' : (stateType === 'handoff' ? 'handoff' : 'neutro')),
+        isContact: false,
+        firstSeen: new Date().toISOString(),
+        lastSeen: new Date().toISOString()
+    };
+    saveContactsDB(db);
+    return { success: true, target: newKey, state: db[newKey].estado };
+}
+
+/**
+ * 📇 IGNORAR MASIVAMENTE A TODOS LOS CONTACTOS CON NOMBRE EN AGENDA
+ */
+function ignoreAllAgendaContacts() {
+    const db = getContactsDB();
+    let addedCount = 0;
+
+    Object.keys(db).forEach(k => {
+        const contact = db[k];
+        if (contact.isContact || (contact.savedName && contact.savedName.trim())) {
+            if (contact.estado !== 'ignorado') {
+                contact.estado = 'ignorado';
+                addedCount++;
+            }
+        }
+    });
+
+    if (addedCount > 0) {
+        saveContactsDB(db);
+    }
+
+    const totalIgnored = Object.values(db).filter(c => c.estado === 'ignorado').length;
+    return { addedCount, totalIgnored };
+}
+
 // Inicializar la carga explícita al arrancar
 loadDataOnStartup();
 
 module.exports = {
     contactStore,
     isJunkJid,
-    getAllowedNumbers,
-    saveAllowedNumbers,
-    getIgnoredNumbers,
-    saveIgnoredNumbers,
+    getSettingsDB,
+    saveSettingsDB,
     getContactsDB,
     saveContactsDB,
     cleanContactsDB,
-    isContactHandoff,
-    setContactHandoff,
+    setNumberState,
+    ignoreAllAgendaContacts,
     upsertContactMetadata,
     bulkUpsertContactsMetadata,
     flushToDisk,
