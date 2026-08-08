@@ -10,11 +10,11 @@ const {
 const { processAIChat } = require('../services/brainService');
 const { handleAdminCommand } = require('./commandHandler');
 
-// 🧠 DE-BOUNCE QUEUE REINICIABLE CON AUTO-EXPIRACIÓN Y SAFETY TIMEOUT
+// 🧠 DE-BOUNCE QUEUE REINICIABLE CON AUTO-EXPIRACIÓN Y SAFETY TIMEOUT DINÁMICO
 const messageBuffers = new Map();
-const DEBOUNCE_DELAY_MS = 8000;      // 8 segundos de inactividad pos-escritura
-const TYPING_TTL_MS = 4500;           // 4.5 segundos: el estado de escritura expira automáticamente si no hay nuevo 'composing'
-const MAX_SAFETY_TIMEOUT_MS = 12000;  // 12 segundos: tiempo máximo absoluto para forzar el envío a la IA
+const DEBOUNCE_DELAY_MS = 8000;      // 8 segundos de inactividad pos-escritura (silencio total)
+const TYPING_TTL_MS = 4500;           // 4.5 segundos: el estado de escritura se renueva mientras teclee y expira si suelta el teclado
+const MAX_SAFETY_TIMEOUT_MS = 15000;  // 15 segundos: safety limit solo si no hay eventos de escritura
 
 // Palabras clave para derivación automática a atención humana
 const HUMAN_REQUEST_KEYWORDS = [
@@ -40,7 +40,8 @@ function checkHumanRequest(text) {
 
 /**
  * ⌨️ GESTIÓN DE PRESENCIA Y AUTO-EXPIRACIÓN DE ESCRITURA
- * Si el cliente escribe pero se arrepiente, el estado "composing" expira automáticamente a los 4.5s.
+ * Si el usuario escribe despacio, cada pulsación de tecla renueva los temporizadores.
+ * Si se arrepiente y suelta el teclado por 4.5s, arranca la cuenta regresiva de 8s de silencio.
  */
 function handlePresenceUpdate(id, presences) {
     if (!id || !presences) return;
@@ -58,19 +59,30 @@ function handlePresenceUpdate(id, presences) {
     if (isTyping) {
         buffer.isTyping = true;
         
-        // Pausar el timer de 8s mientras teclea
+        // Pausar el timer de 8s mientras el usuario siga tecleando activamente
         if (buffer.timer) {
             clearTimeout(buffer.timer);
             buffer.timer = null;
-            console.log(`\n⌨️ [DE-BOUNCE] Cliente en ${id} está escribiendo... Timer de 8s pausado.`);
         }
 
-        // 🧠 AUTO-EXPIRACIÓN DE ESCRITURA (4.5s): Si WhatsApp no envía 'paused', expirar estado automáticamente
+        // Renovamos el Safety Timeout mientras el usuario continúe tecleando físicamente
+        if (buffer.safetyTimer) {
+            clearTimeout(buffer.safetyTimer);
+            buffer.safetyTimer = setTimeout(() => {
+                if (messageBuffers.has(id)) {
+                    console.log(`\n🛡️ [SAFETY TIMEOUT] 15s de espera sin señal. Procesando cola para ${id}.`);
+                    buffer.isTyping = false;
+                    buffer.onTimeout();
+                }
+            }, MAX_SAFETY_TIMEOUT_MS);
+        }
+
+        // AUTO-EXPIRACIÓN DE ESCRITURA (4.5s): Si el usuario suelta las teclas por 4.5s, inicia el conteo de 8s de silencio
         if (buffer.typingExpiryTimer) clearTimeout(buffer.typingExpiryTimer);
         buffer.typingExpiryTimer = setTimeout(() => {
             if (buffer && buffer.isTyping) {
                 buffer.isTyping = false;
-                console.log(`⏱️ [TYPING EXPIRED] Estado de escritura expiró (4.5s inactivo en teclado). Arrancando timer de 8s.`);
+                console.log(`\n⏱️ [TECLADO LIBERADO] Cliente soltó el teclado (4.5s inactivo). Arrancando timer de 8s de silencio.`);
                 if (!buffer.timer) {
                     buffer.timer = setTimeout(buffer.onTimeout, DEBOUNCE_DELAY_MS);
                 }
@@ -82,9 +94,9 @@ function handlePresenceUpdate(id, presences) {
         if (buffer.typingExpiryTimer) clearTimeout(buffer.typingExpiryTimer);
         if (buffer.timer) clearTimeout(buffer.timer);
         
-        // El cliente dejó de escribir: AHORA inicia la cuenta regresiva de 8s
+        // El cliente envió o pausó el teclado: AHORA inicia la cuenta regresiva de 8s
         buffer.timer = setTimeout(buffer.onTimeout, DEBOUNCE_DELAY_MS);
-        console.log(`\n⏳ [DE-BOUNCE START] Cliente en ${id} dejó de escribir. Iniciando timer de 8s de inactividad.`);
+        console.log(`\n⏳ [DE-BOUNCE START] Cliente dejó de escribir. Iniciando timer de 8s de silencio.`);
     }
 }
 
@@ -218,7 +230,7 @@ async function handleIncomingMessage(m, sock) {
     }
 
     // -------------------------------------------------------------
-    // 🧠 DE-BOUNCE QUEUE CON AUTO-EXPIRACIÓN DE ESCRITURA Y SAFETY TIMEOUT (12S)
+    // 🧠 DE-BOUNCE QUEUE CON AUTO-EXPIRACIÓN DE ESCRITURA Y SAFETY TIMEOUT (15S)
     // -------------------------------------------------------------
     let existingBuffer = messageBuffers.get(remoteJid);
 
@@ -260,10 +272,10 @@ async function handleIncomingMessage(m, sock) {
             safetyTimer: null
         };
 
-        // 🛡️ SAFETY TIMEOUT (12s MÁXIMO ABSOLUTO): Garantiza que NINGÚN mensaje quede atrapado si WhatsApp omite 'paused'
+        // 🛡️ SAFETY TIMEOUT (15s): Se renueva dinámicamente si el usuario sigue tecleando
         newBuffer.safetyTimer = setTimeout(() => {
             if (messageBuffers.has(remoteJid)) {
-                console.log(`\n🛡️ [SAFETY TIMEOUT 12s] Forzando procesamiento de ráfaga para ${displayName} por límite máximo de espera.`);
+                console.log(`\n🛡️ [SAFETY TIMEOUT 15s] Procesando cola acumulada para ${displayName}.`);
                 newBuffer.isTyping = false;
                 onTimeout();
             }
@@ -271,7 +283,7 @@ async function handleIncomingMessage(m, sock) {
 
         newBuffer.timer = setTimeout(onTimeout, DEBOUNCE_DELAY_MS);
         messageBuffers.set(remoteJid, newBuffer);
-        console.log(`⏳ [DE-BOUNCE START] Primer mensaje de ${displayName}. Ventana de 8s / Límite máx 12s activado.`);
+        console.log(`⏳ [DE-BOUNCE START] Primer mensaje de ${displayName}. Ventana de 8s de silencio activada.`);
     }
 }
 
