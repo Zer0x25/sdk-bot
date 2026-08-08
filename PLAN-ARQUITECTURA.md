@@ -51,6 +51,8 @@ SDK-Bot/
 ### 2. 🧠 De-bounce Queue & Timer de Inactividad de 8s (Pos-Escritura)
 - **Ventana de Silencio de 8s:** Si un cliente envía mensajes fragmentados, el bot acumula los mensajes en cola.
 - **Renovación Dinámica (`presence.update`):** Si el cliente está escribiendo (`composing`), los temporizadores se renuevan continuamente. **Protección 100% para usuarios lentos al escribir.**
+  - *Nota técnica sobre privacidad de WhatsApp:* Para que los eventos de `composing` sean emitidos por los servidores de WhatsApp, el bot **debe conectarse con `markOnlineOnConnect: true`** y hacer broadcast de su presencia como "disponible" (`sock.sendPresenceUpdate('available')`). Los clientes offline no reciben notificaciones de tipeo por políticas estrictas de privacidad.
+  - *Soporte Multi-Device (Dual JID):* El estado de presencia entra a nivel de "Teléfono" (`@s.whatsapp.net`), pero los mensajes pueden operar bajo la "Identidad Vinculada" (`@lid`). Nuestro motor en memoria RAM resuelve ambos IDs simultáneamente apoyándose en `contacts_db.json`.
 - **Expiración de Escritura (4.5s):** Si el usuario se arrepiente y suelta el teclado sin enviar nada, el estado de escritura expira a los 4.5s y se activa el conteo de 8s de silencio.
 
 ### 3. 🛡️ Simulación Humana & Anti-Ban Rate Limiter
