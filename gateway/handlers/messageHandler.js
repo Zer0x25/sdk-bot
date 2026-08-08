@@ -267,7 +267,7 @@ async function handleIncomingMessage(m, sock) {
         const buf = messageBuffers.get(remoteJid);
         if (!buf) return;
 
-        // 🧠 PASO 1: REVISAR PRIMERO NUESTRO ESTADO EN LA MEMORIA LOCAL DE LA APP (BUSCANDO EN TODOS SUS CANDIDATOS)
+        // 🧠 REVISAR ESTADO EN LA MEMORIA LOCAL DE LA APP (Candidatos Múltiples)
         const candidates = getCandidateIdsForPresence(remoteJid);
         if (phoneNumber) candidates.push(phoneNumber.replace(/[^0-9]/g, ''));
         if (lid) candidates.push(lid.replace(/[^0-9]/g, ''));
@@ -285,44 +285,20 @@ async function handleIncomingMessage(m, sock) {
         const isTypingLocal = (latestPresence && (latestPresence.state === 'composing' || latestPresence.state === 'recording') && (Date.now() - latestPresence.time < TYPING_TTL_MS)) || buf.isTyping;
 
         if (isTypingLocal) {
-            console.log(`\n🔄 [MEMORIA LOCAL APP] Cliente (${displayName}) está en estado '${latestPresence?.state || 'composing'}'. Reiniciando timer de 8s...`);
+            console.log(`\n🔄 [MEMORIA LOCAL] Cliente (${displayName}) sigue escribiendo ('${latestPresence?.state || 'composing'}'). Postergando envío a IA por 8s...`);
             if (buf.timer) clearTimeout(buf.timer);
             buf.timer = setTimeout(buf.onTimeout, DEBOUNCE_DELAY_MS);
             return;
         }
 
-        // 🧠 PASO 2: SI MEMORIA DICE 'SILENCIO', REFRESCAR CON WHATSAPP EN SEGUNDO PLANO
-        sock.presenceSubscribe(remoteJid).catch(() => {});
-        if (phoneNumber) sock.presenceSubscribe(`${phoneNumber}@s.whatsapp.net`).catch(() => {});
-        if (lid) sock.presenceSubscribe(`${lid}@lid`).catch(() => {});
-
-        await new Promise(r => setTimeout(r, 250));
-
-        let postPresence = null;
-        for (const cid of candidates) {
-            const p = activePresences.get(cid);
-            if (p) {
-                if (!postPresence || p.time > postPresence.time) {
-                    postPresence = p;
-                }
-            }
-        }
-
-        if (postPresence && (postPresence.state === 'composing' || postPresence.state === 'recording') && (Date.now() - postPresence.time < TYPING_TTL_MS)) {
-            console.log(`\n🔄 [REFRESCO WHATSAPP] Confirmado: El cliente (${displayName}) volvió a teclear (${postPresence.state}). Reiniciando timer de 8s...`);
-            if (buf.timer) clearTimeout(buf.timer);
-            buf.timer = setTimeout(buf.onTimeout, DEBOUNCE_DELAY_MS);
-            return;
-        }
-
-        // 🧠 PASO 3: SI AMBAS VERIFICACIONES CONFIRMAN SILENCIO -> LUZ VERDE PARA LA IA
+        // LUZ VERDE: 8s DE SILENCIO CUMPLIDOS REALMENTE
         if (buf.typingExpiryTimer) clearTimeout(buf.typingExpiryTimer);
         if (buf.timer) clearTimeout(buf.timer);
 
         const fullBufferedText = buf.messages.join('\n');
         messageBuffers.delete(remoteJid);
 
-        console.log(`\n📦 [DE-BOUNCE BATCH FINAL] 8s de silencio + Memoria Local & WhatsApp OK. Procesando ${buf.messages.length} mensaje(s) de ${displayName}: "${fullBufferedText}"`);
+        console.log(`\n📦 [DE-BOUNCE BATCH FINAL] 8s de silencio confirmados. Procesando ${buf.messages.length} mensaje(s) de ${displayName}:\n"${fullBufferedText}"`);
         await processAIChat(fullBufferedText, remoteJid, metadata, sock);
     };
 
