@@ -200,6 +200,77 @@ function upsertContactMetadata(metadata) {
     return record;
 }
 
+function bulkUpsertContactsMetadata(contactsList) {
+    if (!Array.isArray(contactsList) || contactsList.length === 0) return 0;
+    
+    const db = cleanContactsDB();
+    let count = 0;
+    const now = new Date().toISOString();
+
+    contactsList.forEach(metadata => {
+        const { phoneNumber, lid, savedName, pushName, verifiedName, country, isContact, bio, profilePicUrl, isBusiness, lastEnrichedAt } = metadata;
+
+        if (phoneNumber && isJunkJid(phoneNumber)) return;
+        if (lid && isJunkJid(lid)) return;
+        if (!phoneNumber && !lid) return;
+
+        const hasAnyIdentity = phoneNumber || (savedName && savedName.trim()) || (pushName && pushName !== 'Desconocido' && pushName.trim()) || verifiedName || profilePicUrl;
+        if (!hasAnyIdentity) return;
+
+        let existingKey = Object.keys(db).find(k => {
+            const item = db[k];
+            if (phoneNumber && item.phone === phoneNumber) return true;
+            if (lid && item.lid === lid) return true;
+            return false;
+        });
+
+        let targetKey = phoneNumber || (existingKey && db[existingKey].phone ? db[existingKey].phone : lid);
+
+        if (existingKey && existingKey !== targetKey) {
+            const oldData = db[existingKey];
+            delete db[existingKey];
+            db[targetKey] = oldData;
+        }
+
+        const record = db[targetKey] || {
+            phone: phoneNumber || null,
+            lid: lid || null,
+            savedName: (savedName && savedName.trim()) ? savedName.trim() : null,
+            pushName: (pushName && pushName !== 'Desconocido' && pushName.trim()) ? pushName.trim() : null,
+            verifiedName: (verifiedName && verifiedName.trim()) ? verifiedName.trim() : null,
+            country: country || "Desconocido",
+            profilePicUrl: profilePicUrl || null,
+            bio: bio || null,
+            isBusiness: isBusiness || false,
+            isContact: isContact || false,
+            lastEnrichedAt: lastEnrichedAt || null,
+            firstSeen: now,
+            lastSeen: now,
+            totalMessages: 0
+        };
+
+        if (phoneNumber) record.phone = phoneNumber;
+        if (lid) record.lid = lid;
+        if (savedName && savedName.trim()) record.savedName = savedName.trim();
+        if (pushName && pushName !== 'Desconocido' && pushName.trim()) record.pushName = pushName.trim();
+        if (verifiedName && verifiedName.trim()) record.verifiedName = verifiedName.trim();
+        if (country && country !== 'Desconocido') record.country = country;
+        if (profilePicUrl) record.profilePicUrl = profilePicUrl;
+        if (bio) record.bio = bio;
+        if (isBusiness !== undefined) record.isBusiness = isBusiness;
+        if (isContact) record.isContact = true;
+        if (lastEnrichedAt) record.lastEnrichedAt = lastEnrichedAt;
+
+        record.lastSeen = now;
+
+        db[targetKey] = record;
+        count++;
+    });
+
+    saveContactsDB(db);
+    return count;
+}
+
 module.exports = {
     contactStore,
     isJunkJid,
@@ -210,5 +281,6 @@ module.exports = {
     getContactsDB,
     saveContactsDB,
     cleanContactsDB,
-    upsertContactMetadata
+    upsertContactMetadata,
+    bulkUpsertContactsMetadata
 };

@@ -9,6 +9,7 @@ const {
     saveContactsDB,
     cleanContactsDB,
     upsertContactMetadata,
+    bulkUpsertContactsMetadata,
     isJunkJid,
     contactStore
 } = require('../services/storageService');
@@ -192,14 +193,15 @@ async function handleAdminCommand(textMessage, remoteJid, sock, metadata) {
 
         case '/sync':
         case '/resync':
-            let syncedCount = 0;
             const contactsList = Array.from(contactStore.values());
+            const batch = [];
+
             contactsList.forEach(c => {
                 if (c && c.id && !isJunkJid(c.id)) {
                     const phone = c.id.endsWith('@s.whatsapp.net') ? c.id.split('@')[0] : null;
                     const lid = c.lid ? c.lid.split('@')[0] : (c.id.endsWith('@lid') ? c.id.split('@')[0] : null);
                     
-                    const result = upsertContactMetadata({
+                    batch.push({
                         phoneNumber: phone,
                         lid: lid,
                         savedName: c.name || null,
@@ -208,10 +210,10 @@ async function handleAdminCommand(textMessage, remoteJid, sock, metadata) {
                         isContact: true,
                         country: getCountryFromPhone(phone)
                     });
-                    if (result) syncedCount++;
                 }
             });
 
+            const syncedCount = bulkUpsertContactsMetadata(batch);
             const cleanDb = cleanContactsDB();
             const totalCount = Object.keys(cleanDb).length;
             
@@ -279,8 +281,12 @@ async function handleAdminCommand(textMessage, remoteJid, sock, metadata) {
             break;
     }
 
-    const sentMsg = await sock.sendMessage(remoteJid, { text: adminResponse });
-    registerSentMessage(sentMsg);
+    try {
+        const sentMsg = await sock.sendMessage(remoteJid, { text: adminResponse });
+        registerSentMessage(sentMsg);
+    } catch (e) {
+        console.error("⚠️ No se pudo enviar confirmación admin por reconexión temporal de WhatsApp:", e.message);
+    }
 }
 
 module.exports = {

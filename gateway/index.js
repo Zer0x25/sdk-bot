@@ -2,7 +2,7 @@ const { default: makeWASocket, useMultiFileAuthState, DisconnectReason } = requi
 const pino = require('pino');
 const qrcode = require('qrcode-terminal');
 const { state } = require('./config');
-const { upsertContactMetadata, isJunkJid, cleanContactsDB, contactStore } = require('./services/storageService');
+const { bulkUpsertContactsMetadata, isJunkJid, cleanContactsDB, contactStore } = require('./services/storageService');
 const { getCountryFromPhone } = require('./services/metadataService');
 const { handleIncomingMessage } = require('./handlers/messageHandler');
 
@@ -27,6 +27,8 @@ async function connectToWhatsApp () {
     // Capturar eventos de sincronización de contactos de WhatsApp (Agenda del Teléfono)
     const handleContactSync = contacts => {
         if (!Array.isArray(contacts)) return;
+        const batch = [];
+
         contacts.forEach(c => {
             if (c && c.id && !isJunkJid(c.id)) {
                 // Guardar en el almacén de sesión local
@@ -35,7 +37,7 @@ async function connectToWhatsApp () {
                 const phone = c.id.endsWith('@s.whatsapp.net') ? c.id.split('@')[0] : null;
                 const lid = c.lid ? c.lid.split('@')[0] : (c.id.endsWith('@lid') ? c.id.split('@')[0] : null);
                 
-                upsertContactMetadata({
+                batch.push({
                     phoneNumber: phone,
                     lid: lid,
                     savedName: c.name || null,
@@ -46,6 +48,10 @@ async function connectToWhatsApp () {
                 });
             }
         });
+
+        if (batch.length > 0) {
+            bulkUpsertContactsMetadata(batch);
+        }
     };
 
     sock.ev.on('contacts.upsert', handleContactSync);
