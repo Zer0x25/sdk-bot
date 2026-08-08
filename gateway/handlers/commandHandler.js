@@ -6,6 +6,7 @@ const {
     getIgnoredNumbers, 
     saveIgnoredNumbers, 
     getContactsDB,
+    saveContactsDB,
     cleanContactsDB,
     upsertContactMetadata,
     isJunkJid,
@@ -106,6 +107,38 @@ async function handleAdminCommand(textMessage, remoteJid, sock, metadata) {
         case '/list':
             const currentList = getAllowedNumbers();
             adminResponse = `📋 **Lista de Permitidos (AllowedList):**\n\n${currentList.map(n => `- ${n}`).join('\n')}`;
+            break;
+
+        case '/name':
+        case '/alias':
+            if (!queryParam || !queryParam.includes(' ')) {
+                adminResponse = "⚠️ Uso: `/name <numero_o_lid> <nombre_agenda>`\nEjemplo: `/name 56944323815 Pedro Pizzería`";
+            } else {
+                const targetId = args[1].trim();
+                const customName = args.slice(2).join(' ').trim();
+                const db = getContactsDB();
+                
+                const existingKey = Object.keys(db).find(k => {
+                    const item = db[k];
+                    if (item.phone && item.phone.includes(targetId)) return true;
+                    if (item.lid && item.lid.includes(targetId)) return true;
+                    return k === targetId;
+                });
+
+                if (existingKey) {
+                    db[existingKey].savedName = customName;
+                    saveContactsDB(db);
+                    adminResponse = `✅ Contacto **${db[existingKey].phone || existingKey}** asignado con el nombre de agenda: **"${customName}"**.`;
+                } else {
+                    const newRecord = upsertContactMetadata({
+                        phoneNumber: targetId.length < 15 ? targetId : null,
+                        lid: targetId.length >= 15 ? targetId : null,
+                        savedName: customName,
+                        isContact: true
+                    });
+                    adminResponse = `✅ Nuevo contacto registrado en agenda: **"${customName}"** (${targetId}).`;
+                }
+            }
             break;
 
         case '/search':
@@ -224,6 +257,7 @@ async function handleAdminCommand(textMessage, remoteJid, sock, metadata) {
                 `- **Ignorados (IgnoreList):** ${getIgnoredNumbers().length} usuario(s)\n` +
                 `- **Base de Contactos:** ${Object.keys(getContactsDB()).length} registrado(s)\n\n` +
                 `📌 **Comandos Admin:**\n` +
+                `• \`/name <num> <nombre>\` - Asignar o renombrar contacto en agenda manualmente\n` +
                 `• \`/search <query>\` - Buscar en agenda (Nombre Agenda ↔ Nombre Público ↔ Phone ↔ LID)\n` +
                 `• \`/sync\` - Ejecutar sincronización incremental de contactos\n` +
                 `• \`/contacts\` - Resumen de contactos en BD\n` +

@@ -14,21 +14,6 @@
     "lastSeen": "2026-08-08T05:10:36.513Z",
     "totalMessages": 3
   },
-  "272048244940855": {
-    "phone": null,
-    "lid": "272048244940855",
-    "savedName": null,
-    "pushName": "Zerox 💙",
-    "verifiedName": null,
-    "country": "Desconocido",
-    "profilePicUrl": null,
-    "bio": null,
-    "isBusiness": false,
-    "isContact": true,
-    "firstSeen": "2026-08-08T05:10:35.649Z",
-    "lastSeen": "2026-08-08T05:10:35.649Z",
-    "totalMessages": 1
-  },
   "56926426947": {
     "phone": "56926426947",
     "lid": "87123831046340",
@@ -41,8 +26,24 @@
     "isBusiness": false,
     "isContact": false,
     "firstSeen": "2026-08-08T05:10:35.776Z",
-    "lastSeen": "2026-08-08T05:48:27.594Z",
-    "totalMessages": 19,
+    "lastSeen": "2026-08-08T05:52:02.608Z",
+    "totalMessages": 20,
     "lastEnrichedAt": "2026-08-08T05:25:33.543Z"
+  },
+  "56942523669": {
+    "phone": "56942523669",
+    "lid": "272048244940855",
+    "savedName": null,
+    "pushName": "Jaime Mella",
+    "verifiedName": null,
+    "country": "Chile (+56)",
+    "profilePicUrl": "https://pps.whatsapp.net/v/t61.24694-24/615250904_713810458419708_1353744743827636681_n.jpg?ccb=11-4&oh=01_Q5Aa5QHXevCkS8QdKy1mU4J9iiF8xClUYw3OWqd4HgXMl_YRMw&oe=6A83DD94&_nc_sid=5e03e0&_nc_cat=108",
+    "bio": null,
+    "isBusiness": false,
+    "isContact": true,
+    "firstSeen": "2026-08-08T05:10:35.649Z",
+    "lastSeen": "2026-08-08T05:54:00.915Z",
+    "totalMessages": 4,
+    "lastEnrichedAt": "2026-08-08T05:53:56.979Z"
   }
 }
