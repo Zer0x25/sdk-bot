@@ -1,6 +1,7 @@
 const { state, registerSentMessage } = require('../config');
+const { downloadMediaMessage } = require('@whiskeysockets/baileys');
 const { getCountryFromPhone } = require('../services/metadataService');
-const { clearAIMemory, getAvailableProfiles, getProfileDetail } = require('../services/brainService');
+const { clearAIMemory, getAvailableProfiles, getProfileDetail, exportProfileFile, importProfileFile } = require('../services/brainService');
 const { 
     getSettingsDB,
     getContactsDB,
@@ -35,9 +36,58 @@ function parsePhoneOrLid(input) {
 }
 
 /**
- * 🔤 Parsear comando /nombre tolerando teléfonos formateados nativos (ej: /nombre +56 9 4252 3669 Pedro)
+ * 📥 SUBIR UN PERFIL .MD DESDE UN DOCUMENTO DE WHATSAPP
+ * Descarga el documento (adjunto o citado), valida el nombre y lo envía al brain.
+ * @param {object} sock - Socket de Baileys
+ * @param {string} remoteJid - JID del self-chat
+ * @param {object} docMessage - message.documentMessage (o contenido de quotedMessage)
+ * @param {object} [msgKey] - key del mensaje original para downloadMediaMessage
  */
-function parseNameArgs(queryParam) {
+async function handleProfileUpload(sock, remoteJid, docMessage, msgKey) {
+    try {
+        const fileName = docMessage?.fileName || 'perfil.md';
+        const match = fileName.match(/^([a-z0-9_\-]+)\.(md|txt)$/i);
+        if (!match) {
+            await sock.sendMessage(remoteJid, { text: `⚠️ *Archivo no válido:* \`${fileName}\`. Debe llamarse \`perfil.md\` o \`<key>.md\` (ej: \`lucia.md\`).` });
+            return false;
+        }
+        const profileKey = match[1].toLowerCase();
+
+        const buffer = await downloadMediaMessage(msgKey, 'buffer', {}, { reuploadRequest: true, logger: undefined });
+        if (!buffer) {
+            await sock.sendMessage(remoteJid, { text: `⚠️ No pude descargar el archivo \`${fileName}\`. Intenta reenviarlo citándolo con \`/update\`.` });
+            return false;
+        }
+
+        const content = buffer.toString('utf8');
+        const result = await importProfileFile(profileKey, content);
+
+        if (result && result.success) {
+            const sent = await sock.sendMessage(remoteJid, {
+                text: `✅ *Perfil \`${profileKey}\` actualizado:*\n` +
+                    `• *Nombre:* ${result.nombre}\n` +
+                    `• *Reglas:* ${result.reglas} | *Ejemplos:* ${result.ejemplos}\n\n` +
+                    `Comprueba el prompt: \`/perfil ver ${profileKey}\``
+            });
+            registerSentMessage(sent);
+            return true;
+        }
+
+        const sent = await sock.sendMessage(remoteJid, {
+            text: `⚠️ *Rechazado* (${fileName}): ${result?.message || 'Brain apagado o error de importación'}. El perfil no fue modificado.`
+        });
+        registerSentMessage(sent);
+        return false;
+    } catch (e) {
+        console.error("⚠️ Error al importar perfil desde documento:", e.message);
+        await sock.sendMessage(remoteJid, { text: `⚠️ Error al importar el perfil: ${e.message}` }).catch(() => {});
+        return false;
+    }
+}
+
+/**
+ * 🔤 Parsear comando /nombre tolerando teléfonos formateados nativos (ej: /nombre +56 9 4252 3669 Pedro)
+ */function parseNameArgs(queryParam) {
     if (!queryParam) return { targetId: null, customName: null };
     const str = queryParam.trim();
     
@@ -365,6 +415,35 @@ async function handleAdminCommand(textMessage, remoteJid, sock, metadata, rawMsg
                 break;
             }
 
+            // 📤 /perfil exportar <key> → envía el .md al self-chat para editar
+            if (queryParam.toLowerCase().startsWith('exportar ') || queryParam.toLowerCase() === 'exportar') {
+                const keyToExport = queryParam.toLowerCase().startsWith('exportar ')
+                    ? queryParam.split(/\s+/).slice(1).join(' ').trim().toLowerCase()
+                    : '';
+                if (!keyToExport) {
+                    adminResponse = `⚠️ Uso: \`/perfil exportar <perfil>\`. Disponibles: ${profiles.map(p => `\`${p.key}\``).join(', ') || 'no cargados'}.`;
+                    break;
+                }
+                const exported = await exportProfileFile(keyToExport);
+                if (!exported) {
+                    adminResponse = `⚠️ Perfil *"${keyToExport}"* no encontrado o brain apagado.`;
+                    break;
+                }
+                try {
+                    await sock.sendMessage(remoteJid, {
+                        document: Buffer.from(exported.content, 'utf8'),
+                        mimetype: 'text/markdown',
+                        fileName: exported.filename,
+                        caption: `📤 Perfil *${keyToExport}*. Edítalo y envíalo citando este archivo con \`/update\`.`
+                    });
+                    adminResponse = null; // La respuesta es el propio documento
+                } catch (e) {
+                    console.error("⚠️ Error al enviar documento de perfil:", e.message);
+                    adminResponse = `⚠️ Error al enviar el archivo de perfil: ${e.message}`;
+                }
+                break;
+            }
+
             const argsParts = queryParam.split(/\s+/);
             const profileKey = argsParts[0].toLowerCase();
             const valid = profiles.find(p => p.key === profileKey);
@@ -404,6 +483,32 @@ async function handleAdminCommand(textMessage, remoteJid, sock, metadata, rawMsg
             } else {
                 adminResponse = `⚠️ ${globalRes.message}`;
             }
+            break;
+
+        case '/update':
+        case '/upd':
+        case '/import':
+            // El admin cita un documento .md con /update, o envía el documento con caption /update
+            const quotedDoc = rawMsg?.message?.extendedTextMessage?.contextInfo?.quotedMessage?.documentMessage ||
+                              rawMsg?.message?.extendedTextMessage?.contextInfo?.quotedMessage?.documentWithCaptionMessage?.message?.documentMessage;
+            const ownDoc = rawMsg?.message?.documentMessage || rawMsg?.message?.documentWithCaptionMessage?.message?.documentMessage;
+            const docMsg = quotedDoc || ownDoc;
+            const docKey = quotedDoc ? {
+                key: {
+                    remoteJid,
+                    id: rawMsg.message.extendedTextMessage.contextInfo.stanzaId,
+                    participant: rawMsg.message.extendedTextMessage.contextInfo.participant || undefined
+                },
+                message: rawMsg.message.extendedTextMessage.contextInfo.quotedMessage
+            } : rawMsg;
+
+            if (!docMsg) {
+                adminResponse = "⚠️ *Uso:* cita un archivo \`.md\` y escribe \`/update\` (o envíalo con caption \`/update\`).\n\n*Exportar un perfil para editar:* \`/perfil exportar <key>\`";
+                break;
+            }
+
+            await handleProfileUpload(sock, remoteJid, docMsg, docKey);
+            adminResponse = null; // handleProfileUpload ya respondió
             break;
 
         case '/sincronizar':
@@ -490,6 +595,8 @@ async function handleAdminCommand(textMessage, remoteJid, sock, metadata, rawMsg
                 `⚙️ *Sistema y Config:*\n` +
                 `• \`/pg\` / \`/ag\` -> Pausar/Arrancar bot globalmente\n` +
                 `• \`/pf <perfil>\` -> Cambiar prompt IA\n` +
+                `• \`/pf exportar <perfil>\` -> Enviar .md del perfil a editar\n` +
+                `• \`/update\` (citando un .md) -> Importar perfil editado\n` +
                 `• \`/info\` -> Datos de depuración\n` +
                 `• \`/init\` -> 📚 Leer guía rápida de inicio`;
             break;
@@ -529,5 +636,6 @@ async function handleAdminCommand(textMessage, remoteJid, sock, metadata, rawMsg
 }
 
 module.exports = {
-    handleAdminCommand
+    handleAdminCommand,
+    handleProfileUpload
 };

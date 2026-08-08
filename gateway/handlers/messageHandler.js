@@ -210,6 +210,8 @@ async function handleIncomingMessage(m, sock) {
     const textMessage = msg.message?.conversation || 
                         msg.message?.extendedTextMessage?.text || 
                         msg.message?.imageMessage?.caption || 
+                        msg.message?.documentMessage?.caption || 
+                        msg.message?.documentWithCaptionMessage?.message?.documentMessage?.caption || 
                         "";
         
     if (!textMessage) return; // Ignorar si no hay texto

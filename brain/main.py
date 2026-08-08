@@ -4,7 +4,10 @@ from typing import Optional
 from config import OPENROUTER_MODEL, GROQ_MODEL
 from memory import get_history, update_history, clear_history
 from providers import generate_ai_response, safe_log
-from profiles import build_system_prompt, list_profiles, PROFILES
+from profiles import (
+    build_system_prompt, list_profiles, get_profiles, get_profile_file,
+    import_profile, refresh_profiles
+)
 
 app = FastAPI(title="SDK-Bot Brain API (Modular Multi-Provider Router)")
 
@@ -25,6 +28,10 @@ class ChatRequest(BaseModel):
 class ResetMemoryRequest(BaseModel):
     user_id: str
 
+class ImportProfileRequest(BaseModel):
+    key: str
+    content: str
+
 @app.post("/reset-memory")
 async def reset_memory_endpoint(request: ResetMemoryRequest):
     cleared = clear_history(request.user_id)
@@ -37,14 +44,38 @@ def profiles_endpoint():
 
 @app.get("/profiles/{profile_key}")
 def profile_detail_endpoint(profile_key: str):
-    if profile_key not in PROFILES:
+    if profile_key not in get_profiles():
         raise HTTPException(status_code=404, detail=f"Perfil '{profile_key}' no encontrado")
     return {
         "key": profile_key,
-        "nombre": PROFILES[profile_key]["nombre"],
-        "descripcion": PROFILES[profile_key]["descripcion"],
+        "nombre": get_profiles()[profile_key][1]["nombre"],
+        "descripcion": get_profiles()[profile_key][1]["descripcion"],
         "prompt": build_system_prompt(profile_key)
     }
+
+@app.get("/profiles/{profile_key}/file")
+def profile_file_endpoint(profile_key: str):
+    """Exporta el .md crudo de un perfil para editar y re-subir."""
+    content, filename = get_profile_file(profile_key)
+    if content is None:
+        raise HTTPException(status_code=404, detail=f"Perfil '{profile_key}' no encontrado")
+    from fastapi.responses import PlainTextResponse
+    return PlainTextResponse(content, media_type="text/markdown")
+
+@app.post("/profiles/import")
+def profile_import_endpoint(request: ImportProfileRequest):
+    """Recibe un perfil .md editado (crea o actualiza el archivo en profiles/)."""
+    result = import_profile(request.key, request.content)
+    if not result["success"]:
+        raise HTTPException(status_code=400, detail=result["message"])
+    safe_log(f"📥 [PERFIL IMPORTADO] {result['key']} ({result['nombre']}) | {result['reglas']} reglas, {result['ejemplos']} ejemplos")
+    return {"status": "ok", **result}
+
+@app.post("/profiles/reload")
+def profile_reload_endpoint():
+    """Fuerza la recarga de la carpeta profiles/ (aunque ya es automática por mtime)."""
+    refresh_profiles()
+    return {"status": "ok", "profiles": len(get_profiles())}
 
 @app.post("/chat")
 async def chat_endpoint(request: ChatRequest):

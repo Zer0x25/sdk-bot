@@ -259,9 +259,51 @@ async function getProfileDetail(profileKey) {
     }
 }
 
+/**
+ * 📤 Exportar el .md crudo de un perfil (GET /profiles/{key}/file)
+ * Devuelve { content, filename } o null.
+ */
+async function exportProfileFile(profileKey) {
+    try {
+        const fileUrl = `${BRAIN_API_URL.replace('/chat', '/profiles')}/${encodeURIComponent(profileKey)}/file`;
+        const response = await fetch(fileUrl, {
+            method: 'GET',
+            signal: AbortSignal.timeout(5000)
+        });
+        if (!response.ok) return null;
+        const content = await response.text();
+        return { content, filename: `${profileKey}.md` };
+    } catch (e) {
+        console.error("Error al exportar archivo de perfil:", e.message);
+        return null;
+    }
+}
+
+/**
+ * 📥 Importar un perfil .md editado (POST /profiles/import)
+ * Devuelve el JSON del brain o null.
+ */
+async function importProfileFile(profileKey, content) {
+    try {
+        const importUrl = BRAIN_API_URL.replace('/chat', '/profiles/import');
+        const response = await fetch(importUrl, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            signal: AbortSignal.timeout(5000),
+            body: JSON.stringify({ key: profileKey, content })
+        });
+        return await response.json();
+    } catch (e) {
+        console.error("Error al importar perfil al Brain:", e.message);
+        return null;
+    }
+}
+
 module.exports = {
     processAIChat,
     clearAIMemory,
     getAvailableProfiles,
-    getProfileDetail
+    getProfileDetail,
+    exportProfileFile,
+    importProfileFile
 };

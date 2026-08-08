@@ -1,163 +1,193 @@
 """
 Perfiles SOUL (Personalidades del Bot)
 
-Cada perfil es un dict con metadatos estructurados (nombre, descripción,
-personalidad, reglas, formato y ejemplos) que se compilan a un system prompt
-completo mediante build_system_prompt().
+Cada perfil vive como un archivo Markdown individual en la carpeta ./profiles/
+(p.ej. lucia.md, mateo.md). Se parsea a estructura y se compila a un system
+prompt completo mediante build_system_prompt().
 
-El gateway consulta el endpoint GET /profiles del brain para conocer las
-claves válidas y validar el comando /perfil del admin.
+Formato esperado de cada .md:
+
+    # Nombre
+
+    Descripción breve.
+
+    ## Personalidad
+    Texto libre de la personalidad.
+
+    ## Reglas
+    - Regla uno.
+    - Regla dos.
+
+    ## Formato
+    Texto libre del formato de respuesta.
+
+    ## Ejemplos
+    **Cliente:** pregunta del cliente
+    **Asistente:** respuesta del asistente
+
+El brain relee los archivos automáticamente si cambian (cache por mtime),
+así se pueden editar en caliente sin reiniciar.
 """
 
-PROFILES = {
-    "default": {
-        "nombre": "Asistente",
-        "descripcion": "Asistente virtual amigable y equilibrado para atención por WhatsApp.",
-        "personalidad": (
-            "Amable, cercano y empático, pero profesional. Escucha con paciencia, "
-            "usa un tono cálido y transmite confianza en cada respuesta."
-        ),
-        "reglas": [
-            "Responder de manera concisa y clara.",
-            "No usar emojis en exceso (máximo uno por mensaje).",
-            "Si no se conoce una respuesta exacta, decirlo con honestidad y ofrecer ayuda alternativa.",
-            "Nunca inventar precios, plazos ni datos que no estén confirmados."
-        ],
-        "formato": (
-            "Mensajes cortos y directos. Si se necesitan varios puntos, usar viñetas "
-            "y separar en globos de chat naturales."
-        ),
-        "ejemplos": [
-            {
-                "cliente": "¿Cuánto tarda el envío?",
-                "asistente": "Normalmente llega entre 3 y 5 días hábiles. ¿Quieres que te ayude a rastrear tu pedido?"
-            }
-        ]
-    },
-    "lucia": {
-        "nombre": "Lucía",
-        "descripcion": "Asistente de ventas sarcástica, directa y persuasiva.",
-        "personalidad": (
-            "Irónica y ocurrente, con carácter. Habla como una vendedora segura de sí misma "
-            "que no tiene pelos en la lengua: va al grano y persuade con humor ácido."
-        ),
-        "reglas": [
-            "Nunca usar emojis felices.",
-            "Ser directa y con chispa, pero sin llegar a ser grosera con el cliente.",
-            "Orientar siempre la conversación hacia el cierre de la venta.",
-            "Responder con frases cortas y contundentes."
-        ],
-        "formato": (
-            "Textos breves con toque irónico. Evitar párrafos largos y explicaciones extensas."
-        ),
-        "ejemplos": [
-            {
-                "cliente": "¿Me podrías pasar el precio?",
-                "asistente": "Claro, te lo paso antes de que se acabe el stock (y sí, se acaba). Son $49.990."
-            }
-        ]
-    },
-    "mateo": {
-        "nombre": "Mateo",
-        "descripcion": "Soporte técnico formal, paciente y muy metódico.",
-        "personalidad": (
-            "Serio, formal y extremadamente paciente. Explica los pasos con calma y "
-            "verifica que el usuario comprenda antes de avanzar."
-        ),
-        "reglas": [
-            "Tratar al cliente siempre de 'usted'.",
-            "Explicar cada paso de forma clara y numerada.",
-            "No asumir conocimientos técnicos: preguntar antes de dar instrucciones complejas.",
-            "Mantener la calma y el respeto incluso si el cliente está frustrado."
-        ],
-        "formato": (
-            "Respuestas estructuradas paso a paso (1., 2., 3.). Usar vocabulario "
-            "técnico solo cuando el contexto lo requiera y acompañado de explicación."
-        ),
-        "ejemplos": [
-            {
-                "cliente": "Mi internet no funciona",
-                "asistente": "Entiendo. Vamos a revisarlo por partes. 1. Verifique que el cable esté bien conectado al módem. 2. Reinicie el equipo apagándolo 30 segundos. ¿En qué paso va quedando?"
-            }
-        ]
-    },
-    "ventas": {
-        "nombre": "Ventas",
-        "descripcion": "Ejecutivo de ventas persuasivo, entusiasta y orientado a resultados.",
-        "personalidad": (
-            "Energético, cercano y convincente. Habla con seguridad sobre los productos, "
-            "enfatiza los beneficios y empuja con sutileza hacia la compra sin agobiar."
-        ),
-        "reglas": [
-            "Usar lenguaje persuasivo y positivo ('te conviene', 'aprovecha hoy').",
-            "Destacar siempre el valor para el cliente, no solo características.",
-            "Ofrecer opciones claras de compra y cerrar con un llamado a la acción.",
-            "Nunca presionar de forma agresiva ni inventar stock o precios."
-        ],
-        "formato": (
-            "Mensajes energéticos y concisos. Plantear opciones (A/B) para facilitar la decisión."
-        ),
-        "ejemplos": [
-            {
-                "cliente": "¿Qué tal es ese plan?",
-                "asistente": "Es el favorito de nuestros clientes: ilimitado y sin letra chica. Si lo contratas hoy, te dejo el primer mes a mitad de precio. ¿Te lo activo?"
-            }
-        ]
-    },
-    "cobranzas": {
-        "nombre": "Cobranzas",
-        "descripcion": "Gestor de cobranzas cordial, firme y respetuoso.",
-        "personalidad": (
-            "Profesional y empático, pero firme. Recuerda los compromisos de pago con respeto, "
-            "ofrece facilidades cuando corresponde y nunca pierde la compostura."
-        ),
-        "reglas": [
-            "Tratar al cliente con respeto, jamás intimidar o amenazar.",
-            "Mencionar el monto, vencimiento y consecuencias con claridad y sin dramatismo.",
-            "Ofrecer alternativas de pago o planes cuando existan.",
-            "Registrar el compromiso asumido y agradecer el pago."
-        ],
-        "formato": (
-            "Mensajes formales y claros. Terminar siempre confirmando el acuerdo o el paso siguiente."
-        ),
-        "ejemplos": [
-            {
-                "cliente": "No tengo plata este mes",
-                "asistente": "Te entiendo, gracias por avisarme. Podemos dividir el saldo en dos cuotas de $25.000 para el 15 y el 30. ¿Te sirve?"
-            }
-        ]
-    },
-    "recepcion": {
-        "nombre": "Recepción",
-        "descripcion": "Recepcionista virtual que saluda, filtra y deriva solicitudes.",
-        "personalidad": (
-            "Amable, rápida y organizada. Da la bienvenida, identifica la necesidad y "
-            "canaliza al área correspondiente sin hacer esperar al cliente."
-        ),
-        "reglas": [
-            "Saludar siempre y agradecer el contacto.",
-            "Identificar el motivo de consulta y derivar al área correcta.",
-            "No dar información técnica ni de precios que no correspondan al rol.",
-            "Confirmar que el cliente quedó atendido antes de cerrar."
-        ],
-        "formato": (
-            "Mensajes breves de bienvenida y derivación. Usar viñetas para las opciones disponibles."
-        ),
-        "ejemplos": [
-            {
-                "cliente": "Hola",
-                "asistente": "¡Hola! ¿En qué puedo ayudarte hoy? *1)* Comprar o consultar productos, *2)* Soporte o garantías, *3)* Facturación y pagos, *4)* Otro tema."
-            }
-        ]
+import os
+import re
+
+PROFILES_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "profiles")
+
+# Cache: key -> (mtime, profile_dict)
+_profiles_cache: dict = {}
+
+
+# -------------------------------------------------------------
+# PARSER DE MARKDOWN
+# -------------------------------------------------------------
+
+def _parse_md(content: str, profile_key: str) -> dict:
+    """Convierte el contenido de un .md de perfil a estructura de datos."""
+    lines = content.splitlines()
+
+    nombre = profile_key.capitalize()
+    descripcion = ""
+    secciones = {}
+    seccion_actual = None
+    buffer = []
+    ejemplos = []
+
+    for line in lines:
+        stripped = line.strip()
+
+        if stripped.startswith("# "):
+            nombre = stripped[2:].strip()
+            continue
+
+        if stripped.startswith("## "):
+            if seccion_actual and buffer:
+                secciones[seccion_actual] = "\n".join(buffer).strip()
+            seccion_actual = stripped[3:].strip().lower()
+            buffer = []
+            continue
+
+        if seccion_actual is None:
+            if stripped and not descripcion:
+                descripcion = stripped
+            continue
+
+        buffer.append(stripped)
+
+    if seccion_actual and buffer:
+        secciones[seccion_actual] = "\n".join(buffer).strip()
+
+    # Procesar ejemplos en pares Cliente/Asistente
+    ejemplos_texto = secciones.get("ejemplos", "")
+    for match in re.finditer(r"\*\*Cliente:\*\*\s*(.+?)\s*\n\*\*Asistente:\*\*\s*(.+)", ejemplos_texto, re.S):
+        ejemplos.append({
+            "cliente": match.group(1).strip(),
+            "asistente": match.group(2).strip()
+        })
+
+    reglas = [
+        r[2:].strip() for r in secciones.get("reglas", "").splitlines()
+        if r.strip().startswith("- ") or r.strip().startswith("* ")
+    ]
+
+    return {
+        "nombre": nombre,
+        "descripcion": descripcion,
+        "personalidad": secciones.get("personalidad", ""),
+        "reglas": reglas,
+        "formato": secciones.get("formato", ""),
+        "ejemplos": ejemplos
     }
-}
+
+
+def _valid_key(profile_key: str) -> bool:
+    """Solo claves seguras: minúsculas, dígitos, guiones y guiones bajos."""
+    return bool(re.fullmatch(r"[a-z0-9_\-]+", profile_key or ""))
+
+
+def _file_for(key: str) -> str:
+    return os.path.join(PROFILES_DIR, f"{key}.md")
+
+
+def _list_md_files() -> dict:
+    """key -> ruta de cada .md en la carpeta de perfiles."""
+    found = {}
+    if not os.path.isdir(PROFILES_DIR):
+        return found
+    for fname in sorted(os.listdir(PROFILES_DIR)):
+        if fname.endswith(".md"):
+            key = fname[:-3]
+            if _valid_key(key):
+                found[key] = os.path.join(PROFILES_DIR, fname)
+    return found
+
+
+def get_profiles() -> dict:
+    """Dict de perfiles con recarga automática si algún .md cambió (mtime)."""
+    files = _list_md_files()
+
+    # Detectar archivos nuevos o eliminados
+    if set(files.keys()) != set(_profiles_cache.keys()):
+        _reload_all(files)
+        return _profiles_cache
+
+    # Recargar solo los archivos cuyo mtime cambió
+    changed = False
+    for key, path in files.items():
+        mtime = os.path.getmtime(path)
+        cached = _profiles_cache.get(key)
+        if cached is None or cached[0] != mtime:
+            _profiles_cache[key] = (mtime, _read_profile(path, key))
+            changed = True
+
+    if changed:
+        print(f"[PERFILES] Recarga automatica: {len(_profiles_cache)} perfiles activos")
+
+    return _profiles_cache
+
+
+def _reload_all(files: dict) -> None:
+    _profiles_cache.clear()
+    for key, path in files.items():
+        _profiles_cache[key] = (os.path.getmtime(path), _read_profile(path, key))
+    print(f"[PERFILES] Cargados {len(_profiles_cache)} perfiles desde {PROFILES_DIR}")
+
+
+def _read_profile(path: str, key: str) -> dict:
+    try:
+        with open(path, "r", encoding="utf-8") as f:
+            return _parse_md(f.read(), key)
+    except Exception as e:
+        print(f"⚠️ Error al leer perfil {key}.md: {e}")
+        return {
+            "nombre": key.capitalize(),
+            "descripcion": "",
+            "personalidad": "",
+            "reglas": [],
+            "formato": "",
+            "ejemplos": []
+        }
+
+
+# Mantener alias por compatibilidad con el código existente
+PROFILES = None
+
+
+def refresh_profiles() -> None:
+    """Fuerza la recarga completa de perfiles (POST /profiles/reload)."""
+    global PROFILES
+    _profiles_cache.clear()
+    PROFILES = get_profiles()
 
 
 def build_system_prompt(profile_key: str) -> str:
     """Compila un perfil SOUL a un system prompt completo para los proveedores."""
-    profile = PROFILES.get(profile_key)
+    profile = get_profiles().get(profile_key)
     if not profile:
-        profile = PROFILES["default"]
+        profile = get_profiles().get("default")
+    if not profile:
+        return "Eres un asistente virtual amigable y profesional."
+    profile = profile[1]  # (mtime, dict)
 
     lines = [
         f"Eres {profile['nombre']}. {profile['descripcion']}",
@@ -186,8 +216,51 @@ def list_profiles() -> list:
     return [
         {
             "key": key,
-            "nombre": data["nombre"],
-            "descripcion": data["descripcion"]
+            "nombre": data[1]["nombre"],
+            "descripcion": data[1]["descripcion"]
         }
-        for key, data in PROFILES.items()
+        for key, data in get_profiles().items()
     ]
+
+
+def get_profile_file(profile_key: str):
+    """Devuelve (contenido_crudo, nombre_archivo) del .md de un perfil, o (None, None)."""
+    if not _valid_key(profile_key):
+        return None, None
+    path = _file_for(profile_key)
+    if not os.path.isfile(path):
+        return None, None
+    with open(path, "r", encoding="utf-8") as f:
+        return f.read(), f"{profile_key}.md"
+
+
+def import_profile(profile_key: str, content: str) -> dict:
+    """Valida y guarda un perfil desde su contenido .md (crea o actualiza)."""
+    if not _valid_key(profile_key):
+        return {"success": False, "message": "Clave de perfil inválida (solo minúsculas, números, - y _)"}
+
+    parsed = _parse_md(content, profile_key)
+
+    # Validaciones mínimas para no pisar con basura
+    if not parsed["personalidad"].strip():
+        return {"success": False, "message": "Falta la sección '## Personalidad'"}
+    if not parsed["reglas"]:
+        return {"success": False, "message": "Falta la sección '## Reglas' con al menos una viñeta (- ...)"}
+
+    path = _file_for(profile_key)
+    os.makedirs(PROFILES_DIR, exist_ok=True)
+    with open(path, "w", encoding="utf-8") as f:
+        f.write(content if content.endswith("\n") else content + "\n")
+
+    refresh_profiles()
+    return {
+        "success": True,
+        "key": profile_key,
+        "nombre": parsed["nombre"],
+        "reglas": len(parsed["reglas"]),
+        "ejemplos": len(parsed["ejemplos"])
+    }
+
+
+# Cargar inicial
+refresh_profiles()
