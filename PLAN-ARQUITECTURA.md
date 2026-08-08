@@ -48,12 +48,15 @@ SDK-Bot/
 - **Notificación en Self-Chat:** Alerta al Administrador en su chat privado de WhatsApp.
 - **Control por Comandos:** Comandos `/auto <num>` para reactivar la IA y `/handoff <num>` para pausarla individualmente.
 
-### 2. 🧠 De-bounce Queue & Timer de Inactividad de 8s (Pos-Escritura)
-- **Ventana de Silencio de 8s:** Si un cliente envía mensajes fragmentados, el bot acumula los mensajes en cola.
+### 2. 🧠 De-bounce Queue & Timer de Silencio Estocástico Adaptativo (Random sobre Random)
+- **Ventana de Silencio Estocástica Adaptativa:** En lugar de un temporizador fijo, el tiempo de silencio pos-escritura se calcula dinámicamente:
+  - **Adaptativo Normal (~83%):** 5s a 7s para mensajes únicos/cortos; 7.5s a 12s para múltiples mensajes o textos largos.
+  - **Capa Ocupado / Distraído (~12%):** Posponimiento de 1 a 2 minutos (60s - 120s) imitando un retraso humano ocasional.
+  - **Capa AFK / Muy Ocupado (~5%):** Posponimiento de 3 a 4 minutos (180s - 240s) imitando distracciones más prolongadas.
 - **Renovación Dinámica (`presence.update`):** Si el cliente está escribiendo (`composing`), los temporizadores se renuevan continuamente. **Protección 100% para usuarios lentos al escribir.**
   - *Nota técnica sobre privacidad de WhatsApp:* Para que los eventos de `composing` sean emitidos por los servidores de WhatsApp, el bot **debe conectarse con `markOnlineOnConnect: true`** y hacer broadcast de su presencia como "disponible" (`sock.sendPresenceUpdate('available')`). Los clientes offline no reciben notificaciones de tipeo por políticas estrictas de privacidad.
   - *Soporte Multi-Device (Dual JID):* El estado de presencia entra a nivel de "Teléfono" (`@s.whatsapp.net`), pero los mensajes pueden operar bajo la "Identidad Vinculada" (`@lid`). Nuestro motor en memoria RAM resuelve ambos IDs simultáneamente apoyándose en `contacts_db.json`.
-- **Expiración de Escritura (4.5s):** Si el usuario se arrepiente y suelta el teclado sin enviar nada, el estado de escritura expira a los 4.5s y se activa el conteo de 8s de silencio.
+- **Expiración de Escritura (5s):** Si el usuario se arrepiente y suelta el teclado sin enviar nada, el estado de escritura expira a los 5s y se activa el conteo estocástico de silencio.
 
 ### 3. 🛡️ Simulación Humana & Anti-Ban Rate Limiter
 - **Typing Delay Adaptativo:** Antes de responder, el bot simula presencia `'composing'` por un tiempo dinámico (1.5s - 4.5s) en proporción a la longitud del mensaje.

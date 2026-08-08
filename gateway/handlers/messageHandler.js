@@ -14,8 +14,50 @@ const { handleAdminCommand } = require('./commandHandler');
 // 🧠 DE-BOUNCE QUEUE CON VINCULACIÓN DUAL PHONE/LID EN PRESENCIA Y MEMORIA LOCAL
 const messageBuffers = new Map();
 const activePresences = new Map();   // Mapa global en memoria RAM del estado de presencia
-const DEBOUNCE_DELAY_MS = 8000;      // 8 segundos de silencio total pos-escritura
 const TYPING_TTL_MS = 5000;           // 5.0 segundos: el estado de tecleo expira si el teclado queda inactivo
+
+/**
+ * 🎲 CALCULAR DEBOUNCE ADAPTATIVO CON DISTRACCIÓN/OCUPACIÓN HUMANA (RANDOM SOBRE RANDOM)
+ * Capa 1 (Distracción/Ocupación):
+ *   - ~5%  probabilidad: "Muy Ocupado / AFK" -> Espera de 3 a 4 min (180s - 240s)
+ *   - ~12% probabilidad: "Ocupado / Distraído" -> Espera de 1 a 2 min (60s - 120s)
+ * Capa 2 (Adaptativo Normal ~83%):
+ *   - 1 mensaje corto (<20 chars): Espera de 5s a 7s
+ *   - Múltiples mensajes o texto largo: Espera de 7.5s a 12s
+ */
+function getAdaptiveDebounceMs(messagesArray = []) {
+    const roll = Math.random(); // 0.0 a 1.0
+
+    // 1. Probabilidad del 5% de estar muy ocupado / AFK (3 - 4 min)
+    if (roll < 0.05) {
+        const afkMs = Math.floor(180000 + Math.random() * 60000); // 180s a 240s
+        console.log(`🎲 [HUMAN RANDOM] Roll ${(roll * 100).toFixed(1)}%: Bot ocupado/distraído (AFK). Esperando ${(afkMs / 1000).toFixed(0)}s (${(afkMs / 60000).toFixed(1)}m)...`);
+        return afkMs;
+    }
+
+    // 2. Probabilidad del 12% de estar medianamente ocupado (1 - 2 min)
+    if (roll < 0.17) { // 0.05 + 0.12 = 0.17
+        const busyMs = Math.floor(60000 + Math.random() * 60000); // 60s a 120s
+        console.log(`🎲 [HUMAN RANDOM] Roll ${(roll * 100).toFixed(1)}%: Bot ocupado brevemente. Esperando ${(busyMs / 1000).toFixed(0)}s (${(busyMs / 60000).toFixed(1)}m)...`);
+        return busyMs;
+    }
+
+    // 3. Adaptativo Normal (~83% restante)
+    const msgs = Array.isArray(messagesArray) ? messagesArray : [];
+    const totalLength = msgs.join(' ').length;
+    const msgCount = msgs.length;
+
+    let normalMs;
+    if (msgCount === 1 && totalLength < 20) {
+        // Mensaje único y corto ("Hola", "Precio", etc.) -> 5s a 7s
+        normalMs = Math.floor(5000 + Math.random() * 2000);
+    } else {
+        // Mensajes largos o múltiples -> 7.5s a 12s
+        normalMs = Math.floor(7500 + Math.random() * 4500);
+    }
+
+    return normalMs;
+}
 
 // 🧹 Limpieza automática de RAM para evitar memory leaks en activePresences
 const PRESENCE_CLEANUP_INTERVAL_MS = 10 * 60 * 1000; // 10 minutos
@@ -121,9 +163,10 @@ function handlePresenceUpdate(id, presences) {
                 buffer.typingExpiryTimer = setTimeout(() => {
                     if (buffer && buffer.isTyping) {
                         buffer.isTyping = false;
-                        console.log(`\n⏱️ [TECLADO LIBERADO] 5s inactivo en teclado (${bufferJid}). Iniciando timer de 8s.`);
+                        const delayMs = getAdaptiveDebounceMs(buffer.messages);
+                        console.log(`\n⏱️ [TECLADO LIBERADO] 5s inactivo en teclado (${bufferJid}). Iniciando timer de ${(delayMs / 1000).toFixed(1)}s.`);
                         if (!buffer.timer) {
-                            buffer.timer = setTimeout(buffer.onTimeout, DEBOUNCE_DELAY_MS);
+                            buffer.timer = setTimeout(buffer.onTimeout, delayMs);
                         }
                     }
                 }, TYPING_TTL_MS);
@@ -133,8 +176,9 @@ function handlePresenceUpdate(id, presences) {
                 if (buffer.typingExpiryTimer) clearTimeout(buffer.typingExpiryTimer);
                 if (buffer.timer) clearTimeout(buffer.timer);
                 
-                buffer.timer = setTimeout(buffer.onTimeout, DEBOUNCE_DELAY_MS);
-                console.log(`\n⏳ [PRESENCIA PAUSADA] Cliente (${bufferJid}) PAUSÓ escritura (${presenceState}). Reseteando timer 8s.`);
+                const delayMs = getAdaptiveDebounceMs(buffer.messages);
+                buffer.timer = setTimeout(buffer.onTimeout, delayMs);
+                console.log(`\n⏳ [PRESENCIA PAUSADA] Cliente (${bufferJid}) PAUSÓ escritura (${presenceState}). Reseteando timer a ${(delayMs / 1000).toFixed(1)}s.`);
             }
         }
     }
@@ -301,20 +345,21 @@ async function handleIncomingMessage(m, sock) {
         const isTypingLocal = (latestPresence && (latestPresence.state === 'composing' || latestPresence.state === 'recording') && (Date.now() - latestPresence.time < TYPING_TTL_MS)) || buf.isTyping;
 
         if (isTypingLocal) {
-            console.log(`\n🔄 [MEMORIA LOCAL] Cliente (${displayName}) sigue escribiendo ('${latestPresence?.state || 'composing'}'). Postergando envío a IA por 8s...`);
+            const delayMs = getAdaptiveDebounceMs(buf.messages);
+            console.log(`\n🔄 [MEMORIA LOCAL] Cliente (${displayName}) sigue escribiendo ('${latestPresence?.state || 'composing'}'). Postergando envío a IA por ${(delayMs / 1000).toFixed(1)}s...`);
             if (buf.timer) clearTimeout(buf.timer);
-            buf.timer = setTimeout(buf.onTimeout, DEBOUNCE_DELAY_MS);
+            buf.timer = setTimeout(buf.onTimeout, delayMs);
             return;
         }
 
-        // LUZ VERDE: 8s DE SILENCIO CUMPLIDOS REALMENTE
+        // LUZ VERDE: SILENCIO DE DEBOUNCE CUMPLIDO REALMENTE
         if (buf.typingExpiryTimer) clearTimeout(buf.typingExpiryTimer);
         if (buf.timer) clearTimeout(buf.timer);
 
         const fullBufferedText = buf.messages.join('\n');
         messageBuffers.delete(remoteJid);
 
-        console.log(`\n📦 [DE-BOUNCE BATCH FINAL] 8s de silencio confirmados. Procesando ${buf.messages.length} mensaje(s) de ${displayName}:\n"${fullBufferedText}"`);
+        console.log(`\n📦 [DE-BOUNCE BATCH FINAL] Silencio confirmado. Procesando ${buf.messages.length} mensaje(s) de ${displayName}:\n"${fullBufferedText}"`);
         await processAIChat(fullBufferedText, remoteJid, metadata, sock);
     };
 
@@ -323,9 +368,10 @@ async function handleIncomingMessage(m, sock) {
         existingBuffer.messages.push(textMessage);
         existingBuffer.onTimeout = onTimeout;
 
-        // Resetear timer de 8s al recibir mensaje físico
-        existingBuffer.timer = setTimeout(onTimeout, DEBOUNCE_DELAY_MS);
-        console.log(`⏳ [DE-BOUNCE RESET] Nuevo mensaje recibido de ${displayName}. Timer de 8s de silencio reiniciado desde 0.`);
+        // Resetear timer al recibir mensaje físico con delay estocástico/adaptativo
+        const delayMs = getAdaptiveDebounceMs(existingBuffer.messages);
+        existingBuffer.timer = setTimeout(onTimeout, delayMs);
+        console.log(`⏳ [DE-BOUNCE RESET] Nuevo mensaje recibido de ${displayName}. Timer de ${(delayMs / 1000).toFixed(1)}s de silencio iniciado.`);
     } else {
         const newBuffer = {
             messages: [textMessage],
@@ -336,9 +382,10 @@ async function handleIncomingMessage(m, sock) {
             typingExpiryTimer: null
         };
 
-        newBuffer.timer = setTimeout(onTimeout, DEBOUNCE_DELAY_MS);
+        const delayMs = getAdaptiveDebounceMs(newBuffer.messages);
+        newBuffer.timer = setTimeout(onTimeout, delayMs);
         messageBuffers.set(remoteJid, newBuffer);
-        console.log(`⏳ [DE-BOUNCE START] Primer mensaje de ${displayName}. Timer de 8s de silencio iniciado desde 0.`);
+        console.log(`⏳ [DE-BOUNCE START] Primer mensaje de ${displayName}. Timer de ${(delayMs / 1000).toFixed(1)}s de silencio iniciado.`);
     }
 }
 

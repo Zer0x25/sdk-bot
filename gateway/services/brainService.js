@@ -2,40 +2,56 @@ const { BRAIN_API_URL, state, registerSentMessage } = require('../config');
 
 /**
  * 🧩 Dividir respuestas largas de la IA en globos de chat naturales (Multi-Bubble)
+ * Divide párrafos largos por oraciones (. ! ?) si superan los ~220 caracteres.
  */
 function splitIntoHumanBubbles(text) {
     if (!text || typeof text !== 'string') return [text];
     const trimmed = text.trim();
-    if (trimmed.length <= 180) return [trimmed];
+    if (trimmed.length <= 220) return [trimmed];
 
-    const rawParagraphs = trimmed.split(/\n{2,}/).map(p => p.trim()).filter(Boolean);
-    let bubbles = [];
+    // 1. Separar por párrafos / saltos de línea
+    const rawBlocks = trimmed.split(/\n+/).map(b => b.trim()).filter(Boolean);
+    let chunks = [];
 
-    for (const p of rawParagraphs) {
-        if (p.length > 300 && p.includes('\n')) {
-            const lines = p.split(/\n+/).map(l => l.trim()).filter(Boolean);
-            bubbles.push(...lines);
+    for (const block of rawBlocks) {
+        if (block.length <= 250) {
+            chunks.push(block);
         } else {
-            bubbles.push(p);
+            // Si el bloque es muy largo (>250 chars) sin saltos de línea, dividir por oraciones (. ! ?)
+            const sentences = block.split(/(?<=[.!?])\s+/).map(s => s.trim()).filter(Boolean);
+            let currentChunk = '';
+
+            for (const s of sentences) {
+                if (!currentChunk) {
+                    currentChunk = s;
+                } else if ((currentChunk.length + s.length + 1) <= 220) {
+                    currentChunk += ' ' + s;
+                } else {
+                    chunks.push(currentChunk);
+                    currentChunk = s;
+                }
+            }
+            if (currentChunk) chunks.push(currentChunk);
         }
     }
 
-    const merged = [];
-    let current = '';
+    // 2. Reagrupar fragmentos manteniendo un tamaño cómodo por globo (~220 chars máx)
+    const finalBubbles = [];
+    let currentBubble = '';
 
-    for (const b of bubbles) {
-        if (!current) {
-            current = b;
-        } else if ((current.length + b.length) < 180) {
-            current += '\n\n' + b;
+    for (const chunk of chunks) {
+        if (!currentBubble) {
+            currentBubble = chunk;
+        } else if ((currentBubble.length + chunk.length + 1) <= 220) {
+            currentBubble += ' ' + chunk;
         } else {
-            merged.push(current);
-            current = b;
+            finalBubbles.push(currentBubble);
+            currentBubble = chunk;
         }
     }
-    if (current) merged.push(current);
+    if (currentBubble) finalBubbles.push(currentBubble);
 
-    return merged.length > 0 ? merged : [trimmed];
+    return finalBubbles.length > 0 ? finalBubbles : [trimmed];
 }
 
 /**
@@ -76,6 +92,20 @@ async function notifyAdminError(sock, metadata, textMessage, errorDetails) {
     const country = metadata.country || 'Desconocido';
     const targetKey = metadata.phoneNumber || metadata.lid || 'N/A';
 
+    // Diagnóstico explícito de tipo de error para el administrador
+    let errorSummary = `❌ **Error Técnico en IA:** ${errorDetails}`;
+    const errStr = String(errorDetails || '').toLowerCase();
+
+    if (errStr.includes('aborted') || errStr.includes('timeout')) {
+        errorSummary = `⏳ **TIMEOUT DE IA (Tiempo de espera agotado tras 90s)**\n` +
+                       `📌 *Causa:* El Gateway esperó 90 segundos a que la IA generara el texto, pero el modelo tardó demasiado (servidor saturado o respuesta sumamente extensa).\n` +
+                       `🔧 *Detalle técnico:* ${errorDetails}`;
+    } else if (errStr.includes('fetch failed') || errStr.includes('econnrefused')) {
+        errorSummary = `🚨 **CEREBRO APAGADO / DESCONECTADO (Brain Offline)**\n` +
+                       `📌 *Causa:* El servidor Python (\`brain/main.py\`) no está corriendo en http://127.0.0.1:8000/chat.\n` +
+                       `🔧 *Detalle técnico:* ${errorDetails}`;
+    }
+
     const adminAlert = 
         `⚠️ **ALERTA DE ERROR EN CEREBRO IA**\n` +
         `━━━━━━━━━━━━━━━━━━━━━━\n` +
@@ -83,9 +113,9 @@ async function notifyAdminError(sock, metadata, textMessage, errorDetails) {
         `📱 **Teléfono:** ${phone} | LID: ${lid}\n` +
         `🌎 **País:** ${country}\n` +
         `💬 **Mensaje del Cliente:** "${textMessage}"\n` +
-        `❌ **Error Técnico:** ${errorDetails}\n` +
+        `${errorSummary}\n` +
         `━━━━━━━━━━━━━━━━━━━━━━\n` +
-        `💡 *El bot NO respondió al cliente.* Puedes responderle manualmente o pausar la IA en este chat con:\n` +
+        `💡 *El bot esperó pero NO respondió al cliente.* Inicia el servidor Brain o responde manualmente. Pausar IA:\n` +
         `\`/handoff ${targetKey}\``;
 
     try {
@@ -107,7 +137,7 @@ async function processAIChat(textMessage, remoteJid, metadata, sock) {
             headers: {
                 'Content-Type': 'application/json'
             },
-            signal: AbortSignal.timeout(15000),
+            signal: AbortSignal.timeout(90000), // 90 segundos de timeout para permitir generación de textos largos o modelos lentos
             body: JSON.stringify({
                 user_id: remoteJid,
                 message: textMessage,
