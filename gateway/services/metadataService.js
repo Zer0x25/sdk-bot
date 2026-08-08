@@ -123,7 +123,6 @@ async function enrichContactExtraData(sock, jid, metadata, forceRefresh = false)
 }
 
 function isSelfChat(remoteJid, isFromMe) {
-    if (!isFromMe) return false;
     if (!remoteJid) return false;
     
     const cleanTarget = remoteJid.split('@')[0].split(':')[0].replace(/[^0-9]/g, '');
