@@ -1,5 +1,8 @@
 const { BRAIN_API_URL, state, registerSentMessage } = require('../config');
 
+// Caché en memoria de perfiles SOUL disponibles en el brain
+let cachedProfiles = null;
+
 /**
  * 🧩 Dividir respuestas largas de la IA en globos de chat naturales (Multi-Bubble)
  * Divide párrafos largos por oraciones (. ! ?) si superan los ~220 caracteres.
@@ -141,7 +144,7 @@ async function processAIChat(textMessage, remoteJid, metadata, sock) {
             body: JSON.stringify({
                 user_id: remoteJid,
                 message: textMessage,
-                bot_profile: state.CURRENT_PROFILE,
+                bot_profile: metadata.perfil || state.CURRENT_PROFILE,
                 saved_name: metadata.savedName,
                 push_name: metadata.pushName,
                 user_name: displayName,
@@ -216,7 +219,49 @@ async function clearAIMemory(userJid) {
     }
 }
 
+/**
+ * 📚 Obtener perfiles SOUL disponibles en el brain (GET /profiles)
+ * Cacheado en memoria; si el brain está apagado, devuelve lista vacía
+ * (el comando /perfil informará que no puede listarlos).
+ */
+async function getAvailableProfiles() {
+    if (cachedProfiles) return cachedProfiles;
+    try {
+        const profilesUrl = BRAIN_API_URL.replace('/chat', '/profiles');
+        const response = await fetch(profilesUrl, {
+            method: 'GET',
+            signal: AbortSignal.timeout(5000)
+        });
+        const data = await response.json();
+        cachedProfiles = (data && Array.isArray(data.profiles)) ? data.profiles : [];
+        return cachedProfiles;
+    } catch (e) {
+        console.error("Error al obtener perfiles del Brain:", e.message);
+        return [];
+    }
+}
+
+/**
+ * 📄 Obtener detalle/prompt compilado de un perfil (GET /profiles/{key})
+ */
+async function getProfileDetail(profileKey) {
+    try {
+        const detailUrl = `${BRAIN_API_URL.replace('/chat', '/profiles')}/${encodeURIComponent(profileKey)}`;
+        const response = await fetch(detailUrl, {
+            method: 'GET',
+            signal: AbortSignal.timeout(5000)
+        });
+        if (!response.ok) return null;
+        return await response.json();
+    } catch (e) {
+        console.error("Error al obtener detalle de perfil:", e.message);
+        return null;
+    }
+}
+
 module.exports = {
     processAIChat,
-    clearAIMemory
+    clearAIMemory,
+    getAvailableProfiles,
+    getProfileDetail
 };

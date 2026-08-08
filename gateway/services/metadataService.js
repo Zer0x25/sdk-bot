@@ -119,6 +119,7 @@ function extractUserMetadata(msg) {
     });
 
     const savedName = existingKey ? db[existingKey].savedName : null;
+    const perfil = existingKey ? db[existingKey].perfil : null;
     const bio = existingKey ? db[existingKey].bio : null;
     const profilePicUrl = existingKey ? db[existingKey].profilePicUrl : null;
     const isBusiness = existingKey ? db[existingKey].isBusiness : false;
@@ -141,6 +142,7 @@ function extractUserMetadata(msg) {
         phoneNumber,
         lid,
         savedName,
+        perfil,
         pushName,
         country,
         language,

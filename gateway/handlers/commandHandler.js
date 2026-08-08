@@ -1,6 +1,6 @@
 const { state, registerSentMessage } = require('../config');
 const { getCountryFromPhone } = require('../services/metadataService');
-const { clearAIMemory } = require('../services/brainService');
+const { clearAIMemory, getAvailableProfiles, getProfileDetail } = require('../services/brainService');
 const { 
     getSettingsDB,
     getContactsDB,
@@ -11,6 +11,8 @@ const {
     isJunkJid,
     contactStore,
     setNumberState,
+    setCurrentProfile,
+    setContactProfile,
     ignoreAllAgendaContacts
 } = require('../services/storageService');
 
@@ -339,11 +341,68 @@ async function handleAdminCommand(textMessage, remoteJid, sock, metadata, rawMsg
         case '/perfil':
         case '/pf':
         case '/profile':
+            const profiles = await getAvailableProfiles();
+            const profileList = profiles.map(p => `• \`${p.key}\` - *${p.nombre}*: ${p.descripcion}`).join('\n');
+
             if (!queryParam) {
-                adminResponse = `⚠️ *Uso:* \`/perfil <default|lucia|mateo>\`\nPerfil actual: *${state.CURRENT_PROFILE}*`;
+                adminResponse = `⚠️ *Uso:* \`/perfil <perfil>\` (global) | \`/perfil <perfil> <num>\` (contacto) | \`/perfil ver <perfil>\`\nPerfil actual: *${state.CURRENT_PROFILE}*\n\n*Perfiles disponibles:*\n${profileList || "No se pudieron cargar (¿brain encendido?)"}`;
+                break;
+            }
+
+            // 📄 /perfil ver <key> → muestra el system prompt compilado
+            if (queryParam.toLowerCase().startsWith('ver ')) {
+                const keyToShow = queryParam.split(/\s+/).slice(1).join(' ').trim().toLowerCase();
+                if (!keyToShow) {
+                    adminResponse = `⚠️ Uso: \`/perfil ver <perfil>\`. Disponibles: ${profiles.map(p => `\`${p.key}\``).join(', ') || 'no cargados'}.`;
+                    break;
+                }
+                const detail = await getProfileDetail(keyToShow);
+                if (detail && detail.prompt) {
+                    adminResponse = `📄 *Perfil ${detail.nombre} (\`${detail.key}\`)*\n━━━━━━━━━━━━━━━━━━━━━━\n${detail.prompt}`;
+                } else {
+                    adminResponse = `⚠️ Perfil *"${keyToShow}"* no encontrado o brain apagado. Disponibles: ${profiles.map(p => `\`${p.key}\``).join(', ')}.`;
+                }
+                break;
+            }
+
+            const argsParts = queryParam.split(/\s+/);
+            const profileKey = argsParts[0].toLowerCase();
+            const valid = profiles.find(p => p.key === profileKey);
+
+            if (!valid) {
+                adminResponse = `⚠️ Perfil *"${profileKey}"* no encontrado. Disponibles: ${profiles.map(p => `\`${p.key}\``).join(', ') || 'no hay perfiles cargados'}.`;
+                break;
+            }
+
+            // 🎯 Asignación por contacto: /perfil <key> <num/lid> o cita con número
+            let contactTarget = argsParts.slice(1).join(' ').trim();
+
+            // Si no hay target explícito pero el admin cita un mensaje con teléfono → per-contacto
+            if (!contactTarget && rawMsg?.message?.extendedTextMessage?.contextInfo?.quotedMessage) {
+                const context = rawMsg.message.extendedTextMessage.contextInfo;
+                const quotedText = context.quotedMessage?.conversation ||
+                                   context.quotedMessage?.extendedTextMessage?.text ||
+                                   "";
+                const phoneMatch = quotedText.match(/(?:\+?\d[\d\s\-]{6,20}\d|\b\d{7,16}\b)/);
+                if (phoneMatch) contactTarget = parsePhoneOrLid(phoneMatch[0]);
+            }
+
+            if (contactTarget) {
+                const res = setContactProfile(contactTarget, profileKey);
+                if (res.success) {
+                    adminResponse = `🎭 Perfil *${valid.nombre}* (\`${profileKey}\`) asignado al contacto:\n\`${res.target}\``;
+                } else {
+                    adminResponse = `⚠️ Error al asignar perfil: ${res.message}`;
+                }
+                break;
+            }
+
+            // 🌐 Perfil global
+            const globalRes = setCurrentProfile(profileKey);
+            if (globalRes.success) {
+                adminResponse = `🎭 Perfil global de bot cambiado a: *${valid.nombre}* (\`${profileKey}\`)`;
             } else {
-                state.CURRENT_PROFILE = queryParam.toLowerCase();
-                adminResponse = `🎭 Perfil de bot cambiado a: *${state.CURRENT_PROFILE}*`;
+                adminResponse = `⚠️ ${globalRes.message}`;
             }
             break;
 

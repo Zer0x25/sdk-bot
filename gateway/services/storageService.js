@@ -30,6 +30,11 @@ function isJunkJid(jid) {
 // -------------------------------------------------------------
 // INICIALIZACIÓN SÍNCRONA AL ARRANCAR EL SERVIDOR
 // -------------------------------------------------------------
+function stripBOM(str) {
+    if (str && str.charCodeAt(0) === 0xFEFF) return str.slice(1);
+    return str;
+}
+
 function loadDataOnStartup() {
     console.log("📂 Cargando bases de datos en memoria...");
     
@@ -39,11 +44,14 @@ function loadDataOnStartup() {
             fs.writeFileSync(SETTINGS_FILE_PATH, JSON.stringify(defaultSettings, null, 2));
             cachedSettingsDB = defaultSettings;
         } else {
-            cachedSettingsDB = JSON.parse(fs.readFileSync(SETTINGS_FILE_PATH, 'utf8'));
+            cachedSettingsDB = JSON.parse(stripBOM(fs.readFileSync(SETTINGS_FILE_PATH, 'utf8')));
         }
         // Sincronizar con el state global
         if (cachedSettingsDB.globalMode) {
             state.GLOBAL_MODE = cachedSettingsDB.globalMode;
+        }
+        if (cachedSettingsDB.currentProfile) {
+            state.CURRENT_PROFILE = cachedSettingsDB.currentProfile;
         }
     } catch (e) {
         console.error("Error al leer settings_db.json:", e.message);
@@ -56,7 +64,7 @@ function loadDataOnStartup() {
             fs.writeFileSync(CONTACTS_FILE_PATH, JSON.stringify({}, null, 2));
             cachedContactsDB = {};
         } else {
-            cachedContactsDB = JSON.parse(fs.readFileSync(CONTACTS_FILE_PATH, 'utf8'));
+            cachedContactsDB = JSON.parse(stripBOM(fs.readFileSync(CONTACTS_FILE_PATH, 'utf8')));
         }
     } catch (e) {
         console.error("Error al leer contacts_db.json:", e.message);
@@ -373,6 +381,55 @@ function setNumberState(targetId, stateType) {
 }
 
 /**
+ * 🎭 CAMBIAR PERFIL GLOBAL DEL BOT (persistido en settings_db.json)
+ * @param {string} profileKey - Clave del perfil SOUL (default, lucia, mateo, ...)
+ */
+function setCurrentProfile(profileKey) {
+    if (!profileKey) return { success: false, message: "Perfil no válido" };
+    state.CURRENT_PROFILE = profileKey;
+    const settings = getSettingsDB();
+    settings.currentProfile = profileKey;
+    saveSettingsDB(settings);
+    return { success: true, profile: profileKey };
+}
+
+/**
+ * 🎭 ASIGNAR PERFIL INDIVIDUAL A UN CONTACTO (contacts_db.json)
+ * @param {string} targetId - Teléfono o LID del contacto
+ * @param {string} profileKey - Clave del perfil SOUL
+ */
+function setContactProfile(targetId, profileKey) {
+    const cleanTarget = String(targetId).replace(/[^0-9]/g, '');
+    if (!cleanTarget) return { success: false, message: "ID no válido" };
+
+    const db = getContactsDB();
+    const existingKey = Object.keys(db).find(k => {
+        const item = db[k];
+        const cleanPhone = item.phone ? item.phone.replace(/[^0-9]/g, '') : '';
+        const cleanLid = item.lid ? item.lid.replace(/[^0-9]/g, '') : '';
+        return cleanPhone.includes(cleanTarget) || cleanLid.includes(cleanTarget) || k === cleanTarget;
+    });
+
+    if (existingKey) {
+        db[existingKey].perfil = profileKey;
+        saveContactsDB(db);
+        return { success: true, target: db[existingKey].phone || existingKey, profile: profileKey };
+    }
+
+    // Si el contacto no existe, creamos uno básico con el perfil asignado
+    db[cleanTarget] = {
+        phone: cleanTarget,
+        lid: null,
+        perfil: profileKey,
+        isContact: false,
+        firstSeen: new Date().toISOString(),
+        lastSeen: new Date().toISOString()
+    };
+    saveContactsDB(db);
+    return { success: true, target: cleanTarget, profile: profileKey };
+}
+
+/**
  * 📇 IGNORAR MASIVAMENTE A TODOS LOS CONTACTOS CON NOMBRE EN AGENDA
  */
 function ignoreAllAgendaContacts() {
@@ -409,6 +466,8 @@ module.exports = {
     saveContactsDB,
     cleanContactsDB,
     setNumberState,
+    setCurrentProfile,
+    setContactProfile,
     ignoreAllAgendaContacts,
     upsertContactMetadata,
     bulkUpsertContactsMetadata,

@@ -1,9 +1,10 @@
-from fastapi import FastAPI
+from fastapi import FastAPI, HTTPException
 from pydantic import BaseModel
 from typing import Optional
-from config import PROFILES, OPENROUTER_MODEL, GROQ_MODEL
+from config import OPENROUTER_MODEL, GROQ_MODEL
 from memory import get_history, update_history, clear_history
 from providers import generate_ai_response, safe_log
+from profiles import build_system_prompt, list_profiles, PROFILES
 
 app = FastAPI(title="SDK-Bot Brain API (Modular Multi-Provider Router)")
 
@@ -30,9 +31,24 @@ async def reset_memory_endpoint(request: ResetMemoryRequest):
     safe_log(f"🧹 [MEMORIA REINICIADA] Para usuario: {request.user_id} (Resultado: {cleared})")
     return {"status": "ok", "cleared": cleared, "user_id": request.user_id}
 
+@app.get("/profiles")
+def profiles_endpoint():
+    return {"profiles": list_profiles()}
+
+@app.get("/profiles/{profile_key}")
+def profile_detail_endpoint(profile_key: str):
+    if profile_key not in PROFILES:
+        raise HTTPException(status_code=404, detail=f"Perfil '{profile_key}' no encontrado")
+    return {
+        "key": profile_key,
+        "nombre": PROFILES[profile_key]["nombre"],
+        "descripcion": PROFILES[profile_key]["descripcion"],
+        "prompt": build_system_prompt(profile_key)
+    }
+
 @app.post("/chat")
 async def chat_endpoint(request: ChatRequest):
-    base_instruction = PROFILES.get(request.bot_profile, PROFILES["default"])
+    base_instruction = build_system_prompt(request.bot_profile)
     
     # Enriquecer el prompt con metadatos del interlocutor
     user_info_parts = []
