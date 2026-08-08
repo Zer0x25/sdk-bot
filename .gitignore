@@ -10,6 +10,7 @@ brain/venv/
 gateway/auth_info_baileys/
 gateway/contacts_db.json
 gateway/ignored_numbers.json
+gateway/allowed_numbers.json
 
 # Environment variables
 .env
