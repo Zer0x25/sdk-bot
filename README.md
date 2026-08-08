@@ -1,6 +1,6 @@
 # 🤖 SDK-Bot
 
-**Plataforma Multi-Bot de WhatsApp 100% Custom & Full Agenda Sync** — Gateway de mensajería con `makeInMemoryStore` + Cerebro IA con router multi-proveedor, fallback automático, IgnoreList, Base de Datos de Contactos con Smart Delta Sync y Suite de Metadatos PRO.
+**Plataforma Multi-Bot de WhatsApp 100% Custom & Robust Automation** — Gateway de mensajería con `makeInMemoryStore`, Derivación a Humano (Human Handoff), Acumulador Anti-Spam (De-bounce Queue), Simulación Humana (Typing Delay), Router multi-proveedor, IgnoreList y Base de Datos con Smart Delta Sync.
 
 ---
 
@@ -8,17 +8,13 @@
 
 SDK-Bot es un sistema modular para crear bots de WhatsApp inteligentes con:
 
-- **Sincronización Total de Agenda (`npm run reset` / `node reset-session.js`):** Script automatizado para usuarios finales que elimina la sesión previa y genera un nuevo QR de sincronización masiva de libreta.
-- **Smart Delta Sync (TTL 24h):** Caché local en `contacts_db.json` con refresco inteligente de fotos y bio cada 24 horas.
+- **Derivación a Humano (Human-in-the-Loop & Handoff):** Si un cliente pide *"hablar con una persona"*, la IA se pausa **únicamente para ese cliente** y notifica al Admin en Self-Chat (`/auto <num>` para reactivar).
+- **Acumulador Anti-Spam (De-bounce Queue):** Acumula frases consecutivas en una ventana de 2.5s antes de consultar a la IA.
+- **Simulación Humana (Typing Delay):** Simula el estado `'composing'` durante 1.5s - 4.5s según la longitud de la respuesta antes de responder.
+- **Sincronización Total de Agenda (`npm run reset`):** Script automatizado para usuarios finales.
+- **Smart Delta Sync (TTL 24h):** Caché local en `contacts_db.json` con refresco inteligente de fotos y bio.
 - **Filtro Anti-Basura:** Exclusión automática de Grupos, Comunidades, Canales y Estados.
-- **Conexión WhatsApp** vía Baileys (QR + reconexión automática).
-- **Captura Máxima de Metadatos (PRO Suite):**
-  - **`savedName`**: Nombre guardado en tu agenda del teléfono (ej: *"Mamá"*, *"Tío Juan"*).
-  - **`pushName`**: Nombre público configurado por el usuario en WhatsApp.
-  - **`bio` / `status`**: Biografía o estado de WhatsApp.
-  - **`profilePicUrl`**: Foto de perfil HD.
-  - **`isBusiness`**: Detección de cuentas de empresa.
-- **Filtro Escalonado (IgnoreList > Whitelist)** para excluir contactos personales o familiares en producción.
+- **Captura Máxima de Metadatos (PRO Suite):** `savedName`, `pushName`, `bio`, `profilePicUrl`, `isBusiness`, `country`.
 - **Cerebro IA** con FastAPI, contexto enriquecido y router multi-proveedor (OpenRouter → Groq → Gemini).
 
 ---
@@ -47,14 +43,16 @@ Envía estos comandos desde tu propio chat ("Mensaje a ti mismo"):
 
 | Comando | Descripción |
 |---------|-------------|
+| `/auto <num/lid>` | Reactivar la IA para un cliente en atención humana (Handoff) |
+| `/handoff <num/lid>` | Activar atención humana (pausar IA para ese cliente) |
 | `/name <num> <nombre>` | Asignar o renombrar un contacto de tu agenda manualmente |
 | `/search <query>` | Buscar un contacto por Nombre de Agenda, Nombre Público, Teléfono o LID |
 | `/sync` | Sincronizar contactos activos de la sesión |
-| `/contacts` | Ver resumen de contactos registrados (Agenda vs Anónimos) |
+| `/contacts` | Ver resumen de contactos registrados (Agenda vs Anónimos vs Handoff) |
 | `/export` | Exportar la libreta de contactos mapeados |
 | `/status` | Panel de estado del bot y conteo de listas |
 | `/help` | Lista de comandos disponibles |
-| `/pause` / `/resume` | Pausar o reanudar el auto-respondedor |
+| `/pause` / `/resume` | Pausar o reanudar el auto-respondedor globalmente o por cliente (`/pause <num>`) |
 | `/ignore <num/lid>` | Bloquear respuestas automáticas a un contacto o LID |
 | `/unignore <num/lid>` | Remover contacto de la IgnoreList |
 | `/ignorelist` | Ver lista de contactos/LIDs ignorados |

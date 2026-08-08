@@ -4,8 +4,6 @@ async function processAIChat(textMessage, remoteJid, metadata, sock) {
     const displayName = metadata.savedName || metadata.pushName || 'Usuario';
     console.log(`\n[ENVIANDO A IA] De: ${displayName} (${remoteJid}) | País: ${metadata.country}`);
     
-    await sock.sendPresenceUpdate('composing', remoteJid);
-    
     try {
         const response = await fetch(BRAIN_API_URL, {
             method: 'POST',
@@ -28,10 +26,18 @@ async function processAIChat(textMessage, remoteJid, metadata, sock) {
         });
         
         const data = await response.json();
-        await new Promise(r => setTimeout(r, 1000));
         
         if (data.response) {
             console.log(`[BOT RESPONDE A ${displayName}]: ${data.response}`);
+            
+            // 🧠 SIMULACIÓN HUMANA (Anti-Ban Rate Limiter):
+            // Calcular retardo proporcional al tamaño del mensaje (ej: 1.5s - 4.5s) simulando escritura humana
+            const textLen = data.response.length;
+            const typingDelay = Math.min(Math.max(textLen * 35, 1500), 4500);
+            
+            await sock.sendPresenceUpdate('composing', remoteJid);
+            await new Promise(r => setTimeout(r, typingDelay));
+
             const sentMsg = await sock.sendMessage(remoteJid, { text: data.response });
             registerSentMessage(sentMsg);
         } else {
@@ -44,7 +50,7 @@ async function processAIChat(textMessage, remoteJid, metadata, sock) {
         const sentMsg = await sock.sendMessage(remoteJid, { text: "⚠️ Error de conexión con el Cerebro IA (¿Está encendido?)" });
         registerSentMessage(sentMsg);
     } finally {
-        await sock.sendPresenceUpdate('paused', remoteJid);
+        await sock.sendPresenceUpdate('paused', remoteJid).catch(() => {});
     }
 }
 

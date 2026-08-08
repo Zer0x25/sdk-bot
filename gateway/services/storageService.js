@@ -117,6 +117,7 @@ function cleanContactsDB() {
                 if (item.pushName && !target.pushName) target.pushName = item.pushName;
                 if (item.profilePicUrl && !target.profilePicUrl) target.profilePicUrl = item.profilePicUrl;
                 if (item.bio && !target.bio) target.bio = item.bio;
+                if (item.handoff !== undefined) target.handoff = item.handoff;
                 delete db[k];
                 updated = true;
             }
@@ -127,6 +128,37 @@ function cleanContactsDB() {
         saveContactsDB(db);
     }
     return db;
+}
+
+function isContactHandoff(metadata) {
+    const { phoneNumber, lid } = metadata;
+    const db = getContactsDB();
+    const existingKey = Object.keys(db).find(k => {
+        const item = db[k];
+        if (phoneNumber && item.phone === phoneNumber) return true;
+        if (lid && item.lid === lid) return true;
+        return false;
+    });
+    return existingKey ? Boolean(db[existingKey].handoff) : false;
+}
+
+function setContactHandoff(keyOrMetadata, handoffState = true) {
+    const db = getContactsDB();
+    let targetKey = typeof keyOrMetadata === 'string' ? keyOrMetadata : (keyOrMetadata.phoneNumber || keyOrMetadata.lid);
+
+    const existingKey = Object.keys(db).find(k => {
+        const item = db[k];
+        if (targetKey && item.phone && item.phone.includes(targetKey)) return true;
+        if (targetKey && item.lid && item.lid.includes(targetKey)) return true;
+        return k === targetKey;
+    });
+
+    if (existingKey) {
+        db[existingKey].handoff = Boolean(handoffState);
+        saveContactsDB(db);
+        return db[existingKey];
+    }
+    return null;
 }
 
 function upsertContactMetadata(metadata) {
@@ -173,6 +205,7 @@ function upsertContactMetadata(metadata) {
         bio: bio || null,
         isBusiness: isBusiness || false,
         isContact: isContact || false,
+        handoff: false,
         lastEnrichedAt: lastEnrichedAt || null,
         firstSeen: now,
         lastSeen: now,
@@ -243,6 +276,7 @@ function bulkUpsertContactsMetadata(contactsList) {
             bio: bio || null,
             isBusiness: isBusiness || false,
             isContact: isContact || false,
+            handoff: false,
             lastEnrichedAt: lastEnrichedAt || null,
             firstSeen: now,
             lastSeen: now,
@@ -281,6 +315,8 @@ module.exports = {
     getContactsDB,
     saveContactsDB,
     cleanContactsDB,
+    isContactHandoff,
+    setContactHandoff,
     upsertContactMetadata,
     bulkUpsertContactsMetadata
 };

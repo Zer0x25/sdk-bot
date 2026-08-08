@@ -11,7 +11,8 @@ const {
     upsertContactMetadata,
     bulkUpsertContactsMetadata,
     isJunkJid,
-    contactStore
+    contactStore,
+    setContactHandoff
 } = require('../services/storageService');
 
 async function handleAdminCommand(textMessage, remoteJid, sock, metadata) {
@@ -25,14 +26,61 @@ async function handleAdminCommand(textMessage, remoteJid, sock, metadata) {
 
     switch (command) {
         case '/pause':
-            state.IS_BOT_PAUSED = true;
-            adminResponse = "⏸️ **Bot Pausado.** El auto-respondedor de IA ha sido desactivado.";
+            if (queryParam) {
+                // Pausa individual para un cliente específico
+                const record = setContactHandoff(queryParam, true);
+                if (record) {
+                    adminResponse = `⏸️ **IA Pausada para el cliente:** ${record.savedName || record.pushName || queryParam} (${record.phone || record.lid}).`;
+                } else {
+                    adminResponse = `⚠️ No se encontró al cliente **${queryParam}** en la base de datos.`;
+                }
+            } else {
+                // Pausa global
+                state.IS_BOT_PAUSED = true;
+                adminResponse = "⏸️ **Bot Pausado Globalmente.** El auto-respondedor de IA ha sido desactivado para todos.";
+            }
             break;
 
         case '/resume':
         case '/start':
-            state.IS_BOT_PAUSED = false;
-            adminResponse = "▶️ **Bot Reanudado.** El auto-respondedor de IA está activo.";
+            if (queryParam) {
+                const record = setContactHandoff(queryParam, false);
+                if (record) {
+                    adminResponse = `▶️ **IA Reanudada para el cliente:** ${record.savedName || record.pushName || queryParam} (${record.phone || record.lid}).`;
+                } else {
+                    adminResponse = `⚠️ No se encontró al cliente **${queryParam}** en la base de datos.`;
+                }
+            } else {
+                state.IS_BOT_PAUSED = false;
+                adminResponse = "▶️ **Bot Reanudado Globalmente.** El auto-respondedor de IA está activo.";
+            }
+            break;
+
+        case '/auto':
+        case '/unpause':
+            if (!queryParam) {
+                adminResponse = "⚠️ Uso: `/auto <numero_o_lid>`\nEjemplo: `/auto 56912345678` para reactivar IA a un cliente en handoff.";
+            } else {
+                const record = setContactHandoff(queryParam, false);
+                if (record) {
+                    adminResponse = `🤖 **IA Reactivada para el cliente:** ${record.savedName || record.pushName || queryParam} (${record.phone || record.lid}).`;
+                } else {
+                    adminResponse = `⚠️ No se encontró al cliente **${queryParam}** en la base de datos.`;
+                }
+            }
+            break;
+
+        case '/handoff':
+            if (!queryParam) {
+                adminResponse = "⚠️ Uso: `/handoff <numero_o_lid>`\nEjemplo: `/handoff 56912345678` para pausar IA a ese cliente.";
+            } else {
+                const record = setContactHandoff(queryParam, true);
+                if (record) {
+                    adminResponse = `🤝 **Atención Humana (Handoff) activada para:** ${record.savedName || record.pushName || queryParam}. La IA permanecerá en silencio para este chat.`;
+                } else {
+                    adminResponse = `⚠️ No se encontró al cliente **${queryParam}** en la base de datos.`;
+                }
+            }
             break;
 
         case '/allow':
@@ -167,8 +215,7 @@ async function handleAdminCommand(textMessage, remoteJid, sock, metadata) {
                         `  • Teléfono: ${c.phone || 'N/A'}\n` +
                         `  • LID: ${c.lid || 'N/A'}\n` +
                         `  • País: ${c.country}\n` +
-                        `  • Estado/Bio: ${c.bio || 'Sin biografía'}\n` +
-                        `  • En tu Agenda: ${c.isContact ? 'Sí ✅' : 'No ❌'}\n` +
+                        `  • Atención Humana (Handoff): ${c.handoff ? 'Sí 🚨' : 'No (IA) 🤖'}\n` +
                         `  • Mensajes: ${c.totalMessages || 1}`
                     ).join('\n\n');
                     
@@ -182,13 +229,15 @@ async function handleAdminCommand(textMessage, remoteJid, sock, metadata) {
             const contactsDB = getContactsDB();
             const totalContacts = Object.keys(contactsDB).length;
             const inAgenda = Object.values(contactsDB).filter(c => c.isContact || c.savedName).length;
+            const inHandoff = Object.values(contactsDB).filter(c => c.handoff).length;
             const recent = Object.values(contactsDB).sort((a, b) => new Date(b.lastSeen) - new Date(a.lastSeen)).slice(0, 5);
             
             adminResponse = `📇 **Base de Contactos Registrados:**\n` +
                 `- **Total registrados:** ${totalContacts}\n` +
-                `- **En tu agenda telefónica:** ${inAgenda}\n\n` +
+                `- **En tu agenda telefónica:** ${inAgenda}\n` +
+                `- **En atención humana (Handoff):** ${inHandoff}\n\n` +
                 `📌 **Últimos activos:**\n` +
-                (recent.length ? recent.map(c => `• ${c.savedName ? `${c.savedName} (Agenda)` : (c.pushName || 'Anónimo')} (${c.phone || c.lid || 'Sin ID'})`).join('\n') : 'Sin registros');
+                (recent.length ? recent.map(c => `• ${c.savedName ? `${c.savedName} (Agenda)` : (c.pushName || 'Anónimo')} (${c.phone || c.lid || 'Sin ID'}) ${c.handoff ? '[🚨 Humano]' : ''}`).join('\n') : 'Sin registros');
             break;
 
         case '/sync':
@@ -226,7 +275,7 @@ async function handleAdminCommand(textMessage, remoteJid, sock, metadata) {
         case '/export':
             const dbExport = getContactsDB();
             const exportList = Object.values(dbExport).map(c => 
-                `• ${c.savedName ? `[Agenda] ${c.savedName}` : (c.pushName || 'Desconocido')} -> Tel: ${c.phone || 'N/A'} | LID: ${c.lid || 'N/A'}`
+                `• ${c.savedName ? `[Agenda] ${c.savedName}` : (c.pushName || 'Desconocido')} -> Tel: ${c.phone || 'N/A'} | LID: ${c.lid || 'N/A'} ${c.handoff ? '[🚨 Handoff]' : ''}`
             );
             adminResponse = `📤 **Exportación de Libreta (${exportList.length}):**\n\n` + exportList.join('\n');
             break;
@@ -253,13 +302,15 @@ async function handleAdminCommand(textMessage, remoteJid, sock, metadata) {
         case '/status':
         case '/help':
             adminResponse = `🤖 **Estado del SDK-Bot:**\n` +
-                `- **Estado:** ${state.IS_BOT_PAUSED ? '⏸️ Pausado' : '▶️ Activo'}\n` +
+                `- **Estado Bot Global:** ${state.IS_BOT_PAUSED ? '⏸️ Pausado' : '▶️ Activo'}\n` +
                 `- **Perfil IA:** ${state.CURRENT_PROFILE}\n` +
                 `- **Permitidos (Allowed):** ${getAllowedNumbers().length} regla(s)\n` +
                 `- **Ignorados (IgnoreList):** ${getIgnoredNumbers().length} usuario(s)\n` +
                 `- **Base de Contactos:** ${Object.keys(getContactsDB()).length} registrado(s)\n\n` +
                 `📌 **Comandos Admin:**\n` +
-                `• \`/name <num> <nombre>\` - Asignar o renombrar contacto en agenda manualmente\n` +
+                `• \`/auto <num/lid>\` - Devolver control del chat a la IA\n` +
+                `• \`/handoff <num/lid>\` - Activar atención humana (pausar IA para ese cliente)\n` +
+                `• \`/name <num> <nombre>\` - Asignar o renombrar contacto en agenda\n` +
                 `• \`/search <query>\` - Buscar en agenda (Nombre Agenda ↔ Nombre Público ↔ Phone ↔ LID)\n` +
                 `• \`/sync\` - Ejecutar sincronización incremental de contactos\n` +
                 `• \`/contacts\` - Resumen de contactos en BD\n` +
@@ -270,7 +321,7 @@ async function handleAdminCommand(textMessage, remoteJid, sock, metadata) {
                 `• \`/allow <num/lid/*>\` - Permitir usuario\n` +
                 `• \`/remove <num/lid>\` - Remover permitido\n` +
                 `• \`/list\` - Ver permitidos\n` +
-                `• \`/pause\` / \`/resume\` - Pausar/Reanudar IA\n` +
+                `• \`/pause\` / \`/resume\` - Pausar/Reanudar IA globalmente\n` +
                 `• \`/profile <nombre>\` - Cambiar personalidad\n` +
                 `• \`/info\` - Ver datos de Admin\n` +
                 `• \`/status\` - Ver este menú`;
