@@ -10,10 +10,10 @@ const {
 const { processAIChat } = require('../services/brainService');
 const { handleAdminCommand } = require('./commandHandler');
 
-// 🧠 DE-BOUNCE QUEUE REINICIABLE CON AUTO-EXPIRACIÓN Y REARME POR MENSAJE
+// 🧠 DE-BOUNCE QUEUE CON VERIFICACIÓN ESTRICTA DE PRESENCIA EN LA PUERTA LÓGICA
 const messageBuffers = new Map();
-const DEBOUNCE_DELAY_MS = 8000;      // 8 segundos de inactividad pos-escritura (silencio total)
-const TYPING_TTL_MS = 4500;           // 4.5 segundos: el estado de escritura expira automáticamente si no hay nuevo 'composing'
+const DEBOUNCE_DELAY_MS = 8000;      // 8 segundos de silencio total pos-escritura
+const TYPING_TTL_MS = 5000;           // 5.0 segundos: el estado de tecleo expira si el teclado queda inactivo
 
 // Palabras clave para derivación automática a atención humana
 const HUMAN_REQUEST_KEYWORDS = [
@@ -38,9 +38,8 @@ function checkHumanRequest(text) {
 }
 
 /**
- * ⌨️ GESTIÓN DE PRESENCIA Y AUTO-EXPIRACIÓN DE ESCRITURA
- * Si el usuario escribe despacio, la presencia destruye el timer de 8s mientras teclea.
- * Si suelta el teclado por 4.5s sin enviar, se resetea y arranca el timer de 8s de silencio desde 0.
+ * ⌨️ GESTIÓN DE PRESENCIA DE BAILEYS (composing / recording / paused / available)
+ * Mapea presencia tanto por Phone JID como por LID JID.
  */
 function handlePresenceUpdate(id, presences) {
     if (!id || !presences) return;
@@ -51,40 +50,46 @@ function handlePresenceUpdate(id, presences) {
     const presenceState = userPresence.lastKnownPresence;
     const isTyping = presenceState === 'composing' || presenceState === 'recording';
     const isPaused = presenceState === 'paused' || presenceState === 'available';
-    
-    let buffer = messageBuffers.get(id);
-    if (!buffer) return;
 
-    if (isTyping) {
-        buffer.isTyping = true;
+    const cleanId = id.split('@')[0].split(':')[0];
+
+    // Buscar buffer que coincida por JID directo, Teléfono o LID
+    for (const [bufferJid, buffer] of messageBuffers.entries()) {
+        const cleanBufferJid = bufferJid.split('@')[0].split(':')[0];
         
-        // Destruir el timer de 8s mientras el usuario siga tecleando activamente
-        if (buffer.timer) {
-            clearTimeout(buffer.timer);
-            buffer.timer = null;
-            console.log(`\n⌨️ [DE-BOUNCE] Cliente en ${id} está tecleando... Timer de 8s cancelado.`);
-        }
-
-        // AUTO-EXPIRACIÓN DE ESCRITURA (4.5s): Si el usuario suelta las teclas por 4.5s sin enviar mensaje, resetea y arranca el timer de 8s
-        if (buffer.typingExpiryTimer) clearTimeout(buffer.typingExpiryTimer);
-        buffer.typingExpiryTimer = setTimeout(() => {
-            if (buffer && buffer.isTyping) {
-                buffer.isTyping = false;
-                console.log(`\n⏱️ [TECLADO LIBERADO] Cliente soltó el teclado (4.5s inactivo). Reseteando timer de 8s de silencio desde 0.`);
-                if (!buffer.timer) {
-                    buffer.timer = setTimeout(buffer.onTimeout, DEBOUNCE_DELAY_MS);
+        if (bufferJid === id || cleanBufferJid === cleanId) {
+            if (isTyping) {
+                buffer.isTyping = true;
+                buffer.lastTypingTime = Date.now();
+                
+                // Cancelar el timer de 8s mientras el usuario siga tecleando/grabando
+                if (buffer.timer) {
+                    clearTimeout(buffer.timer);
+                    buffer.timer = null;
                 }
-            }
-        }, TYPING_TTL_MS);
+                console.log(`\n⌨️ [PRESENCIA] Cliente (${bufferJid}) ESTÁ ESCRIBIENDO (${presenceState}). Timer de 8s pausado.`);
 
-    } else if (isPaused && buffer.isTyping) {
-        buffer.isTyping = false;
-        if (buffer.typingExpiryTimer) clearTimeout(buffer.typingExpiryTimer);
-        if (buffer.timer) clearTimeout(buffer.timer);
-        
-        // El cliente pausó el teclado: Resetea e inicia el timer de 8s de silencio desde 0
-        buffer.timer = setTimeout(buffer.onTimeout, DEBOUNCE_DELAY_MS);
-        console.log(`\n⏳ [DE-BOUNCE START] Cliente dejó de escribir. Reseteando timer de 8s de silencio desde 0.`);
+                // Expiración automática a los 5s si deja de presionar teclas sin enviar evento paused
+                if (buffer.typingExpiryTimer) clearTimeout(buffer.typingExpiryTimer);
+                buffer.typingExpiryTimer = setTimeout(() => {
+                    if (buffer && buffer.isTyping) {
+                        buffer.isTyping = false;
+                        console.log(`\n⏱️ [TECLADO LIBERADO] 5s inactivo en teclado (${bufferJid}). Listo para conteo de 8s.`);
+                        if (!buffer.timer) {
+                            buffer.timer = setTimeout(buffer.onTimeout, DEBOUNCE_DELAY_MS);
+                        }
+                    }
+                }, TYPING_TTL_MS);
+
+            } else if (isPaused) {
+                buffer.isTyping = false;
+                if (buffer.typingExpiryTimer) clearTimeout(buffer.typingExpiryTimer);
+                if (buffer.timer) clearTimeout(buffer.timer);
+                
+                buffer.timer = setTimeout(buffer.onTimeout, DEBOUNCE_DELAY_MS);
+                console.log(`\n⏳ [PRESENCIA] Cliente (${bufferJid}) PAUSÓ escritura (${presenceState}). Reseteando timer 8s.`);
+            }
+        }
     }
 }
 
@@ -218,7 +223,7 @@ async function handleIncomingMessage(m, sock) {
     }
 
     // -------------------------------------------------------------
-    // 🧠 DE-BOUNCE QUEUE: RESET COMPLETO DE 8S AL RECIBIR MENSAJE FÍSICO
+    // 🚪 PUERTA LÓGICA DE-BOUNCE CON VERIFICACIÓN ESTRICTA DE PRESENCIA
     // -------------------------------------------------------------
     let existingBuffer = messageBuffers.get(remoteJid);
 
@@ -226,32 +231,40 @@ async function handleIncomingMessage(m, sock) {
         const buf = messageBuffers.get(remoteJid);
         if (!buf) return;
 
-        // Limpiar timers secundarios de seguridad
+        // 🚪 PUERTA LÓGICA CRÍTICA: ¿El usuario está escribiendo o grabó audio recientemente?
+        const isCurrentlyTyping = buf.isTyping || (buf.lastTypingTime && (Date.now() - buf.lastTypingTime < TYPING_TTL_MS));
+
+        if (isCurrentlyTyping) {
+            console.log(`\n🛑 [PUERTA LÓGICA: BLOQUEADO] Se cumplieron 8s pero el cliente (${displayName}) SIGUE ESCRIBIENDO. Postergando 8s...`);
+            if (buf.timer) clearTimeout(buf.timer);
+            buf.timer = setTimeout(buf.onTimeout, DEBOUNCE_DELAY_MS);
+            return;
+        }
+
+        // Limpiar timers secundarios
         if (buf.typingExpiryTimer) clearTimeout(buf.typingExpiryTimer);
         if (buf.timer) clearTimeout(buf.timer);
 
         const fullBufferedText = buf.messages.join('\n');
         messageBuffers.delete(remoteJid);
 
-        console.log(`\n📦 [DE-BOUNCE BATCH FINAL] 8s de silencio cumplidos. Procesando ${buf.messages.length} mensaje(s) de ${displayName}: "${fullBufferedText}"`);
+        console.log(`\n📦 [DE-BOUNCE BATCH FINAL] 8s de silencio + No tecleando. Procesando ${buf.messages.length} mensaje(s) de ${displayName}: "${fullBufferedText}"`);
         await processAIChat(fullBufferedText, remoteJid, metadata, sock);
     };
 
     if (existingBuffer) {
-        // 🔑 AL LLEGAR UN MENSAJE FÍSICO: El cliente presiono "Enviar", ya no está tecleando ese mensaje
-        existingBuffer.isTyping = false;
-        if (existingBuffer.typingExpiryTimer) clearTimeout(existingBuffer.typingExpiryTimer);
         if (existingBuffer.timer) clearTimeout(existingBuffer.timer);
-
         existingBuffer.messages.push(textMessage);
         existingBuffer.onTimeout = onTimeout;
+
+        // Resetear timer de 8s al recibir mensaje físico
         existingBuffer.timer = setTimeout(onTimeout, DEBOUNCE_DELAY_MS);
-        
         console.log(`⏳ [DE-BOUNCE RESET] Nuevo mensaje recibido de ${displayName}. Timer de 8s de silencio reiniciado desde 0.`);
     } else {
         const newBuffer = {
             messages: [textMessage],
             isTyping: false,
+            lastTypingTime: null,
             onTimeout: onTimeout,
             timer: null,
             typingExpiryTimer: null
