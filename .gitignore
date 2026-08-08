@@ -6,8 +6,10 @@ __pycache__/
 *.pyc
 brain/venv/
 
-# Baileys auth & session files (SENSITIVE)
+# WhatsApp session, auth & private contact data (SENSITIVE / PRIVACY)
 gateway/auth_info_baileys/
+gateway/contacts_db.json
+gateway/ignored_numbers.json
 
 # Environment variables
 .env
