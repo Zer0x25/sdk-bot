@@ -4,13 +4,14 @@ const {
     upsertContactMetadata, 
     getIgnoredNumbers, 
     getAllowedNumbers, 
+    getContactsDB,
     isContactHandoff, 
     setContactHandoff 
 } = require('../services/storageService');
 const { processAIChat } = require('../services/brainService');
 const { handleAdminCommand } = require('./commandHandler');
 
-// 🧠 DE-BOUNCE QUEUE CON DOBLE VERIFICACIÓN (ESTADO LOCAL APP + REFRESCO WHATSAPP)
+// 🧠 DE-BOUNCE QUEUE CON VINCULACIÓN DUAL PHONE/LID EN PRESENCIA Y MEMORIA LOCAL
 const messageBuffers = new Map();
 const activePresences = new Map();   // Mapa global en memoria RAM del estado de presencia
 const DEBOUNCE_DELAY_MS = 8000;      // 8 segundos de silencio total pos-escritura
@@ -39,8 +40,29 @@ function checkHumanRequest(text) {
 }
 
 /**
+ * 🔀 Resolver todos los IDs vinculados (Phone y LID) para un JID entrante
+ */
+function getCandidateIdsForPresence(id) {
+    const clean = String(id).split('@')[0].split(':')[0].replace(/[^0-9]/g, '');
+    const set = new Set([clean, String(id)]);
+
+    const db = getContactsDB();
+    const contact = Object.values(db).find(c => 
+        (c.phone && c.phone.includes(clean)) || 
+        (c.lid && c.lid.includes(clean))
+    );
+
+    if (contact) {
+        if (contact.phone) set.add(contact.phone.replace(/[^0-9]/g, ''));
+        if (contact.lid) set.add(contact.lid.replace(/[^0-9]/g, ''));
+    }
+
+    return Array.from(set);
+}
+
+/**
  * ⌨️ GESTIÓN DE PRESENCIA DE BAILEYS (composing / recording / paused / available)
- * Guarda el estado en la memoria RAM local (activePresences) de la app en tiempo real.
+ * Guarda el estado en la memoria RAM local (activePresences) vinculando Phone y LID.
  */
 function handlePresenceUpdate(id, presences) {
     if (!id || !presences) return;
@@ -49,22 +71,24 @@ function handlePresenceUpdate(id, presences) {
     if (!userPresence) return;
 
     const presenceState = userPresence.lastKnownPresence;
-    const cleanId = id.split('@')[0].split(':')[0];
+    const candidates = getCandidateIdsForPresence(id);
 
-    // 💾 Guardar estado exacto en la memoria local de la aplicación
-    activePresences.set(id, { state: presenceState, time: Date.now() });
-    activePresences.set(cleanId, { state: presenceState, time: Date.now() });
+    console.log(`📡 [PRESENCIA RECIBIDA] ID: ${id} | Candidatos: [${candidates.join(', ')}] | Estado: "${presenceState}"`);
 
-    console.log(`📡 [PRESENCIA RECIBIDA] ID: ${id} | Estado: "${presenceState}"`);
+    // 💾 Guardar estado exacto en memoria RAM para todos sus IDs (Phone y LID)
+    candidates.forEach(cid => {
+        activePresences.set(cid, { state: presenceState, time: Date.now() });
+    });
 
     const isTyping = presenceState === 'composing' || presenceState === 'recording';
     const isPaused = presenceState === 'paused' || presenceState === 'available';
 
-    // Buscar buffer que coincida por JID directo, Teléfono o LID
+    // Buscar buffer que coincida con cualquiera de los candidatos (Phone o LID)
     for (const [bufferJid, buffer] of messageBuffers.entries()) {
-        const cleanBufferJid = bufferJid.split('@')[0].split(':')[0];
+        const cleanBuffer = bufferJid.split('@')[0].split(':')[0].replace(/[^0-9]/g, '');
+        const isMatch = candidates.some(cid => bufferJid.includes(cid) || cleanBuffer.includes(cid));
         
-        if (bufferJid === id || cleanBufferJid === cleanId) {
+        if (isMatch) {
             if (isTyping) {
                 buffer.isTyping = true;
                 buffer.lastTypingTime = Date.now();
@@ -243,15 +267,21 @@ async function handleIncomingMessage(m, sock) {
         const buf = messageBuffers.get(remoteJid);
         if (!buf) return;
 
-        // 🧠 PASO 1: REVISAR PRIMERO NUESTRO ESTADO EN LA MEMORIA LOCAL DE LA APP
-        const cleanPhone = phoneNumber;
-        const cleanLid = lid;
+        // 🧠 PASO 1: REVISAR PRIMERO NUESTRO ESTADO EN LA MEMORIA LOCAL DE LA APP (BUSCANDO EN TODOS SUS CANDIDATOS)
+        const candidates = getCandidateIdsForPresence(remoteJid);
+        if (phoneNumber) candidates.push(phoneNumber.replace(/[^0-9]/g, ''));
+        if (lid) candidates.push(lid.replace(/[^0-9]/g, ''));
 
-        const p1 = activePresences.get(remoteJid);
-        const p2 = cleanPhone ? activePresences.get(cleanPhone) : null;
-        const p3 = cleanLid ? activePresences.get(cleanLid) : null;
+        let latestPresence = null;
+        for (const cid of candidates) {
+            const p = activePresences.get(cid);
+            if (p) {
+                if (!latestPresence || p.time > latestPresence.time) {
+                    latestPresence = p;
+                }
+            }
+        }
 
-        const latestPresence = p1 || p2 || p3;
         const isTypingLocal = (latestPresence && (latestPresence.state === 'composing' || latestPresence.state === 'recording') && (Date.now() - latestPresence.time < TYPING_TTL_MS)) || buf.isTyping;
 
         if (isTypingLocal) {
@@ -261,18 +291,22 @@ async function handleIncomingMessage(m, sock) {
             return;
         }
 
-        // 🧠 PASO 2: SI MEMORIA DICE 'SILENCIO', REFROSCAR CON WHATSAPP EN SEGUNDO PLANO
+        // 🧠 PASO 2: SI MEMORIA DICE 'SILENCIO', REFRESCAR CON WHATSAPP EN SEGUNDO PLANO
         sock.presenceSubscribe(remoteJid).catch(() => {});
         if (phoneNumber) sock.presenceSubscribe(`${phoneNumber}@s.whatsapp.net`).catch(() => {});
         if (lid) sock.presenceSubscribe(`${lid}@lid`).catch(() => {});
 
-        await new Promise(r => setTimeout(r, 200));
+        await new Promise(r => setTimeout(r, 250));
 
-        // Re-verificar tras el breve refresco
-        const postP1 = activePresences.get(remoteJid);
-        const postP2 = cleanPhone ? activePresences.get(cleanPhone) : null;
-        const postP3 = cleanLid ? activePresences.get(cleanLid) : null;
-        const postPresence = postP1 || postP2 || postP3;
+        let postPresence = null;
+        for (const cid of candidates) {
+            const p = activePresences.get(cid);
+            if (p) {
+                if (!postPresence || p.time > postPresence.time) {
+                    postPresence = p;
+                }
+            }
+        }
 
         if (postPresence && (postPresence.state === 'composing' || postPresence.state === 'recording') && (Date.now() - postPresence.time < TYPING_TTL_MS)) {
             console.log(`\n🔄 [REFRESCO WHATSAPP] Confirmado: El cliente (${displayName}) volvió a teclear (${postPresence.state}). Reiniciando timer de 8s...`);
