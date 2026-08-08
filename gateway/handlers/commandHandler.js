@@ -5,7 +5,8 @@ const {
     saveAllowedNumbers, 
     getIgnoredNumbers, 
     saveIgnoredNumbers, 
-    getContactsDB 
+    getContactsDB,
+    cleanContactsDB
 } = require('../services/storageService');
 
 async function handleAdminCommand(textMessage, remoteJid, sock, metadata) {
@@ -153,6 +154,16 @@ async function handleAdminCommand(textMessage, remoteJid, sock, metadata) {
                 (recent.length ? recent.map(c => `• ${c.savedName ? `${c.savedName} (Agenda)` : (c.pushName || 'Anónimo')} (${c.phone || c.lid || 'Sin ID'})`).join('\n') : 'Sin registros');
             break;
 
+        case '/sync':
+        case '/resync':
+            const cleanDb = cleanContactsDB();
+            const count = Object.keys(cleanDb).length;
+            adminResponse = `🔄 **Sincronización Incremental Ejecutada:**\n` +
+                `- Libreta de contactos depurada y verificada.\n` +
+                `- Total contactos activos en caché: **${count}**\n` +
+                `- Estrategia TTL activa (Refresco de fotos/bio cada 24 horas).`;
+            break;
+
         case '/export':
             const dbExport = getContactsDB();
             const exportList = Object.values(dbExport).map(c => 
@@ -190,6 +201,7 @@ async function handleAdminCommand(textMessage, remoteJid, sock, metadata) {
                 `- **Base de Contactos:** ${Object.keys(getContactsDB()).length} registrado(s)\n\n` +
                 `📌 **Comandos Admin:**\n` +
                 `• \`/search <query>\` - Buscar en agenda (Nombre Agenda ↔ Nombre Público ↔ Phone ↔ LID)\n` +
+                `• \`/sync\` - Ejecutar sincronización inteligente incremental\n` +
                 `• \`/contacts\` - Resumen de contactos en BD\n` +
                 `• \`/export\` - Exportar libreta de contactos\n` +
                 `• \`/ignore <num/lid>\` - Agregar a IgnoreList\n` +

@@ -1,6 +1,6 @@
 # 🤖 SDK-Bot
 
-**Plataforma Multi-Bot de WhatsApp 100% Custom & Modular** — Gateway de mensajería + Cerebro IA con router multi-proveedor, fallback automático, IgnoreList, Base de Datos de Contactos y Suite de Metadatos PRO.
+**Plataforma Multi-Bot de WhatsApp 100% Custom & Smart Sync** — Gateway de mensajería + Cerebro IA con router multi-proveedor, fallback automático, IgnoreList, Base de Datos de Contactos con Smart Delta Sync (TTL 24h) y Suite de Metadatos PRO.
 
 ---
 
@@ -8,6 +8,8 @@
 
 SDK-Bot es un sistema modular para crear bots de WhatsApp inteligentes con:
 
+- **Smart Delta Sync (TTL 24h):** Caché local en `contacts_db.json` con refresco inteligente de fotos y bio cada 24 horas (0 peticiones redundantes a la red).
+- **Filtro Anti-Basura:** Exclusión automática de Grupos, Comunidades, Canales y Estados.
 - **Estructura Modular & Desacoplada** en capas limpias de configuración, servicios y manejadores.
 - **Conexión WhatsApp** vía Baileys (QR + reconexión automática).
 - **Captura Máxima de Metadatos (PRO Suite):**
@@ -19,11 +21,11 @@ SDK-Bot es un sistema modular para crear bots de WhatsApp inteligentes con:
 - **Base de Datos de Contactos Automática (`contacts_db.json`)** con mapeo Teléfono ↔ LID ↔ Agenda ↔ Público.
 - **Filtro Escalonado (IgnoreList > Whitelist)** para excluir contactos personales o familiares en producción.
 - **Cerebro IA** con FastAPI, contexto enriquecido y router multi-proveedor (OpenRouter → Groq → Gemini).
-- **Panel de control remoto** desde el Self-Chat de WhatsApp (búsqueda, listas, control de perfil).
+- **Panel de control remoto** desde el Self-Chat de WhatsApp (búsqueda, sincronización `/sync`, listas, control de perfil).
 
 ---
 
-## 📁 Estructura del Proyecto Refactorizado
+## 📁 Estructura del Proyecto
 
 ```
 SDK-Bot/
@@ -31,11 +33,11 @@ SDK-Bot/
 │   ├── index.js                  # Punto de entrada ultraligero (~45 líneas)
 │   ├── config.js                 # Estado global, URLs y rutas
 │   ├── services/
-│   │   ├── storageService.js     # Gestor I/O de JSONs (allowed, ignored, contacts_db)
-│   │   ├── metadataService.js    # Extracción dual Phone/LID, Países, Foto de perfil HD y Bio
+│   │   ├── storageService.js     # Gestor I/O atómico (allowed, ignored, contacts_db, cleanContactsDB)
+│   │   ├── metadataService.js    # Smart Delta Sync (TTL 24h), Phone/LID dual, Foto HD y Bio
 │   │   └── brainService.js       # Cliente HTTP REST para el Cerebro IA
 │   ├── handlers/
-│   │   ├── commandHandler.js     # Procesador modular de comandos admin en Self-Chat
+│   │   ├── commandHandler.js     # Procesador modular de comandos admin (/search, /sync, /ignore, etc.)
 │   │   └── messageHandler.js     # Pipeline de filtrado y mensajería
 │   ├── allowed_numbers.json      # Whitelist de números/LIDs (Hot-Reload)
 │   ├── ignored_numbers.json      # IgnoreList / Lista Negra (Hot-Reload)
@@ -61,6 +63,7 @@ Envía estos comandos desde tu propio chat ("Mensaje a ti mismo"):
 | Comando | Descripción |
 |---------|-------------|
 | `/search <query>` | Buscar un contacto por Nombre de Agenda, Nombre Público, Teléfono o LID |
+| `/sync` | Forzar re-sincronización y depuración incremental de contactos |
 | `/contacts` | Ver resumen de contactos registrados (Agenda vs Anónimos) |
 | `/export` | Exportar la libreta de contactos mapeados |
 | `/status` | Panel de estado del bot y conteo de listas |

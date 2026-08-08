@@ -1,6 +1,8 @@
 const { state } = require('../config');
 const { getContactsDB, upsertContactMetadata } = require('./storageService');
 
+const TTL_ENRICHMENT_MS = 24 * 60 * 60 * 1000; // 24 Horas de TTL para refresco de foto/bio
+
 function getCountryFromPhone(phone) {
     if (!phone) return "Desconocido";
     const clean = phone.replace(/[^0-9]/g, '');
@@ -46,6 +48,7 @@ function extractUserMetadata(msg) {
     const profilePicUrl = existingKey ? db[existingKey].profilePicUrl : null;
     const isBusiness = existingKey ? db[existingKey].isBusiness : false;
     const isContact = existingKey ? db[existingKey].isContact : false;
+    const lastEnrichedAt = existingKey ? db[existingKey].lastEnrichedAt : null;
 
     const candidateIds = new Set();
     jids.forEach(j => {
@@ -68,36 +71,50 @@ function extractUserMetadata(msg) {
         profilePicUrl,
         isBusiness,
         isContact,
+        lastEnrichedAt,
         candidateIds: Array.from(candidateIds)
     };
 }
 
-async function enrichContactExtraData(sock, jid, metadata) {
+async function enrichContactExtraData(sock, jid, metadata, forceRefresh = false) {
     if (!sock || !jid || jid.endsWith('@g.us')) return;
 
     try {
-        let updated = false;
         const db = getContactsDB();
         const key = metadata.phoneNumber || metadata.lid;
         const record = db[key];
 
-        if (!record || !record.profilePicUrl) {
+        // 🧠 SMART TTL CHECK: Si ya fue enriquecido en las últimas 24h y no se fuerza refresco, omitir peticiones de red
+        if (record && !forceRefresh) {
+            const lastEnriched = record.lastEnrichedAt ? new Date(record.lastEnrichedAt).getTime() : 0;
+            const ageMs = Date.now() - lastEnriched;
+            if (ageMs < TTL_ENRICHMENT_MS && record.profilePicUrl && record.bio) {
+                return; // Omitir red, datos frescos en caché
+            }
+        }
+
+        let updated = false;
+
+        // 1. Consultar Foto de Perfil
+        if (forceRefresh || !record || !record.profilePicUrl) {
             const picUrl = await sock.profilePictureUrl(jid, 'image').catch(() => null);
-            if (picUrl) {
+            if (picUrl && picUrl !== metadata.profilePicUrl) {
                 metadata.profilePicUrl = picUrl;
                 updated = true;
             }
         }
 
-        if (!record || !record.bio) {
+        // 2. Consultar Biografía / Estado
+        if (forceRefresh || !record || !record.bio) {
             const statusObj = await sock.fetchStatus(jid).catch(() => null);
-            if (statusObj && statusObj.status) {
+            if (statusObj && statusObj.status && statusObj.status !== metadata.bio) {
                 metadata.bio = statusObj.status;
                 updated = true;
             }
         }
 
-        if (updated) {
+        metadata.lastEnrichedAt = new Date().toISOString();
+        if (updated || !record || !record.lastEnrichedAt) {
             upsertContactMetadata(metadata);
         }
     } catch (e) {

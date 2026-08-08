@@ -7,7 +7,7 @@ Crear una plataforma escalable donde podamos levantar `N` cantidad de bots de Wh
 
 ---
 
-## ✅ Estado Actual del Proyecto (Refactorizado & Modular)
+## ✅ Estado Actual del Proyecto (Refactorizado & Smart Sync)
 
 ### 📁 Estructura de Archivos
 
@@ -17,15 +17,15 @@ SDK-Bot/
 │   ├── index.js                  # Punto de entrada ultraligero (~45 líneas)
 │   ├── config.js                 # Estado global, URLs y rutas
 │   ├── services/
-│   │   ├── storageService.js     # Gestor I/O de JSONs (allowed, ignored, contacts_db)
-│   │   ├── metadataService.js    # Extracción dual Phone/LID, Países, Foto de perfil HD y Bio
+│   │   ├── storageService.js     # Gestor I/O atómico (allowed, ignored, contacts_db, cleanContactsDB)
+│   │   ├── metadataService.js    # Smart Delta Sync (TTL 24h), Phone/LID dual, Foto HD y Bio
 │   │   └── brainService.js       # Cliente HTTP REST para el Cerebro IA
 │   ├── handlers/
-│   │   ├── commandHandler.js     # Procesador modular de comandos admin en Self-Chat
+│   │   ├── commandHandler.js     # Procesador modular de comandos admin (/search, /sync, /ignore, etc.)
 │   │   └── messageHandler.js     # Pipeline de filtrado y mensajería
 │   ├── allowed_numbers.json      # Whitelist (Hot-Reload)
 │   ├── ignored_numbers.json      # IgnoreList / Lista Negra (Hot-Reload)
-│   ├── contacts_db.json          # Base de datos de contactos PRO
+│   ├── contacts_db.json          # Base de datos de contactos PRO (Caché local persistente)
 │   └── auth_info_baileys/        # Sesión WhatsApp (auto-generada)
 └── brain/                        # Capa de Inteligencia (Python + FastAPI)
     ├── main.py                   # Aplicación FastAPI modularizada
@@ -45,12 +45,13 @@ SDK-Bot/
 **Tecnología:** Node.js + Baileys
 
 **Componentes:**
-*   **Punto de Entrada (`index.js`):** Gestiona el ciclo de vida del socket de Baileys, eventos de reconexión y sincronización de libreta.
-*   **Servicio de Almacenamiento (`storageService.js`):** Métodos atómicos para persistir `allowed_numbers`, `ignored_numbers` y `contacts_db`.
-*   **Servicio de Metadatos (`metadataService.js`):** Extracción dual Phone/LID, resolución de agenda (`savedName` vs `pushName`), fotos de perfil y biografía.
-*   **Servicio Cerebro (`brainService.js`):** Comunicación asíncrona HTTP POST `/chat` con estado `composing` y simulación humana.
-*   **Manejador de Comandos (`commandHandler.js`):** Panel admin completo en Self-Chat (`/search`, `/contacts`, `/export`, `/ignore`, `/unignore`, `/allow`, `/remove`, `/status`, `/info`, `/profile`).
-*   **Pipeline de Mensajes (`messageHandler.js`):** Filtrado ordenado: Anti-loop → Self-Chat → Ignorado forzado en chat cliente → Bloqueo de comandos externos → Pausa global → IgnoreList → Whitelist → Cerebro.
+*   **Sincronización Incremental Inteligente (Smart Delta Sync):**
+    *   **Caché en Disco:** `contacts_db.json` actúa como fuente local persistente.
+    *   **Refresco TTL (24 Horas):** `enrichContactExtraData` solo consulta fotos de perfil o biografías a la red si han pasado más de 24 horas (`lastEnrichedAt`).
+    *   **Filtro Anti-Basura:** Excluye automáticamente grupos (`@g.us`), canales (`@newsletter`), broadcast (`status@broadcast`) y entradas fantasma sin identidad.
+    *   **Historial Inicial:** Escucha el evento nativo `messaging-history.set` para capturar la libreta al primer inicio.
+*   **Servicio de Almacenamiento (`storageService.js`):** Escritura atómica, migración automática de claves LID a Teléfono y limpieza en tiempo real.
+*   **Manejador de Comandos (`commandHandler.js`):** Panel admin completo en Self-Chat (`/search`, `/sync`, `/contacts`, `/export`, `/ignore`, `/unignore`, `/allow`, `/remove`, `/status`, `/info`, `/profile`).
 
 ---
 
@@ -59,11 +60,7 @@ SDK-Bot/
 
 **Componentes:**
 *   **Aplicación Principal (`main.py`):** Endpoints REST con validación Pydantic (`ChatRequest`).
-*   **Router Multi-Proveedor (`providers.py`):**
-    1.  **Primario:** OpenRouter → `openai/gpt-oss-20b:free`
-    2.  **Fallback 1:** Groq → `llama-3.3-70b-versatile`
-    3.  **Fallback 2:** Google Gemini → `gemini-flash-latest`
-*   **Gestor de Memoria (`memory.py`):** Persistencia en RAM del historial por `user_id`.
+*   **Router Multi-Proveedor (`providers.py`):** OpenRouter → Groq → Gemini.
 
 ---
 
@@ -73,11 +70,11 @@ SDK-Bot/
 Mensaje Entrante en Baileys
 │
 ├── 🗂️ Actualización en contacts_db.json (savedName, pushName, Teléfono, LID, Bio, isContact)
-├── 🔄 Enriquecimiento Asíncrono (Foto de perfil HD & Biografía)
+├── 🧠 Smart TTL Check (¿lastEnrichedAt < 24h? SÍ: Omitir Red | NO: Consultar Foto/Bio)
 │
 ├── ¿Es un mensaje anti-loop (ID del bot)?  → IGNORAR
 ├── ¿Es Self-Chat (isFromMe + JID del Admin)?
-│   ├── ¿Empieza con /? → EJECUTAR COMANDO ADMIN (commandHandler)
+│   ├── ¿Empieza con /? → EJECUTAR COMANDO ADMIN (commandHandler: /search, /sync, etc.)
 │   └── Texto normal   → ASISTENTE PERSONAL IA (brainService)
 ├── ¿isFromMe en chat de cliente?           → IGNORAR (no interferir)
 ├── ¿Empieza con / (tercero)?              → BLOQUEAR (seguridad)

@@ -2,9 +2,12 @@ const { default: makeWASocket, useMultiFileAuthState, DisconnectReason } = requi
 const pino = require('pino');
 const qrcode = require('qrcode-terminal');
 const { state } = require('./config');
-const { upsertContactMetadata } = require('./services/storageService');
+const { upsertContactMetadata, isJunkJid, cleanContactsDB } = require('./services/storageService');
 const { getCountryFromPhone } = require('./services/metadataService');
 const { handleIncomingMessage } = require('./handlers/messageHandler');
+
+// Limpiar base de contactos al iniciar para remover data basura preexistente
+cleanContactsDB();
 
 // -------------------------------------------------------------
 // CONEXIÓN PRINCIPAL CON BAILEYS (ENTRADA PRINCIPAL DEL GATEWAY)
@@ -22,7 +25,7 @@ async function connectToWhatsApp () {
     // Capturar eventos de sincronización de contactos de WhatsApp (Agenda del Teléfono)
     const handleContactSync = contacts => {
         contacts.forEach(c => {
-            if (c.id) {
+            if (c.id && !isJunkJid(c.id)) {
                 const phone = c.id.endsWith('@s.whatsapp.net') ? c.id.split('@')[0] : null;
                 const lid = c.lid ? c.lid.split('@')[0] : (c.id.endsWith('@lid') ? c.id.split('@')[0] : null);
                 
@@ -41,6 +44,11 @@ async function connectToWhatsApp () {
 
     sock.ev.on('contacts.upsert', handleContactSync);
     sock.ev.on('contacts.update', handleContactSync);
+    
+    // Capturar sincronización de historial inicial de WhatsApp Web
+    sock.ev.on('messaging-history.set', ({ contacts }) => {
+        if (contacts) handleContactSync(contacts);
+    });
 
     sock.ev.on('connection.update', (update) => {
         const { connection, lastDisconnect, qr } = update;

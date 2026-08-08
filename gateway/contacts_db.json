@@ -1,1 +1,47 @@
-{}
+{
+  "56944323815": {
+    "phone": "56944323815",
+    "lid": "268345429467164",
+    "savedName": null,
+    "pushName": "lin-su C. C.            😬",
+    "verifiedName": null,
+    "country": "Chile (+56)",
+    "profilePicUrl": "https://pps.whatsapp.net/v/t61.24694-24/641056623_1699969871378459_6354729257929400167_n.jpg?ccb=11-4&oh=01_Q5Aa5QHpCiygUjsYT4Xg3ns7Q8J-b1soN8NL5p2drEf959wOOw&oe=6A83E039&_nc_sid=5e03e0&_nc_cat=102",
+    "bio": null,
+    "isBusiness": false,
+    "isContact": true,
+    "firstSeen": "2026-08-08T05:10:35.624Z",
+    "lastSeen": "2026-08-08T05:10:36.513Z",
+    "totalMessages": 3
+  },
+  "272048244940855": {
+    "phone": null,
+    "lid": "272048244940855",
+    "savedName": null,
+    "pushName": "Zerox 💙",
+    "verifiedName": null,
+    "country": "Desconocido",
+    "profilePicUrl": null,
+    "bio": null,
+    "isBusiness": false,
+    "isContact": true,
+    "firstSeen": "2026-08-08T05:10:35.649Z",
+    "lastSeen": "2026-08-08T05:10:35.649Z",
+    "totalMessages": 1
+  },
+  "56926426947": {
+    "phone": "56926426947",
+    "lid": null,
+    "savedName": null,
+    "pushName": null,
+    "verifiedName": null,
+    "country": "Chile (+56)",
+    "profilePicUrl": "https://pps.whatsapp.net/v/t61.24694-24/677191752_4585095948389857_6222648767295503829_n.jpg?ccb=11-4&oh=01_Q5Aa5QHegUOBlKRt3mBDgJ_KBV63todn5cVKlaKmjbLk0EvCaA&oe=6A83E546&_nc_sid=5e03e0&_nc_cat=111",
+    "bio": null,
+    "isBusiness": false,
+    "isContact": false,
+    "firstSeen": "2026-08-08T05:10:35.776Z",
+    "lastSeen": "2026-08-08T05:10:36.687Z",
+    "totalMessages": 12
+  }
+}
