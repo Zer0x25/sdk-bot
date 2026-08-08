@@ -10,9 +10,11 @@ const {
 const { processAIChat } = require('../services/brainService');
 const { handleAdminCommand } = require('./commandHandler');
 
-// 🧠 DE-BOUNCE QUEUE REINICIABLE (Timer de Inactividad de 8 segundos pos-escritura)
+// 🧠 DE-BOUNCE QUEUE REINICIABLE CON AUTO-EXPIRACIÓN Y SAFETY TIMEOUT
 const messageBuffers = new Map();
-const DEBOUNCE_DELAY_MS = 8000; // 8 segundos de espera de inactividad tras dejar de escribir
+const DEBOUNCE_DELAY_MS = 8000;      // 8 segundos de inactividad pos-escritura
+const TYPING_TTL_MS = 4500;           // 4.5 segundos: el estado de escritura expira automáticamente si no hay nuevo 'composing'
+const MAX_SAFETY_TIMEOUT_MS = 12000;  // 12 segundos: tiempo máximo absoluto para forzar el envío a la IA
 
 // Palabras clave para derivación automática a atención humana
 const HUMAN_REQUEST_KEYWORDS = [
@@ -37,8 +39,8 @@ function checkHumanRequest(text) {
 }
 
 /**
- * ⌨️ GESTIÓN DE PRESENCIA Y ESTADO DE ESCRITURA ("composing" / "paused")
- * Con congela/inicia el temporizador de 8s dependiendo de si el usuario está tecleando o en pausa.
+ * ⌨️ GESTIÓN DE PRESENCIA Y AUTO-EXPIRACIÓN DE ESCRITURA
+ * Si el cliente escribe pero se arrepiente, el estado "composing" expira automáticamente a los 4.5s.
  */
 function handlePresenceUpdate(id, presences) {
     if (!id || !presences) return;
@@ -55,15 +57,32 @@ function handlePresenceUpdate(id, presences) {
 
     if (isTyping) {
         buffer.isTyping = true;
+        
+        // Pausar el timer de 8s mientras teclea
         if (buffer.timer) {
             clearTimeout(buffer.timer);
             buffer.timer = null;
-            console.log(`\n⌨️ [DE-BOUNCE] Cliente en ${id} está escribiendo... Timer pausado en espera de inactividad.`);
+            console.log(`\n⌨️ [DE-BOUNCE] Cliente en ${id} está escribiendo... Timer de 8s pausado.`);
         }
+
+        // 🧠 AUTO-EXPIRACIÓN DE ESCRITURA (4.5s): Si WhatsApp no envía 'paused', expirar estado automáticamente
+        if (buffer.typingExpiryTimer) clearTimeout(buffer.typingExpiryTimer);
+        buffer.typingExpiryTimer = setTimeout(() => {
+            if (buffer && buffer.isTyping) {
+                buffer.isTyping = false;
+                console.log(`⏱️ [TYPING EXPIRED] Estado de escritura expiró (4.5s inactivo en teclado). Arrancando timer de 8s.`);
+                if (!buffer.timer) {
+                    buffer.timer = setTimeout(buffer.onTimeout, DEBOUNCE_DELAY_MS);
+                }
+            }
+        }, TYPING_TTL_MS);
+
     } else if (isPaused && buffer.isTyping) {
         buffer.isTyping = false;
-        // El cliente dejó de escribir: AHORA inicia la cuenta regresiva de 8s
+        if (buffer.typingExpiryTimer) clearTimeout(buffer.typingExpiryTimer);
         if (buffer.timer) clearTimeout(buffer.timer);
+        
+        // El cliente dejó de escribir: AHORA inicia la cuenta regresiva de 8s
         buffer.timer = setTimeout(buffer.onTimeout, DEBOUNCE_DELAY_MS);
         console.log(`\n⏳ [DE-BOUNCE START] Cliente en ${id} dejó de escribir. Iniciando timer de 8s de inactividad.`);
     }
@@ -199,7 +218,7 @@ async function handleIncomingMessage(m, sock) {
     }
 
     // -------------------------------------------------------------
-    // 🧠 DE-BOUNCE QUEUE CON TIMER DE INACTIVIDAD REINICIABLE (8 SEG)
+    // 🧠 DE-BOUNCE QUEUE CON AUTO-EXPIRACIÓN DE ESCRITURA Y SAFETY TIMEOUT (12S)
     // -------------------------------------------------------------
     let existingBuffer = messageBuffers.get(remoteJid);
 
@@ -207,17 +226,15 @@ async function handleIncomingMessage(m, sock) {
         const buf = messageBuffers.get(remoteJid);
         if (!buf) return;
 
-        // Si el cliente está tecleando activamente, postergar ejecución
-        if (buf.isTyping) {
-            console.log(`⏳ [DE-BOUNCE POSTPONED] Cliente ${displayName} sigue escribiendo. Postergando 8s...`);
-            buf.timer = setTimeout(buf.onTimeout, DEBOUNCE_DELAY_MS);
-            return;
-        }
-        
+        // Limpiar timers secundarios de seguridad
+        if (buf.typingExpiryTimer) clearTimeout(buf.typingExpiryTimer);
+        if (buf.safetyTimer) clearTimeout(buf.safetyTimer);
+        if (buf.timer) clearTimeout(buf.timer);
+
         const fullBufferedText = buf.messages.join('\n');
         messageBuffers.delete(remoteJid);
 
-        console.log(`\n📦 [DE-BOUNCE BATCH FINAL] 8s de inactividad pos-escritura cumplidos. Procesando ${buf.messages.length} mensaje(s) de ${displayName}: "${fullBufferedText}"`);
+        console.log(`\n📦 [DE-BOUNCE BATCH FINAL] 8s de inactividad cumplidos. Procesando ${buf.messages.length} mensaje(s) de ${displayName}: "${fullBufferedText}"`);
         await processAIChat(fullBufferedText, remoteJid, metadata, sock);
     };
 
@@ -231,18 +248,30 @@ async function handleIncomingMessage(m, sock) {
             existingBuffer.timer = setTimeout(onTimeout, DEBOUNCE_DELAY_MS);
             console.log(`⏳ [DE-BOUNCE RESET] Mensaje acumulado de ${displayName}. Timer de 8s reiniciado.`);
         } else {
-            console.log(`💬 [DE-BOUNCE QUEUED] Mensaje acumulado de ${displayName}. (Cliente sigue tecleando, timer pausado).`);
+            console.log(`💬 [DE-BOUNCE QUEUED] Mensaje acumulado de ${displayName}. (Cliente tecleando, timer en pausa).`);
         }
     } else {
         const newBuffer = {
             messages: [textMessage],
             isTyping: false,
             onTimeout: onTimeout,
-            timer: null
+            timer: null,
+            typingExpiryTimer: null,
+            safetyTimer: null
         };
+
+        // 🛡️ SAFETY TIMEOUT (12s MÁXIMO ABSOLUTO): Garantiza que NINGÚN mensaje quede atrapado si WhatsApp omite 'paused'
+        newBuffer.safetyTimer = setTimeout(() => {
+            if (messageBuffers.has(remoteJid)) {
+                console.log(`\n🛡️ [SAFETY TIMEOUT 12s] Forzando procesamiento de ráfaga para ${displayName} por límite máximo de espera.`);
+                newBuffer.isTyping = false;
+                onTimeout();
+            }
+        }, MAX_SAFETY_TIMEOUT_MS);
+
         newBuffer.timer = setTimeout(onTimeout, DEBOUNCE_DELAY_MS);
         messageBuffers.set(remoteJid, newBuffer);
-        console.log(`⏳ [DE-BOUNCE START] Primer mensaje de ${displayName}. Iniciando ventana de inactividad de 8s.`);
+        console.log(`⏳ [DE-BOUNCE START] Primer mensaje de ${displayName}. Ventana de 8s / Límite máx 12s activado.`);
     }
 }
 
