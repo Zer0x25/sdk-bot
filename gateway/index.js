@@ -19,7 +19,9 @@ async function connectToWhatsApp () {
     const sock = makeWASocket({
         printQRInTerminal: false,
         auth: authState,
-        logger: pino({ level: 'silent' })
+        logger: pino({ level: 'silent' }),
+        syncFullHistory: true,
+        markOnlineOnConnect: false
     });
 
     // Capturar eventos de sincronización de contactos de WhatsApp (Agenda del Teléfono)
@@ -49,7 +51,7 @@ async function connectToWhatsApp () {
     sock.ev.on('contacts.upsert', handleContactSync);
     sock.ev.on('contacts.update', handleContactSync);
     
-    // Capturar sincronización de historial inicial de WhatsApp Web
+    // Capturar sincronización de historial completo inicial de WhatsApp Web
     sock.ev.on('messaging-history.set', ({ contacts }) => {
         if (contacts) handleContactSync(contacts);
     });
