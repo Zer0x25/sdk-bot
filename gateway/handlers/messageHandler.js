@@ -10,7 +10,7 @@ const {
 const { processAIChat } = require('../services/brainService');
 const { handleAdminCommand } = require('./commandHandler');
 
-// 🧠 DE-BOUNCE QUEUE CON VERIFICACIÓN ESTRICTA DE PRESENCIA EN LA PUERTA LÓGICA
+// 🧠 DE-BOUNCE QUEUE CON SUSCRIPCIÓN ACTIVA A PRESENCIA EN TIEMPO REAL
 const messageBuffers = new Map();
 const DEBOUNCE_DELAY_MS = 8000;      // 8 segundos de silencio total pos-escritura
 const TYPING_TTL_MS = 5000;           // 5.0 segundos: el estado de tecleo expira si el teclado queda inactivo
@@ -39,7 +39,7 @@ function checkHumanRequest(text) {
 
 /**
  * ⌨️ GESTIÓN DE PRESENCIA DE BAILEYS (composing / recording / paused / available)
- * Mapea presencia tanto por Phone JID como por LID JID.
+ * Escucha eventos push de WhatsApp suscritos mediante sock.presenceSubscribe.
  */
 function handlePresenceUpdate(id, presences) {
     if (!id || !presences) return;
@@ -48,10 +48,12 @@ function handlePresenceUpdate(id, presences) {
     if (!userPresence) return;
 
     const presenceState = userPresence.lastKnownPresence;
+    const cleanId = id.split('@')[0].split(':')[0];
+
+    console.log(`📡 [PRESENCIA RECIBIDA DE WHATSAPP] ID: ${id} | Estado: "${presenceState}"`);
+
     const isTyping = presenceState === 'composing' || presenceState === 'recording';
     const isPaused = presenceState === 'paused' || presenceState === 'available';
-
-    const cleanId = id.split('@')[0].split(':')[0];
 
     // Buscar buffer que coincida por JID directo, Teléfono o LID
     for (const [bufferJid, buffer] of messageBuffers.entries()) {
@@ -67,14 +69,14 @@ function handlePresenceUpdate(id, presences) {
                     clearTimeout(buffer.timer);
                     buffer.timer = null;
                 }
-                console.log(`\n⌨️ [PRESENCIA] Cliente (${bufferJid}) ESTÁ ESCRIBIENDO (${presenceState}). Timer de 8s pausado.`);
+                console.log(`\n⌨️ [DE-BOUNCE CORTE por PRESENCIA] Cliente (${bufferJid}) ESTÁ ESCRIBIENDO (${presenceState}). Timer de 8s detenido.`);
 
                 // Expiración automática a los 5s si deja de presionar teclas sin enviar evento paused
                 if (buffer.typingExpiryTimer) clearTimeout(buffer.typingExpiryTimer);
                 buffer.typingExpiryTimer = setTimeout(() => {
                     if (buffer && buffer.isTyping) {
                         buffer.isTyping = false;
-                        console.log(`\n⏱️ [TECLADO LIBERADO] 5s inactivo en teclado (${bufferJid}). Listo para conteo de 8s.`);
+                        console.log(`\n⏱️ [TECLADO LIBERADO] 5s inactivo en teclado (${bufferJid}). Iniciando timer de 8s.`);
                         if (!buffer.timer) {
                             buffer.timer = setTimeout(buffer.onTimeout, DEBOUNCE_DELAY_MS);
                         }
@@ -87,7 +89,7 @@ function handlePresenceUpdate(id, presences) {
                 if (buffer.timer) clearTimeout(buffer.timer);
                 
                 buffer.timer = setTimeout(buffer.onTimeout, DEBOUNCE_DELAY_MS);
-                console.log(`\n⏳ [PRESENCIA] Cliente (${bufferJid}) PAUSÓ escritura (${presenceState}). Reseteando timer 8s.`);
+                console.log(`\n⏳ [PRESENCIA PAUSADA] Cliente (${bufferJid}) PAUSÓ escritura (${presenceState}). Reseteando timer 8s.`);
             }
         }
     }
@@ -105,6 +107,11 @@ async function handleIncomingMessage(m, sock) {
     const isFromMe = msg.key.fromMe;
     const metadata = extractUserMetadata(msg);
     const { remoteJid, phoneNumber, lid, savedName, pushName, candidateIds } = metadata;
+
+    // 🔔 SUSCRIBIR EN TIEMPO REAL A EVENTOS DE PRESENCIA (composing/paused) DE ESTE CLIENTE
+    sock.presenceSubscribe(remoteJid).catch(() => {});
+    if (phoneNumber) sock.presenceSubscribe(`${phoneNumber}@s.whatsapp.net`).catch(() => {});
+    if (lid) sock.presenceSubscribe(`${lid}@lid`).catch(() => {});
 
     // 🗂️ GUARDAR / ACTUALIZAR CONTACTO EN BASE DE DATOS
     upsertContactMetadata(metadata);
