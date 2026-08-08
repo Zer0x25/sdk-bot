@@ -1,6 +1,9 @@
 const fs = require('fs');
 const { ALLOWED_FILE_PATH, IGNORED_FILE_PATH, CONTACTS_FILE_PATH } = require('../config');
 
+// Almacén en memoria de contactos de la sesión
+const contactStore = new Map();
+
 function isJunkJid(jid) {
     if (!jid) return true;
     const str = String(jid).toLowerCase();
@@ -198,6 +201,7 @@ function upsertContactMetadata(metadata) {
 }
 
 module.exports = {
+    contactStore,
     isJunkJid,
     getAllowedNumbers,
     saveAllowedNumbers,

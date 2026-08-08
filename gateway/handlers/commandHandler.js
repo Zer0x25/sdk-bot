@@ -8,10 +8,11 @@ const {
     getContactsDB,
     cleanContactsDB,
     upsertContactMetadata,
-    isJunkJid
+    isJunkJid,
+    contactStore
 } = require('../services/storageService');
 
-async function handleAdminCommand(textMessage, remoteJid, sock, metadata, store) {
+async function handleAdminCommand(textMessage, remoteJid, sock, metadata) {
     const args = textMessage.trim().split(' ');
     const command = args[0].toLowerCase();
     const queryParam = args.slice(1).join(' ').trim();
@@ -159,34 +160,32 @@ async function handleAdminCommand(textMessage, remoteJid, sock, metadata, store)
         case '/sync':
         case '/resync':
             let syncedCount = 0;
-            if (store && store.contacts) {
-                const contactsList = Object.values(store.contacts);
-                contactsList.forEach(c => {
-                    if (c.id && !isJunkJid(c.id)) {
-                        const phone = c.id.endsWith('@s.whatsapp.net') ? c.id.split('@')[0] : null;
-                        const lid = c.lid ? c.lid.split('@')[0] : (c.id.endsWith('@lid') ? c.id.split('@')[0] : null);
-                        
-                        const result = upsertContactMetadata({
-                            phoneNumber: phone,
-                            lid: lid,
-                            savedName: c.name || null,
-                            pushName: c.notify || c.pushName || null,
-                            verifiedName: c.verifiedName || null,
-                            isContact: true,
-                            country: getCountryFromPhone(phone)
-                        });
-                        if (result) syncedCount++;
-                    }
-                });
-            }
+            const contactsList = Array.from(contactStore.values());
+            contactsList.forEach(c => {
+                if (c && c.id && !isJunkJid(c.id)) {
+                    const phone = c.id.endsWith('@s.whatsapp.net') ? c.id.split('@')[0] : null;
+                    const lid = c.lid ? c.lid.split('@')[0] : (c.id.endsWith('@lid') ? c.id.split('@')[0] : null);
+                    
+                    const result = upsertContactMetadata({
+                        phoneNumber: phone,
+                        lid: lid,
+                        savedName: c.name || null,
+                        pushName: c.notify || c.pushName || null,
+                        verifiedName: c.verifiedName || null,
+                        isContact: true,
+                        country: getCountryFromPhone(phone)
+                    });
+                    if (result) syncedCount++;
+                }
+            });
 
             const cleanDb = cleanContactsDB();
             const totalCount = Object.keys(cleanDb).length;
             
-            adminResponse = `🔄 **Sincronización Total de Agenda Ejecutada:**\n` +
-                `- Contactos procesados desde libreta de WhatsApp: **${syncedCount}**\n` +
+            adminResponse = `🔄 **Sincronización Incremental Ejecutada:**\n` +
+                `- Contactos procesados de la sesión: **${syncedCount}**\n` +
                 `- Total contactos activos en base de datos: **${totalCount}**\n` +
-                `- Caché persistente actualizada en \`contacts_db.json\` e \`baileys_store.json\`.`;
+                `- Caché persistente actualizada en \`contacts_db.json\`.`;
             break;
 
         case '/export':
@@ -226,7 +225,7 @@ async function handleAdminCommand(textMessage, remoteJid, sock, metadata, store)
                 `- **Base de Contactos:** ${Object.keys(getContactsDB()).length} registrado(s)\n\n` +
                 `📌 **Comandos Admin:**\n` +
                 `• \`/search <query>\` - Buscar en agenda (Nombre Agenda ↔ Nombre Público ↔ Phone ↔ LID)\n` +
-                `• \`/sync\` - Ejecutar sincronización total de agenda desde store\n` +
+                `• \`/sync\` - Ejecutar sincronización incremental de contactos\n` +
                 `• \`/contacts\` - Resumen de contactos en BD\n` +
                 `• \`/export\` - Exportar libreta de contactos\n` +
                 `• \`/ignore <num/lid>\` - Agregar a IgnoreList\n` +

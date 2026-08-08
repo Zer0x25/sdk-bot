@@ -4,7 +4,7 @@ const { upsertContactMetadata, getIgnoredNumbers, getAllowedNumbers } = require(
 const { processAIChat } = require('../services/brainService');
 const { handleAdminCommand } = require('./commandHandler');
 
-async function handleIncomingMessage(m, sock, store) {
+async function handleIncomingMessage(m, sock) {
     const msg = m.messages[0];
     if (!msg || !msg.message) return;
 
@@ -41,7 +41,7 @@ async function handleIncomingMessage(m, sock, store) {
     // -------------------------------------------------------------
     if (isSelf) {
         if (textMessage.trim().startsWith('/')) {
-            await handleAdminCommand(textMessage.trim(), remoteJid, sock, metadata, store);
+            await handleAdminCommand(textMessage.trim(), remoteJid, sock, metadata);
             return;
         }
 
