@@ -1,0 +1,17 @@
+{
+  "56912345678": {
+    "phone": "56912345678",
+    "lid": "123456789012345",
+    "savedName": "Ejemplo Contacto",
+    "pushName": "Usuario Ejemplo",
+    "verifiedName": null,
+    "country": "Chile (+56)",
+    "profilePicUrl": null,
+    "bio": null,
+    "isBusiness": false,
+    "isContact": true,
+    "firstSeen": "2026-08-08T00:00:00.000Z",
+    "lastSeen": "2026-08-08T00:00:00.000Z",
+    "totalMessages": 1
+  }
+}
