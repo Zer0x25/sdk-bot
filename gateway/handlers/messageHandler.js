@@ -39,8 +39,8 @@ function checkHumanRequest(text) {
 
 /**
  * ⌨️ GESTIÓN DE PRESENCIA Y AUTO-EXPIRACIÓN DE ESCRITURA
- * Si el usuario escribe despacio, la presencia pausa el timer de 8s.
- * Si se arrepiente y suelta el teclado por 4.5s, arranca la cuenta regresiva de 8s de silencio.
+ * Si el usuario escribe despacio, la presencia destruye el timer de 8s mientras teclea.
+ * Si suelta el teclado por 4.5s sin enviar, se resetea y arranca el timer de 8s de silencio desde 0.
  */
 function handlePresenceUpdate(id, presences) {
     if (!id || !presences) return;
@@ -58,19 +58,19 @@ function handlePresenceUpdate(id, presences) {
     if (isTyping) {
         buffer.isTyping = true;
         
-        // Pausar el timer de 8s mientras el usuario siga tecleando activamente
+        // Destruir el timer de 8s mientras el usuario siga tecleando activamente
         if (buffer.timer) {
             clearTimeout(buffer.timer);
             buffer.timer = null;
-            console.log(`\n⌨️ [DE-BOUNCE] Cliente en ${id} está tecleando... Timer de 8s en pausa.`);
+            console.log(`\n⌨️ [DE-BOUNCE] Cliente en ${id} está tecleando... Timer de 8s cancelado.`);
         }
 
-        // AUTO-EXPIRACIÓN DE ESCRITURA (4.5s): Si el usuario suelta las teclas por 4.5s sin enviar mensaje, arranca el timer
+        // AUTO-EXPIRACIÓN DE ESCRITURA (4.5s): Si el usuario suelta las teclas por 4.5s sin enviar mensaje, resetea y arranca el timer de 8s
         if (buffer.typingExpiryTimer) clearTimeout(buffer.typingExpiryTimer);
         buffer.typingExpiryTimer = setTimeout(() => {
             if (buffer && buffer.isTyping) {
                 buffer.isTyping = false;
-                console.log(`\n⏱️ [TECLADO LIBERADO] Cliente soltó el teclado (4.5s inactivo). Arrancando timer de 8s de silencio.`);
+                console.log(`\n⏱️ [TECLADO LIBERADO] Cliente soltó el teclado (4.5s inactivo). Reseteando timer de 8s de silencio desde 0.`);
                 if (!buffer.timer) {
                     buffer.timer = setTimeout(buffer.onTimeout, DEBOUNCE_DELAY_MS);
                 }
@@ -82,9 +82,9 @@ function handlePresenceUpdate(id, presences) {
         if (buffer.typingExpiryTimer) clearTimeout(buffer.typingExpiryTimer);
         if (buffer.timer) clearTimeout(buffer.timer);
         
-        // El cliente pausó el teclado: AHORA inicia la cuenta regresiva de 8s de silencio
+        // El cliente pausó el teclado: Resetea e inicia el timer de 8s de silencio desde 0
         buffer.timer = setTimeout(buffer.onTimeout, DEBOUNCE_DELAY_MS);
-        console.log(`\n⏳ [DE-BOUNCE START] Cliente dejó de escribir. Iniciando timer de 8s de silencio.`);
+        console.log(`\n⏳ [DE-BOUNCE START] Cliente dejó de escribir. Reseteando timer de 8s de silencio desde 0.`);
     }
 }
 
@@ -218,7 +218,7 @@ async function handleIncomingMessage(m, sock) {
     }
 
     // -------------------------------------------------------------
-    // 🧠 DE-BOUNCE QUEUE: REARME INFALIBLE AL RECIBIR MENSAJE FÍSICO
+    // 🧠 DE-BOUNCE QUEUE: RESET COMPLETO DE 8S AL RECIBIR MENSAJE FÍSICO
     // -------------------------------------------------------------
     let existingBuffer = messageBuffers.get(remoteJid);
 
@@ -247,7 +247,7 @@ async function handleIncomingMessage(m, sock) {
         existingBuffer.onTimeout = onTimeout;
         existingBuffer.timer = setTimeout(onTimeout, DEBOUNCE_DELAY_MS);
         
-        console.log(`⏳ [DE-BOUNCE RESET] Nuevo mensaje recibido de ${displayName}. Timer de 8s de silencio reiniciado.`);
+        console.log(`⏳ [DE-BOUNCE RESET] Nuevo mensaje recibido de ${displayName}. Timer de 8s de silencio reiniciado desde 0.`);
     } else {
         const newBuffer = {
             messages: [textMessage],
@@ -259,7 +259,7 @@ async function handleIncomingMessage(m, sock) {
 
         newBuffer.timer = setTimeout(onTimeout, DEBOUNCE_DELAY_MS);
         messageBuffers.set(remoteJid, newBuffer);
-        console.log(`⏳ [DE-BOUNCE START] Primer mensaje de ${displayName}. Timer de 8s de silencio iniciado.`);
+        console.log(`⏳ [DE-BOUNCE START] Primer mensaje de ${displayName}. Timer de 8s de silencio iniciado desde 0.`);
     }
 }
 
