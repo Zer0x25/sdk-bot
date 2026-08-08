@@ -10,9 +10,9 @@ const {
 const { processAIChat } = require('../services/brainService');
 const { handleAdminCommand } = require('./commandHandler');
 
-// 🧠 DE-BOUNCE QUEUE REINICIABLE (Timer de Inactividad de 8 segundos)
+// 🧠 DE-BOUNCE QUEUE REINICIABLE (Timer de Inactividad de 8 segundos pos-escritura)
 const messageBuffers = new Map();
-const DEBOUNCE_DELAY_MS = 8000; // 8 segundos de espera de inactividad
+const DEBOUNCE_DELAY_MS = 8000; // 8 segundos de espera de inactividad tras dejar de escribir
 
 // Palabras clave para derivación automática a atención humana
 const HUMAN_REQUEST_KEYWORDS = [
@@ -37,25 +37,35 @@ function checkHumanRequest(text) {
 }
 
 /**
- * ⌨️ REINICIO DE TIMER POR DETECCIÓN DE ESCRITURA ("composing")
- * Si el cliente está escribiendo en WhatsApp, reinicia el temporizador de 8s
+ * ⌨️ GESTIÓN DE PRESENCIA Y ESTADO DE ESCRITURA ("composing" / "paused")
+ * Con congela/inicia el temporizador de 8s dependiendo de si el usuario está tecleando o en pausa.
  */
 function handlePresenceUpdate(id, presences) {
     if (!id || !presences) return;
     
-    // Obtener estado de presencia del usuario
     const userPresence = presences[id] || Object.values(presences)[0];
     if (!userPresence) return;
 
-    const isTyping = userPresence.lastKnownPresence === 'composing' || userPresence.lastKnownPresence === 'recording';
+    const presenceState = userPresence.lastKnownPresence;
+    const isTyping = presenceState === 'composing' || presenceState === 'recording';
+    const isPaused = presenceState === 'paused' || presenceState === 'available';
     
-    if (isTyping && messageBuffers.has(id)) {
-        const buffer = messageBuffers.get(id);
-        if (buffer && buffer.timer) {
+    let buffer = messageBuffers.get(id);
+    if (!buffer) return;
+
+    if (isTyping) {
+        buffer.isTyping = true;
+        if (buffer.timer) {
             clearTimeout(buffer.timer);
-            buffer.timer = setTimeout(buffer.onTimeout, DEBOUNCE_DELAY_MS);
-            console.log(`\n⌨️ [DE-BOUNCE RESET] Cliente en ${id} está escribiendo... Timer de 8s reiniciado.`);
+            buffer.timer = null;
+            console.log(`\n⌨️ [DE-BOUNCE] Cliente en ${id} está escribiendo... Timer pausado en espera de inactividad.`);
         }
+    } else if (isPaused && buffer.isTyping) {
+        buffer.isTyping = false;
+        // El cliente dejó de escribir: AHORA inicia la cuenta regresiva de 8s
+        if (buffer.timer) clearTimeout(buffer.timer);
+        buffer.timer = setTimeout(buffer.onTimeout, DEBOUNCE_DELAY_MS);
+        console.log(`\n⏳ [DE-BOUNCE START] Cliente en ${id} dejó de escribir. Iniciando timer de 8s de inactividad.`);
     }
 }
 
@@ -196,23 +206,37 @@ async function handleIncomingMessage(m, sock) {
     const onTimeout = async () => {
         const buf = messageBuffers.get(remoteJid);
         if (!buf) return;
+
+        // Si el cliente está tecleando activamente, postergar ejecución
+        if (buf.isTyping) {
+            console.log(`⏳ [DE-BOUNCE POSTPONED] Cliente ${displayName} sigue escribiendo. Postergando 8s...`);
+            buf.timer = setTimeout(buf.onTimeout, DEBOUNCE_DELAY_MS);
+            return;
+        }
         
         const fullBufferedText = buf.messages.join('\n');
         messageBuffers.delete(remoteJid);
 
-        console.log(`\n📦 [DE-BOUNCE BATCH FINAL] 8s de inactividad cumplidos. Procesando ${buf.messages.length} mensaje(s) de ${displayName}: "${fullBufferedText}"`);
+        console.log(`\n📦 [DE-BOUNCE BATCH FINAL] 8s de inactividad pos-escritura cumplidos. Procesando ${buf.messages.length} mensaje(s) de ${displayName}: "${fullBufferedText}"`);
         await processAIChat(fullBufferedText, remoteJid, metadata, sock);
     };
 
     if (existingBuffer) {
-        clearTimeout(existingBuffer.timer);
+        if (existingBuffer.timer) clearTimeout(existingBuffer.timer);
         existingBuffer.messages.push(textMessage);
         existingBuffer.onTimeout = onTimeout;
-        existingBuffer.timer = setTimeout(onTimeout, DEBOUNCE_DELAY_MS);
-        console.log(`⏳ [DE-BOUNCE RESET] Nuevo mensaje de ${displayName}. Timer de 8s reiniciado.`);
+
+        // Si NO está tecleando activamente, arrancar/reiniciar el temporizador de inactividad de 8s
+        if (!existingBuffer.isTyping) {
+            existingBuffer.timer = setTimeout(onTimeout, DEBOUNCE_DELAY_MS);
+            console.log(`⏳ [DE-BOUNCE RESET] Mensaje acumulado de ${displayName}. Timer de 8s reiniciado.`);
+        } else {
+            console.log(`💬 [DE-BOUNCE QUEUED] Mensaje acumulado de ${displayName}. (Cliente sigue tecleando, timer pausado).`);
+        }
     } else {
         const newBuffer = {
             messages: [textMessage],
+            isTyping: false,
             onTimeout: onTimeout,
             timer: null
         };
