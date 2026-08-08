@@ -9,9 +9,18 @@
 - **🤝 Derivación a Humano (Single-User Handoff):** Si un cliente pide *"hablar con un asesor"*, la IA se pausa **únicamente para ese cliente** y notifica al Admin en Self-Chat (`/auto <num>` para reactivar).
 - **🧠 De-bounce Queue (8s Timer de Inactividad Pos-Escritura):** Acumula mensajes consecutivos. Si el usuario escribe despacio (`composing`), los temporizadores se renuevan continuamente sin cortar la idea del cliente.
 - **⏱️ Auto-Expiración de Escritura (4.5s):** Si el cliente se arrepiente y borra lo que escribía, el estado expira automáticamente a los 4.5s y arranca los 8s de silencio.
-- **🛡️ Simulación Humana (Typing Delay Rate Limiter):** Simula el estado `'composing'` durante 1.5s - 4.5s según la longitud de la respuesta antes de responder, protegiendo la cuenta contra baneos.
+- **🛡️ Simulación Humana Ultra-Realista (Multi-Bubble & Jitter Rate Limiter):** 
+  - Simula tiempo de **lectura/pensamiento** inicial (1s - 3s) antes de encender el teclado.
+  - Velocidad de tecleo natural a ritmo humano (7 a 10 char/s, 100ms - 135ms por carácter) con **varianza aleatoria estocástica (jitter)** para evadir algoritmos de detección de Meta.
+  - Fragmenta respuestas largas en **varios globos de chat secuenciales (Multi-Bubble)** de ~180 caracteres con micro-pausas interactivas.
+- **🌎 Detección Automática de País e Idioma Nativo:**
+  - Cobertura completa de prefijos telefónicos de toda América (Sur, Centro, Norte y Caribe) y Europa.
+  - Inyección automática del **idioma del cliente** (Portugués, Inglés, Francés, Alemán, Italiano, Neerlandés, etc.) al prompt de la IA para ofrecer atención en su idioma nativo si es diferente al español.
+- **🚨 Alertas Silenciosas de Error al Self-Chat:** 
+  - Los errores técnicos o caídas de la IA **nunca se envían al cliente**. 
+  - En su lugar, el sistema notifica en privado al Self-Chat del Admin con el nombre del cliente, teléfono, país, mensaje original y el comando rápido `/handoff <num>` para tomar la conversación.
 - **🗂️ Base de Datos de Contactos (`contacts_db.json`) con Smart Delta Sync:**
-  - Persistencia de `savedName` (Agenda), `pushName` (Público), `phone`, `lid`, `profilePicUrl` HD, `bio` e `isBusiness`.
+  - Persistencia de `savedName` (Agenda), `pushName` (Público), `phone`, `lid`, `country`, `language`, `profilePicUrl` HD, `bio` e `isBusiness`.
   - Refresco inteligente TTL de 24 horas para foto y biografía.
   - Inserciones masivas ultra-rápidas en lote (`bulkUpsertContactsMetadata`).
 - **🚀 Re-Sincronización Automatizada (`npm run reset`):** Script `reset-session.js` para limpiar sesión y escanear un QR nuevo con descarga masiva de libreta.
