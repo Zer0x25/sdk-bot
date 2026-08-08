@@ -9,7 +9,7 @@ OPENROUTER_API_KEY = os.getenv("OPENROUTER_API_KEY")
 GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
 
 # Modelos recomendados y estables
-OPENROUTER_MODEL = "openai/gpt-oss-20b:free"
+OPENROUTER_MODEL = "openrouter/free"
 GROQ_MODEL = "llama-3.3-70b-versatile"
 
 # Perfiles de Personalidad (SOUL)

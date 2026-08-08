@@ -146,7 +146,6 @@ async function handleAdminCommand(textMessage, remoteJid, sock, metadata, rawMsg
         // -------------------------------------------------------------
 
         case '/ignorar':
-        case '/bloquear':
         case '/i':
         case '/b':
         case '/ignore':
@@ -183,7 +182,6 @@ async function handleAdminCommand(textMessage, remoteJid, sock, metadata, rawMsg
         case '/quitar':
         case '/q':
         case '/remove':
-        case '/revoke':
         case '/rem':
             if (!queryParam) {
                 adminResponse = "⚠️ *Uso:* `/quitar <numero_o_lid|*>`\n\n*Ejemplo copiable:*\n```/q +56 9 4252 3669```";

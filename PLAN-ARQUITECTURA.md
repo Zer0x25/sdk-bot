@@ -14,26 +14,25 @@ Crear una plataforma escalable donde podamos levantar `N` cantidad de bots de Wh
 ```
 SDK-Bot/
 ├── gateway/                      # Capa de Mensajería (Node.js + Baileys)
-│   ├── index.js                  # Punto de entrada ultraligero con syncFullHistory
-│   ├── reset-session.js          # Script de re-sincronización de libreta (Fresh QR)
-│   ├── config.js                 # Estado global, URLs y registros anti-bucle
+│   ├── index.js                  # Punto de entrada ultraligero con syncFullHistory y presenceSubscribe
+│   ├── reset-session.js          # Script de re-sincronización de libreta (npm run reset / Fresh QR)
+│   ├── config.js                 # Estado global, URLs y registro anti-bucle
 │   ├── services/
-│   │   ├── storageService.js     # Gestor I/O atómico (allowed, ignored, contacts_db, handoff, bulkUpsert)
-│   │   ├── metadataService.js    # Smart Delta Sync (TTL 24h), Phone/LID dual, Foto HD y Bio
-│   │   └── brainService.js       # Cliente HTTP REST + Simulación Humana (Typing Delay)
+│   │   ├── storageService.js     # Gestor I/O atómico (contacts_db, settings_db, setNumberState, bulkUpsert)
+│   │   ├── metadataService.js    # Smart Delta Sync (TTL 24h), Phone/LID dual, Foto HD, Bio y Países
+│   │   └── brainService.js       # Cliente HTTP REST + Simulación Humana (Typing Delay & Multi-Bubble)
 │   ├── handlers/
-│   │   ├── commandHandler.js     # Procesador modular de comandos admin (/search, /sync, /auto, /name, etc.)
-│   │   └── messageHandler.js     # Pipeline de mensajes, De-bounce 8s y Handoff Humano
-│   ├── allowed_numbers.json      # Whitelist de números/LIDs (gitignored)
-│   ├── ignored_numbers.json      # IgnoreList / Lista Negra (gitignored)
-│   ├── contacts_db.json          # Base de datos de contactos PRO (gitignored)
+│   │   ├── commandHandler.js     # Procesador modular de comandos admin con extracción de citas
+│   │   └── messageHandler.js     # Pipeline de mensajes, De-bounce estocástico, Handoff y Presencia RAM
+│   ├── contacts_db.json          # Base de datos centralizada de contactos y estados (gitignored)
+│   ├── settings_db.json          # Configuración global del bot (globalMode: allowed_all / ignored_all)
 │   ├── *.json.example            # Plantillas de ejemplo para despliegues limpios
 │   └── auth_info_baileys/        # Sesión y estado de WhatsApp (gitignored)
 └── brain/                        # Capa de Inteligencia (Python + FastAPI)
-    ├── main.py                   # Aplicación FastAPI modularizada
-    ├── config.py                 # API Keys, perfiles SOUL y modelos
-    ├── memory.py                 # Gestor de memoria por user_id
-    ├── providers.py              # Router multi-proveedor (OpenRouter → Groq → Gemini)
+    ├── main.py                   # Aplicación FastAPI modularizada (/chat, /reset-memory)
+    ├── config.py                 # API Keys, perfiles SOUL y modelos (OpenRouter, Groq, Gemini)
+    ├── memory.py                 # Gestor de memoria en RAM por user_id (máx 15 mensajes)
+    ├── providers.py              # Router multi-proveedor (OpenRouter 25s → Groq 25s → Gemini 40s)
     ├── .env                      # API Keys (gitignored)
     ├── requirements.txt          # Dependencias Python
     └── venv/                     # Entorno virtual
@@ -44,29 +43,39 @@ SDK-Bot/
 ## 🏗️ Componentes de Arquitectura e Innovaciones
 
 ### 1. 🤝 Derivación a Humano (Human Handoff & Pausa Quirúrgica)
-- **Detección Automática:** Cuando un cliente utiliza expresiones como `"hablar con una persona"`, `"asesor"`, `"ejecutivo"`, `"atención humana"`, el Gateway pausa la IA **exclusivamente para ese cliente**.
-- **Notificación en Self-Chat:** Alerta al Administrador en su chat privado de WhatsApp.
-- **Control por Comandos:** Comandos `/ia` (o `/a`) para reactivar la IA, `/humano` (o `/h`) para pausarla individualmente, y `/limpiar` (o `/c`) para reiniciar la memoria conversacional del cliente.
+- **Detección Automática:** Cuando un cliente utiliza expresiones como `"hablar con una persona"`, `"asesor"`, `"ejecutivo"`, `"atención humana"`, el Gateway pausa la IA **exclusivamente para ese cliente** asignando `estado: "handoff"` en `contacts_db.json`.
+- **Notificación en Self-Chat:** Alerta al Administrador en su chat privado de WhatsApp indicando datos del cliente y el comando copiable `/auto <num>`.
+- **Control por Comandos & Extracción de Citas:**
+  - Comandos `/auto` (o `/a`, `/ia`) para reactivar la IA, `/handoff` (o `/h`, `/humano`) para pausarla individualmente, y `/limpiar` (o `/c`, `/reset`) para reiniciar la memoria conversacional del cliente.
+  - **Extracción de Citas:** Al responder (citar) un mensaje en Self-Chat con un comando, el sistema extrae automáticamente el teléfono o LID del contexto.
 
 ### 2. 🧠 De-bounce Queue & Timer de Silencio Estocástico Adaptativo (Random sobre Random)
 - **Ventana de Silencio Estocástica Adaptativa:** En lugar de un temporizador fijo, el tiempo de silencio pos-escritura se calcula dinámicamente:
-  - **Adaptativo Normal (~83%):** 5s a 7s para mensajes únicos/cortos; 7.5s a 12s para múltiples mensajes o textos largos.
+  - **Adaptativo Normal (~83%):** 5s a 7s para mensajes únicos/cortos (<20 chars); 7.5s a 12s para múltiples mensajes o textos largos.
   - **Capa Ocupado / Distraído (~12%):** Posponimiento de 1 a 2 minutos (60s - 120s) imitando un retraso humano ocasional.
   - **Capa AFK / Muy Ocupado (~5%):** Posponimiento de 3 a 4 minutos (180s - 240s) imitando distracciones más prolongadas.
-- **Renovación Dinámica (`presence.update`):** Si el cliente está escribiendo (`composing`), los temporizadores se renuevan continuamente. **Protección 100% para usuarios lentos al escribir.**
-  - *Nota técnica sobre privacidad de WhatsApp:* Para que los eventos de `composing` sean emitidos por los servidores de WhatsApp, el bot **debe conectarse con `markOnlineOnConnect: true`** y hacer broadcast de su presencia como "disponible" (`sock.sendPresenceUpdate('available')`). Los clientes offline no reciben notificaciones de tipeo por políticas estrictas de privacidad.
-  - *Soporte Multi-Device (Dual JID):* El estado de presencia entra a nivel de "Teléfono" (`@s.whatsapp.net`), pero los mensajes pueden operar bajo la "Identidad Vinculada" (`@lid`). Nuestro motor en memoria RAM resuelve ambos IDs simultáneamente apoyándose en `contacts_db.json`.
-- **Expiración de Escritura (5s):** Si el usuario se arrepiente y suelta el teclado sin enviar nada, el estado de escritura expira a los 5s y se activa el conteo estocástico de silencio.
+- **Renovación Dinámica (`presence.update`):** Si el cliente está escribiendo (`composing` / `recording`), los temporizadores se renuevan continuamente sin cortar la idea del usuario.
+  - *Soporte Multi-Device (Dual JID):* El estado de presencia entra a nivel de "Teléfono" (`@s.whatsapp.net`), pero los mensajes pueden operar bajo el "LID" (`@lid`). Nuestro motor en memoria RAM (`activePresences`) resuelve ambos IDs simultáneamente apoyándose en `contacts_db.json`.
+- **Expiración de Escritura (5.0s):** Si el usuario deja de escribir sin enviar evento `paused`, el estado de escritura expira a los 5.0s (`TYPING_TTL_MS`) e inicia el temporizador de silencio adaptativo.
 
 ### 3. 🛡️ Simulación Humana & Anti-Ban Rate Limiter
-- **Typing Delay Adaptativo:** Antes de responder, el bot simula presencia `'composing'` por un tiempo dinámico (1.5s - 4.5s) en proporción a la longitud del mensaje.
+- **Lectura / Pensamiento Inicial:** Simula tiempo de lectura (800ms - 3.3s) antes de encender el estado de tecleo.
+- **Typing Delay Adaptativo (1.5s - 16s):** Simula velocidad humana de 7 a 10 caracteres por segundo (100ms - 135ms por carácter) con ruido estocástico (jitter), acotado entre 1.5s y 16.0s por globo.
+- **Multi-Bubble (Globos Secuenciales):** Divide respuestas extensas en fragmentos de **~220 caracteres máximo** con pausas inter-globo de 1.0s a 2.2s.
 
-### 4. 🗂️ Base de Datos de Contactos con Smart Delta Sync (TTL 24h)
-- **`contacts_db.json` como Caché Local:** Persistencia en disco de `savedName` (Agenda), `pushName` (Público), `phone`, `lid`, `profilePicUrl` HD, `bio`, `country` e `isBusiness`.
-- **TTL de 24 Horas:** Evita consultas redundantes de foto/bio a la red de WhatsApp si el contacto ya fue enriquecido en las últimas 24 horas.
-- **`bulkUpsertContactsMetadata`:** Procesamiento en lote masivo (< 5ms) para evitar bloqueos del socket de Baileys.
+### 4. ⚡ Router Multi-Proveedor de IA & Resiliencia (Cascada de 90s)
+- **Cascada Automatizada de Respaldo:**
+  1. **OpenRouter** (`openai/gpt-oss-20b:free`): Principal (Timeout de 25s).
+  2. **Groq** (`llama-3.3-70b-versatile`): Primer Respaldo (Timeout de 25s).
+  3. **Google Gemini** (`gemini-1.5-flash`): Segundo Respaldo (Timeout de 40s).
+- **Alertas Silenciosas de Error:** Si la IA falla o se agota el timeout de 90s, el error **nunca se muestra al cliente**. Se envía una alerta privada al Self-Chat del Admin con el diagnóstico exacto.
 
-### 5. 🚀 Re-Sincronización Automatizada para Usuarios Finales (`npm run reset`)
+### 5. 🗂️ Motor de Estados Centralizado (`contacts_db.json` & `settings_db.json`)
+- **Gestión Unificada de Estados:** Reemplaza listas externas obsoletas por el campo `estado` (`permitido`, `ignorado`, `handoff`, `neutro`) en `contacts_db.json` y `globalMode` (`allowed_all` / `ignored_all`) en `settings_db.json`.
+- **TTL de 24 Horas:** Evita consultas redundantes de foto/bio a WhatsApp si el contacto fue enriquecido en las últimas 24h.
+- **`bulkUpsertContactsMetadata`:** Inserciones en lote ultra-rápidas para no bloquear el Event Loop de Node.js.
+
+### 6. 🚀 Re-Sincronización Automatizada para Usuarios Finales (`npm run reset`)
 - Script `reset-session.js` para limpiar `auth_info_baileys` y generar un código QR nuevo que descargue la libreta completa de contactos de la cuenta.
 
 ---
@@ -76,22 +85,28 @@ SDK-Bot/
 ```
 Mensaje Entrante en Baileys (messages.upsert)
 │
-├── 🗂️ Registro en contacts_db.json (bulkUpsert / upsertContactMetadata)
+├── 🗂️ Registro/Actualización en contacts_db.json (bulkUpsert / upsertContactMetadata)
 ├── 🧠 Smart TTL Check (¿lastEnrichedAt < 24h? SÍ: Omitir Red | NO: Consultar Foto/Bio)
 │
-├── ¿Es mensaje de bot anti-loop (ID registrado)? → IGNORAR
+├── ¿Es mensaje de bot anti-loop (ID en botSentMessageIds)? → IGNORAR
 ├── ¿Es Self-Chat (isSelfChat: Admin Phone o LID)?
-│   ├── ¿Empieza con /? → EJECUTAR COMANDO ADMIN (/search, /sync, /auto, /name, /ignore, etc.)
+│   ├── ¿Empieza con /? → EJECUTAR COMANDO ADMIN (con auto-extracción de JID si cita mensaje)
 │   └── Texto normal   → ASISTENTE PERSONAL IA (brainService)
-├── ¿Es mensaje enviado por ti en chat de cliente? → IGNORAR (Bot en silencio)
-├── ¿Empieza con / (cliente)?                      → BLOQUEAR (Seguridad)
-├── ¿Bot pausado globalmente?                     → IGNORAR
-├── ¿Teléfono o LID en ignored_numbers.json?        → SÍ: IGNORAR (Prioridad Alta)
-├── ¿Coincide con allowed_numbers.json?             → NO: IGNORAR
+├── ¿Es mensaje enviado por ti en chat de cliente (fromMe)? → IGNORAR (Bot en silencio)
+├── ¿Empieza con / (cliente)?                      → BLOQUEAR (Seguridad Admin)
+├── ¿Bot pausado globalmente (IS_BOT_PAUSED)?       → IGNORAR
 │
-├── 🤝 ¿Contiene palabras clave de atención humana?  → SÍ: ACTIVAR HANDOFF + NOTIFICAR ADMIN
-├── ¿Tiene Handoff activo para este cliente?        → SÍ: IGNORAR (Esperando atención humana)
+├── 🗂️ Evaluación de Estado en contacts_db.json:
+│   ├── ¿estado == 'ignorado'?                     → IGNORAR
+│   ├── ¿estado == 'permitido'?                    → CONTINUAR (Bypassea modo global)
+│   └── ¿estado == 'neutro'?
+│       └── ¿globalMode == 'ignored_all'?          → IGNORAR (Modo Estricto Whitelist)
 │
-└── 🧠 De-bounce Queue (Esperar 8s de silencio pos-escritura)
-    └── 🤖 Simulación Humana (1.5s-4.5s 'composing') → Respuesta de la IA
+├── 🤝 ¿Contiene palabras clave de atención humana?  → SÍ: ESTADO = HANDOFF + NOTIFICAR ADMIN + AVISAR CLIENTE
+├── ¿Tiene estado == 'handoff'?                     → SÍ: IGNORAR (Esperando atención humana)
+│
+└── 🧠 De-bounce Queue (Silencio estocástico adaptativo 5s-12s / 1-2m / 3-4m)
+    ├── 📖 Simulación Lectura (800ms - 3.3s)
+    ├── ⌨️ Simulación Tipeo ('composing' 1.5s - 16s)
+    └── 🧩 Envío por Globos (Multi-Bubble ~220 chars con pausas de 1.0s - 2.2s)
 ```

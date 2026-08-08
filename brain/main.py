@@ -83,8 +83,8 @@ async def chat_endpoint(request: ChatRequest):
 def health_check():
     return {
         "status": "ok",
-        "primary": f"OpenRouter ({OPENROUTER_MODEL})",
-        "fallbacks": [GROQ_MODEL, "Gemini"]
+        "primary": f"Groq ({GROQ_MODEL})",
+        "fallbacks": [f"OpenRouter ({OPENROUTER_MODEL})", "Gemini (gemini-flash-lite-latest)"]
     }
 
 if __name__ == "__main__":
