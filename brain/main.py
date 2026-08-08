@@ -17,6 +17,7 @@ class ChatRequest(BaseModel):
     phone_number: Optional[str] = None
     lid: Optional[str] = None
     country: Optional[str] = None
+    language: Optional[str] = None
     bio: Optional[str] = None
     is_business: Optional[bool] = None
 
@@ -36,6 +37,9 @@ async def chat_endpoint(request: ChatRequest):
         
     if request.country and request.country != "Desconocido":
         user_info_parts.append(f"Ubicación/País: {request.country}")
+
+    if request.language:
+        user_info_parts.append(f"Idioma Nativo del País de Origen: {request.language} (Si el usuario te escribe en su idioma nativo o si es oportuno, puedes responder u ofrecer continuar la atención en {request.language})")
         
     if request.bio:
         user_info_parts.append(f"Estado/Bio de WhatsApp: \"{request.bio}\"")

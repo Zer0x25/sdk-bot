@@ -225,7 +225,7 @@ function setContactHandoff(keyOrMetadata, handoffState = true) {
 }
 
 function upsertContactMetadata(metadata) {
-    const { phoneNumber, lid, savedName, pushName, verifiedName, country, isContact, bio, profilePicUrl, isBusiness, lastEnrichedAt } = metadata;
+    const { phoneNumber, lid, savedName, pushName, verifiedName, country, language, isContact, bio, profilePicUrl, isBusiness, lastEnrichedAt } = metadata;
 
     if (phoneNumber && isJunkJid(phoneNumber)) return null;
     if (lid && isJunkJid(lid)) return null;
@@ -259,6 +259,7 @@ function upsertContactMetadata(metadata) {
         pushName: (pushName && pushName !== 'Desconocido' && pushName.trim()) ? pushName.trim() : null,
         verifiedName: (verifiedName && verifiedName.trim()) ? verifiedName.trim() : null,
         country: country || "Desconocido",
+        language: language || null,
         profilePicUrl: profilePicUrl || null,
         bio: bio || null,
         isBusiness: isBusiness || false,
@@ -276,6 +277,7 @@ function upsertContactMetadata(metadata) {
     if (pushName && pushName !== 'Desconocido' && pushName.trim()) record.pushName = pushName.trim();
     if (verifiedName && verifiedName.trim()) record.verifiedName = verifiedName.trim();
     if (country && country !== 'Desconocido') record.country = country;
+    if (language) record.language = language;
     if (profilePicUrl) record.profilePicUrl = profilePicUrl;
     if (bio) record.bio = bio;
     if (isBusiness !== undefined) record.isBusiness = isBusiness;

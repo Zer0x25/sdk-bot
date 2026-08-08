@@ -2,7 +2,8 @@ const { BRAIN_API_URL, state, registerSentMessage } = require('../config');
 
 async function processAIChat(textMessage, remoteJid, metadata, sock) {
     const displayName = metadata.savedName || metadata.pushName || 'Usuario';
-    console.log(`\n[ENVIANDO A IA] De: ${displayName} (${remoteJid}) | País: ${metadata.country}`);
+    const langLog = metadata.language ? ` | Idioma: ${metadata.language}` : '';
+    console.log(`\n[ENVIANDO A IA] De: ${displayName} (${remoteJid}) | País: ${metadata.country}${langLog}`);
     
     try {
         const response = await fetch(BRAIN_API_URL, {
@@ -21,6 +22,7 @@ async function processAIChat(textMessage, remoteJid, metadata, sock) {
                 phone_number: metadata.phoneNumber,
                 lid: metadata.lid,
                 country: metadata.country,
+                language: metadata.language,
                 bio: metadata.bio,
                 is_business: metadata.isBusiness
             })

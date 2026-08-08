@@ -3,21 +3,96 @@ const { getContactsDB, upsertContactMetadata } = require('./storageService');
 
 const TTL_ENRICHMENT_MS = 24 * 60 * 60 * 1000; // 24 Horas de TTL para refresco de foto/bio
 
+const COUNTRY_CODES = [
+    // --- América del Sur ---
+    { code: '591', country: 'Bolivia (+591)' },
+    { code: '56',  country: 'Chile (+56)' },
+    { code: '54',  country: 'Argentina (+54)' },
+    { code: '51',  country: 'Perú (+51)' },
+    { code: '57',  country: 'Colombia (+57)' },
+    { code: '55',  country: 'Brasil (+55)', language: 'Portugués (Português)' },
+    { code: '593', country: 'Ecuador (+593)' },
+    { code: '58',  country: 'Venezuela (+58)' },
+    { code: '595', country: 'Paraguay (+595)' },
+    { code: '598', country: 'Uruguay (+598)' },
+    { code: '592', country: 'Guyana (+592)', language: 'Inglés (English)' },
+    { code: '597', country: 'Surinam (+597)', language: 'Neerlandés (Nederlands)' },
+    { code: '594', country: 'Guayana Francesa (+594)', language: 'Francés (Français)' },
+    { code: '500', country: 'Islas Malvinas (+500)', language: 'Inglés (English)' },
+
+    // --- América Central y Caribe ---
+    { code: '502', country: 'Guatemala (+502)' },
+    { code: '503', country: 'El Salvador (+503)' },
+    { code: '504', country: 'Honduras (+504)' },
+    { code: '505', country: 'Nicaragua (+505)' },
+    { code: '506', country: 'Costa Rica (+506)' },
+    { code: '507', country: 'Panamá (+507)' },
+    { code: '501', country: 'Belice (+501)', language: 'Inglés (English)' },
+    { code: '53',  country: 'Cuba (+53)' },
+    { code: '509', country: 'Haití (+509)', language: 'Francés / Criollo (Français / Kreyòl)' },
+    { code: '297', country: 'Aruba (+297)', language: 'Papiamento / Neerlandés' },
+    { code: '599', country: 'Curazao / Caribe Neerlandés (+599)', language: 'Papiamento / Neerlandés' },
+    { code: '590', country: 'Guadalupe / San Martín (+590)', language: 'Francés (Français)' },
+    { code: '596', country: 'Martinica (+596)', language: 'Francés (Français)' },
+
+    // --- América del Norte ---
+    { code: '52',  country: 'México (+52)' },
+    { code: '1',   country: 'EE.UU. / Canadá / Caribe (+1)', language: 'Inglés / Francés (English / Français)' },
+
+    // --- Europa (Países no hispanohablantes) ---
+    { code: '34',  country: 'España (+34)' },
+    { code: '33',  country: 'Francia (+33)', language: 'Francés (Français)' },
+    { code: '44',  country: 'Reino Unido (+44)', language: 'Inglés (English)' },
+    { code: '49',  country: 'Alemania (+49)', language: 'Alemán (Deutsch)' },
+    { code: '39',  country: 'Italia (+39)', language: 'Italiano' },
+    { code: '351', country: 'Portugal (+351)', language: 'Portugués (Português)' },
+    { code: '41',  country: 'Suiza (+41)', language: 'Alemán / Francés / Italiano' },
+    { code: '31',  country: 'Países Bajos (+31)', language: 'Neerlandés (Nederlands)' },
+    { code: '32',  country: 'Bélgica (+32)', language: 'Neerlandés / Francés' },
+    { code: '43',  country: 'Austria (+43)', language: 'Alemán (Deutsch)' },
+    { code: '46',  country: 'Suecia (+46)', language: 'Sueco (Svenska)' },
+    { code: '47',  country: 'Noruega (+47)', language: 'Noruego (Norsk)' },
+    { code: '45',  country: 'Dinamarca (+45)', language: 'Danés (Dansk)' },
+    { code: '358', country: 'Finlandia (+358)', language: 'Finés / Sueco (Suomi)' },
+    { code: '353', country: 'Irlanda (+353)', language: 'Inglés (English)' },
+    { code: '48',  country: 'Polonia (+48)', language: 'Polaco (Polski)' },
+    { code: '420', country: 'República Checa (+420)', language: 'Checo (Čeština)' },
+    { code: '421', country: 'Eslovaquia (+421)', language: 'Eslovaco (Slovenčina)' },
+    { code: '36',  country: 'Hungría (+36)', language: 'Húngaro (Magyar)' },
+    { code: '30',  country: 'Grecia (+30)', language: 'Griego (Ελληνικά)' },
+    { code: '40',  country: 'Rumania (+40)', language: 'Rumano (Română)' },
+    { code: '380', country: 'Ucrania (+380)', language: 'Ucraniano (Українська)' },
+    { code: '385', country: 'Croacia (+385)', language: 'Croata (Hrvatski)' },
+    { code: '386', country: 'Eslovenia (+386)', language: 'Esloveno (Slovenščina)' },
+    { code: '370', country: 'Lituania (+370)', language: 'Lituano (Lietuvių)' },
+    { code: '371', country: 'Letonia (+371)', language: 'Letón (Latviešu)' },
+    { code: '372', country: 'Estonia (+372)', language: 'Estonio (Eesti)' },
+    { code: '354', country: 'Islandia (+354)', language: 'Islandés (Íslenska)' },
+    { code: '352', country: 'Luxemburgo (+352)', language: 'Luxemburgués / Francés / Alemán' },
+    { code: '376', country: 'Andorra (+376)' },
+    { code: '377', country: 'Mónaco (+377)', language: 'Francés (Français)' },
+    { code: '423', country: 'Liechtenstein (+423)', language: 'Alemán (Deutsch)' },
+    { code: '378', country: 'San Marino (+378)', language: 'Italiano' },
+    { code: '356', country: 'Malta (+356)', language: 'Maltés / Inglés' },
+    { code: '357', country: 'Chipre (+357)', language: 'Griego / Turco' }
+];
+
+// Ordenar por longitud de código descendente para resolver prefijos de 3 dígitos antes que los de 2 o 1 dígito
+const SORTED_COUNTRY_CODES = [...COUNTRY_CODES].sort((a, b) => b.code.length - a.code.length);
+
 function getCountryFromPhone(phone) {
     if (!phone) return "Desconocido";
     const clean = phone.replace(/[^0-9]/g, '');
-    if (clean.startsWith('56')) return "Chile (+56)";
-    if (clean.startsWith('52')) return "México (+52)";
-    if (clean.startsWith('54')) return "Argentina (+54)";
-    if (clean.startsWith('57')) return "Colombia (+57)";
-    if (clean.startsWith('51')) return "Perú (+51)";
-    if (clean.startsWith('34')) return "España (+34)";
-    if (clean.startsWith('1')) return "EE.UU. / Canadá (+1)";
-    if (clean.startsWith('55')) return "Brasil (+55)";
-    if (clean.startsWith('593')) return "Ecuador (+593)";
-    if (clean.startsWith('58')) return "Venezuela (+58)";
-    if (clean.startsWith('502')) return "Guatemala (+502)";
+    const match = SORTED_COUNTRY_CODES.find(c => clean.startsWith(c.code));
+    if (match) return match.country;
     return `+${clean.substring(0, 3)}`;
+}
+
+function getLanguageFromPhone(phone) {
+    if (!phone) return null;
+    const clean = phone.replace(/[^0-9]/g, '');
+    const match = SORTED_COUNTRY_CODES.find(c => clean.startsWith(c.code));
+    return (match && match.language) ? match.language : null;
 }
 
 function extractUserMetadata(msg) {
@@ -58,6 +133,7 @@ function extractUserMetadata(msg) {
     });
 
     const country = phoneNumber ? getCountryFromPhone(phoneNumber) : "Desconocido";
+    const language = phoneNumber ? getLanguageFromPhone(phoneNumber) : null;
 
     return {
         remoteJid,
@@ -67,6 +143,7 @@ function extractUserMetadata(msg) {
         savedName,
         pushName,
         country,
+        language,
         bio,
         profilePicUrl,
         isBusiness,
@@ -137,6 +214,7 @@ function isSelfChat(remoteJid, isFromMe) {
 
 module.exports = {
     getCountryFromPhone,
+    getLanguageFromPhone,
     extractUserMetadata,
     enrichContactExtraData,
     isSelfChat
