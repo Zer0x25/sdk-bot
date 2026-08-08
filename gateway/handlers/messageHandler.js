@@ -138,9 +138,9 @@ async function handleIncomingMessage(m, sock) {
     const { remoteJid, phoneNumber, lid, savedName, pushName, candidateIds } = metadata;
 
     // 🔔 SUSCRIBIR EN TIEMPO REAL A EVENTOS DE PRESENCIA (composing/paused) DE ESTE CLIENTE AL INICIAR
-    sock.presenceSubscribe(remoteJid).catch(() => {});
-    if (phoneNumber) sock.presenceSubscribe(`${phoneNumber}@s.whatsapp.net`).catch(() => {});
-    if (lid) sock.presenceSubscribe(`${lid}@lid`).catch(() => {});
+    sock.presenceSubscribe(remoteJid).catch(e => console.error(`⚠️ Error al suscribir presencia de ${remoteJid}:`, e.message));
+    if (phoneNumber) sock.presenceSubscribe(`${phoneNumber}@s.whatsapp.net`).catch(e => console.error(`⚠️ Error al suscribir presencia (Phone) de ${phoneNumber}:`, e.message));
+    if (lid) sock.presenceSubscribe(`${lid}@lid`).catch(e => console.error(`⚠️ Error al suscribir presencia (LID) de ${lid}:`, e.message));
 
     // 🗂️ GUARDAR / ACTUALIZAR CONTACTO EN BASE DE DATOS
     upsertContactMetadata(metadata);

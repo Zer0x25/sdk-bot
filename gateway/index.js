@@ -21,7 +21,7 @@ async function connectToWhatsApp () {
         auth: authState,
         logger: pino({ level: 'silent' }),
         syncFullHistory: true,
-        markOnlineOnConnect: false
+        markOnlineOnConnect: true
     });
 
     // Capturar eventos de sincronización de contactos de WhatsApp (Agenda del Teléfono)
@@ -88,6 +88,9 @@ async function connectToWhatsApp () {
             }
             console.log(`\n✅ ¡Conectado a WhatsApp con éxito!`);
             console.log(`👑 ADMIN DETECTADO -> Teléfono: ${state.ADMIN_PHONE} | LID: ${state.ADMIN_LID}`);
+            
+            // 📡 Anunciar al servidor que el bot está en línea para poder recibir eventos de "composing" de otros.
+            sock.sendPresenceUpdate('available').catch(e => console.error('⚠️ Error enviando estado de presencia:', e));
         }
     });
 
