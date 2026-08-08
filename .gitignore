@@ -1,6 +1,11 @@
 # Dependencies
 node_modules/
 
+# Python cache & venv
+__pycache__/
+*.pyc
+brain/venv/
+
 # Baileys auth & session files (SENSITIVE)
 gateway/auth_info_baileys/
 

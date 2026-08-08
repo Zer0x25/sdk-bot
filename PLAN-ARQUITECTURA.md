@@ -1,4 +1,4 @@
-# Plan de Arquitectura: SDK-Bot (100% Custom)
+# Plan de Arquitectura: SDK-Bot (100% Custom & Modular)
 
 Este documento define las bases para construir nuestro propio sistema Multi-Bot de WhatsApp desde cero, dejando atrás las limitaciones y colisiones de arquitecturas pre-empaquetadas.
 
@@ -7,108 +7,82 @@ Crear una plataforma escalable donde podamos levantar `N` cantidad de bots de Wh
 
 ---
 
-## ✅ Estado Actual del Proyecto (Implementado)
+## ✅ Estado Actual del Proyecto (Refactorizado & Modular)
 
 ### 📁 Estructura de Archivos
+
 ```
 SDK-Bot/
-├── gateway/
-│   ├── index.js                  # Gateway WhatsApp (Baileys) - Capa de Mensajería
-│   ├── allowed_numbers.json      # Lista de números/LIDs permitidos (editable en caliente)
-│   ├── package.json              # Dependencias Node.js
-│   └── auth_info_baileys/        # Sesión de WhatsApp (auto-generada)
-└── brain/
-    ├── main.py                   # API REST del Cerebro IA (FastAPI)
-    ├── .env                      # API Keys: Groq, OpenRouter, Gemini
+├── gateway/                      # Capa de Mensajería (Node.js + Baileys)
+│   ├── index.js                  # Punto de entrada ultraligero (~45 líneas)
+│   ├── config.js                 # Estado global, URLs y rutas
+│   ├── services/
+│   │   ├── storageService.js     # Gestor I/O de JSONs (allowed, ignored, contacts_db)
+│   │   ├── metadataService.js    # Extracción dual Phone/LID, Países, Foto de perfil HD y Bio
+│   │   └── brainService.js       # Cliente HTTP REST para el Cerebro IA
+│   ├── handlers/
+│   │   ├── commandHandler.js     # Procesador modular de comandos admin en Self-Chat
+│   │   └── messageHandler.js     # Pipeline de filtrado y mensajería
+│   ├── allowed_numbers.json      # Whitelist (Hot-Reload)
+│   ├── ignored_numbers.json      # IgnoreList / Lista Negra (Hot-Reload)
+│   ├── contacts_db.json          # Base de datos de contactos PRO
+│   └── auth_info_baileys/        # Sesión WhatsApp (auto-generada)
+└── brain/                        # Capa de Inteligencia (Python + FastAPI)
+    ├── main.py                   # Aplicación FastAPI modularizada
+    ├── config.py                 # API Keys, perfiles SOUL y modelos
+    ├── memory.py                 # Gestor de memoria por user_id
+    ├── providers.py              # Router multi-proveedor (OpenRouter → Groq → Gemini)
+    ├── .env                      # API Keys (gitignored)
     ├── requirements.txt          # Dependencias Python
-    └── venv/                     # Entorno virtual Python
+    └── venv/                     # Entorno virtual
 ```
 
 ---
 
-## 🏗️ Arquitectura Implementada (Dos Capas)
+## 🏗️ Arquitectura Implementada (Dos Capas Modulares)
 
 ### 1. Capa de Mensajería (WhatsApp Gateway)
-**Tecnología:** Node.js + Baileys | **Archivo:** `gateway/index.js`
+**Tecnología:** Node.js + Baileys
 
-**Funcionalidades implementadas:**
-*   **Conexión WhatsApp:** Autenticación por QR y reconexión automática ante caídas de red (`shouldReconnect`).
-*   **Simulación Humana:** Estado `composing` (escribiendo...) + pausa artificial de 1 segundo antes de responder.
-*   **Filtro de Seguridad / Whitelist (Hot-Reload):** Lista de permitidos en `allowed_numbers.json`. Soporta números de teléfono tradicionales y LIDs (nuevo sistema de privacidad de WhatsApp). Se recarga en tiempo real sin reiniciar el servidor. Acepta `*` para modo público.
-*   **Panel de Control Remoto (Self-Chat Admin Commands):**
-    *   Detección automática del `ADMIN_PHONE` y `ADMIN_LID` desde `sock.user` al conectar.
-    *   Comandos de administración exclusivos del **Self-Chat** (Chat "Mensaje a ti mismo"):
-        *   `/status` / `/help` — Panel de estado del bot.
-        *   `/pause` / `/resume` — Activar/desactivar el auto-respondedor.
-        *   `/allow <num_o_lid>` — Agregar usuario a la lista de permitidos.
-        *   `/remove <num_o_lid>` — Remover usuario de la lista.
-        *   `/list` — Ver todos los permitidos.
-        *   `/profile <default|lucia|mateo>` — Cambiar personalidad de la IA en caliente.
-    *   Los textos normales en Self-Chat activan el modo **Asistente Personal IA**.
-*   **Aislamiento de Conversaciones del Admin:** Si el administrador responde manualmente en el chat de un cliente desde su teléfono, el bot se inhabilita al 100% para no interferir. Los clientes no pueden ejecutar comandos de administración.
-*   **Registro Anti-Bucle (Anti-Loop Registry):** Rastreo por `msg.key.id` de los mensajes enviados por el bot, impidiendo auto-respuestas o bucles infinitos.
+**Componentes:**
+*   **Punto de Entrada (`index.js`):** Gestiona el ciclo de vida del socket de Baileys, eventos de reconexión y sincronización de libreta.
+*   **Servicio de Almacenamiento (`storageService.js`):** Métodos atómicos para persistir `allowed_numbers`, `ignored_numbers` y `contacts_db`.
+*   **Servicio de Metadatos (`metadataService.js`):** Extracción dual Phone/LID, resolución de agenda (`savedName` vs `pushName`), fotos de perfil y biografía.
+*   **Servicio Cerebro (`brainService.js`):** Comunicación asíncrona HTTP POST `/chat` con estado `composing` y simulación humana.
+*   **Manejador de Comandos (`commandHandler.js`):** Panel admin completo en Self-Chat (`/search`, `/contacts`, `/export`, `/ignore`, `/unignore`, `/allow`, `/remove`, `/status`, `/info`, `/profile`).
+*   **Pipeline de Mensajes (`messageHandler.js`):** Filtrado ordenado: Anti-loop → Self-Chat → Ignorado forzado en chat cliente → Bloqueo de comandos externos → Pausa global → IgnoreList → Whitelist → Cerebro.
 
 ---
 
 ### 2. Capa de Inteligencia (Cerebro IA)
-**Tecnología:** Python + FastAPI | **Archivo:** `brain/main.py`
+**Tecnología:** Python + FastAPI
 
-**Funcionalidades implementadas:**
-*   **API REST:** Endpoint `POST /chat` recibe `user_id`, `message` y `bot_profile`.
-*   **Router Multi-Proveedor con Fallback Automático (3 niveles):**
+**Componentes:**
+*   **Aplicación Principal (`main.py`):** Endpoints REST con validación Pydantic (`ChatRequest`).
+*   **Router Multi-Proveedor (`providers.py`):**
     1.  **Primario:** OpenRouter → `openai/gpt-oss-20b:free`
     2.  **Fallback 1:** Groq → `llama-3.3-70b-versatile`
     3.  **Fallback 2:** Google Gemini → `gemini-flash-latest`
-*   **API Keys configuradas:** Groq (`GROQ_API_KEY`), OpenRouter (`OPENROUTER_API_KEY`), Gemini (`GEMINI_API_KEY`) en archivo `.env`.
-*   **Perfiles de Personalidad (SOUL):** Diccionario de `system_prompts` por perfil (`default`, `lucia`, `mateo`). Perfil activo gestionado remotamente por el admin desde WhatsApp.
-*   **Memoria de Conversación (Short-Term):** Historial por `user_id` en diccionario en RAM. Se pierde al reiniciar el servidor (versión v1 sin persistencia).
+*   **Gestor de Memoria (`memory.py`):** Persistencia en RAM del historial por `user_id`.
 
 ---
 
-## 🔒 Flujo de Seguridad de Mensajes
+## 🔒 Flujo de Seguridad y Pipeline de Mensajes
 
 ```
-Mensaje Entrante
+Mensaje Entrante en Baileys
+│
+├── 🗂️ Actualización en contacts_db.json (savedName, pushName, Teléfono, LID, Bio, isContact)
+├── 🔄 Enriquecimiento Asíncrono (Foto de perfil HD & Biografía)
 │
 ├── ¿Es un mensaje anti-loop (ID del bot)?  → IGNORAR
 ├── ¿Es Self-Chat (isFromMe + JID del Admin)?
-│   ├── ¿Empieza con /? → EJECUTAR COMANDO ADMIN (solo en Self-Chat)
-│   └── Texto normal   → ASISTENTE PERSONAL IA
+│   ├── ¿Empieza con /? → EJECUTAR COMANDO ADMIN (commandHandler)
+│   └── Texto normal   → ASISTENTE PERSONAL IA (brainService)
 ├── ¿isFromMe en chat de cliente?           → IGNORAR (no interferir)
 ├── ¿Empieza con / (tercero)?              → BLOQUEAR (seguridad)
 ├── ¿Bot pausado?                           → IGNORAR
-├── ¿Número en allowed_numbers.json?        → SI: CEREBRO IA | NO: IGNORAR
-└── Respuesta de la IA al cliente
+├── ¿Teléfono o LID en ignored_numbers.json?→ SÍ: IGNORAR (Prioridad Alta)
+├── ¿Coincide con allowed_numbers.json?     → SÍ: CEREBRO IA | NO: IGNORAR
+└── Respuesta de la IA al cliente con Contexto de Agenda
 ```
-
----
-
-## 🚀 Hoja de Ruta Original (Estado)
-
-1.  ✅ **Prueba de Concepto (Gateway):** Script Baileys funcional con QR y reconexión.
-2.  ✅ **Prueba de Concepto (Cerebro):** API FastAPI con Gemini/Groq/OpenRouter.
-3.  ✅ **El Puente:** Gateway conectado al Cerebro vía HTTP REST.
-4.  ⏳ **Sistema de Memoria Persistente:** SQLite para que la memoria sobreviva reinicios.
-5.  ✅ **Tiempos Humanos:** Estado `composing` + pausa artificial implementados.
-
----
-
-## 🔮 Futuras Mejoras y Arquitectura Avanzada
-
-### 🧠 1. Arnés de Memoria Avanzado (Inspirado en OpenClaw / Hermes)
-*   **Compresión de Contexto (Short-Term Compaction):** Resumir historiales largos automáticamente mediante un LLM secundario para no saturar la ventana de tokens.
-*   **Extractor de Hechos (Fact Extraction & Long-Term Memory):** Detectar y almacenar datos clave del usuario (nombre, preferencias, historial) en SQLite / Base de Datos Vectorial por `user_id`.
-*   **Memoria Persistente (SQLite):** Reemplazar el diccionario en RAM por una BD ligera para que la memoria sobreviva reinicios del servidor.
-
-### 🌐 2. Módulo de Navegación y Búsqueda Web en Tiempo Real
-*   **Detección Automática de Intención:** Detectar preguntas sobre información actual/fresca (noticias, precios, eventos).
-*   **Extracción sin API Key:** Usar `duckduckgo_search` (o Tavily API) para extraer los 3 mejores resultados truncados a ~500 caracteres.
-*   **Inyección RAG en el Prompt:** Pasar los resultados como contexto temporal al LLM antes de generar la respuesta.
-
-### 📱 3. Despliegue en Dispositivos Móviles (VPS de Bolsillo / Termux)
-*   Ejecución 24/7 en Android mediante Termux + `termux-wake-lock` + `pm2`.
-*   Vinculación sin QR mediante **Pairing Code** de 8 dígitos de Baileys.
-
-### 🤖 4. Multi-Bot (N Sesiones Simultáneas)
-*   Múltiples instancias de Gateway (cada una con su carpeta de sesión independiente).
-*   El Cerebro gestiona perfiles y memorias aisladas por `user_id` + `bot_id`.

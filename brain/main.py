@@ -1,123 +1,70 @@
-import os
 from fastapi import FastAPI
 from pydantic import BaseModel
-import google.generativeai as genai
-from openai import OpenAI
-from dotenv import load_dotenv
+from typing import Optional
+from config import PROFILES, OPENROUTER_MODEL, GROQ_MODEL
+from memory import get_history, update_history
+from providers import generate_ai_response, safe_log
 
-load_dotenv()
-
-# 1. Cliente Groq (Vía OpenAI client format)
-groq_key = os.getenv("GROQ_API_KEY")
-groq_client = None
-if groq_key:
-    groq_client = OpenAI(
-        base_url="https://api.groq.com/openai/v1",
-        api_key=groq_key,
-    )
-
-# 2. Cliente OpenRouter
-openrouter_key = os.getenv("OPENROUTER_API_KEY")
-openrouter_client = None
-if openrouter_key:
-    openrouter_client = OpenAI(
-        base_url="https://openrouter.ai/api/v1",
-        api_key=openrouter_key,
-    )
-
-# 3. Cliente Gemini
-gemini_key = os.getenv("GEMINI_API_KEY")
-if gemini_key:
-    genai.configure(api_key=gemini_key)
-
-app = FastAPI(title="SDK-Bot Brain API (Stable Free Router)")
+app = FastAPI(title="SDK-Bot Brain API (Modular Multi-Provider Router)")
 
 class ChatRequest(BaseModel):
     user_id: str
     message: str
     bot_profile: str = "default"
-
-PROFILES = {
-    "default": "Eres un asistente virtual amigable para WhatsApp. Respondes de manera concisa y clara.",
-    "lucia": "Eres Lucía, una asistente de ventas sarcástica y directa. Nunca usas emojis felices.",
-    "mateo": "Eres Mateo, un soporte técnico muy formal y paciente."
-}
-
-memory_db = {}
-
-# Modelos recomendados y estables
-OPENROUTER_MODEL = "openai/gpt-oss-20b:free"
-GROQ_MODEL = "llama-3.3-70b-versatile"
-
-def safe_log(msg: str):
-    try:
-        print(msg, flush=True)
-    except Exception:
-        pass
+    saved_name: Optional[str] = None
+    push_name: Optional[str] = None
+    user_name: Optional[str] = None
+    phone_number: Optional[str] = None
+    lid: Optional[str] = None
+    country: Optional[str] = None
+    bio: Optional[str] = None
+    is_business: Optional[bool] = None
 
 @app.post("/chat")
 async def chat_endpoint(request: ChatRequest):
-    system_instruction = PROFILES.get(request.bot_profile, PROFILES["default"])
+    base_instruction = PROFILES.get(request.bot_profile, PROFILES["default"])
     
-    if request.user_id not in memory_db:
-        memory_db[request.user_id] = []
+    # Enriquecer el prompt con metadatos del interlocutor
+    user_info_parts = []
+    
+    if request.saved_name:
+        user_info_parts.append(f"Nombre en Agenda del Admin: \"{request.saved_name}\"")
+    if request.push_name and request.push_name != request.saved_name:
+        user_info_parts.append(f"Nombre Público WhatsApp: \"{request.push_name}\"")
+    elif not request.saved_name and request.user_name and request.user_name != "Desconocido":
+        user_info_parts.append(f"Nombre: \"{request.user_name}\"")
         
-    respuesta_texto = None
-    provider_used = f"OpenRouter ({OPENROUTER_MODEL})"
+    if request.country and request.country != "Desconocido":
+        user_info_parts.append(f"Ubicación/País: {request.country}")
+        
+    if request.bio:
+        user_info_parts.append(f"Estado/Bio de WhatsApp: \"{request.bio}\"")
+        
+    if request.is_business:
+        user_info_parts.append("Tipo de Cuenta: Empresa/Business")
 
-    # 🟢 INTENTO 1: OpenRouter (gpt-oss-20b:free) - PRINCIPAL
+    if user_info_parts:
+        system_instruction = f"{base_instruction}\n[Contexto de la Persona en WhatsApp: {', '.join(user_info_parts)}]"
+    else:
+        system_instruction = base_instruction
+
+    history = get_history(request.user_id)
+    display_log_name = request.saved_name or request.push_name or request.user_name or 'Desconocido'
+    safe_log(f"\n📩 [CEREBRO RECIBE] De: {display_log_name} ({request.user_id}) | Tel: {request.phone_number or 'N/A'} | LID: {request.lid or 'N/A'} | Bio: {request.bio or 'N/A'}")
+
     try:
-        if not openrouter_client:
-            raise Exception("No hay API Key de OpenRouter configurada")
-
-        messages = [{"role": "system", "content": system_instruction}]
-        messages.append({"role": "user", "content": request.message})
-
-        completion = openrouter_client.chat.completions.create(
-            model=OPENROUTER_MODEL,
-            messages=messages
+        response_text, provider_used, updated_history = await generate_ai_response(
+            system_instruction=system_instruction,
+            message=request.message,
+            memory_history=history,
+            user_id=request.user_id
         )
-        respuesta_texto = completion.choices[0].message.content
-
-    except Exception as openrouter_err:
-        safe_log(f"\nOpenRouter saturado/fallo ({openrouter_err}). Cambiando a Fallback 1 (Groq - Llama 3.3)...")
-        
-        # 🟡 INTENTO 2: Groq (Llama 3.3 70B Versatile) - SEGUNDO RESPALDO
-        try:
-            if not groq_client:
-                raise Exception("No hay API Key de Groq configurada")
-
-            messages = [{"role": "system", "content": system_instruction}]
-            messages.append({"role": "user", "content": request.message})
-
-            completion = groq_client.chat.completions.create(
-                model=GROQ_MODEL,
-                messages=messages
-            )
-            respuesta_texto = completion.choices[0].message.content
-            provider_used = f"Groq ({GROQ_MODEL})"
-            
-        except Exception as groq_err:
-            safe_log(f"\nGroq fallo ({groq_err}). Cambiando a Fallback 2 (Gemini)...")
-            
-            # 🔴 INTENTO 3: Google Gemini - TERCER RESPALDO
-            try:
-                model = genai.GenerativeModel(
-                    model_name="gemini-flash-latest",
-                    system_instruction=system_instruction
-                )
-                chat = model.start_chat(history=memory_db[request.user_id])
-                response = chat.send_message(request.message)
-                respuesta_texto = response.text
-                memory_db[request.user_id] = chat.history
-                provider_used = "Google Gemini"
-            except Exception as gemini_err:
-                return {"error": f"Todos los proveedores fallaron. OpenRouter: {openrouter_err} | Groq: {groq_err} | Gemini: {gemini_err}"}
-
-    # Imprimir log de respuesta en consola
-    safe_log(f"\n[{provider_used} RESPONDE A {request.user_id}]: {respuesta_texto}\n")
-
-    return {"response": respuesta_texto, "provider": provider_used}
+        update_history(request.user_id, updated_history)
+        safe_log(f"🤖 [{provider_used} RESPONDE A {display_log_name}]: {response_text}\n")
+        return {"response": response_text, "provider": provider_used}
+    except Exception as err:
+        safe_log(f"❌ Error en router de proveedores: {err}")
+        return {"error": str(err)}
 
 @app.get("/")
 def health_check():

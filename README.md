@@ -1,6 +1,6 @@
 # 🤖 SDK-Bot
 
-**Plataforma Multi-Bot de WhatsApp 100% Custom** — Gateway de mensajería + Cerebro IA con router multi-proveedor y fallback automático.
+**Plataforma Multi-Bot de WhatsApp 100% Custom & Modular** — Gateway de mensajería + Cerebro IA con router multi-proveedor, fallback automático, IgnoreList, Base de Datos de Contactos y Suite de Metadatos PRO.
 
 ---
 
@@ -8,99 +8,48 @@
 
 SDK-Bot es un sistema modular para crear bots de WhatsApp inteligentes con:
 
-- **Conexión WhatsApp** vía Baileys (QR + reconexión automática)
-- **Cerebro IA** con FastAPI y router multi-proveedor (OpenRouter → Groq → Gemini)
-- **Panel de control remoto** desde el Self-Chat de WhatsApp
-- **Whitelist hot-reload** sin reiniciar el servidor
-- **Perfiles de personalidad (SOUL)** intercambiables en caliente
-- **Simulación humana** (estado "escribiendo..." + pausa artificial)
+- **Estructura Modular & Desacoplada** en capas limpias de configuración, servicios y manejadores.
+- **Conexión WhatsApp** vía Baileys (QR + reconexión automática).
+- **Captura Máxima de Metadatos (PRO Suite):**
+  - **`savedName`**: Nombre guardado en tu agenda del teléfono (ej: *"Mamá"*, *"Tío Juan"*).
+  - **`pushName`**: Nombre público configurado por el usuario en WhatsApp.
+  - **`bio` / `status`**: Biografía o estado de WhatsApp.
+  - **`profilePicUrl`**: Foto de perfil HD.
+  - **`isBusiness`**: Detección de cuentas de empresa.
+- **Base de Datos de Contactos Automática (`contacts_db.json`)** con mapeo Teléfono ↔ LID ↔ Agenda ↔ Público.
+- **Filtro Escalonado (IgnoreList > Whitelist)** para excluir contactos personales o familiares en producción.
+- **Cerebro IA** con FastAPI, contexto enriquecido y router multi-proveedor (OpenRouter → Groq → Gemini).
+- **Panel de control remoto** desde el Self-Chat de WhatsApp (búsqueda, listas, control de perfil).
 
 ---
 
-## 📁 Estructura del Proyecto
+## 📁 Estructura del Proyecto Refactorizado
 
 ```
 SDK-Bot/
 ├── gateway/                      # Capa de Mensajería (Node.js + Baileys)
-│   ├── index.js                  # Gateway WhatsApp
-│   ├── allowed_numbers.json      # Whitelist de números/LIDs
-│   ├── package.json              # Dependencias Node.js
+│   ├── index.js                  # Punto de entrada ultraligero (~45 líneas)
+│   ├── config.js                 # Estado global, URLs y rutas
+│   ├── services/
+│   │   ├── storageService.js     # Gestor I/O de JSONs (allowed, ignored, contacts_db)
+│   │   ├── metadataService.js    # Extracción dual Phone/LID, Países, Foto de perfil HD y Bio
+│   │   └── brainService.js       # Cliente HTTP REST para el Cerebro IA
+│   ├── handlers/
+│   │   ├── commandHandler.js     # Procesador modular de comandos admin en Self-Chat
+│   │   └── messageHandler.js     # Pipeline de filtrado y mensajería
+│   ├── allowed_numbers.json      # Whitelist de números/LIDs (Hot-Reload)
+│   ├── ignored_numbers.json      # IgnoreList / Lista Negra (Hot-Reload)
+│   ├── contacts_db.json          # Base de datos de contactos mapeados con metadatos completos
 │   └── auth_info_baileys/        # Sesión WhatsApp (auto-generada, gitignored)
 ├── brain/                        # Capa de Inteligencia (Python + FastAPI)
-│   ├── main.py                   # API REST del Cerebro IA
+│   ├── main.py                   # Aplicación FastAPI modularizada
+│   ├── config.py                 # API Keys, perfiles SOUL y modelos
+│   ├── memory.py                 # Gestor de memoria por user_id
+│   ├── providers.py              # Router multi-proveedor (OpenRouter → Groq → Gemini)
 │   ├── .env                      # API Keys (gitignored)
-│   ├── requirements.txt          # Dependencias Python
-│   └── venv/                     # Entorno virtual
+│   └── requirements.txt          # Dependencias Python
 ├── PLAN-ARQUITECTURA.md          # Documentación técnica completa
 └── .gitignore
-```
-
----
-
-## 🏗️ Arquitectura
-
-```
-┌─────────────────────┐       HTTP POST /chat       ┌─────────────────────┐
-│   WhatsApp Gateway  │ ──────────────────────────▶  │    Cerebro IA       │
-│   (Node.js/Baileys) │ ◀──────────────────────────  │  (Python/FastAPI)   │
-│                     │        JSON Response         │                     │
-│  • Filtros          │                              │  • Multi-Proveedor  │
-│  • Anti-loop        │                              │  • Fallback Auto    │
-│  • Admin Commands   │                              │  • Perfiles SOUL    │
-│  • Whitelist        │                              │  • Memoria x user   │
-└─────────────────────┘                              └─────────────────────┘
-```
-
-### Router Multi-Proveedor (Fallback Automático)
-
-| Prioridad | Proveedor   | Modelo                        |
-|-----------|-------------|-------------------------------|
-| 🥇 Primario | OpenRouter  | `openai/gpt-oss-20b:free`    |
-| 🥈 Fallback 1 | Groq       | `llama-3.3-70b-versatile`    |
-| 🥉 Fallback 2 | Gemini     | `gemini-flash-latest`        |
-
-Si un proveedor responde con `429 (Rate Limit)` o falla, el sistema conmuta automáticamente al siguiente sin afectar la experiencia del usuario.
-
----
-
-## ⚡ Instalación
-
-### Requisitos
-- **Node.js** ≥ 18
-- **Python** ≥ 3.10
-
-### 1. Gateway (WhatsApp)
-
-```bash
-cd gateway
-npm install
-node index.js
-```
-
-> Escanea el código QR con tu WhatsApp al primer inicio.
-
-### 2. Cerebro IA
-
-```bash
-cd brain
-python -m venv venv
-source venv/bin/activate    # Linux/Mac
-# venv\Scripts\activate     # Windows
-pip install -r requirements.txt
-```
-
-Crea el archivo `.env`:
-
-```env
-GROQ_API_KEY=tu_key_aqui
-OPENROUTER_API_KEY=tu_key_aqui
-GEMINI_API_KEY=tu_key_aqui
-```
-
-Inicia el servidor:
-
-```bash
-uvicorn main:app --host 0.0.0.0 --port 3001
 ```
 
 ---
@@ -111,41 +60,22 @@ Envía estos comandos desde tu propio chat ("Mensaje a ti mismo"):
 
 | Comando | Descripción |
 |---------|-------------|
-| `/status` | Panel de estado del bot |
+| `/search <query>` | Buscar un contacto por Nombre de Agenda, Nombre Público, Teléfono o LID |
+| `/contacts` | Ver resumen de contactos registrados (Agenda vs Anónimos) |
+| `/export` | Exportar la libreta de contactos mapeados |
+| `/status` | Panel de estado del bot y conteo de listas |
 | `/help` | Lista de comandos disponibles |
-| `/pause` | Pausar el auto-respondedor |
-| `/resume` | Reanudar el auto-respondedor |
-| `/allow <num>` | Agregar número a whitelist |
-| `/remove <num>` | Remover número de whitelist |
+| `/pause` / `/resume` | Pausar o reanudar el auto-respondedor |
+| `/ignore <num/lid>` | Bloquear respuestas automáticas a un contacto o LID |
+| `/unignore <num/lid>` | Remover contacto de la IgnoreList |
+| `/ignorelist` | Ver lista de contactos/LIDs ignorados |
+| `/allow <num/lid/*>` | Agregar número/LID a whitelist (`*` = público) |
+| `/remove <num/lid>` | Remover número/LID de whitelist |
 | `/list` | Ver todos los números permitidos |
+| `/info` | Ver datos de conexión admin (Phone, LID, País) |
 | `/profile <nombre>` | Cambiar personalidad (`default`, `lucia`, `mateo`) |
 
 > 💡 Los textos normales en Self-Chat activan el modo **Asistente Personal IA**.
-
----
-
-## 🔒 Seguridad
-
-- ✅ Solo los números en `allowed_numbers.json` reciben respuestas (`*` = público)
-- ✅ Los clientes **no pueden** ejecutar comandos de administración
-- ✅ Si el admin responde manualmente a un cliente, el bot se inhabilita en ese chat
-- ✅ Registro anti-loop previene auto-respuestas infinitas
-- ✅ Credenciales y sesiones excluidas de git
-
----
-
-## 🗺️ Roadmap
-
-- [x] Gateway WhatsApp con Baileys (QR + reconexión)
-- [x] Cerebro IA con FastAPI
-- [x] Puente Gateway ↔ Cerebro via HTTP REST
-- [x] Simulación de tiempos humanos
-- [x] Router multi-proveedor con fallback
-- [ ] Memoria persistente (SQLite)
-- [ ] Compresión de contexto para historiales largos
-- [ ] Búsqueda web en tiempo real (RAG)
-- [ ] Despliegue en Termux (Android 24/7)
-- [ ] Multi-Bot (N sesiones simultáneas)
 
 ---
 
