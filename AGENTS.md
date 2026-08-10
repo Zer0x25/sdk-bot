@@ -1,6 +1,6 @@
 # AGENTS.md
 
-Plataforma WhatsApp multi-bot: `gateway/` (Node.js + Baileys) + `brain/` (Python FastAPI). No hay CI, lint ni tests (`npm test` es placeholder).
+Plataforma WhatsApp multi-bot: `gateway/` (Node.js + Baileys) + `brain/` (Python FastAPI). Sin CI; lint + tests por componente (ver secciones abajo).
 
 ## Arranque (orden importa)
 
@@ -67,12 +67,18 @@ Setup primera vez (Linux Debian/Ubuntu): `sudo apt install python3-venv` → `cd
 - Serialización por chat (B1): `chatInFlight` (Set en `messageHandler.js`) impide 2 llamadas de IA simultáneas por cliente; los mensajes que llegan durante una llamada se acumulan en el buffer y se reprograman al terminar. Los buffers huérfanos se descartan a los 15 min (B2).
 - **Reconexión (F1):** al cerrarse una conexión, el gateway espera con backoff (2s→60s) antes de reconectar; NUNCA reconecta en loop inmediato. Si el socket se cae mientras responde una IA, el cliente queda en espera hasta la reconexión.
 - **Logs rotados:** `logs/` de gateway y brain están en `.gitignore`; borrarlos es seguro. El brain usa `logging` de Python — `print()` directo NO llega a `brain.log` (usar `safe_log` o `make_logger`).
-- Verificar cambios: arrancar brain + gateway manualmente (no hay tests).
+- Verificar cambios: `npm run check` (gateway) + ruff/pytest (brain) antes de arrancar manualmente.
+
+## Lint (F3-P5)
+
+- **Gateway (ESLint 10, flat config):** `cd gateway; npm run lint` (o `npm run lint:fix`). Config en `eslint.config.js`: globals de Node 22 (`fetch`, `AbortSignal`), `no-unused-vars` en warn con `argsIgnorePattern: '^_'` y `caughtErrors: 'none'` (los catch ignorados por diseño), `no-empty` con `allowEmptyCatch`. Correr antes de cada commit.
+- **Brain (ruff):** `cd brain; venv/bin/ruff check .` (instalar: `venv/bin/pip install ruff`). Config en `brain/ruff.toml`: `select` = E/F/I/UP/B/FURB/RUF; `ignore` = BLE001, TRY002, S110 (los `except Exception` ciegos son DEFENSIVOS a propósito: cascada de proveedores, fallback de perfiles, `safe_log`). No usar `--fix` global sin revisar el diff.
+- Comando único por componente: `npm run check` (lint + tests) en gateway; en brain, ruff + pytest.
 
 ## Tests (F3-P4)
 
 - **Gateway:** `cd gateway; npm test` → `node --test` (runner nativo, sin dependencias). Descubre `tests/*.test.js` automáticamente. Cubren: `commandHelpers` (parseo/sanitize/chunk/citas), `pipeline` (matriz de decisión completa), `contactsRepository` (clean/upsert/dedupe/índices) y `brainService` (bubbles/delays).
-- **Brain:** `cd brain; venv/bin/python -m pytest tests/` → `test_profiles.py` cubre el parser markdown de perfiles (`_parse_md`, `_valid_key`, `_list_md_files`, fallback `default`). `pytest` instalado en el venv.
+- **Brain:** `cd brain; venv/bin/python -m pytest tests/` → `test_profiles.py` cubre el parser markdown de perfiles (`_parse_md`, `_valid_key`, `_list_md_files`, fallback `default`). Dev deps (`pytest`, `ruff`) en `brain/requirements-dev.txt` (`venv/bin/pip install -r requirements-dev.txt`).
 - **Helpers de tests:** `gateway/tests/helpers/tmpPaths.js` redirige `config.js` a una DB temporal (nunca toca `contacts_db.json` real de prod). Cada archivo de test corre en su propio proceso.
 - Los tests ya encontraron bugs reales (arreglados y cubiertos): `chunkAdminText` no partía líneas únicas >2800 chars; `findKeyByDigits` devolvía `undefined` en vez de `null`; el regex de ejemplos del parser de perfiles era greedy (tragaba pares consecutivos de `**Cliente:**`/`**Asistente:**`).
 - Código, logs y comentarios en español.

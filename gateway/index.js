@@ -8,7 +8,7 @@ const { bulkUpsertContactsMetadata, isJunkJid, cleanContactsDB, contactStore } =
 const { flushToDisk } = require('./services/db');
 const { getCountryFromPhone } = require('./services/metadataService');
 const { handleIncomingMessage, handlePresenceUpdate } = require('./handlers/messageHandler');
-const { logger, cat } = require('./services/logger');
+const { cat } = require('./services/logger');
 
 const log = cat('CORE');
 const logInstancia = cat('INSTANCIA');

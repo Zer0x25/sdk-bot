@@ -22,7 +22,7 @@ const logError = cat("ERROR");
 async function handleProfileUpload(sock, remoteJid, docMessage, msgKey) {
     try {
         const fileName = docMessage?.fileName || 'perfil.md';
-        const match = fileName.match(/^([a-z0-9_\-]+)\.(md|txt)$/i);
+        const match = fileName.match(/^([a-z0-9_-]+)\.(md|txt)$/i);
         if (!match) {
             await sock.sendMessage(remoteJid, { text: `⚠️ *Archivo no válido:* \`${fileName}\`. Debe llamarse \`perfil.md\` o \`<key>.md\` (ej: \`lucia.md\`).` });
             return false;
@@ -146,7 +146,7 @@ async function runPerfil({ sock, remoteJid, queryParam, rawMsg }) {
         const quotedText = context.quotedMessage?.conversation ||
                            context.quotedMessage?.extendedTextMessage?.text ||
                            "";
-        const phoneMatch = quotedText.match(/(?:\+?\d[\d\s\-]{6,20}\d|\b\d{7,16}\b)/);
+        const phoneMatch = quotedText.match(/(?:\+?\d[\d\s-]{6,20}\d|\b\d{7,16}\b)/);
         if (phoneMatch) contactTarget = parsePhoneOrLid(phoneMatch[0]);
     }
 

@@ -2,7 +2,6 @@ const { state } = require('../config');
 const { getSettingsDB, getContactsDB } = require('./db');
 const { cat } = require('./logger');
 const log = cat('DEBOUNCE');
-const logAI = cat('AI');
 
 /**
  * 🧠 PIPELINE DE DECISIÓN DE MENSAJES (F3-P3)

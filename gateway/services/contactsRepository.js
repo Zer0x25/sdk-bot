@@ -1,6 +1,4 @@
 const { getContactsDB, saveContactsDB, onContactsCacheUpdate } = require('./db');
-const { cat } = require("./logger");
-const logError = cat("ERROR");
 
 // Almacén en memoria de contactos de la sesión (RAM de Baileys)
 const contactStore = new Map();

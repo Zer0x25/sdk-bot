@@ -1,16 +1,28 @@
+import atexit
+import os
+import secrets
+import signal
+import socket
+import sys
+import time
+
 from fastapi import FastAPI, HTTPException, Request
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel
-from typing import Optional
-import os
-import secrets
-from config import OPENROUTER_MODEL, GROQ_MODEL, BRAIN_API_KEY, BRAIN_HOST
-from memory import get_history, update_history, clear_history
-from providers import generate_ai_response, safe_log
+
+from config import BRAIN_API_KEY, BRAIN_HOST, GROQ_MODEL, OPENROUTER_MODEL
+from logging_setup import make_logger
+from memory import clear_history, get_history, update_history
 from profiles import (
-    build_system_prompt, list_profiles, get_profiles, get_profile_file,
-    import_profile, delete_profile, refresh_profiles
+    build_system_prompt,
+    delete_profile,
+    get_profile_file,
+    get_profiles,
+    import_profile,
+    list_profiles,
+    refresh_profiles,
 )
+from providers import generate_ai_response, safe_log
 
 app = FastAPI(title="SDK-Bot Brain API (Modular Multi-Provider Router)")
 
@@ -29,15 +41,15 @@ class ChatRequest(BaseModel):
     user_id: str
     message: str
     bot_profile: str = "default"
-    saved_name: Optional[str] = None
-    push_name: Optional[str] = None
-    user_name: Optional[str] = None
-    phone_number: Optional[str] = None
-    lid: Optional[str] = None
-    country: Optional[str] = None
-    language: Optional[str] = None
-    bio: Optional[str] = None
-    is_business: Optional[bool] = None
+    saved_name: str | None = None
+    push_name: str | None = None
+    user_name: str | None = None
+    phone_number: str | None = None
+    lid: str | None = None
+    country: str | None = None
+    language: str | None = None
+    bio: str | None = None
+    is_business: bool | None = None
 
 class ResetMemoryRequest(BaseModel):
     user_id: str
@@ -70,7 +82,7 @@ def profile_detail_endpoint(profile_key: str):
 @app.get("/profiles/{profile_key}/file")
 def profile_file_endpoint(profile_key: str):
     """Exporta el .md crudo de un perfil para editar y re-subir."""
-    content, filename = get_profile_file(profile_key)
+    content, _filename = get_profile_file(profile_key)
     if content is None:
         raise HTTPException(status_code=404, detail=f"Perfil '{profile_key}' no encontrado")
     from fastapi.responses import PlainTextResponse
@@ -166,8 +178,6 @@ def health_check():
 # -------------------------------------------------------------
 # ⏱️ S2 — Rate limit por user_id en /chat (ventana deslizante de 60s)
 # -------------------------------------------------------------
-import time
-
 RATE_LIMIT_ENABLED = os.getenv("BRAIN_RATE_LIMIT_ENABLED", "1") == "1"
 RATE_LIMIT_MAX = int(os.getenv("BRAIN_RATE_LIMIT_PER_MIN", "10"))
 RATE_LIMIT_WINDOW = 60.0
@@ -195,14 +205,7 @@ def _is_rate_limited(user_id: str) -> bool:
 # - Si ya hay un Brain corriendo (lock + PID vivo), avisa y sale.
 # - Uso: `python main.py --restart` cierra el Brain anterior y arranca uno nuevo.
 # -------------------------------------------------------------
-import sys
-import socket
-import atexit
-import signal
-import time
-from logging_setup import make_logger
-
-log = make_logger("brain.instancia")
+log_instancia = make_logger("brain.instancia")
 
 BRAIN_PORT = int(os.getenv("BRAIN_PORT", "8000"))
 BRAIN_LOCK_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)), ".brain.lock")
@@ -231,7 +234,7 @@ def _port_in_use(port):
 
 def _read_lock():
     try:
-        with open(BRAIN_LOCK_FILE, "r", encoding="utf-8") as f:
+        with open(BRAIN_LOCK_FILE, encoding="utf-8") as f:
             return int(f.read().strip())
     except (OSError, ValueError):
         return None
@@ -249,29 +252,29 @@ def ensure_singleton(allow_restart=False):
     existing = _read_lock()
     if existing and _is_pid_alive(existing):
         if allow_restart:
-            log.info(f"♻️  Brain anterior detectado (PID {existing}). Cerrando y reiniciando...")
+            log_instancia.info(f"♻️  Brain anterior detectado (PID {existing}). Cerrando y reiniciando...")
             try:
                 os.kill(existing, signal.SIGTERM)
                 for _ in range(20):
                     if not _is_pid_alive(existing):
                         break
                     time.sleep(0.25)
-            except Exception:
-                pass
+            except Exception as e:
+                log_instancia.error(f"⚠️ No pude detener la instancia anterior ({e}).")
         else:
-            log.info(f"🔒 El Brain YA está corriendo (PID {existing}). Revisa: `ss -tlnp | grep {BRAIN_PORT}`")
-            log.info("   → Para reiniciarlo sin tocar nada: `python main.py --restart`")
+            log_instancia.info(f"🔒 El Brain YA está corriendo (PID {existing}). Revisa: `ss -tlnp | grep {BRAIN_PORT}`")
+            log_instancia.info("   → Para reiniciarlo sin tocar nada: `python main.py --restart`")
             sys.exit(1)
     elif existing:
-        log.info(f"🧹 Lock huérfano detectado (PID {existing} ya no existe). Limpiando...")
+        log_instancia.info(f"🧹 Lock huérfano detectado (PID {existing} ya no existe). Limpiando...")
         try:
             os.remove(BRAIN_LOCK_FILE)
         except OSError:
             pass
 
     if _port_in_use(BRAIN_PORT):
-        log.info(f"🔒 El puerto {BRAIN_PORT} ya está ocupado por otro proceso.")
-        log.info("   → Si es un Brain: `python main.py --restart`. Si es otro programa, libéralo primero.")
+        log_instancia.info(f"🔒 El puerto {BRAIN_PORT} ya está ocupado por otro proceso.")
+        log_instancia.info("   → Si es un Brain: `python main.py --restart`. Si es otro programa, libéralo primero.")
         sys.exit(1)
 
     _write_lock()

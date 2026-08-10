@@ -202,7 +202,7 @@ async function enrichContactExtraData(sock, jid, metadata, forceRefresh = false)
     }
 }
 
-function isSelfChat(remoteJid, isFromMe) {
+function isSelfChat(remoteJid, _isFromMe) {
     if (!remoteJid) return false;
     
     const cleanTarget = remoteJid.split('@')[0].split(':')[0].replace(/[^0-9]/g, '');

@@ -114,7 +114,7 @@ function extractPhoneFromQuoted(rawMsg) {
                        rawMsg?.message?.extendedTextMessage?.contextInfo?.quotedMessage?.extendedTextMessage?.text ||
                        "";
     // Buscar un número de teléfono (con espacios, guiones o llano) o LID en el texto citado
-    const phoneMatch = quotedText.match(/(?:\+?\d[\d\s\-]{6,20}\d|\b\d{7,16}\b)/);
+    const phoneMatch = quotedText.match(/(?:\+?\d[\d\s-]{6,20}\d|\b\d{7,16}\b)/);
     return phoneMatch ? parsePhoneOrLid(phoneMatch[0]) : "";
 }
 

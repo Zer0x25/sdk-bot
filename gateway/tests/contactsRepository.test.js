@@ -5,7 +5,7 @@ const { withTempDbPaths } = require('./helpers/tmpPaths');
 const tmp = withTempDbPaths();
 after(() => tmp.restore());
 
-const { getContactsDB, getSettingsDB } = require('../services/db');
+const { getContactsDB } = require('../services/db');
 const { cleanContactsDB, upsertContactMetadata, bulkUpsertContactsMetadata, findExistingKey, findKeyByDigits, isJunkJid } = require('../services/contactsRepository');
 
 beforeEach(() => {

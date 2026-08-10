@@ -53,7 +53,7 @@ function runNombre({ queryParam }) {
         return `✅ Contacto \`${db[existingKey].phone || existingKey}\` asignado con el nombre de agenda: *"${customName}"*.`;
     }
 
-    const newRecord = upsertContactMetadata({
+    upsertContactMetadata({
         phoneNumber: nameTarget.length < 15 ? nameTarget : null,
         lid: nameTarget.length >= 15 ? nameTarget : null,
         savedName: customName,
@@ -70,7 +70,7 @@ function parseNameArgs(queryParam) {
     const str = queryParam.trim();
     
     // Matchear teléfono o LID al inicio incluso con espacios o símbolos (ej: "+56 9 4252 3669 Pedro Pizzería")
-    const phoneMatch = str.match(/^(\+?[\d\s\-\(\)]{7,25})\s+(.+)$/);
+    const phoneMatch = str.match(/^(\+?[\d\s\-()]{7,25})\s+(.+)$/);
     if (phoneMatch) {
         const rawPhone = phoneMatch[1].trim();
         const customName = phoneMatch[2].trim();

@@ -31,6 +31,7 @@ así se pueden editar en caliente sin reiniciar.
 
 import os
 import re
+
 from logging_setup import make_logger
 
 log = make_logger("brain.perfiles")
@@ -83,7 +84,7 @@ def _parse_md(content: str, profile_key: str) -> dict:
     # Procesar ejemplos en pares Cliente/Asistente
     # (lookahead no-greedy: el asistente termina en el siguiente par o fin del texto)
     ejemplos_texto = secciones.get("ejemplos", "")
-    for match in re.finditer(r"\*\*Cliente:\*\*\s*(.+?)\s*\n\*\*Asistente:\*\*\s*(.+?)(?=\n\*\*Cliente:\*\*|$)", ejemplos_texto, re.S):
+    for match in re.finditer(r"\*\*Cliente:\*\*\s*(.+?)\s*\n\*\*Asistente:\*\*\s*(.+?)(?=\n\*\*Cliente:\*\*|$)", ejemplos_texto, re.DOTALL):
         ejemplos.append({
             "cliente": match.group(1).strip(),
             "asistente": match.group(2).strip()
@@ -159,7 +160,7 @@ def _reload_all(files: dict) -> None:
 
 def _read_profile(path: str, key: str) -> dict:
     try:
-        with open(path, "r", encoding="utf-8") as f:
+        with open(path, encoding="utf-8") as f:
             return _parse_md(f.read(), key)
     except Exception as e:
         log.info(f"⚠️ Error al leer perfil {key}.md: {e}")
@@ -229,7 +230,7 @@ def get_profile_file(profile_key: str):
     path = _file_for(profile_key)
     if not os.path.isfile(path):
         return None, None
-    with open(path, "r", encoding="utf-8") as f:
+    with open(path, encoding="utf-8") as f:
         return f.read(), f"{profile_key}.md"
 
 

@@ -1,0 +1,11 @@
+# Config de ruff (lint del brain). Correr: venv/bin/ruff check brain/
+# Estilo pragmático para código legacy:
+# - BLE001: except Exception ciego es DEFENSIVO a propósito (cascada de proveedores,
+#   fallback de perfiles, safe_log). No se fuerza a crear excepciones propias.
+# - TRY002: no hay jerarquía de excepciones propia en este proyecto.
+# - S110: try/except/pass puntuales con intención (import defensivo, safe_log).
+lint.select = ["E", "F", "I", "UP", "B", "FURB", "RUF"]
+lint.ignore = ["BLE001", "TRY002", "S110", "E501"]
+
+[lint.per-file-ignores]
+"tests/*" = ["F401"]  # pytest se importa para fixtures aunque no se use directo

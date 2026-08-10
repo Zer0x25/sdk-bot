@@ -1,4 +1,7 @@
 from openai import OpenAI
+
+from logging_setup import make_logger
+
 # Gemini es un fallback opcional 3rd: en Termux (bionic) google-genai no tiene
 # wheel precompilado y no se instala, así que lo importamos de forma defensiva.
 try:
@@ -7,7 +10,15 @@ try:
 except ImportError:
     genai = None
     types = None
-from config import GROQ_API_KEY, OPENROUTER_API_KEY, GEMINI_API_KEY, OPENROUTER_MODEL, GROQ_MODEL
+from config import (
+    GEMINI_API_KEY,
+    GROQ_API_KEY,
+    GROQ_MODEL,
+    OPENROUTER_API_KEY,
+    OPENROUTER_MODEL,
+)
+
+log = make_logger("brain.ai")
 
 # 1. Cliente Groq (Vía OpenAI client format)
 groq_client = None
@@ -32,9 +43,8 @@ gemini_client = None
 if genai is not None and GEMINI_API_KEY:
     gemini_client = genai.Client(api_key=GEMINI_API_KEY)
 
-from logging_setup import make_logger
-
 log = make_logger("brain.ai")
+
 
 def safe_log(msg: str):
     try:
@@ -63,7 +73,8 @@ async def generate_ai_response(system_instruction: str, message: str, memory_his
         )
         respuesta_texto = completion.choices[0].message.content
         
-        new_history = memory_history + [
+        new_history = [
+            *memory_history,
             {"role": "user", "content": message},
             {"role": "assistant", "content": respuesta_texto}
         ]
@@ -85,7 +96,8 @@ async def generate_ai_response(system_instruction: str, message: str, memory_his
             respuesta_texto = completion.choices[0].message.content
             provider_used = f"OpenRouter ({OPENROUTER_MODEL})"
             
-            new_history = memory_history + [
+            new_history = [
+                *memory_history,
                 {"role": "user", "content": message},
                 {"role": "assistant", "content": respuesta_texto}
             ]
@@ -117,10 +129,11 @@ async def generate_ai_response(system_instruction: str, message: str, memory_his
                 respuesta_texto = response.text
                 provider_used = "Google Gemini Flash Lite"
                 
-                new_history = memory_history + [
+                new_history = [
+                    *memory_history,
                     {"role": "user", "content": message},
                     {"role": "assistant", "content": respuesta_texto}
                 ]
                 return respuesta_texto, provider_used, new_history
             except Exception as gemini_err:
-                raise Exception(f"Todos los proveedores fallaron en la cascada de 90s. Groq: {groq_err} | OpenRouter: {openrouter_err} | Gemini: {gemini_err}")
+                raise Exception(f"Todos los proveedores fallaron en la cascada de 90s. Groq: {groq_err} | OpenRouter: {openrouter_err} | Gemini: {gemini_err}") from None
