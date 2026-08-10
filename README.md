@@ -64,9 +64,25 @@ SDK-Bot/
 
 ## 🚀 Inicio Rápido
 
+### 0. Preparar entorno Python (solo la primera vez)
+
+> En Debian/Ubuntu, antes de crear el venv instala el paquete `python3-venv`:
+> `sudo apt install python3-venv` (en Debian 12/Ubuntu 24.04: `python3.12-venv`).
+
+```bash
+cd brain
+# Linux / macOS
+python3 -m venv venv && venv/bin/pip install -r requirements.txt
+# Windows
+python -m venv venv && venv\Scripts\pip install -r requirements.txt
+```
+
 ### 1. Iniciar Cerebro IA (Python FastAPI):
 ```bash
 cd brain
+# Linux / macOS
+venv/bin/python main.py
+# Windows
 venv\Scripts\python.exe main.py
 ```
 
