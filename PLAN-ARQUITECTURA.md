@@ -26,13 +26,15 @@ SDK-Bot/
 │   │   └── messageHandler.js     # Pipeline de mensajes, De-bounce estocástico, Handoff y Presencia RAM
 │   ├── contacts_db.json          # Base de datos centralizada de contactos y estados (gitignored)
 │   ├── settings_db.json          # Configuración global del bot (globalMode: allowed_all / ignored_all)
+│   ├── settings_db.json.example  # Plantilla de configuración global
 │   ├── *.json.example            # Plantillas de ejemplo para despliegues limpios
 │   └── auth_info_baileys/        # Sesión y estado de WhatsApp (gitignored)
 └── brain/                        # Capa de Inteligencia (Python + FastAPI)
-    ├── main.py                   # Aplicación FastAPI modularizada (/chat, /reset-memory)
-    ├── config.py                 # API Keys, perfiles SOUL y modelos (OpenRouter, Groq, Gemini)
+    ├── main.py                   # Aplicación FastAPI modularizada (/chat, /reset-memory, /profiles)
+    ├── config.py                 # API Keys y modelos (Groq, OpenRouter, Gemini)
     ├── memory.py                 # Gestor de memoria en RAM por user_id (máx 15 mensajes)
-    ├── providers.py              # Router multi-proveedor (OpenRouter 25s → Groq 25s → Gemini 40s)
+    ├── providers.py              # Router multi-proveedor (Groq 25s → OpenRouter 25s → Gemini 40s)
+    ├── profiles/                 # Perfiles SOUL editables en Markdown (default, lucia, mateo, ventas, cobranzas, recepcion)
     ├── .env                      # API Keys (gitignored)
     ├── requirements.txt          # Dependencias Python
     └── venv/                     # Entorno virtual
@@ -65,9 +67,9 @@ SDK-Bot/
 
 ### 4. ⚡ Router Multi-Proveedor de IA & Resiliencia (Cascada de 90s)
 - **Cascada Automatizada de Respaldo:**
-  1. **OpenRouter** (`openai/gpt-oss-20b:free`): Principal (Timeout de 25s).
-  2. **Groq** (`llama-3.3-70b-versatile`): Primer Respaldo (Timeout de 25s).
-  3. **Google Gemini** (`gemini-1.5-flash`): Segundo Respaldo (Timeout de 40s).
+  1. **Groq** (`llama-3.3-70b-versatile`): Principal (Timeout de 25s).
+  2. **OpenRouter** (`openrouter/free`): Primer Respaldo (Timeout de 25s).
+  3. **Google Gemini** (`gemini-flash-lite-latest`): Segundo Respaldo (Timeout de 40s).
 - **Alertas Silenciosas de Error:** Si la IA falla o se agota el timeout de 90s, el error **nunca se muestra al cliente**. Se envía una alerta privada al Self-Chat del Admin con el diagnóstico exacto.
 
 ### 5. 🗂️ Motor de Estados Centralizado (`contacts_db.json` & `settings_db.json`)

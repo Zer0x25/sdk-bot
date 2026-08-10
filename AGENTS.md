@@ -33,12 +33,15 @@ Setup primera vez (Linux Debian/Ubuntu): `sudo apt install python3-venv` → `cd
 
 ## Gotchas
 
+- **Instancia única:** brain y gateway escriben un lock con PID (`.brain.lock`, `.gateway.lock`, gitignored). Abrir una segunda instancia se bloquea con mensaje claro (protege `auth_info_baileys` de corrupción por doble gateway). Para reiniciar: `python main.py --restart` / `npm start -- --restart`. Los locks huérfanos se auto-limpian.
 - El brain debe estar corriendo o el gateway envía alerta al self-chat (nunca al cliente).
 - Memoria del brain es solo RAM (15 msgs); reiniciar `brain` borra conversaciones. `/limpiar` llama a `/reset-memory`.
 - `brain/.env` (gitignored, sin `.example`): `GROQ_API_KEY`, `OPENROUTER_API_KEY`, `GEMINI_API_KEY`. Sin key, la cascada se salta ese proveedor.
 - Estado por contacto: `estado` (`neutro`/`permitido`/`ignorado`/`handoff`) + `globalMode` (`allowed_all`/`ignored_all`) en `settings_db.json` (`*` en `/i` `/p` cambia el modo global).
-- `settings_db.json` e `ignored_numbers.json` están versionados; `contacts_db.json`/`allowed_numbers.json` no. `allowed_numbers.json`/`ignored_numbers.json` son legado: no se referencian en el código.
+- `settings_db.json` está versionado (`contacts_db.json` no). Hay plantilla `settings_db.json.example`; los archivos legacy `allowed_numbers.json`/`ignored_numbers.json` fueron eliminados (R3, no se referenciaban).
 - Comandos admin solo en self-chat (mensaje a ti mismo); texto normal ahí = asistente IA. `/` de clientes = bloqueado (seguridad).
 - `contacts_db.json` se limpia de basura en cada arranque (`cleanContactsDB()`).
+- **Bio legada con 422:** registros viejos de `contacts_db.json` pueden tener `bio` como OBJETO `{status,setAt}` (de `sock.fetchStatus` antiguo), lo que rompe el brain con `422 Input should be a valid string`. Sanitizada en `cleanContactsDB()` (D), en `extractUserMetadata` (solo strings) y en los upserts (solo strings). `fetchStatus` devuelve un ARRAY `[{status,setAt,id}]` — tomar `[0].status`.
+- Serialización por chat (B1): `chatInFlight` (Set en `messageHandler.js`) impide 2 llamadas de IA simultáneas por cliente; los mensajes que llegan durante una llamada se acumulan en el buffer y se reprograman al terminar. Los buffers huérfanos se descartan a los 15 min (B2).
 - Verificar cambios: arrancar brain + gateway manualmente (no hay tests).
 - Código, logs y comentarios en español.

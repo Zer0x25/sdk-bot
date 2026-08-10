@@ -169,15 +169,10 @@ def _read_profile(path: str, key: str) -> dict:
         }
 
 
-# Mantener alias por compatibilidad con el código existente
-PROFILES = None
-
-
 def refresh_profiles() -> None:
     """Fuerza la recarga completa de perfiles (POST /profiles/reload)."""
-    global PROFILES
     _profiles_cache.clear()
-    PROFILES = get_profiles()
+    get_profiles()
 
 
 def build_system_prompt(profile_key: str) -> str:

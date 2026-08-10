@@ -16,7 +16,7 @@
 - **🔀 Extracción Automática por Cita (Reply/Quote Extraction):**
   - Al responder (citar) cualquier mensaje de alerta o de un cliente en Self-Chat con un comando (ej: `/a`, `/h`, `/c`, `/n Pedro`), el sistema extrae automáticamente el teléfono o LID del texto citado.
 - **⚡ Cascada Multi-Proveedor & Timeout de 90s:**
-  - Cascada automatizada con 90s de timeout HTTP global: **OpenRouter** (`openai/gpt-oss-20b:free`, 25s) → **Groq** (`llama-3.3-70b-versatile`, 25s) → **Google Gemini** (`gemini-1.5-flash`, 40s).
+  - Cascada automatizada con 90s de timeout HTTP global: **Groq** (`llama-3.3-70b-versatile`, 25s) → **OpenRouter** (`openrouter/free`, 25s) → **Google Gemini** (`gemini-flash-lite-latest`, 40s).
 - **🌎 Detección Automática de País e Idioma Nativo:**
   - Cobertura completa de prefijos telefónicos de toda América (Sur, Centro, Norte y Caribe) y Europa.
   - Inyección automática del **idioma del cliente** (Portugués, Inglés, Francés, Alemán, Italiano, Neerlandés, etc.) al prompt de la IA para ofrecer atención en su idioma nativo si es diferente al español.
@@ -48,16 +48,19 @@ SDK-Bot/
 │   │   └── messageHandler.js     # Pipeline de mensajes, De-bounce estocástico, Handoff y Presencia RAM
 │   ├── contacts_db.json          # Base de datos centralizada de contactos y estados (gitignored)
 │   ├── settings_db.json          # Configuración global del bot (gitignored)
+│   ├── settings_db.json.example  # Plantilla de configuración global
 │   ├── *.json.example            # Plantillas de ejemplo para despliegues limpios
 │   └── auth_info_baileys/        # Sesión y estado de WhatsApp (gitignored)
 ├── brain/                        # Capa de Inteligencia (Python + FastAPI)
-│   ├── main.py                   # Aplicación FastAPI modularizada (/chat, /reset-memory)
-│   ├── config.py                 # API Keys, perfiles SOUL y modelos (OpenRouter, Groq, Gemini)
+│   ├── main.py                   # Aplicación FastAPI modularizada (/chat, /reset-memory, /profiles)
+│   ├── config.py                 # API Keys y modelos (Groq, OpenRouter, Gemini)
 │   ├── memory.py                 # Gestor de memoria en RAM por user_id (máx 15 mensajes)
-│   ├── providers.py              # Router multi-proveedor (OpenRouter 25s → Groq 25s → Gemini 40s)
+│   ├── providers.py              # Router multi-proveedor (Groq 25s → OpenRouter 25s → Gemini 40s)
+│   ├── profiles/                 # Perfiles SOUL editables en Markdown (default, lucia, mateo, ventas, cobranzas, recepcion)
 │   ├── .env                      # API Keys (gitignored)
 │   └── requirements.txt          # Dependencias Python
 └── PLAN-ARQUITECTURA.md          # Documentación técnica completa
+└── ROADMAP.md                    # Hoja de ruta de fases (guía de sesiones)
 ```
 
 ---
@@ -84,6 +87,7 @@ cd brain
 venv/bin/python main.py
 # Windows
 venv\Scripts\python.exe main.py
+# Si ya está corriendo (puerto ocupado): `venv/bin/python main.py --restart` lo reinicia
 ```
 
 ### 2. Iniciar Gateway WhatsApp (Node.js):
@@ -91,7 +95,9 @@ venv\Scripts\python.exe main.py
 cd gateway
 npm start
 # o: node index.js
+# Si ya está corriendo: `npm start -- --restart` lo reinicia
 ```
+> 🔒 **Instancia única:** abrir una segunda instancia del brain o del gateway se bloquea automáticamente (mensaje claro + salida). Esto protege la sesión de WhatsApp de corrupción por doble conexión.
 
 ### 3. Re-sincronizar Libreta Completa de Contactos (Fresh QR):
 ```bash
@@ -121,7 +127,7 @@ Envía estos comandos desde tu propio chat de WhatsApp ("Mensaje a ti mismo"). *
 | `/exportar` | `/export` | Exportar la libreta completa de contactos mapeados |
 | `/pausar` | `/pg`, `/pause`, `/stop` | Pausar el auto-respondedor globalmente para todos los chats |
 | `/reanudar` | `/ag`, `/resume`, `/start`, `/run` | Reanudar el auto-respondedor globalmente |
-| `/perfil <nombre>` | `/pf`, `/profile` | Cambiar personalidad del bot (`default`, `lucia`, `mateo`) |
+| `/perfil <nombre>` | `/pf`, `/profile` | Cambiar personalidad del bot (`default`, `lucia`, `mateo`, `ventas`, `cobranzas`, `recepcion`) |
 | `/info` | `/whoami` | Ver datos de conexión admin (Phone, LID, País, JID) |
 | `/estado` | `/e`, `/menu`, `/status`, `/help`, `/admin` | Panel de estado general del bot y menú de ayuda |
 | `/init` | `/guia`, `/startguide` | Ver guía rápida de inicio explicativa interactiva |
