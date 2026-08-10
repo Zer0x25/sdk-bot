@@ -70,7 +70,7 @@ Objetivo: que el sistema sobreviva solo y sea debuggeable.
 ### 🟠 Fase 2 — Seguridad y privacidad (sesión 4)
 Objetivo: no dejar expuestos costos, memoria ni escritura de archivos.
 
-- [ ] **S1** — Bind de uvicorn a `127.0.0.1` (el gateway está en la misma máquina) + `API_KEY` opcional en header `X-API-Key` verificada por middleware FastAPI.
+- [x] **S1** — Bind de uvicorn a `127.0.0.1` (el gateway está en la misma máquina) + `API_KEY` opcional en header `X-API-Key` verificada por middleware FastAPI. El gateway lee la key del mismo `brain/.env` (`getBrainApiKey()` en `config.js`), así que se pega UNA sola vez. `BRAIN_HOST` permite override.
 - [ ] **S2** — Rate-limit por `user_id` en el brain (ej: 10 msgs/min) y por admin en el gateway.
 - [ ] **Validar nombres en `/exportar`/`/buscar`** para evitar inyección de markdown (control de caracteres).
 - [ ] **Revisar `downloadMediaMessage`** en `handleProfileUpload` (`commandHandler.js:56`) — en Baileys 7 la firma cambió; confirmar que la descarga de documentos citados funciona.

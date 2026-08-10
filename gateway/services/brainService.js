@@ -1,7 +1,13 @@
-const { BRAIN_API_URL, state, registerSentMessage } = require('../config');
+const { BRAIN_API_BASE, BRAIN_API_URL, BRAIN_API_KEY, state, registerSentMessage } = require('../config');
 const { cat } = require("../services/logger");
 const log = cat("AI");
 const logError = cat("ERROR");
+
+// 🔐 S1 — Header de autenticación hacia el brain (no-op si no hay key definida)
+function authHeaders(extra = {}) {
+    if (BRAIN_API_KEY) extra['X-API-Key'] = BRAIN_API_KEY;
+    return extra;
+}
 
 // Caché en memoria de perfiles SOUL disponibles en el brain
 let cachedProfiles = null;
@@ -141,9 +147,7 @@ async function notifyAdminError(sock, metadata, textMessage, errorDetails) {
 async function requestBrain(payload) {
     const response = await fetch(BRAIN_API_URL, {
         method: 'POST',
-        headers: {
-            'Content-Type': 'application/json'
-        },
+        headers: authHeaders({ 'Content-Type': 'application/json' }),
         signal: AbortSignal.timeout(90000), // 90 segundos de timeout para permitir generación de textos largos o modelos lentos
         body: JSON.stringify(payload)
     });
@@ -248,10 +252,9 @@ async function processAIChat(textMessage, remoteJid, metadata, sock) {
 
 async function clearAIMemory(userJid) {
     try {
-        const resetUrl = BRAIN_API_URL.replace('/chat', '/reset-memory');
-        const response = await fetch(resetUrl, {
+        const response = await fetch(`${BRAIN_API_BASE}/reset-memory`, {
             method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
+            headers: authHeaders({ 'Content-Type': 'application/json' }),
             body: JSON.stringify({ user_id: userJid })
         });
         const data = await response.json();
@@ -270,9 +273,10 @@ async function clearAIMemory(userJid) {
 async function getAvailableProfiles() {
     if (cachedProfiles && (Date.now() - cachedProfilesAt < PROFILES_CACHE_TTL_MS)) return cachedProfiles;
     try {
-        const profilesUrl = BRAIN_API_URL.replace('/chat', '/profiles');
+        const profilesUrl = `${BRAIN_API_BASE}/profiles`;
         const response = await fetch(profilesUrl, {
             method: 'GET',
+            headers: authHeaders(),
             signal: AbortSignal.timeout(5000)
         });
         const data = await response.json();
@@ -290,9 +294,10 @@ async function getAvailableProfiles() {
  */
 async function getProfileDetail(profileKey) {
     try {
-        const detailUrl = `${BRAIN_API_URL.replace('/chat', '/profiles')}/${encodeURIComponent(profileKey)}`;
+        const detailUrl = `${BRAIN_API_BASE}/profiles/${encodeURIComponent(profileKey)}`;
         const response = await fetch(detailUrl, {
             method: 'GET',
+            headers: authHeaders(),
             signal: AbortSignal.timeout(5000)
         });
         if (!response.ok) return null;
@@ -309,9 +314,10 @@ async function getProfileDetail(profileKey) {
  */
 async function exportProfileFile(profileKey) {
     try {
-        const fileUrl = `${BRAIN_API_URL.replace('/chat', '/profiles')}/${encodeURIComponent(profileKey)}/file`;
+        const fileUrl = `${BRAIN_API_BASE}/profiles/${encodeURIComponent(profileKey)}/file`;
         const response = await fetch(fileUrl, {
             method: 'GET',
+            headers: authHeaders(),
             signal: AbortSignal.timeout(5000)
         });
         if (!response.ok) return null;
@@ -329,10 +335,10 @@ async function exportProfileFile(profileKey) {
  */
 async function importProfileFile(profileKey, content) {
     try {
-        const importUrl = BRAIN_API_URL.replace('/chat', '/profiles/import');
+        const importUrl = `${BRAIN_API_BASE}/profiles/import`;
         const response = await fetch(importUrl, {
             method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
+            headers: authHeaders({ 'Content-Type': 'application/json' }),
             signal: AbortSignal.timeout(5000),
             body: JSON.stringify({ key: profileKey, content })
         });

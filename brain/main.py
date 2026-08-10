@@ -1,7 +1,10 @@
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, Request
+from fastapi.responses import JSONResponse
 from pydantic import BaseModel
 from typing import Optional
-from config import OPENROUTER_MODEL, GROQ_MODEL
+import os
+import secrets
+from config import OPENROUTER_MODEL, GROQ_MODEL, BRAIN_API_KEY, BRAIN_HOST
 from memory import get_history, update_history, clear_history
 from providers import generate_ai_response, safe_log
 from profiles import (
@@ -10,6 +13,17 @@ from profiles import (
 )
 
 app = FastAPI(title="SDK-Bot Brain API (Modular Multi-Provider Router)")
+
+# 🔐 S1 — Autenticación opcional por API key (header X-API-Key).
+# Si BRAIN_API_KEY está definida en .env, toda ruta excepto "/" (health) exige
+# el header. La comparación es en tiempo constante (secrets.compare_digest).
+@app.middleware("http")
+async def require_api_key(request: Request, call_next):
+    if BRAIN_API_KEY and request.url.path != "/":
+        provided = request.headers.get("X-API-Key", "")
+        if not secrets.compare_digest(provided, BRAIN_API_KEY):
+            return JSONResponse(status_code=401, content={"detail": "API key inválida o faltante"})
+    return await call_next(request)
 
 class ChatRequest(BaseModel):
     user_id: str
@@ -79,6 +93,10 @@ def profile_reload_endpoint():
 
 @app.post("/chat")
 async def chat_endpoint(request: ChatRequest):
+    if RATE_LIMIT_ENABLED and _is_rate_limited(request.user_id):
+        safe_log(f"⏱️ [RATE LIMIT] {request.user_id} excedió {RATE_LIMIT_MAX} llamadas/min")
+        raise HTTPException(status_code=429, detail="Demasiados mensajes por minuto. Espera unos segundos.")
+
     base_instruction = build_system_prompt(request.bot_profile)
     
     # Enriquecer el prompt con metadatos del interlocutor
@@ -136,11 +154,37 @@ def health_check():
 
 
 # -------------------------------------------------------------
+# ⏱️ S2 — Rate limit por user_id en /chat (ventana deslizante de 60s)
+# -------------------------------------------------------------
+import time
+
+RATE_LIMIT_ENABLED = os.getenv("BRAIN_RATE_LIMIT_ENABLED", "1") == "1"
+RATE_LIMIT_MAX = int(os.getenv("BRAIN_RATE_LIMIT_PER_MIN", "10"))
+RATE_LIMIT_WINDOW = 60.0
+_rate_hits = {}  # user_id -> [timestamps]
+
+def _is_rate_limited(user_id: str) -> bool:
+    now = time.time()
+    # Podar si la tabla crece demasiado (memoria contenida)
+    if len(_rate_hits) > 5000:
+        for key in list(_rate_hits):
+            _rate_hits[key] = [t for t in _rate_hits[key] if now - t < RATE_LIMIT_WINDOW]
+            if not _rate_hits[key]:
+                del _rate_hits[key]
+    arr = [t for t in _rate_hits.get(user_id, []) if now - t < RATE_LIMIT_WINDOW]
+    if len(arr) >= RATE_LIMIT_MAX:
+        _rate_hits[user_id] = arr
+        return True
+    arr.append(now)
+    _rate_hits[user_id] = arr
+    return False
+
+
+# -------------------------------------------------------------
 # 🔒 INSTANCIA ÚNICA (evita "address already in use" confuso)
 # - Si ya hay un Brain corriendo (lock + PID vivo), avisa y sale.
 # - Uso: `python main.py --restart` cierra el Brain anterior y arranca uno nuevo.
 # -------------------------------------------------------------
-import os
 import sys
 import socket
 import atexit
@@ -254,7 +298,7 @@ if __name__ == "__main__":
 
     ensure_singleton(allow_restart="--restart" in sys.argv)
     try:
-        uvicorn.run(app, host="0.0.0.0", port=BRAIN_PORT)
+        uvicorn.run(app, host=BRAIN_HOST, port=BRAIN_PORT)
     finally:
         # uvicorn no garantiza el retorno normal: limpiar el lock si llegamos aquí
         _remove_lock()

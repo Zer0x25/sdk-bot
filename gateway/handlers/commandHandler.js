@@ -2,9 +2,14 @@ const { state, registerSentMessage } = require('../config');
 const { cat } = require("../services/logger");
 const log = cat("COMANDO");
 const logError = cat("ERROR");
+const { createRateLimiter } = require('../services/rateLimit');
 const { downloadMediaMessage } = require('@whiskeysockets/baileys');
 const { getCountryFromPhone } = require('../services/metadataService');
 const { clearAIMemory, getAvailableProfiles, getProfileDetail, exportProfileFile, importProfileFile } = require('../services/brainService');
+
+// ⏱️ S2 — Límite de comandos admin: máx 20/min por admin (ventana deslizante)
+const ADMIN_CMD_MAX_PER_MIN = 20;
+const adminCommandLimiter = createRateLimiter(ADMIN_CMD_MAX_PER_MIN, 60 * 1000);
 const { 
     getSettingsDB,
     getContactsDB,
@@ -19,6 +24,18 @@ const {
     setContactProfile,
     ignoreAllAgendaContacts
 } = require('../services/storageService');
+
+/**
+ * 🧹 Sanitizar texto de usuario antes de interpolar en respuestas con formato
+ * markdown de WhatsApp (Fase 2, S3): neutraliza caracteres de formato
+ * (* _ ` ~) y saltos de línea para evitar inyección de markdown.
+ */
+function sanitizeMarkdown(text) {
+    if (!text) return '';
+    return String(text)
+        .replace(/[*_`~]/g, '')
+        .replace(/[\r\n]+/g, ' ');
+}
 
 /**
  * 🧹 Normalizar cualquier formato de teléfono (+56 9 4252 3669 -> 56942523669) o LID
@@ -81,7 +98,15 @@ async function handleProfileUpload(sock, remoteJid, docMessage, msgKey) {
         }
         const profileKey = match[1].toLowerCase();
 
-        const buffer = await downloadMediaMessage(msgKey, 'buffer', {}, { reuploadRequest: true, logger: undefined });
+        // 📥 Descarga en Baileys 7.0.0-rc14: downloadMediaMessage(msg, type, options, ctx).
+        // ctx.logger debe ser un logger real y ctx.reuploadRequest una FUNCIÓN
+        // (Baileys la llama solo si el media da 404/410 = expirado; aquí no hay
+        // re-fetch posible sin store, así que se reintenta con el mismo mensaje
+        // y el error real llega al admin).
+        const buffer = await downloadMediaMessage(msgKey, 'buffer', {}, {
+            logger: log,
+            reuploadRequest: async (msg) => msg
+        });
         if (!buffer) {
             await sock.sendMessage(remoteJid, { text: `⚠️ No pude descargar el archivo \`${fileName}\`. Intenta reenviarlo citándolo con \`/update\`.` });
             return false;
@@ -139,6 +164,13 @@ async function handleProfileUpload(sock, remoteJid, docMessage, msgKey) {
 }
 
 async function handleAdminCommand(textMessage, remoteJid, sock, metadata, rawMsg = null) {
+    // ⏱️ S2 — Rate limit de comandos admin (protege de spam accidental de comandos)
+    if (adminCommandLimiter(remoteJid)) {
+        log.warn(`⏱️ [RATE LIMIT ADMIN] ${remoteJid} excedió ${ADMIN_CMD_MAX_PER_MIN} comandos/min. Ignorado: ${textMessage.slice(0, 60)}`);
+        await sock.sendMessage(remoteJid, { text: "⏱️ *Demasiados comandos por minuto.* Espera unos segundos e inténtalo de nuevo." });
+        return;
+    }
+
     const args = textMessage.trim().split(/\s+/);
     const command = args[0].toLowerCase();
     let queryParam = args.slice(1).join(' ').trim();
@@ -326,11 +358,11 @@ async function handleAdminCommand(textMessage, remoteJid, sock, metadata, rawMsg
                 });
 
                 if (matches.length === 0) {
-                    adminResponse = `🔍 No se encontraron contactos coincidiendo con "${queryParam}".`;
+                    adminResponse = `🔍 No se encontraron contactos coincidiendo con "${sanitizeMarkdown(queryParam)}".`;
                 } else {
                     const resultsText = matches.slice(0, 10).map(c => {
                         const targetNum = c.phone || c.lid;
-                        return `👤 *${c.savedName ? `${c.savedName} (Agenda)` : (c.pushName || 'Sin Nombre')}*\n` +
+                        return `👤 *${sanitizeMarkdown(c.savedName ? `${c.savedName} (Agenda)` : (c.pushName || 'Sin Nombre'))}*\n` +
                         `  • Teléfono: \`${c.phone || 'N/A'}\` | LID: \`${c.lid || 'N/A'}\`\n` +
                         `  • Estado Actual: \`${c.estado}\` ${c.estado === 'handoff' ? '🚨' : '🤖'}\n` +
                         `  • Reanudar IA: \`\`\`/a ${targetNum}\`\`\`\n` +
@@ -576,7 +608,7 @@ async function handleAdminCommand(textMessage, remoteJid, sock, metadata, rawMsg
         case '/export':
             const dbExport = getContactsDB();
             const exportList = Object.values(dbExport).map(c => 
-                `• ${c.savedName ? `[Agenda] ${c.savedName}` : (c.pushName || 'Desconocido')} -> Tel: \`${c.phone || 'N/A'}\` | LID: \`${c.lid || 'N/A'}\` [${c.estado.toUpperCase()}]`
+                `• ${sanitizeMarkdown(c.savedName ? `[Agenda] ${c.savedName}` : (c.pushName || 'Desconocido'))} -> Tel: \`${c.phone || 'N/A'}\` | LID: \`${c.lid || 'N/A'}\` [${c.estado.toUpperCase()}]`
             );
             adminResponse = `📤 *Exportación de Libreta (${exportList.length}):*\n\n` + exportList.join('\n');
             break;
