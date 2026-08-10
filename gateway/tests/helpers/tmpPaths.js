@@ -2,26 +2,26 @@ const path = require('path');
 const os = require('os');
 const fs = require('fs');
 
-// Redirige los paths de config.js a un directorio temporal ANTES de requerir
-// los módulos (db.js carga los archivos al importarse). Cada archivo de test
-// corre en su propio proceso con `node --test`, así que el parcheo es seguro.
-const CONFIG_PATH = path.resolve(__dirname, '..', '..', 'config.js');
-
+// Redirige config.js a una DB temporal SOLO vía variables de entorno
+// (config.js las lee si están presentes). NUNCA reescribe archivos fuente:
+// en el pasado, un restore fallido dejó rutas de /tmp commitadas en config.js
+// y prod escribió su DB real en /tmp (bug F3-P1). Cada archivo de test corre
+// en su propio proceso con `node --test`, así que las env vars no colisionan.
 function withTempDbPaths() {
     const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'sdkbot-test-'));
-    fs.writeFileSync(path.join(tmpDir, 'contacts_db.json'), JSON.stringify({}, null, 2));
-    fs.writeFileSync(path.join(tmpDir, 'settings_db.json'), JSON.stringify({ globalMode: 'allowed_all' }, null, 2));
+    const contactsPath = path.join(tmpDir, 'contacts_db.json');
+    const settingsPath = path.join(tmpDir, 'settings_db.json');
+    fs.writeFileSync(contactsPath, JSON.stringify({}, null, 2));
+    fs.writeFileSync(settingsPath, JSON.stringify({ globalMode: 'allowed_all' }, null, 2));
 
-    const original = fs.readFileSync(CONFIG_PATH, 'utf-8');
-    const patched = original
-        .replace("const CONTACTS_FILE_PATH = path.join(__dirname, 'contacts_db.json');", `const CONTACTS_FILE_PATH = ${JSON.stringify(path.join(tmpDir, 'contacts_db.json'))};`)
-        .replace("const SETTINGS_FILE_PATH = path.join(__dirname, 'settings_db.json');", `const SETTINGS_FILE_PATH = ${JSON.stringify(path.join(tmpDir, 'settings_db.json'))};`);
-    fs.writeFileSync(CONFIG_PATH, patched);
+    process.env.SDK_CONTACTS_DB_PATH = contactsPath;
+    process.env.SDK_SETTINGS_DB_PATH = settingsPath;
 
     return {
         tmpDir,
         restore() {
-            fs.writeFileSync(CONFIG_PATH, original);
+            delete process.env.SDK_CONTACTS_DB_PATH;
+            delete process.env.SDK_SETTINGS_DB_PATH;
             fs.rmSync(tmpDir, { recursive: true, force: true });
         }
     };

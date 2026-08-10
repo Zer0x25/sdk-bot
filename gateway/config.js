@@ -20,9 +20,11 @@ function getBrainApiKey() {
     return '';
 }
 
-// Rutas de archivos de bases de datos
-const CONTACTS_FILE_PATH = "/tmp/sdkbot-test-RQe4zL/contacts_db.json";
-const SETTINGS_FILE_PATH = "/tmp/sdkbot-test-RQe4zL/settings_db.json";
+// Rutas de archivos de bases de datos.
+// En tests se redirigen con env vars (SDK_CONTACTS_DB_PATH / SDK_SETTINGS_DB_PATH)
+// para que tmpPaths.js NUNCA reescriba este archivo fuente (ver bug F3 en 351fa1a).
+const CONTACTS_FILE_PATH = process.env.SDK_CONTACTS_DB_PATH || path.join(__dirname, 'contacts_db.json');
+const SETTINGS_FILE_PATH = process.env.SDK_SETTINGS_DB_PATH || path.join(__dirname, 'settings_db.json');
 
 // Estado Global del Bot
 const state = {
