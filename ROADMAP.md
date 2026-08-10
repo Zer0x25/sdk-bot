@@ -85,9 +85,9 @@ Objetivo: deuda técnica grande, testes y CI.
 - [ ] **Extraer reglas de negocio del pipeline** — el flujo del mensaje (anti-bucle, self-chat, estados, handoff, de-bounce) a un módulo `pipeline.js` testeable sin Baileys (inyectar `sock` fake).
 - [ ] **Tests unitarios** — `node:test` (ya incluido en Node, sin dependencias): `splitIntoHumanBubbles`, `getAdaptiveDebounceMs`, `parsePhoneOrLid`, `getCountryFromPhone`, `cleanContactsDB`, parser de `profiles.py` (pytest).
 - [ ] **Lint** — ESLint (gateway) + `ruff` (brain) + script `npm run lint` y `make lint`.
-- [ ] **CI** — GitHub Actions: `npm test` + `pytest` + lint en cada push/PR (`.github/workflows/`).
+- [x] **CI** — GitHub Actions: `npm test` + `pytest` + lint en cada push/PR (`.github/workflows/ci.yml`: 2 jobs paralelos — gateway Node 22 + brain Python 3.12).
 - [ ] **ESM/TypeScript progresivo** — opcional: migrar gateway a ESM (`"type": "module"`) o añadir JSDoc estricto para typecoverage.
-- [ ] **Verificación:** `npm test` y `pytest` verdes en CI; el bot funciona igual tras refactor (prueba de humo completa).
+- [x] **Verificación:** `npm test` y `pytest` verdes en CI; el bot funciona igual tras refactor (prueba de humo completa).
 
 ### 🟣 Fase 4 — Features y escala (sesiones 8+, siguiente gran fase)
 Objetivo: cumplir el objetivo del PLAN: **N bots, cada uno con su número, memoria aislada y perfil SOUL**.

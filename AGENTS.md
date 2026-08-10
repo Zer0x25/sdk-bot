@@ -1,6 +1,6 @@
 # AGENTS.md
 
-Plataforma WhatsApp multi-bot: `gateway/` (Node.js + Baileys) + `brain/` (Python FastAPI). Sin CI; lint + tests por componente (ver secciones abajo).
+Plataforma WhatsApp multi-bot: `gateway/` (Node.js + Baileys) + `brain/` (Python FastAPI). CI en GitHub Actions (lint + tests por componente); ver secciones abajo.
 
 ## Arranque (orden importa)
 
@@ -74,6 +74,10 @@ Setup primera vez (Linux Debian/Ubuntu): `sudo apt install python3-venv` → `cd
 - **Gateway (ESLint 10, flat config):** `cd gateway; npm run lint` (o `npm run lint:fix`). Config en `eslint.config.js`: globals de Node 22 (`fetch`, `AbortSignal`), `no-unused-vars` en warn con `argsIgnorePattern: '^_'` y `caughtErrors: 'none'` (los catch ignorados por diseño), `no-empty` con `allowEmptyCatch`. Correr antes de cada commit.
 - **Brain (ruff):** `cd brain; venv/bin/ruff check .` (instalar: `venv/bin/pip install ruff`). Config en `brain/ruff.toml`: `select` = E/F/I/UP/B/FURB/RUF; `ignore` = BLE001, TRY002, S110 (los `except Exception` ciegos son DEFENSIVOS a propósito: cascada de proveedores, fallback de perfiles, `safe_log`). No usar `--fix` global sin revisar el diff.
 - Comando único por componente: `npm run check` (lint + tests) en gateway; en brain, ruff + pytest.
+
+## CI (F3-P6)
+
+- GitHub Actions en `.github/workflows/ci.yml`: 2 jobs paralelos en push/PR a `main` — **gateway** (Node 22, `npm ci` + `npm run lint` + `npm test`) y **brain** (Python 3.12, `pip install -r requirements-dev.txt` + `ruff check .` + `pytest`). Ver estado con `gh run list`.
 
 ## Tests (F3-P4)
 
