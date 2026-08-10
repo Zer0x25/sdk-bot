@@ -99,7 +99,32 @@ npm start
 ```
 > 🔒 **Instancia única:** abrir una segunda instancia del brain o del gateway se bloquea automáticamente (mensaje claro + salida). Esto protege la sesión de WhatsApp de corrupción por doble conexión.
 
-### 3. Re-sincronizar Libreta Completa de Contactos (Fresh QR):
+### 3. Producción (systemd) — ejecutar en segundo plano:
+
+```bash
+cd ~/playground/SDK-bot
+sudo bash deploy/install.sh        # instala, habilita y arranca sdk-bot-brain + sdk-bot-gateway
+systemctl status sdk-bot-brain sdk-bot-gateway   # ambos: active (running)
+journalctl -u sdk-bot-gateway -f   # logs en vivo
+```
+
+### 4. Desarrollo — alternar entre manual y systemd:
+
+Nunca corras manual y systemd del mismo componente a la vez (el lock de instancia única bloquea al segundo que arranque).
+
+```bash
+cd ~/playground/SDK-bot
+bash deploy/dev.sh manual brain      # apaga systemd + lanza brain manual (Ctrl+C al terminar)
+bash deploy/dev.sh manual gateway    # idem para el gateway
+bash deploy/dev.sh manual ambos      # imprime los comandos para 2 terminales
+bash deploy/dev.sh reset             # mata lo manual + relanza todo en systemd
+bash deploy/dev.sh reset brain       # solo el brain
+bash deploy/dev.sh status            # estado de services y locks
+```
+
+> 📋 **Logs:** rotación automática (5MB × 3) en `gateway/logs/gateway.log` y `brain/logs/brain.log`.
+
+### 5. Re-sincronizar Libreta Completa de Contactos (Fresh QR):
 ```bash
 cd gateway
 npm run reset
