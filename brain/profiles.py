@@ -232,6 +232,22 @@ def get_profile_file(profile_key: str):
         return f.read(), f"{profile_key}.md"
 
 
+def delete_profile(profile_key: str) -> dict:
+    """Elimina el archivo .md de un perfil. `default` es irremplazable (base del bot)."""
+    if not _valid_key(profile_key):
+        return {"success": False, "message": "Clave de perfil inválida (solo minúsculas, números, - y _)"}
+    if profile_key == "default":
+        return {"success": False, "message": "'default' es el perfil base del bot y no se puede borrar. Si quieres cambiarlo, sube un perfil.md nuevo con /update."}
+
+    path = _file_for(profile_key)
+    if not os.path.isfile(path):
+        return {"success": False, "message": f"Perfil '{profile_key}' no existe"}
+
+    os.remove(path)
+    refresh_profiles()
+    return {"success": True, "key": profile_key}
+
+
 def import_profile(profile_key: str, content: str) -> dict:
     """Valida y guarda un perfil desde su contenido .md (crea o actualiza)."""
     if not _valid_key(profile_key):

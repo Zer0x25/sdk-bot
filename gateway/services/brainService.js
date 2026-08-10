@@ -355,11 +355,37 @@ async function importProfileFile(profileKey, content) {
     }
 }
 
+/**
+ * 🗑️ Eliminar un perfil .md del brain (DELETE /profiles/{key})
+ * Devuelve el JSON del brain o null.
+ */
+async function deleteProfileFile(profileKey) {
+    try {
+        const deleteUrl = `${BRAIN_API_BASE}/profiles/${encodeURIComponent(profileKey)}`;
+        const response = await fetch(deleteUrl, {
+            method: 'DELETE',
+            headers: authHeaders(),
+            signal: AbortSignal.timeout(5000)
+        });
+        const result = await response.json();
+        if (result && result.success) {
+            // 🔄 Invalidar caché: el perfil ya no debe verse
+            cachedProfiles = null;
+            cachedProfilesAt = 0;
+        }
+        return result;
+    } catch (e) {
+        logError.error("Error al eliminar perfil del Brain:", e.message);
+        return null;
+    }
+}
+
 module.exports = {
     processAIChat,
     clearAIMemory,
     getAvailableProfiles,
     getProfileDetail,
     exportProfileFile,
-    importProfileFile
+    importProfileFile,
+    deleteProfileFile
 };

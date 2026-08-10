@@ -9,7 +9,7 @@ from memory import get_history, update_history, clear_history
 from providers import generate_ai_response, safe_log
 from profiles import (
     build_system_prompt, list_profiles, get_profiles, get_profile_file,
-    import_profile, refresh_profiles
+    import_profile, delete_profile, refresh_profiles
 )
 
 app = FastAPI(title="SDK-Bot Brain API (Modular Multi-Provider Router)")
@@ -90,6 +90,16 @@ def profile_reload_endpoint():
     """Fuerza la recarga de la carpeta profiles/ (aunque ya es automática por mtime)."""
     refresh_profiles()
     return {"status": "ok", "profiles": len(get_profiles())}
+
+@app.delete("/profiles/{profile_key}")
+def profile_delete_endpoint(profile_key: str):
+    """Elimina el .md de un perfil (default está protegido)."""
+    result = delete_profile(profile_key)
+    if not result["success"]:
+        status = 400 if result["message"].startswith(("Clave", "'default'")) else 404
+        raise HTTPException(status_code=status, detail=result["message"])
+    safe_log(f"🗑️ [PERFIL ELIMINADO] {result['key']}")
+    return {"status": "ok", **result}
 
 @app.post("/chat")
 async def chat_endpoint(request: ChatRequest):

@@ -5,7 +5,7 @@ const logError = cat("ERROR");
 const { createRateLimiter } = require('../services/rateLimit');
 const { downloadMediaMessage } = require('@whiskeysockets/baileys');
 const { getCountryFromPhone } = require('../services/metadataService');
-const { clearAIMemory, getAvailableProfiles, getProfileDetail, exportProfileFile, importProfileFile } = require('../services/brainService');
+const { clearAIMemory, getAvailableProfiles, getProfileDetail, exportProfileFile, importProfileFile, deleteProfileFile } = require('../services/brainService');
 
 // ⏱️ S2 — Límite de comandos admin: máx 20/min por admin (ventana deslizante)
 const ADMIN_CMD_MAX_PER_MIN = 20;
@@ -487,7 +487,7 @@ async function handleAdminCommand(textMessage, remoteJid, sock, metadata, rawMsg
             const profileList = profiles.map(p => `• \`${p.key}\` - *${p.nombre}*: ${p.descripcion}`).join('\n');
 
             if (!queryParam) {
-                adminResponse = `⚠️ *Uso:* \`/perfil <perfil>\` (global) | \`/perfil <perfil> <num>\` (contacto) | \`/perfil ver <perfil>\`\nPerfil actual: *${state.CURRENT_PROFILE}*\n\n*Perfiles disponibles:*\n${profileList || "No se pudieron cargar (¿brain encendido?)"}`;
+                adminResponse = `⚠️ *Uso:* \`/perfil <perfil>\` (global) | \`/perfil <perfil> <num>\` (contacto) | \`/perfil ver <perfil>\` | \`/perfil exportar <perfil>\` | \`/perfil eliminar <perfil>\`\nPerfil actual: *${state.CURRENT_PROFILE}*\n\n*Perfiles disponibles:*\n${profileList || "No se pudieron cargar (¿brain encendido?)"}`;
                 break;
             }
 
@@ -503,6 +503,22 @@ async function handleAdminCommand(textMessage, remoteJid, sock, metadata, rawMsg
                     adminResponse = `📄 *Perfil ${detail.nombre} (\`${detail.key}\`)*\n━━━━━━━━━━━━━━━━━━━━━━\n${detail.prompt}`;
                 } else {
                     adminResponse = `⚠️ Perfil *"${keyToShow}"* no encontrado o brain apagado. Disponibles: ${profiles.map(p => `\`${p.key}\``).join(', ')}.`;
+                }
+                break;
+            }
+
+            // 🗑️ /perfil eliminar <key> → borra el .md del perfil en el brain
+            if (['eliminar', 'borrar', 'delete', 'del', 'rm'].includes(queryParam.toLowerCase().split(/\s+/)[0])) {
+                const keyToDelete = queryParam.toLowerCase().split(/\s+/).slice(1).join(' ').trim();
+                if (!keyToDelete) {
+                    adminResponse = `⚠️ Uso: \`/perfil eliminar <perfil>\`. Disponibles: ${profiles.map(p => `\`${p.key}\``).join(', ') || 'no cargados'}.`;
+                    break;
+                }
+                const delResult = await deleteProfileFile(keyToDelete);
+                if (delResult && delResult.success) {
+                    adminResponse = `🗑️ *Perfil \`${keyToDelete}\` eliminado.*\n\nRecuerda: si un contacto tenía ese perfil asignado, el brain caerá a \`default\`.`;
+                } else {
+                    adminResponse = `⚠️ No pude borrar *"${keyToDelete}"*: ${(delResult && delResult.detail) || 'no encontrado o brain apagado'}.`;
                 }
                 break;
             }
@@ -688,6 +704,7 @@ async function handleAdminCommand(textMessage, remoteJid, sock, metadata, rawMsg
                 `• \`/pg\` / \`/ag\` -> Pausar/Arrancar bot globalmente\n` +
                 `• \`/pf <perfil>\` -> Cambiar prompt IA\n` +
                 `• \`/pf exportar <perfil>\` -> Enviar .md del perfil a editar\n` +
+                `• \`/pf eliminar <perfil>\` -> Borrar un perfil (default protegido)\n` +
                 `• \`/update\` (citando un .md) -> Importar perfil editado\n` +
                 `• \`/info\` -> Datos de depuración\n` +
                 `• \`/init\` -> 📚 Leer guía rápida de inicio`;

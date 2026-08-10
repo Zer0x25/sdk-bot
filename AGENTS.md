@@ -38,7 +38,8 @@ Setup primera vez (Linux Debian/Ubuntu): `sudo apt install python3-venv` → `cd
 
 ## Editar perfiles desde WhatsApp (self-chat)
 
-- `/perfil exportar <key>` envía el `.md` como documento; editar y reenviar citándolo con `/update` (o caption `/update`) lo importa y actualiza el archivo. Solo se aceptan archivos `*.md`/`*.txt` nombrados `<key>.md`.
+- `/perfil exportar <key>` envía el `.md` como documento; editar y reenviar citándolo con `/update` (o caption `/update`) lo importa y actualiza el archivo. Solo se aceptan archivos `*.md`/`*.txt` nombrados `<key>.md` (el nombre del archivo DEFINE la clave del perfil; cualquier `<key>.md` nuevo crea un perfil nuevo).
+- `/perfil eliminar <key>` (alias: borrar/delete/del/rm) borra el `.md` vía `DELETE /profiles/{key}`. `default` está protegido. Al borrar un perfil asignado a contactos, el brain cae a `default`.
 - `/perfil <key>` (global) | `/perfil <key> <num>` o citando (por contacto) | `/perfil ver <key>` (prompt compilado).
 - `/perfil` valida contra `GET /profiles` (brain encendido); con brain apagado lista vacía y rechaza cambios.
 
