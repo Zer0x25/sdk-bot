@@ -9,6 +9,11 @@ Plataforma WhatsApp multi-bot: `gateway/` (Node.js + Baileys) + `brain/` (Python
 3. QR nuevo / re-sincronizar libreta: `cd gateway; npm run reset` (borra `auth_info_baileys/` tras confirmar y lanza index.js).
 4. **Producción (F1):** systemd units en `deploy/` — `sudo bash deploy/install.sh` y ajustar rutas/usuario. Verificar con `systemctl status sdk-bot-{brain,gateway}` y `journalctl -u sdk-bot-gateway -f`.
 
+**Desarrollo vs producción:** nunca corras manual y systemd del mismo componente a la vez (el lock de instancia única bloquea al segundo). Usa `bash deploy/dev.sh`:
+- `dev.sh manual brain|gateway|ambos` — detiene el service systemd y lanza la instancia manual (foreground, Ctrl+C al terminar; `ambos` imprime los comandos para 2 terminales).
+- `dev.sh reset brain|gateway|ambos` — mata las instancias manuales y relanza los services de systemd.
+- `dev.sh status` — estado de services y locks.
+
 Logs: `gateway/logs/gateway.log` y `brain/logs/brain.log` (rotación 5MB, 3 backups). Ver en vivo: `tail -f gateway/logs/gateway.log | pino-pretty` (instalar pino-pretty aparte) o `cat` directo (JSON por línea).
 
 Setup primera vez (Linux Debian/Ubuntu): `sudo apt install python3-venv` → `cd brain; python3 -m venv venv && venv/bin/pip install -r requirements.txt`. Windows: `python -m venv venv && venv\Scripts\pip install -r requirements.txt`.
