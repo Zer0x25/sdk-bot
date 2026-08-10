@@ -72,7 +72,7 @@ def get_history(bot_id: str, user_id: str):
     cutoff = time.time() - WINDOW_SECONDS
     rows = conn.execute(
         "SELECT role, content FROM messages WHERE bot_id = ? AND user_id = ? AND created_at >= ? "
-        "ORDER BY created_at ASC, id ASC",
+        "ORDER BY id ASC",  # id = orden de inserción (los timestamps float pueden colisionar en un mismo tick)
         (bot_id, user_id, cutoff),
     ).fetchall()
     msgs = [{"role": r["role"], "content": r["content"]} for r in rows]
@@ -100,7 +100,7 @@ def append_exchange(bot_id: str, user_id: str, user_msg: str, assistant_msg: str
             "INSERT INTO messages (bot_id, user_id, role, content, created_at) VALUES (?, ?, ?, ?, ?)",
             [
                 (bot_id, user_id, "user", user_msg, now),
-                (bot_id, user_id, "assistant", assistant_msg, now + 0.001),
+                (bot_id, user_id, "assistant", assistant_msg, now),
             ],
         )
         _sweep_chat(conn, bot_id, user_id)
