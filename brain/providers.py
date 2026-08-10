@@ -1,6 +1,12 @@
 from openai import OpenAI
-from google import genai
-from google.genai import types
+# Gemini es un fallback opcional 3rd: en Termux (bionic) google-genai no tiene
+# wheel precompilado y no se instala, así que lo importamos de forma defensiva.
+try:
+    from google import genai
+    from google.genai import types
+except ImportError:
+    genai = None
+    types = None
 from config import GROQ_API_KEY, OPENROUTER_API_KEY, GEMINI_API_KEY, OPENROUTER_MODEL, GROQ_MODEL
 
 # 1. Cliente Groq (Vía OpenAI client format)
@@ -21,9 +27,9 @@ if OPENROUTER_API_KEY:
         timeout=25.0 # Timeout de 25s para OpenRouter (permite generación de textos largos)
     )
 
-# 3. Cliente Gemini
+# 3. Cliente Gemini (solo si el módulo está disponible)
 gemini_client = None
-if GEMINI_API_KEY:
+if genai is not None and GEMINI_API_KEY:
     gemini_client = genai.Client(api_key=GEMINI_API_KEY)
 
 from logging_setup import make_logger
