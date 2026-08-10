@@ -59,13 +59,13 @@ Objetivo: estabilizar lo que ya existe sin tocar arquitectura. **Estado: COMPLET
 ### 🟡 Fase 1 — Estabilidad y operabilidad (sesiones 2-3)
 Objetivo: que el sistema sobreviva solo y sea debuggeable.
 
-- [ ] **B6 / R7** — Pool de concurrencia global (ej: máx 3-4 `processAIChat` simultáneos; cola FIFO por fuera).
-- [ ] **R6** — Logger con archivos rotados por tamaño/día (`pino` ya está en dependencias): logs del gateway a `logs/gateway.log`, brain a `logs/brain.log`. Categorías: `[AI]`, `[DEBOUNCE]`, `[PRESENCIA]`, `[COMANDO]`, `[ERROR]`.
-- [ ] **Reconnect robusto** — En `index.js:78` no se espera que el socket viejo cierre antes de recrear; añadir `sock.end()` + backoff exponencial (2s, 5s, 15s, 60s) para evitar loop de reconexión violento.
-- [ ] **Watchdog** — systemd units (`sdk-bot-gateway.service`, `sdk-bot-brain.service`) con `Restart=always` y arranque en orden (brain antes que gateway). Plantillas en `deploy/`.
-- [ ] **R1 (parcial)** — Índices en RAM: mantener `Map` phone→key y lid→key junto a `cachedContactsDB` para eliminar los `Object.keys().find()` en hot path (upsert, extractUserMetadata, presence).
-- [ ] **Retry 1x en brain** si la respuesta viene vacía o con error transitorio, antes de notificar al admin.
-- [ ] **Verificación:** matar el gateway a mitad de conversación, ver reconexión con backoff; ver logs rotando; 5 clientes escribiendo a la vez sin respuestas cruzadas.
+- [x] **B6 / R7** — Pool de concurrencia global (`services/aiQueue.js`): máx 3 `processAIChat` simultáneos con cola FIFO. Verificado con 10 tareas (máx 3 activas, sin cruces).
+- [x] **R6** — Logger rotado por tamaño (5MB, 3 backups): gateway `logs/gateway.log` (pino + pino-roll, categorías `cat: AI/DEBOUNCE/PRESENCIA/COMANDO/ERROR/CORE/INSTANCIA/STORAGE`), brain `logs/brain.log` (`logging_setup.py`, RotatingFileHandler). `reset-session.js` sigue con console (interactivo).
+- [x] **Reconnect robusto** — En `index.js`: `sock.end()` del socket viejo antes de recrear, guard `currentSocket !== sock` para ignorar eventos de sockets reemplazados, y backoff exponencial 2s→5s→15s→60s (topado) con reset en `open`.
+- [x] **Watchdog** — Plantillas systemd en `deploy/` (`sdk-bot-brain.service`, `sdk-bot-gateway.service` con `Requires` del brain + `install.sh`). Pendiente de instalar en el VPS.
+- [x] **R1 (parcial)** — Índices RAM en `storageService.js`: `phoneIndex`, `lidIndex`, `digitsIndex` (Mapas reconstruidos en `saveContactsDB`/`loadDataOnStartup`); `findExistingKey()` O(1) en upserts y `extractUserMetadata`, índice de dígitos + fallback scan en comandos admin.
+- [x] **Retry 1x en brain** — `requestBrain()`: reintento solo en errores transitorios (red/timeout/5xx/proveedor); los 4xx (422 validación) NO se reintentan (son bugs).
+- [ ] **Verificación pendiente en vivo:** matar el gateway a mitad de conversación y ver reconexión con backoff (lógica verificada por código; requiere desconexión real de WhatsApp).
 
 ### 🟠 Fase 2 — Seguridad y privacidad (sesión 4)
 Objetivo: no dejar expuestos costos, memoria ni escritura de archivos.

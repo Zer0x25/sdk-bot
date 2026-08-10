@@ -1,9 +1,40 @@
 const fs = require('fs');
 const fsPromises = require('fs/promises');
 const { SETTINGS_FILE_PATH, CONTACTS_FILE_PATH, state } = require('../config');
+const { cat } = require("../services/logger");
+const log = cat("STORAGE");
+const logError = cat("ERROR");
 
 // Almacén en memoria de contactos de la sesión
 const contactStore = new Map();
+
+// -------------------------------------------------------------
+// ÍNDICES RAM (R1): eliminan los Object.keys().find() del hot path
+// -------------------------------------------------------------
+let phoneIndex = new Map();   // phone -> clave del registro
+let lidIndex = new Map();     // lid   -> clave del registro
+let digitsIndex = new Map();  // clave/phone/lid en dígitos puros -> clave (para comandos admin)
+
+function rebuildIndexes() {
+    const db = cachedContactsDB || {};
+    phoneIndex = new Map();
+    lidIndex = new Map();
+    digitsIndex = new Map();
+    for (const [k, item] of Object.entries(db)) {
+        if (!item || typeof item !== 'object') continue;
+        if (item.phone) phoneIndex.set(item.phone, k);
+        if (item.lid) lidIndex.set(item.lid, k);
+        const d = String(k).replace(/[^0-9]/g, '');
+        if (d) digitsIndex.set(d, k);
+    }
+}
+
+// Búsqueda exacta por phone/lid (hot path: upsert, bulk, extractUserMetadata)
+function findExistingKey(phoneNumber, lid) {
+    if (phoneNumber && phoneIndex.has(phoneNumber)) return phoneIndex.get(phoneNumber);
+    if (lid && lidIndex.has(lid)) return lidIndex.get(lid);
+    return null;
+}
 
 // -------------------------------------------------------------
 // CACHÉ EN MEMORIA Y GUARDADO DIFERIDO (DEBOUNCE)
@@ -36,7 +67,7 @@ function stripBOM(str) {
 }
 
 function loadDataOnStartup() {
-    console.log("📂 Cargando bases de datos en memoria...");
+    log.info("📂 Cargando bases de datos en memoria...");
     
     try {
         if (!fs.existsSync(SETTINGS_FILE_PATH)) {
@@ -54,7 +85,7 @@ function loadDataOnStartup() {
             state.CURRENT_PROFILE = cachedSettingsDB.currentProfile;
         }
     } catch (e) {
-        console.error("Error al leer settings_db.json:", e.message);
+        logError.error("Error al leer settings_db.json:", e.message);
         cachedSettingsDB = { globalMode: 'allowed_all' };
         state.GLOBAL_MODE = 'allowed_all';
     }
@@ -67,9 +98,10 @@ function loadDataOnStartup() {
             cachedContactsDB = JSON.parse(stripBOM(fs.readFileSync(CONTACTS_FILE_PATH, 'utf8')));
         }
     } catch (e) {
-        console.error("Error al leer contacts_db.json:", e.message);
+        logError.error("Error al leer contacts_db.json:", e.message);
         cachedContactsDB = {};
     }
+    rebuildIndexes();
 }
 
 // -------------------------------------------------------------
@@ -95,7 +127,7 @@ function saveSettingsDB(settings) {
         try {
             await fsPromises.writeFile(SETTINGS_FILE_PATH, JSON.stringify(cachedSettingsDB, null, 2));
         } catch (e) {
-            console.error("Error al guardar settings_db.json de forma asíncrona:", e.message);
+            logError.error("Error al guardar settings_db.json de forma asíncrona:", e.message);
         }
     }, SAVE_DELAY_MS);
     return true;
@@ -103,6 +135,7 @@ function saveSettingsDB(settings) {
 
 function saveContactsDB(db) {
     cachedContactsDB = db;
+    rebuildIndexes(); // los índices RAM siempre espejan la caché actual
     if (saveContactsTimer) clearTimeout(saveContactsTimer);
     saveContactsTimer = setTimeout(async () => {
         try {
@@ -111,7 +144,7 @@ function saveContactsDB(db) {
             await fsPromises.writeFile(tmpPath, JSON.stringify(cachedContactsDB, null, 2));
             await fsPromises.rename(tmpPath, CONTACTS_FILE_PATH);
         } catch (e) {
-            console.error("Error al guardar contacts_db.json de forma asíncrona:", e.message);
+            logError.error("Error al guardar contacts_db.json de forma asíncrona:", e.message);
         }
     }, SAVE_DELAY_MS);
     return true;
@@ -121,13 +154,13 @@ function saveContactsDB(db) {
 // FUNCIÓN DE CIERRE SEGURO (Graceful Shutdown)
 // -------------------------------------------------------------
 function flushToDisk() {
-    console.log("💾 Guardando bases de datos a disco antes de cerrar...");
+    log.info("💾 Guardando bases de datos a disco antes de cerrar...");
     try {
         if (cachedSettingsDB) fs.writeFileSync(SETTINGS_FILE_PATH, JSON.stringify(cachedSettingsDB, null, 2));
         if (cachedContactsDB) fs.writeFileSync(CONTACTS_FILE_PATH, JSON.stringify(cachedContactsDB, null, 2));
-        console.log("✅ Datos guardados correctamente.");
+        log.info("✅ Datos guardados correctamente.");
     } catch (e) {
-        console.error("⚠️ Error durante el volcado síncrono a disco:", e.message);
+        logError.error("⚠️ Error durante el volcado síncrono a disco:", e.message);
     }
 }
 
@@ -199,12 +232,8 @@ function upsertContactMetadata(metadata) {
 
     const db = cleanContactsDB();
 
-    let existingKey = Object.keys(db).find(k => {
-        const item = db[k];
-        if (phoneNumber && item.phone === phoneNumber) return true;
-        if (lid && item.lid === lid) return true;
-        return false;
-    });
+    // ⚡ Índice RAM: O(1) en vez de Object.keys().find()
+    let existingKey = findExistingKey(phoneNumber, lid);
 
     let targetKey = phoneNumber || (existingKey && db[existingKey].phone ? db[existingKey].phone : lid);
 
@@ -273,12 +302,8 @@ function bulkUpsertContactsMetadata(contactsList) {
         const hasAnyIdentity = phoneNumber || (savedName && savedName.trim()) || (pushName && pushName !== 'Desconocido' && pushName.trim()) || verifiedName || profilePicUrl;
         if (!hasAnyIdentity) return;
 
-        let existingKey = Object.keys(db).find(k => {
-            const item = db[k];
-            if (phoneNumber && item.phone === phoneNumber) return true;
-            if (lid && item.lid === lid) return true;
-            return false;
-        });
+        // ⚡ Índice RAM: O(1) en vez de Object.keys().find()
+        let existingKey = findExistingKey(phoneNumber, lid);
 
         let targetKey = phoneNumber || (existingKey && db[existingKey].phone ? db[existingKey].phone : lid);
 
@@ -353,12 +378,16 @@ function setNumberState(targetId, stateType) {
     if (!cleanTarget) return { success: false, message: "ID no válido" };
 
     const db = getContactsDB();
-    const existingKey = Object.keys(db).find(k => {
-        const item = db[k];
-        const cleanPhone = item.phone ? item.phone.replace(/[^0-9]/g, '') : '';
-        const cleanLid = item.lid ? item.lid.replace(/[^0-9]/g, '') : '';
-        return cleanPhone.includes(cleanTarget) || cleanLid.includes(cleanTarget) || k === cleanTarget;
-    });
+    // ⚡ Índice RAM de dígitos puros; scan completo solo si no hubo match exacto
+    let existingKey = digitsIndex.has(cleanTarget) ? digitsIndex.get(cleanTarget) : null;
+    if (!existingKey) {
+        existingKey = Object.keys(db).find(k => {
+            const item = db[k];
+            const cleanPhone = item.phone ? item.phone.replace(/[^0-9]/g, '') : '';
+            const cleanLid = item.lid ? item.lid.replace(/[^0-9]/g, '') : '';
+            return cleanPhone.includes(cleanTarget) || cleanLid.includes(cleanTarget) || k === cleanTarget;
+        });
+    }
 
     if (existingKey) {
         // Mapeo del stateType al campo "estado" string
@@ -410,12 +439,16 @@ function setContactProfile(targetId, profileKey) {
     if (!cleanTarget) return { success: false, message: "ID no válido" };
 
     const db = getContactsDB();
-    const existingKey = Object.keys(db).find(k => {
-        const item = db[k];
-        const cleanPhone = item.phone ? item.phone.replace(/[^0-9]/g, '') : '';
-        const cleanLid = item.lid ? item.lid.replace(/[^0-9]/g, '') : '';
-        return cleanPhone.includes(cleanTarget) || cleanLid.includes(cleanTarget) || k === cleanTarget;
-    });
+    // ⚡ Índice RAM de dígitos puros; scan completo solo si no hubo match exacto
+    let existingKey = digitsIndex.has(cleanTarget) ? digitsIndex.get(cleanTarget) : null;
+    if (!existingKey) {
+        existingKey = Object.keys(db).find(k => {
+            const item = db[k];
+            const cleanPhone = item.phone ? item.phone.replace(/[^0-9]/g, '') : '';
+            const cleanLid = item.lid ? item.lid.replace(/[^0-9]/g, '') : '';
+            return cleanPhone.includes(cleanTarget) || cleanLid.includes(cleanTarget) || k === cleanTarget;
+        });
+    }
 
     if (existingKey) {
         db[existingKey].perfil = profileKey;
@@ -478,6 +511,7 @@ module.exports = {
     ignoreAllAgendaContacts,
     upsertContactMetadata,
     bulkUpsertContactsMetadata,
+    findExistingKey,
     flushToDisk,
     loadDataOnStartup
 };

@@ -31,6 +31,9 @@ así se pueden editar en caliente sin reiniciar.
 
 import os
 import re
+from logging_setup import make_logger
+
+log = make_logger("brain.perfiles")
 
 PROFILES_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "profiles")
 
@@ -141,7 +144,7 @@ def get_profiles() -> dict:
             changed = True
 
     if changed:
-        print(f"[PERFILES] Recarga automatica: {len(_profiles_cache)} perfiles activos")
+        log.info(f"[PERFILES] Recarga automatica: {len(_profiles_cache)} perfiles activos")
 
     return _profiles_cache
 
@@ -150,7 +153,7 @@ def _reload_all(files: dict) -> None:
     _profiles_cache.clear()
     for key, path in files.items():
         _profiles_cache[key] = (os.path.getmtime(path), _read_profile(path, key))
-    print(f"[PERFILES] Cargados {len(_profiles_cache)} perfiles desde {PROFILES_DIR}")
+    log.info(f"[PERFILES] Cargados {len(_profiles_cache)} perfiles desde {PROFILES_DIR}")
 
 
 def _read_profile(path: str, key: str) -> dict:
@@ -158,7 +161,7 @@ def _read_profile(path: str, key: str) -> dict:
         with open(path, "r", encoding="utf-8") as f:
             return _parse_md(f.read(), key)
     except Exception as e:
-        print(f"⚠️ Error al leer perfil {key}.md: {e}")
+        log.info(f"⚠️ Error al leer perfil {key}.md: {e}")
         return {
             "nombre": key.capitalize(),
             "descripcion": "",

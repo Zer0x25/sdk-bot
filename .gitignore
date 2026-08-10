@@ -16,6 +16,10 @@ gateway/allowed_numbers.json
 .gateway.lock
 brain/.brain.lock
 
+# Logs rotados (R6)
+gateway/logs/
+brain/logs/
+
 # Environment variables
 .env
 .env.*

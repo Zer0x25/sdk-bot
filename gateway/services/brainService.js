@@ -1,4 +1,7 @@
 const { BRAIN_API_URL, state, registerSentMessage } = require('../config');
+const { cat } = require("../services/logger");
+const log = cat("AI");
+const logError = cat("ERROR");
 
 // Caché en memoria de perfiles SOUL disponibles en el brain
 let cachedProfiles = null;
@@ -86,7 +89,7 @@ function calculateTypingDelay(bubbleText) {
  */
 async function notifyAdminError(sock, metadata, textMessage, errorDetails) {
     if (!state.ADMIN_PHONE && !state.ADMIN_LID) {
-        console.error("⚠️ [ERROR ADMIN] No se detectó ADMIN_PHONE ni ADMIN_LID para enviar alerta de error.");
+        logError.error("⚠️ [ERROR ADMIN] No se detectó ADMIN_PHONE ni ADMIN_LID para enviar alerta de error.");
         return;
     }
 
@@ -127,52 +130,84 @@ async function notifyAdminError(sock, metadata, textMessage, errorDetails) {
         const sentAlert = await sock.sendMessage(adminJid, { text: adminAlert });
         registerSentMessage(sentAlert);
     } catch (err) {
-        console.error("Error al enviar alerta a Self-Chat del Admin:", err.message);
+        logError.error("Error al enviar alerta a Self-Chat del Admin:", err.message);
     }
+}
+
+/**
+ * 🤝 Petición al brain con reintento 1x en errores TRANSITORIOS.
+ * No se reintentan errores 4xx (422 de validación = bug, no transitorio).
+ */
+async function requestBrain(payload) {
+    const response = await fetch(BRAIN_API_URL, {
+        method: 'POST',
+        headers: {
+            'Content-Type': 'application/json'
+        },
+        signal: AbortSignal.timeout(90000), // 90 segundos de timeout para permitir generación de textos largos o modelos lentos
+        body: JSON.stringify(payload)
+    });
+
+    const data = await response.json();
+
+    if (!response.ok) {
+        // FastAPI devuelve {"detail": [...]} en 422 (validación) — loguear la causa real
+        const detail = (data && data.detail) ? JSON.stringify(data.detail) : `HTTP ${response.status}`;
+        const err = new Error(`Brain rechazó la petición (${response.status}): ${detail}`);
+        err.status = response.status;
+        throw err;
+    }
+
+    if (!data.response && data.error) {
+        const err = new Error(data.error);
+        err.status = 502; // error del proveedor de IA = transitorio, reintentar
+        throw err;
+    }
+
+    return data;
 }
 
 async function processAIChat(textMessage, remoteJid, metadata, sock) {
     const displayName = metadata.savedName || metadata.pushName || 'Usuario';
     const langLog = metadata.language ? ` | Idioma: ${metadata.language}` : '';
-    console.log(`\n[ENVIANDO A IA] De: ${displayName} (${remoteJid}) | País: ${metadata.country}${langLog}`);
+    log.info(`\n[ENVIANDO A IA] De: ${displayName} (${remoteJid}) | País: ${metadata.country}${langLog}`);
     
-    try {
-        const response = await fetch(BRAIN_API_URL, {
-            method: 'POST',
-            headers: {
-                'Content-Type': 'application/json'
-            },
-            signal: AbortSignal.timeout(90000), // 90 segundos de timeout para permitir generación de textos largos o modelos lentos
-            body: JSON.stringify({
-                user_id: remoteJid,
-                message: textMessage,
-                bot_profile: metadata.perfil || state.CURRENT_PROFILE,
-                saved_name: metadata.savedName,
-                push_name: metadata.pushName,
-                user_name: displayName,
-                phone_number: metadata.phoneNumber,
-                lid: metadata.lid,
-                country: metadata.country,
-                language: metadata.language,
-                bio: metadata.bio,
-                is_business: metadata.isBusiness
-            })
-        });
-        
-        const data = await response.json();
+    const payload = {
+        user_id: remoteJid,
+        message: textMessage,
+        bot_profile: metadata.perfil || state.CURRENT_PROFILE,
+        saved_name: metadata.savedName,
+        push_name: metadata.pushName,
+        user_name: displayName,
+        phone_number: metadata.phoneNumber,
+        lid: metadata.lid,
+        country: metadata.country,
+        language: metadata.language,
+        bio: metadata.bio,
+        is_business: metadata.isBusiness
+    };
 
-        if (!response.ok) {
-            // FastAPI devuelve {"detail": [...]} en 422 (validación) — loguear la causa real
-            const detail = (data && data.detail) ? JSON.stringify(data.detail) : `HTTP ${response.status}`;
-            throw new Error(`Brain rechazó la petición (${response.status}): ${detail}`);
+    try {
+        let data;
+        try {
+            data = await requestBrain(payload);
+        } catch (error) {
+            // ↻ Retry 1x solo en errores transitorios (red, timeout, 5xx). 4xx = bug, no reintentar.
+            if (!error.status || error.status >= 500) {
+                log.warn(`↻ Error transitorio del cerebro (${error.message}). Reintentando (1/1)...`);
+                await new Promise(r => setTimeout(r, 1500));
+                data = await requestBrain(payload);
+            } else {
+                throw error;
+            }
         }
 
         if (data.response) {
-            console.log(`[BOT RESPONDE A ${displayName}]: ${data.response}`);
+            log.info(`[BOT RESPONDE A ${displayName}]: ${data.response}`);
             
             // 🧠 1. Simulación de Lectura / Pensamiento Humano (antes de teclear)
             const readDelay = calculateReadDelay(textMessage);
-            console.log(`[SIMULACIÓN HUMANA] 📖 Leyendo/pensando durante ${(readDelay / 1000).toFixed(2)}s...`);
+            log.info(`[SIMULACIÓN HUMANA] 📖 Leyendo/pensando durante ${(readDelay / 1000).toFixed(2)}s...`);
             await new Promise(r => setTimeout(r, readDelay));
 
             // 🧩 2. Divisón inteligente en globos (Multi-Bubble)
@@ -183,7 +218,7 @@ async function processAIChat(textMessage, remoteJid, metadata, sock) {
                 const bubble = bubbles[i];
                 const typingDelay = calculateTypingDelay(bubble);
 
-                console.log(`[SIMULACIÓN HUMANA] ⌨️ Tecleando globo ${i + 1}/${bubbles.length} (${bubble.length} chars) durante ${(typingDelay / 1000).toFixed(2)}s...`);
+                log.info(`[SIMULACIÓN HUMANA] ⌨️ Tecleando globo ${i + 1}/${bubbles.length} (${bubble.length} chars) durante ${(typingDelay / 1000).toFixed(2)}s...`);
                 
                 await sock.sendPresenceUpdate('composing', remoteJid);
                 await new Promise(r => setTimeout(r, typingDelay));
@@ -195,16 +230,16 @@ async function processAIChat(textMessage, remoteJid, metadata, sock) {
                 if (i < bubbles.length - 1) {
                     await sock.sendPresenceUpdate('paused', remoteJid).catch(() => {});
                     const pauseBetweenBubbles = 1000 + Math.floor(Math.random() * 1200); // 1.0s a 2.2s
-                    console.log(`[SIMULACIÓN HUMANA] ☕ Pausa entre globos de ${(pauseBetweenBubbles / 1000).toFixed(2)}s...`);
+                    log.info(`[SIMULACIÓN HUMANA] ☕ Pausa entre globos de ${(pauseBetweenBubbles / 1000).toFixed(2)}s...`);
                     await new Promise(r => setTimeout(r, pauseBetweenBubbles));
                 }
             }
         } else {
-            console.error("Error del cerebro:", data.error);
+            logError.error("Error del cerebro:", data.error);
             await notifyAdminError(sock, metadata, textMessage, data.error || "Respuesta vacía del cerebro IA");
         }
     } catch (error) {
-        console.error("Error al conectar con el cerebro:", error.message);
+        logError.error("Error al conectar con el cerebro:", error.message);
         await notifyAdminError(sock, metadata, textMessage, error.message);
     } finally {
         await sock.sendPresenceUpdate('paused', remoteJid).catch(() => {});
@@ -222,7 +257,7 @@ async function clearAIMemory(userJid) {
         const data = await response.json();
         return data && data.status === 'ok';
     } catch (e) {
-        console.error("Error al resetear memoria en Brain:", e.message);
+        logError.error("Error al resetear memoria en Brain:", e.message);
         return false;
     }
 }
@@ -245,7 +280,7 @@ async function getAvailableProfiles() {
         cachedProfilesAt = Date.now();
         return cachedProfiles;
     } catch (e) {
-        console.error("Error al obtener perfiles del Brain:", e.message);
+        logError.error("Error al obtener perfiles del Brain:", e.message);
         return [];
     }
 }
@@ -263,7 +298,7 @@ async function getProfileDetail(profileKey) {
         if (!response.ok) return null;
         return await response.json();
     } catch (e) {
-        console.error("Error al obtener detalle de perfil:", e.message);
+        logError.error("Error al obtener detalle de perfil:", e.message);
         return null;
     }
 }
@@ -283,7 +318,7 @@ async function exportProfileFile(profileKey) {
         const content = await response.text();
         return { content, filename: `${profileKey}.md` };
     } catch (e) {
-        console.error("Error al exportar archivo de perfil:", e.message);
+        logError.error("Error al exportar archivo de perfil:", e.message);
         return null;
     }
 }
@@ -309,7 +344,7 @@ async function importProfileFile(profileKey, content) {
         }
         return result;
     } catch (e) {
-        console.error("Error al importar perfil al Brain:", e.message);
+        logError.error("Error al importar perfil al Brain:", e.message);
         return null;
     }
 }

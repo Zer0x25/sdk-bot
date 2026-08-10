@@ -1,5 +1,5 @@
 const { state } = require('../config');
-const { getContactsDB, upsertContactMetadata } = require('./storageService');
+const { getContactsDB, upsertContactMetadata, findExistingKey } = require('./storageService');
 
 const TTL_ENRICHMENT_MS = 24 * 60 * 60 * 1000; // 24 Horas de TTL para refresco de foto/bio
 
@@ -111,12 +111,8 @@ function extractUserMetadata(msg) {
     const lid = lidJid ? lidJid.split('@')[0].split(':')[0] : null;
 
     const db = getContactsDB();
-    const existingKey = Object.keys(db).find(k => {
-        const item = db[k];
-        if (phoneNumber && item.phone === phoneNumber) return true;
-        if (lid && item.lid === lid) return true;
-        return false;
-    });
+    // ⚡ Índice RAM de storageService (O(1)) en vez de Object.keys().find()
+    const existingKey = findExistingKey(phoneNumber, lid);
 
     const savedName = existingKey ? db[existingKey].savedName : null;
     const perfil = existingKey ? db[existingKey].perfil : null;

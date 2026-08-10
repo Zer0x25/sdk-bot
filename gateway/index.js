@@ -7,6 +7,11 @@ const { state } = require('./config');
 const { bulkUpsertContactsMetadata, isJunkJid, cleanContactsDB, contactStore, flushToDisk } = require('./services/storageService');
 const { getCountryFromPhone } = require('./services/metadataService');
 const { handleIncomingMessage, handlePresenceUpdate } = require('./handlers/messageHandler');
+const { logger, cat } = require('./services/logger');
+
+const log = cat('CORE');
+const logInstancia = cat('INSTANCIA');
+const logError = cat('ERROR');
 
 // -------------------------------------------------------------
 // 🔒 INSTANCIA ÚNICA DEL GATEWAY
@@ -58,16 +63,16 @@ async function ensureSingleInstance() {
 
     if (existing && isProcessAlive(existing)) {
         if (allowRestart) {
-            console.log(`♻️  Gateway anterior detectado (PID ${existing}). Cerrando y reiniciando...`);
+            logInstancia.info(`♻️  Gateway anterior detectado (PID ${existing}). Cerrando y reiniciando...`);
             try { process.kill(existing, 'SIGTERM'); } catch (e) { /* ya muerto */ }
             await waitForExit(existing, 8000);
         } else {
-            console.log(`\n🔒 El Gateway YA está corriendo (PID ${existing}).`);
-            console.log(`   → Para reiniciarlo: \`npm start -- --restart\`\n`);
+            logInstancia.info(`\n🔒 El Gateway YA está corriendo (PID ${existing}).`);
+            logInstancia.info(`   → Para reiniciarlo: \`npm start -- --restart\`\n`);
             process.exit(1);
         }
     } else if (existing) {
-        console.log(`🧹 Lock huérfano detectado (PID ${existing} ya no existe). Limpiando...`);
+        logInstancia.info(`🧹 Lock huérfano detectado (PID ${existing} ya no existe). Limpiando...`);
         try { fs.unlinkSync(GATEWAY_LOCK_FILE); } catch (e) { /* ignorar */ }
     }
 
@@ -82,7 +87,37 @@ cleanContactsDB();
 // CONEXIÓN PRINCIPAL CON BAILEYS (ENTRADA PRINCIPAL DEL GATEWAY)
 // -------------------------------------------------------------
 
+let currentSocket = null;          // Socket activo (para cerrar el anterior antes de recrear)
+let reconnectAttempt = 0;          // Intento actual de reconexión (reset en 'open')
+let reconnectTimer = null;         // Timer de backoff pendiente
+
+// ⚠️ Backoff exponencial: 2s → 5s → 15s → 60s (tope) para no martillear a WhatsApp
+const RECONNECT_BACKOFF_MS = [2000, 5000, 15000, 60000];
+
+function getReconnectDelay() {
+    const idx = Math.min(reconnectAttempt, RECONNECT_BACKOFF_MS.length - 1);
+    return RECONNECT_BACKOFF_MS[idx];
+}
+
+function scheduleReconnect() {
+    reconnectAttempt += 1;
+    const delay = getReconnectDelay();
+    log.warn(`↻ Esperando ${(delay / 1000).toFixed(0)}s antes de reconectar (intento ${reconnectAttempt})...`);
+    if (reconnectTimer) clearTimeout(reconnectTimer);
+    reconnectTimer = setTimeout(() => {
+        reconnectTimer = null;
+        connectToWhatsApp();
+    }, delay);
+}
+
 async function connectToWhatsApp () {
+    // 🔌 Cerrar limpiamente un socket anterior que aún esté vivo (evita doble conexión)
+    if (currentSocket) {
+        const old = currentSocket;
+        currentSocket = null;
+        try { old.end(new Error('Reconnect por nueva conexión')); } catch (e) { /* ya cerrado */ }
+    }
+
     const { state: authState, saveCreds } = await useMultiFileAuthState('auth_info_baileys');
 
     const sock = makeWASocket({
@@ -92,6 +127,7 @@ async function connectToWhatsApp () {
         syncFullHistory: true,
         markOnlineOnConnect: true
     });
+    currentSocket = sock;
 
     // Capturar eventos de sincronización de contactos de WhatsApp (Agenda del Teléfono)
     const handleContactSync = contacts => {
@@ -137,29 +173,35 @@ async function connectToWhatsApp () {
     });
 
     sock.ev.on('connection.update', (update) => {
+        // Ignorar eventos de sockets reemplazados o cerrados por una reconexión nueva
+        if (currentSocket !== sock) return;
+
         const { connection, lastDisconnect, qr } = update;
         
         if (qr) {
-            console.log('\n--- ESCANEA ESTE CÓDIGO QR CON TU WHATSAPP ---');
+            log.info('\n--- ESCANEA ESTE CÓDIGO QR CON TU WHATSAPP ---');
             qrcode.generate(qr, { small: true });
         }
         
         if (connection === 'close') {
+            currentSocket = null;
             const shouldReconnect = (lastDisconnect.error)?.output?.statusCode !== DisconnectReason.loggedOut;
-            console.log('Conexión cerrada. Motivo:', lastDisconnect.error?.message, '| Reconectando:', shouldReconnect);
+            log.warn('Conexión cerrada. Motivo:', lastDisconnect.error?.message, '| Reconectando:', shouldReconnect);
             if (shouldReconnect) {
-                connectToWhatsApp();
+                scheduleReconnect();
             }
         } else if (connection === 'open') {
+            reconnectAttempt = 0;
+            if (reconnectTimer) { clearTimeout(reconnectTimer); reconnectTimer = null; }
             if (sock.user) {
                 state.ADMIN_PHONE = sock.user.id ? sock.user.id.split(':')[0].split('@')[0] : '';
                 state.ADMIN_LID = sock.user.lid ? sock.user.lid.split(':')[0].split('@')[0] : '';
             }
-            console.log(`\n✅ ¡Conectado a WhatsApp con éxito!`);
-            console.log(`👑 ADMIN DETECTADO -> Teléfono: ${state.ADMIN_PHONE} | LID: ${state.ADMIN_LID}`);
+            log.info(`\n✅ ¡Conectado a WhatsApp con éxito!`);
+            log.info(`👑 ADMIN DETECTADO -> Teléfono: ${state.ADMIN_PHONE} | LID: ${state.ADMIN_LID}`);
             
             // 📡 Anunciar al servidor que el bot está en línea para poder recibir eventos de "composing" de otros.
-            sock.sendPresenceUpdate('available').catch(e => console.error('⚠️ Error enviando estado de presencia:', e));
+            sock.sendPresenceUpdate('available').catch(e => logError.error('⚠️ Error enviando estado de presencia:', e));
         }
     });
 
@@ -177,7 +219,7 @@ ensureSingleInstance().then(connectToWhatsApp);
 // CIERRE SEGURO (GRACEFUL SHUTDOWN)
 // -------------------------------------------------------------
 function handleExit() {
-    console.log('\n🛑 Señal de apagado recibida. Cerrando de forma segura...');
+    log.info('\n🛑 Señal de apagado recibida. Cerrando de forma segura...');
     flushToDisk();
     process.exit(0);
 }

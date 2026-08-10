@@ -7,16 +7,22 @@ Plataforma WhatsApp multi-bot: `gateway/` (Node.js + Baileys) + `brain/` (Python
 1. Brain primero: `cd brain; python main.py` (venv: `venv/bin/python` Linux / `venv\Scripts\python.exe` Windows) → FastAPI en `0.0.0.0:8000`. El puerto es fijo: `gateway/config.js` tiene `BRAIN_API_URL` hardcodeado a `http://127.0.0.1:8000/chat`.
 2. Gateway: `cd gateway; npm start` (o `node index.js`).
 3. QR nuevo / re-sincronizar libreta: `cd gateway; npm run reset` (borra `auth_info_baileys/` tras confirmar y lanza index.js).
+4. **Producción (F1):** systemd units en `deploy/` — `sudo bash deploy/install.sh` y ajustar rutas/usuario. Verificar con `systemctl status sdk-bot-{brain,gateway}` y `journalctl -u sdk-bot-gateway -f`.
+
+Logs: `gateway/logs/gateway.log` y `brain/logs/brain.log` (rotación 5MB, 3 backups). Ver en vivo: `tail -f gateway/logs/gateway.log | pino-pretty` (instalar pino-pretty aparte) o `cat` directo (JSON por línea).
 
 Setup primera vez (Linux Debian/Ubuntu): `sudo apt install python3-venv` → `cd brain; python3 -m venv venv && venv/bin/pip install -r requirements.txt`. Windows: `python -m venv venv && venv\Scripts\pip install -r requirements.txt`.
 
 ## Arquitectura
 
-- `gateway/index.js` — entrada Baileys (`syncFullHistory: true`, `presenceSubscribe`, `markOnlineOnConnect`). El admin se detecta solo (`state.ADMIN_PHONE/LID`).
+- `gateway/index.js` — entrada Baileys (`syncFullHistory: true`, `presenceSubscribe`, `markOnlineOnConnect`). El admin se detecta solo (`state.ADMIN_PHONE/LID`). Reconexión con **backoff exponencial 2s→5s→15s→60s** (reset en `open`); socket anterior se cierra con `sock.end()` antes de recrear.
 - `gateway/config.js` — `state` global (`CURRENT_PROFILE`, `GLOBAL_MODE`, `IS_BOT_PAUSED`) + registro anti-bucle `botSentMessageIds` (expira a los 60s).
-- `gateway/services/storageService.js` — persistencia `contacts_db.json` (write atómico tmp+rename) + `settings_db.json` con debounce 2s y flush en SIGINT/SIGTERM.
+- `gateway/services/storageService.js` — persistencia `contacts_db.json` (write atómico tmp+rename) + `settings_db.json` con debounce 2s y flush en SIGINT/SIGTERM. **Índices RAM** `phoneIndex`/`lidIndex`/`digitsIndex` (R1): reconstruidos en `saveContactsDB()`, `findExistingKey()` O(1) en hot paths.
 - `gateway/services/metadataService.js` — país/idioma por prefijo (América + Europa), TTL 24h foto/bio, resuelve Phone y LID dual.
-- `gateway/services/brainService.js` — cliente REST del brain (timeout global 90s) + simulación humana (typing 7-10 char/s, multi-bubble ~220 chars).
+- `gateway/services/brainService.js` — cliente REST del brain (timeout global 90s) + simulación humana (typing 7-10 char/s, multi-bubble ~220 chars). **Retry 1x** en errores transitorios (red/timeout/5xx); los 4xx no se reintentan.
+- `gateway/services/aiQueue.js` — pool de concurrencia global (máx 3 `processAIChat` en paralelo, cola FIFO). Evita saturar a los proveedores con varios clientes a la vez.
+- `gateway/services/logger.js` — pino + pino-roll (rotación 5MB × 3): `logs/gateway.log` + stdout. Categorías vía `cat('AI'|'DEBOUNCE'|'PRESENCIA'|'COMANDO'|'ERROR'|'CORE'|'INSTANCIA'|'STORAGE')`.
+- `brain/logging_setup.py` — logging rotado del brain (RotatingFileHandler a `brain/logs/brain.log` + consola); `safe_log` en providers y logs de main.py/profiles.py lo usan.
 - `gateway/handlers/messageHandler.js` — pipeline, de-bounce estocástico (5-7s corto, 7.5-12s largo/múltiple; 12% → 1-2m; 5% → 3-4m), TTL de tecleo 5s, handoff por palabras clave.
 - `gateway/handlers/commandHandler.js` — comandos admin del self-chat; citar un mensaje extrae teléfono/LID automáticamente.
 - `brain/main.py` — endpoints `POST /chat`, `POST /reset-memory`, `GET /profiles`, `GET /profiles/{key}` (prompt compilado), `GET /profiles/{key}/file`, `POST /profiles/import`, `POST /profiles/reload`.
@@ -38,10 +44,12 @@ Setup primera vez (Linux Debian/Ubuntu): `sudo apt install python3-venv` → `cd
 - Memoria del brain es solo RAM (15 msgs); reiniciar `brain` borra conversaciones. `/limpiar` llama a `/reset-memory`.
 - `brain/.env` (gitignored, sin `.example`): `GROQ_API_KEY`, `OPENROUTER_API_KEY`, `GEMINI_API_KEY`. Sin key, la cascada se salta ese proveedor.
 - Estado por contacto: `estado` (`neutro`/`permitido`/`ignorado`/`handoff`) + `globalMode` (`allowed_all`/`ignored_all`) en `settings_db.json` (`*` en `/i` `/p` cambia el modo global).
-- `settings_db.json` está versionado (`contacts_db.json` no). Hay plantilla `settings_db.json.example`; los archivos legacy `allowed_numbers.json`/`ignored_numbers.json` fueron eliminados (R3, no se referenciaban).
+- `settings_db.json` NO está versionado (gitignored por privacidad; contiene números de teléfono). Hay plantilla `settings_db.json.example`; los archivos legacy `allowed_numbers.json`/`ignored_numbers.json` fueron eliminados (R3, no se referenciaban).
 - Comandos admin solo en self-chat (mensaje a ti mismo); texto normal ahí = asistente IA. `/` de clientes = bloqueado (seguridad).
 - `contacts_db.json` se limpia de basura en cada arranque (`cleanContactsDB()`).
 - **Bio legada con 422:** registros viejos de `contacts_db.json` pueden tener `bio` como OBJETO `{status,setAt}` (de `sock.fetchStatus` antiguo), lo que rompe el brain con `422 Input should be a valid string`. Sanitizada en `cleanContactsDB()` (D), en `extractUserMetadata` (solo strings) y en los upserts (solo strings). `fetchStatus` devuelve un ARRAY `[{status,setAt,id}]` — tomar `[0].status`.
 - Serialización por chat (B1): `chatInFlight` (Set en `messageHandler.js`) impide 2 llamadas de IA simultáneas por cliente; los mensajes que llegan durante una llamada se acumulan en el buffer y se reprograman al terminar. Los buffers huérfanos se descartan a los 15 min (B2).
+- **Reconexión (F1):** al cerrarse una conexión, el gateway espera con backoff (2s→60s) antes de reconectar; NUNCA reconecta en loop inmediato. Si el socket se cae mientras responde una IA, el cliente queda en espera hasta la reconexión.
+- **Logs rotados:** `logs/` de gateway y brain están en `.gitignore`; borrarlos es seguro. El brain usa `logging` de Python — `print()` directo NO llega a `brain.log` (usar `safe_log` o `make_logger`).
 - Verificar cambios: arrancar brain + gateway manualmente (no hay tests).
 - Código, logs y comentarios en español.

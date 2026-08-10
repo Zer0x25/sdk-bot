@@ -1,4 +1,7 @@
 const { state, registerSentMessage } = require('../config');
+const { cat } = require("../services/logger");
+const log = cat("COMANDO");
+const logError = cat("ERROR");
 const { downloadMediaMessage } = require('@whiskeysockets/baileys');
 const { getCountryFromPhone } = require('../services/metadataService');
 const { clearAIMemory, getAvailableProfiles, getProfileDetail, exportProfileFile, importProfileFile } = require('../services/brainService');
@@ -104,7 +107,7 @@ async function handleProfileUpload(sock, remoteJid, docMessage, msgKey) {
         registerSentMessage(sent);
         return false;
     } catch (e) {
-        console.error("⚠️ Error al importar perfil desde documento:", e.message);
+        logError.error("⚠️ Error al importar perfil desde documento:", e.message);
         await sock.sendMessage(remoteJid, { text: `⚠️ Error al importar el perfil: ${e.message}` }).catch(() => {});
         return false;
     }
@@ -151,11 +154,11 @@ async function handleAdminCommand(textMessage, remoteJid, sock, metadata, rawMsg
         const phoneMatch = quotedText.match(/(?:\+?\d[\d\s\-]{6,20}\d|\b\d{7,16}\b)/);
         if (phoneMatch) {
             queryParam = parsePhoneOrLid(phoneMatch[0]);
-            console.log(`📌 [CITA DETECTADA] Extraído objetivo automáticamente del mensaje citado: ${queryParam}`);
+            log.info(`📌 [CITA DETECTADA] Extraído objetivo automáticamente del mensaje citado: ${queryParam}`);
         }
     }
 
-    console.log(`\n👑 [COMANDO ADMIN EN SELF-CHAT]: ${command} ${queryParam || ''}`);
+    log.info(`\n👑 [COMANDO ADMIN EN SELF-CHAT]: ${command} ${queryParam || ''}`);
 
     let adminResponse = "";
 
@@ -463,7 +466,7 @@ async function handleAdminCommand(textMessage, remoteJid, sock, metadata, rawMsg
                     });
                     adminResponse = null; // La respuesta es el propio documento
                 } catch (e) {
-                    console.error("⚠️ Error al enviar documento de perfil:", e.message);
+                    logError.error("⚠️ Error al enviar documento de perfil:", e.message);
                     adminResponse = `⚠️ Error al enviar el archivo de perfil: ${e.message}`;
                 }
                 break;
@@ -661,7 +664,7 @@ async function handleAdminCommand(textMessage, remoteJid, sock, metadata, rawMsg
             registerSentMessage(sentMsg);
         }
     } catch (e) {
-        console.error("⚠️ No se pudo enviar confirmación admin por reconexión temporal de WhatsApp:", e.message);
+        logError.error("⚠️ No se pudo enviar confirmación admin por reconexión temporal de WhatsApp:", e.message);
     }
 }
 

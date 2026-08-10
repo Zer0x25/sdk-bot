@@ -26,9 +26,13 @@ gemini_client = None
 if GEMINI_API_KEY:
     gemini_client = genai.Client(api_key=GEMINI_API_KEY)
 
+from logging_setup import make_logger
+
+log = make_logger("brain.ai")
+
 def safe_log(msg: str):
     try:
-        print(msg, flush=True)
+        log.info(msg)
     except Exception:
         pass
 

@@ -146,6 +146,9 @@ import socket
 import atexit
 import signal
 import time
+from logging_setup import make_logger
+
+log = make_logger("brain.instancia")
 
 BRAIN_PORT = int(os.getenv("BRAIN_PORT", "8000"))
 BRAIN_LOCK_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)), ".brain.lock")
@@ -192,7 +195,7 @@ def ensure_singleton(allow_restart=False):
     existing = _read_lock()
     if existing and _is_pid_alive(existing):
         if allow_restart:
-            print(f"♻️  Brain anterior detectado (PID {existing}). Cerrando y reiniciando...")
+            log.info(f"♻️  Brain anterior detectado (PID {existing}). Cerrando y reiniciando...")
             try:
                 os.kill(existing, signal.SIGTERM)
                 for _ in range(20):
@@ -202,19 +205,19 @@ def ensure_singleton(allow_restart=False):
             except Exception:
                 pass
         else:
-            print(f"🔒 El Brain YA está corriendo (PID {existing}). Revisa: `ss -tlnp | grep {BRAIN_PORT}`")
-            print("   → Para reiniciarlo sin tocar nada: `python main.py --restart`")
+            log.info(f"🔒 El Brain YA está corriendo (PID {existing}). Revisa: `ss -tlnp | grep {BRAIN_PORT}`")
+            log.info("   → Para reiniciarlo sin tocar nada: `python main.py --restart`")
             sys.exit(1)
     elif existing:
-        print(f"🧹 Lock huérfano detectado (PID {existing} ya no existe). Limpiando...")
+        log.info(f"🧹 Lock huérfano detectado (PID {existing} ya no existe). Limpiando...")
         try:
             os.remove(BRAIN_LOCK_FILE)
         except OSError:
             pass
 
     if _port_in_use(BRAIN_PORT):
-        print(f"🔒 El puerto {BRAIN_PORT} ya está ocupado por otro proceso.")
-        print("   → Si es un Brain: `python main.py --restart`. Si es otro programa, libéralo primero.")
+        log.info(f"🔒 El puerto {BRAIN_PORT} ya está ocupado por otro proceso.")
+        log.info("   → Si es un Brain: `python main.py --restart`. Si es otro programa, libéralo primero.")
         sys.exit(1)
 
     _write_lock()

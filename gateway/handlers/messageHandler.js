@@ -7,7 +7,16 @@ const {
     setNumberState 
 } = require('../services/storageService');
 const { processAIChat } = require('../services/brainService');
+const { enqueueAI, poolStats } = require('../services/aiQueue');
 const { handleAdminCommand } = require('./commandHandler');
+const { cat } = require('../services/logger');
+
+// 📢 Logging por categoría ([AI], [DEBOUNCE], [PRESENCIA], [COMANDO], [ERROR])
+const log = cat('DEBOUNCE');
+const logAI = cat('AI');
+const logPresencia = cat('PRESENCIA');
+const logComando = cat('COMANDO');
+const logError = cat('ERROR');
 
 // 🧠 DE-BOUNCE QUEUE CON VINCULACIÓN DUAL PHONE/LID EN PRESENCIA Y MEMORIA LOCAL
 const messageBuffers = new Map();
@@ -30,14 +39,14 @@ function getAdaptiveDebounceMs(messagesArray = []) {
     // 1. Probabilidad del 5% de estar muy ocupado / AFK (3 - 4 min)
     if (roll < 0.05) {
         const afkMs = Math.floor(180000 + Math.random() * 60000); // 180s a 240s
-        console.log(`🎲 [HUMAN RANDOM] Roll ${(roll * 100).toFixed(1)}%: Bot ocupado/distraído (AFK). Esperando ${(afkMs / 1000).toFixed(0)}s (${(afkMs / 60000).toFixed(1)}m)...`);
+        log.info(`🎲 [HUMAN RANDOM] Roll ${(roll * 100).toFixed(1)}%: Bot ocupado/distraído (AFK). Esperando ${(afkMs / 1000).toFixed(0)}s (${(afkMs / 60000).toFixed(1)}m)...`);
         return afkMs;
     }
 
     // 2. Probabilidad del 12% de estar medianamente ocupado (1 - 2 min)
     if (roll < 0.17) { // 0.05 + 0.12 = 0.17
         const busyMs = Math.floor(60000 + Math.random() * 60000); // 60s a 120s
-        console.log(`🎲 [HUMAN RANDOM] Roll ${(roll * 100).toFixed(1)}%: Bot ocupado brevemente. Esperando ${(busyMs / 1000).toFixed(0)}s (${(busyMs / 60000).toFixed(1)}m)...`);
+        log.info(`🎲 [HUMAN RANDOM] Roll ${(roll * 100).toFixed(1)}%: Bot ocupado brevemente. Esperando ${(busyMs / 1000).toFixed(0)}s (${(busyMs / 60000).toFixed(1)}m)...`);
         return busyMs;
     }
 
@@ -72,7 +81,7 @@ setInterval(() => {
             cleaned++;
         }
     }
-    if (cleaned > 0) console.log(`🧹 [LIMPIEZA RAM] Eliminados ${cleaned} registros de presencia antiguos.`);
+    if (cleaned > 0) log.info(`🧹 [LIMPIEZA RAM] Eliminados ${cleaned} registros de presencia antiguos.`);
 
     // Descartar buffers huérfanos (bot pausado, handoff, caída de conexión, etc.)
     let cleanedBuffers = 0;
@@ -85,7 +94,7 @@ setInterval(() => {
             cleanedBuffers++;
         }
     }
-    if (cleanedBuffers > 0) console.log(`🧹 [LIMPIEZA RAM] Descartados ${cleanedBuffers} buffers de mensajes huérfanos.`);
+    if (cleanedBuffers > 0) log.info(`🧹 [LIMPIEZA RAM] Descartados ${cleanedBuffers} buffers de mensajes huérfanos.`);
 }, PRESENCE_CLEANUP_INTERVAL_MS);
 
 // Palabras clave para derivación automática a atención humana
@@ -144,7 +153,7 @@ function handlePresenceUpdate(id, presences) {
     const presenceState = userPresence.lastKnownPresence;
     const candidates = getCandidateIdsForPresence(id);
 
-    console.log(`📡 [PRESENCIA RECIBIDA] ID: ${id} | Candidatos: [${candidates.join(', ')}] | Estado: "${presenceState}"`);
+    logPresencia.info(`📡 [PRESENCIA RECIBIDA] ID: ${id} | Candidatos: [${candidates.join(', ')}] | Estado: "${presenceState}"`);
 
     // 💾 Guardar estado exacto en memoria RAM para todos sus IDs (Phone y LID)
     candidates.forEach(cid => {
@@ -170,7 +179,7 @@ function handlePresenceUpdate(id, presences) {
                     clearTimeout(buffer.timer);
                     buffer.timer = null;
                 }
-                console.log(`\n⌨️ [DE-BOUNCE MEMORIA] Cliente (${bufferJid}) ESTÁ ESCRIBIENDO (${presenceState}). Timer de 8s en pausa.`);
+                log.info(`\n⌨️ [DE-BOUNCE MEMORIA] Cliente (${bufferJid}) ESTÁ ESCRIBIENDO (${presenceState}). Timer de 8s en pausa.`);
 
                 // Expiración automática a los 5s si deja de presionar teclas sin enviar evento paused
                 if (buffer.typingExpiryTimer) clearTimeout(buffer.typingExpiryTimer);
@@ -178,7 +187,7 @@ function handlePresenceUpdate(id, presences) {
                     if (buffer && buffer.isTyping) {
                         buffer.isTyping = false;
                         const delayMs = getAdaptiveDebounceMs(buffer.messages);
-                        console.log(`\n⏱️ [TECLADO LIBERADO] 5s inactivo en teclado (${bufferJid}). Iniciando timer de ${(delayMs / 1000).toFixed(1)}s.`);
+                        log.info(`\n⏱️ [TECLADO LIBERADO] 5s inactivo en teclado (${bufferJid}). Iniciando timer de ${(delayMs / 1000).toFixed(1)}s.`);
                         if (!buffer.timer) {
                             buffer.timer = setTimeout(buffer.onTimeout, delayMs);
                         }
@@ -192,7 +201,7 @@ function handlePresenceUpdate(id, presences) {
                 
                 const delayMs = getAdaptiveDebounceMs(buffer.messages);
                 buffer.timer = setTimeout(buffer.onTimeout, delayMs);
-                console.log(`\n⏳ [PRESENCIA PAUSADA] Cliente (${bufferJid}) PAUSÓ escritura (${presenceState}). Reseteando timer a ${(delayMs / 1000).toFixed(1)}s.`);
+                log.info(`\n⏳ [PRESENCIA PAUSADA] Cliente (${bufferJid}) PAUSÓ escritura (${presenceState}). Reseteando timer a ${(delayMs / 1000).toFixed(1)}s.`);
             }
         }
     }
@@ -212,9 +221,9 @@ async function handleIncomingMessage(m, sock) {
     const { remoteJid, phoneNumber, lid, savedName, pushName, candidateIds } = metadata;
 
     // 🔔 SUSCRIBIR EN TIEMPO REAL A EVENTOS DE PRESENCIA (composing/paused) DE ESTE CLIENTE AL INICIAR
-    sock.presenceSubscribe(remoteJid).catch(e => console.error(`⚠️ Error al suscribir presencia de ${remoteJid}:`, e.message));
-    if (phoneNumber) sock.presenceSubscribe(`${phoneNumber}@s.whatsapp.net`).catch(e => console.error(`⚠️ Error al suscribir presencia (Phone) de ${phoneNumber}:`, e.message));
-    if (lid) sock.presenceSubscribe(`${lid}@lid`).catch(e => console.error(`⚠️ Error al suscribir presencia (LID) de ${lid}:`, e.message));
+    sock.presenceSubscribe(remoteJid).catch(e => logError.error(`⚠️ Error al suscribir presencia de ${remoteJid}:`, e.message));
+    if (phoneNumber) sock.presenceSubscribe(`${phoneNumber}@s.whatsapp.net`).catch(e => logError.error(`⚠️ Error al suscribir presencia (Phone) de ${phoneNumber}:`, e.message));
+    if (lid) sock.presenceSubscribe(`${lid}@lid`).catch(e => logError.error(`⚠️ Error al suscribir presencia (LID) de ${lid}:`, e.message));
 
     // 🗂️ GUARDAR / ACTUALIZAR CONTACTO EN BASE DE DATOS
     const contactRecord = upsertContactMetadata(metadata) || { estado: 'neutro' };
@@ -235,7 +244,7 @@ async function handleIncomingMessage(m, sock) {
     const isSelf = isSelfChat(remoteJid, isFromMe);
     const displayName = savedName ? `${savedName} (Agenda)` : pushName;
 
-    console.log(`\n🔍 [DEBUG CHAT] JID: ${remoteJid} | Phone: ${phoneNumber || 'N/A'} | LID: ${lid || 'N/A'} | From: "${displayName}" | isSelf: ${isSelf} | Texto: "${textMessage}"`);
+    logAI.info(`\n🔍 [DEBUG CHAT] JID: ${remoteJid} | Phone: ${phoneNumber || 'N/A'} | LID: ${lid || 'N/A'} | From: "${displayName}" | isSelf: ${isSelf} | Texto: "${textMessage}"`);
 
     // -------------------------------------------------------------
     // SCENARIO 1: MENSAJES EN TU CHAT PROPIO (Self-Chat / Mensaje a ti mismo)
@@ -246,8 +255,8 @@ async function handleIncomingMessage(m, sock) {
             return;
         }
 
-        console.log(`\n🤖 [ASISTENTE PERSONAL EN SELF-CHAT]: "${textMessage}"`);
-        await processAIChat(textMessage, remoteJid, metadata, sock);
+        logAI.info(`\n🤖 [ASISTENTE PERSONAL EN SELF-CHAT]: "${textMessage}"`);
+        await enqueueAI(() => processAIChat(textMessage, remoteJid, metadata, sock));
         return;
     }
 
@@ -255,7 +264,7 @@ async function handleIncomingMessage(m, sock) {
     // SCENARIO 2: MENSAJES ENVIADOS POR TI EN CHATS DE CLIENTES
     // -------------------------------------------------------------
     if (isFromMe) {
-        console.log(`\n🙈 [IGNORADO FORZADO] Escribiste en chat de cliente (${remoteJid}). Bot en silencio.`);
+        log.info(`\n🙈 [IGNORADO FORZADO] Escribiste en chat de cliente (${remoteJid}). Bot en silencio.`);
         return;
     }
 
@@ -265,13 +274,13 @@ async function handleIncomingMessage(m, sock) {
 
     // 🛡️ SEGURIDAD: Bloquear intentos de comandos / desde clientes
     if (textMessage.trim().startsWith('/')) {
-        console.log(`\n🚫 [SEGURIDAD] Cliente (${displayName} - ${remoteJid}) intentó ejecutar comando admin: ${textMessage}`);
+        logComando.info(`\n🚫 [SEGURIDAD] Cliente (${displayName} - ${remoteJid}) intentó ejecutar comando admin: ${textMessage}`);
         return;
     }
 
     // 🛑 Si el bot está pausado globalmente, no responder a clientes
     if (state.IS_BOT_PAUSED) {
-        console.log(`\n⏸️ [MENSAJE IGNORADO] Bot pausado globalmente. Mensaje de: ${displayName}`);
+        log.info(`\n⏸️ [MENSAJE IGNORADO] Bot pausado globalmente. Mensaje de: ${displayName}`);
         return;
     }
 
@@ -282,18 +291,18 @@ async function handleIncomingMessage(m, sock) {
     const estado = contactRecord.estado || 'neutro';
 
     if (estado === 'ignorado') {
-        console.log(`\n🚫 [MENSAJE IGNORADO - ESTADO IGNORADO] De: ${displayName}`);
+        log.info(`\n🚫 [MENSAJE IGNORADO - ESTADO IGNORADO] De: ${displayName}`);
         return;
     }
 
     if (estado === 'permitido') {
-        console.log(`\n✅ [PERMITIDO EXPLÍCITAMENTE] De: ${displayName}`);
+        log.info(`\n✅ [PERMITIDO EXPLÍCITAMENTE] De: ${displayName}`);
         // Puede proceder, se salta la evaluación del modo global
     } else if (estado === 'neutro') {
         // Evaluar Modo Global
         const globalMode = state.GLOBAL_MODE || settings.globalMode || 'allowed_all';
         if (globalMode === 'ignored_all') {
-            console.log(`\n🚫 [MENSAJE IGNORADO - MODO GLOBAL ESTRICTO] De: ${displayName}`);
+            log.info(`\n🚫 [MENSAJE IGNORADO - MODO GLOBAL ESTRICTO] De: ${displayName}`);
             return;
         }
     }
@@ -305,7 +314,7 @@ async function handleIncomingMessage(m, sock) {
     // A) Verificar si el cliente activó palabras clave de atención humana
     const wantsHuman = checkHumanRequest(textMessage);
     if (wantsHuman) {
-        console.log(`\n🚨 [HANDOFF ACTIVADO] Cliente ${displayName} (${phoneNumber || lid}) solicitó atención humana.`);
+        logAI.info(`\n🚨 [HANDOFF ACTIVADO] Cliente ${displayName} (${phoneNumber || lid}) solicitó atención humana.`);
         const targetId = phoneNumber || lid;
         setNumberState(targetId, 'handoff');
 
@@ -333,7 +342,7 @@ async function handleIncomingMessage(m, sock) {
 
     // B) Verificar si el cliente ya tiene Handoff Activo (pausado individualmente)
     if (estado === 'handoff') {
-        console.log(`\n🙈 [HANDOFF ACTIVO] IA pausada para cliente individual: ${displayName} (${phoneNumber || lid})`);
+        logAI.info(`\n🙈 [HANDOFF ACTIVO] IA pausada para cliente individual: ${displayName} (${phoneNumber || lid})`);
         return;
     }
 
@@ -363,7 +372,7 @@ async function handleIncomingMessage(m, sock) {
                 typingExpiryTimer: null
             });
         }
-        console.log(`⏳ [IA EN CURSO] Cliente (${displayName}) escribió mientras la IA responde. ${messageBuffers.get(remoteJid).messages.length} msg(s) en espera.`);
+        logAI.info(`⏳ [IA EN CURSO] Cliente (${displayName}) escribió mientras la IA responde. ${messageBuffers.get(remoteJid).messages.length} msg(s) en espera.`);
         return;
     }
 
@@ -380,7 +389,7 @@ async function handleIncomingMessage(m, sock) {
         // Resetear timer al recibir mensaje físico con delay estocástico/adaptativo
         const delayMs = getAdaptiveDebounceMs(existingBuffer.messages);
         existingBuffer.timer = setTimeout(onTimeout, delayMs);
-        console.log(`⏳ [DE-BOUNCE RESET] Nuevo mensaje recibido de ${displayName}. Timer de ${(delayMs / 1000).toFixed(1)}s de silencio iniciado.`);
+        log.info(`⏳ [DE-BOUNCE RESET] Nuevo mensaje recibido de ${displayName}. Timer de ${(delayMs / 1000).toFixed(1)}s de silencio iniciado.`);
     } else {
         const newBuffer = {
             messages: [textMessage],
@@ -395,7 +404,7 @@ async function handleIncomingMessage(m, sock) {
         const delayMs = getAdaptiveDebounceMs(newBuffer.messages);
         newBuffer.timer = setTimeout(onTimeout, delayMs);
         messageBuffers.set(remoteJid, newBuffer);
-        console.log(`⏳ [DE-BOUNCE START] Primer mensaje de ${displayName}. Timer de ${(delayMs / 1000).toFixed(1)}s de silencio iniciado.`);
+        log.info(`⏳ [DE-BOUNCE START] Primer mensaje de ${displayName}. Timer de ${(delayMs / 1000).toFixed(1)}s de silencio iniciado.`);
     }
 }
 
@@ -436,7 +445,7 @@ function createBufferTimeout(remoteJid, metadata, sock) {
 
         if (isTypingLocal) {
             const delayMs = getAdaptiveDebounceMs(buf.messages);
-            console.log(`\n🔄 [MEMORIA LOCAL] Cliente (${displayName}) sigue escribiendo ('${latestPresence?.state || 'composing'}'). Postergando envío a IA por ${(delayMs / 1000).toFixed(1)}s...`);
+            log.info(`\n🔄 [MEMORIA LOCAL] Cliente (${displayName}) sigue escribiendo ('${latestPresence?.state || 'composing'}'). Postergando envío a IA por ${(delayMs / 1000).toFixed(1)}s...`);
             if (buf.timer) clearTimeout(buf.timer);
             buf.timer = setTimeout(buf.onTimeout, delayMs);
             return;
@@ -449,11 +458,14 @@ function createBufferTimeout(remoteJid, metadata, sock) {
         const fullBufferedText = buf.messages.join('\n');
         buf.messages = []; // Los mensajes procesados salen del buffer; no se borra el buffer aún
 
-        console.log(`\n📦 [DE-BOUNCE BATCH FINAL] Silencio confirmado. Procesando mensaje(s) de ${displayName}:\n"${fullBufferedText}"`);
+        log.info(`\n📦 [DE-BOUNCE BATCH FINAL] Silencio confirmado. Procesando mensaje(s) de ${displayName}:\n"${fullBufferedText}"`);
 
         chatInFlight.add(remoteJid);
         try {
-            await processAIChat(fullBufferedText, remoteJid, metadata, sock);
+            // 🎯 La cola FIFO global limita las llamadas simultáneas a la IA
+            const { active, queued } = poolStats();
+            logAI.info(`🎯 [POOL AI] Esperando turno en cola global (activas: ${active}, en cola: ${queued})...`);
+            await enqueueAI(() => processAIChat(fullBufferedText, remoteJid, metadata, sock));
         } finally {
             chatInFlight.delete(remoteJid);
 
@@ -463,7 +475,7 @@ function createBufferTimeout(remoteJid, metadata, sock) {
                 if (bufAfter.timer) clearTimeout(bufAfter.timer);
                 const delayMs = getAdaptiveDebounceMs(bufAfter.messages);
                 bufAfter.timer = setTimeout(bufAfter.onTimeout, delayMs);
-                console.log(`⏳ [IA TERMINADA] Cliente (${displayName}) tiene ${bufAfter.messages.length} msg(s) en espera. Timer de ${(delayMs / 1000).toFixed(1)}s iniciado.`);
+                logAI.info(`⏳ [IA TERMINADA] Cliente (${displayName}) tiene ${bufAfter.messages.length} msg(s) en espera. Timer de ${(delayMs / 1000).toFixed(1)}s iniciado.`);
             } else if (bufAfter) {
                 if (bufAfter.timer) clearTimeout(bufAfter.timer);
                 messageBuffers.delete(remoteJid);
