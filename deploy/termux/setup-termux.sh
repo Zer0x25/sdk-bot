@@ -15,6 +15,10 @@ pkg install -y python nodejs-lts runit git termux-tools
 # termux-wake-lock mantiene vivo el proceso (evita que Android duerma el bot)
 termux-wake-lock || true
 
+# 🔐 Secretos (keys + sesión de WhatsApp) viven FUERA del repo en ~/.sdk-bot-secrets
+# para que sobrevivan incluso a un re-clon. El repo NUNCA guarda estos archivos.
+BACKUP_DIR="$HOME/.sdk-bot-secrets"
+
 if [ ! -d "$REPO/.git" ]; then
     echo "📥 2/6 Clonando SDK-Bot (main)..."
     git clone https://github.com/Zer0x25/SDK-Bot.git "$REPO"
@@ -22,6 +26,15 @@ else
     echo "📥 2/6 Repo existente en $REPO, actualizando..."
     git -C "$REPO" fetch origin
     git -C "$REPO" pull --ff-only origin main
+fi
+
+echo "🗄 Restaurando secretos desde $BACKUP_DIR (si existen)..."
+if [ -d "$BACKUP_DIR" ]; then
+    [ -f "$BACKUP_DIR/.env" ] && cp -f "$BACKUP_DIR/.env" "$REPO/brain/.env" && echo "    ✅ brain/.env restaurado (tus keys)"
+    [ -d "$BACKUP_DIR/auth_info_baileys" ] && cp -rf "$BACKUP_DIR/auth_info_baileys" "$REPO/gateway/" && echo "    ✅ Sesión de WhatsApp restaurada (no hace falta re-vincular)"
+else
+    mkdir -p "$BACKUP_DIR"
+    echo "    (backup vacío en $BACKUP_DIR — la primera vez hay que pegar keys y escanear el QR)"
 fi
 
 echo "🐍 3/6 Dependencias del brain (sin google-generativeai: no compila en bionic)..."
@@ -41,6 +54,8 @@ GROQ_API_KEY=gsk-REEMPLAZA
 EOF
     chmod 600 "$REPO/brain/.env"
     echo "    ⚠️  Edita $REPO/brain/.env con tus keys reales antes de arrancar."
+else
+    echo "🔑 5/6 brain/.env EXISTE — se mantiene tal cual (nunca se sobreescribe)."
 fi
 
 echo "🛠 6/6 Registrando servicios en runit..."
@@ -83,9 +98,18 @@ sv up sdk-brain 2>/dev/null || runsvdir -P "$SVDIR" &
 sleep 2
 sv up sdk-gateway 2>/dev/null || true
 
+# 🗄 Guardar copia de seguridad SIEMPRE actualizada de los secretos
+echo ""
+echo "🗄 Actualizando backup de secretos en $BACKUP_DIR..."
+[ -f "$REPO/brain/.env" ] && cp -f "$REPO/brain/.env" "$BACKUP_DIR/.env"
+[ -d "$REPO/gateway/auth_info_baileys" ] && rm -rf "$BACKUP_DIR/auth_info_baileys" && cp -r "$REPO/gateway/auth_info_baileys" "$BACKUP_DIR/"
+
 echo ""
 echo "Verifica con:"
 echo "  sv status sdk-brain sdk-gateway"
 echo "  tail -f ~/logs/sdk-gateway.log"
 echo ""
 echo "⚠️  Si es la primera vez, escanea el QR de WhatsApp en el log del gateway."
+echo ""
+echo "📌 Para actualizaciones futuras NO re-corras este script: usa"
+echo "    bash $REPO/deploy/termux/update-termux.sh   (pull + restart, sin tocar keys ni sesión)"

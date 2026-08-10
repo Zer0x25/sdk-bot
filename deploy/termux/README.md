@@ -29,6 +29,27 @@ El script es idempotente: instala dependencias, registra los servicios en
 runit, crea el boot automático (Termux:Boot) y levanta todo. Los detalles
 están en la sección "Replicar el deploy" al final.
 
+## Actualizaciones (nunca re-pa\u0301stees keys ni re-vincules WhatsApp)
+
+```bash
+cd ~/SDK-Bot && bash deploy/termux/update-termux.sh
+```
+
+El `update-termux.sh` hace `git pull --ff-only origin main`, reinstala
+dependencias SOLO si cambiaron y reinicia los servicios. **No toca** `brain/.env`
+ni `gateway/auth_info_baileys/` (ambos están en `.gitignore` y jamás viajan en git).
+
+### Secretos a prueba de re-clon (backup fuera del repo)
+
+El `setup-termux.sh` mantiene una copia automática en `~/.sdk-bot-secrets/`
+(`.env` + `auth_info_baileys/`). Si algún día borras el repo y reclonas:
+
+1. `git clone https://github.com/Zer0x25/SDK-Bot.git`
+2. `cd SDK-Bot && bash deploy/termux/setup-termux.sh`
+
+El script restaura keys y sesión desde el backup **antes** de arrancar: no
+vuelves a pegar nada ni a escanear el QR.
+
 ---
 
 ## 1. Arquitectura
