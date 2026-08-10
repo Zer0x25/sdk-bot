@@ -92,8 +92,8 @@ Objetivo: deuda técnica grande, testes y CI.
 ### 🟣 Fase 4 — Features y escala (sesiones 8+, siguiente gran fase)
 Objetivo: cumplir el objetivo del PLAN: **N bots, cada uno con su número, memoria aislada y perfil SOUL**.
 
-- [ ] **Memoria persistente** — migrar `brain/memory.py` (RAM, 15 msgs, se pierde al reiniciar) a SQLite por `user_id` con truncado por tokens y ventana temporal (ej: últimas 24h). Persistencia en disco + `/limpiar` sigue funcionando.
-- [ ] **Memoria aislada multi-bot** — `memory_db[bot_id][user_id]`.
+- [x] **Memoria persistente** — `brain/memory.py` migrado a SQLite (`brain/memory.db`, gitignored, lazy init): `append_exchange` incremental, `get_history` con ventana temporal de 24h (sweep por chat + barrido global cada 50 escrituras), truncado por cantidad (15 msgs) y por tokens aproximados (chars/4, máx 2000). `/limpiar` sigue funcionando (reset-memory). Verificado en prod: el bot recordó el nombre tras reiniciar el brain.
+- [x] **Memoria aislada multi-bot** — esquema `messages(bot_id, user_id, role, content, created_at)` con índice `(bot_id, user_id, created_at)`; el gateway envía `bot_id` = su propio número (`ADMIN_PHONE`/`ADMIN_LID`). Verificado: mismo `user_id` en bots distintos no comparte memoria y el reset-memory solo afecta al bot indicado.
 - [ ] **Salud y métricas** — endpoint `GET /health` en brain y `GET /status` en gateway (conteo buffers, presencias, última IA, uptime) para futura dashboard.
 - [ ] **Cola persistente de mensajes** — si el brain está caído, encolar en disco (con límite) en vez de perder el mensaje del cliente.
 - [ ] **Respuestas programadas / broadcast** con límites diarios por número.

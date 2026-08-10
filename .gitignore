@@ -12,6 +12,9 @@ gateway/contacts_db.json
 gateway/ignored_numbers.json
 gateway/allowed_numbers.json
 
+# Memoria de conversación persistente del brain (F4-P1, SQLite)
+brain/memory.db
+
 # Lock de instancia única (evita dobles instancias)
 .gateway.lock
 brain/.brain.lock

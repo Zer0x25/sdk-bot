@@ -181,6 +181,7 @@ async function processAIChat(textMessage, remoteJid, metadata, sock) {
         user_id: remoteJid,
         message: textMessage,
         bot_profile: metadata.perfil || state.CURRENT_PROFILE,
+        bot_id: state.ADMIN_PHONE || state.ADMIN_LID || 'single', // F4-P2: aislamiento de memoria por bot
         saved_name: metadata.savedName,
         push_name: metadata.pushName,
         user_name: displayName,
@@ -257,7 +258,7 @@ async function clearAIMemory(userJid) {
         const response = await fetch(`${BRAIN_API_BASE}/reset-memory`, {
             method: 'POST',
             headers: authHeaders({ 'Content-Type': 'application/json' }),
-            body: JSON.stringify({ user_id: userJid })
+            body: JSON.stringify({ user_id: userJid, bot_id: state.ADMIN_PHONE || state.ADMIN_LID || 'single' })
         });
         const data = /** @type {any} */ (await response.json());
         return data && data.status === 'ok';

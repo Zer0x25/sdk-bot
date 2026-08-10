@@ -12,7 +12,7 @@ from pydantic import BaseModel
 
 from config import BRAIN_API_KEY, BRAIN_HOST, GROQ_MODEL, OPENROUTER_MODEL
 from logging_setup import make_logger
-from memory import clear_history, get_history, update_history
+from memory import append_exchange, clear_history, get_history
 from profiles import (
     build_system_prompt,
     delete_profile,
@@ -50,9 +50,11 @@ class ChatRequest(BaseModel):
     language: str | None = None
     bio: str | None = None
     is_business: bool | None = None
+    bot_id: str | None = None  # F4-P2: aislamiento de memoria por bot (default 'single')
 
 class ResetMemoryRequest(BaseModel):
     user_id: str
+    bot_id: str | None = None
 
 class ImportProfileRequest(BaseModel):
     key: str
@@ -60,7 +62,8 @@ class ImportProfileRequest(BaseModel):
 
 @app.post("/reset-memory")
 async def reset_memory_endpoint(request: ResetMemoryRequest):
-    cleared = clear_history(request.user_id)
+    bot_id = request.bot_id or "single"
+    cleared = clear_history(bot_id, request.user_id)
     safe_log(f"🧹 [MEMORIA REINICIADA] Para usuario: {request.user_id} (Resultado: {cleared})")
     return {"status": "ok", "cleared": cleared, "user_id": request.user_id}
 
@@ -148,18 +151,19 @@ async def chat_endpoint(request: ChatRequest):
     else:
         system_instruction = base_instruction
 
-    history = get_history(request.user_id)
+    bot_id = request.bot_id or "single"
+    history = get_history(bot_id, request.user_id)
     display_log_name = request.saved_name or request.push_name or request.user_name or 'Desconocido'
     safe_log(f"\n📩 [CEREBRO RECIBE] De: {display_log_name} ({request.user_id}) | Tel: {request.phone_number or 'N/A'} | LID: {request.lid or 'N/A'} | Bio: {request.bio or 'N/A'}")
 
     try:
-        response_text, provider_used, updated_history = await generate_ai_response(
+        response_text, provider_used, _updated_history = await generate_ai_response(
             system_instruction=system_instruction,
             message=request.message,
             memory_history=history,
             user_id=request.user_id
         )
-        update_history(request.user_id, updated_history)
+        append_exchange(bot_id, request.user_id, request.message, response_text)
         safe_log(f"🤖 [{provider_used} RESPONDE A {display_log_name}]: {response_text}\n")
         return {"response": response_text, "provider": provider_used}
     except Exception as err:
