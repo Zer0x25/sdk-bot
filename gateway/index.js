@@ -1,10 +1,79 @@
 const { default: makeWASocket, useMultiFileAuthState, DisconnectReason } = require('@whiskeysockets/baileys');
 const pino = require('pino');
 const qrcode = require('qrcode-terminal');
+const fs = require('fs');
+const path = require('path');
 const { state } = require('./config');
 const { bulkUpsertContactsMetadata, isJunkJid, cleanContactsDB, contactStore, flushToDisk } = require('./services/storageService');
 const { getCountryFromPhone } = require('./services/metadataService');
 const { handleIncomingMessage, handlePresenceUpdate } = require('./handlers/messageHandler');
+
+// -------------------------------------------------------------
+// 🔒 INSTANCIA ÚNICA DEL GATEWAY
+// Dos gateways compartiendo auth_info_baileys pelean por creds.json
+// y pueden CORROMPER la sesión de WhatsApp. Por eso se bloquea.
+// Uso: `node index.js --restart` (o `npm start -- --restart`) cierra
+// el anterior y arranca uno nuevo.
+// -------------------------------------------------------------
+const GATEWAY_LOCK_FILE = path.join(__dirname, '.gateway.lock');
+
+function isProcessAlive(pid) {
+    if (!pid) return false;
+    try {
+        process.kill(pid, 0);
+        return true;
+    } catch (e) {
+        return e.code === 'EPERM';
+    }
+}
+
+function readLock() {
+    try {
+        return parseInt(fs.readFileSync(GATEWAY_LOCK_FILE, 'utf8').trim(), 10);
+    } catch (e) {
+        return null;
+    }
+}
+
+function removeLock() {
+    try {
+        if (readLock() === process.pid) fs.unlinkSync(GATEWAY_LOCK_FILE);
+    } catch (e) { /* ignorar */ }
+}
+
+function waitForExit(pid, timeoutMs) {
+    const start = Date.now();
+    return new Promise(resolve => {
+        const check = () => {
+            if (!isProcessAlive(pid) || Date.now() - start > timeoutMs) return resolve();
+            setTimeout(check, 250);
+        };
+        check();
+    });
+}
+
+async function ensureSingleInstance() {
+    const allowRestart = process.argv.includes('--restart');
+    const existing = readLock();
+
+    if (existing && isProcessAlive(existing)) {
+        if (allowRestart) {
+            console.log(`♻️  Gateway anterior detectado (PID ${existing}). Cerrando y reiniciando...`);
+            try { process.kill(existing, 'SIGTERM'); } catch (e) { /* ya muerto */ }
+            await waitForExit(existing, 8000);
+        } else {
+            console.log(`\n🔒 El Gateway YA está corriendo (PID ${existing}).`);
+            console.log(`   → Para reiniciarlo: \`npm start -- --restart\`\n`);
+            process.exit(1);
+        }
+    } else if (existing) {
+        console.log(`🧹 Lock huérfano detectado (PID ${existing} ya no existe). Limpiando...`);
+        try { fs.unlinkSync(GATEWAY_LOCK_FILE); } catch (e) { /* ignorar */ }
+    }
+
+    fs.writeFileSync(GATEWAY_LOCK_FILE, String(process.pid));
+    process.on('exit', removeLock);
+}
 
 // Limpiar base de contactos al iniciar para remover data basura preexistente
 cleanContactsDB();
@@ -102,7 +171,7 @@ async function connectToWhatsApp () {
     sock.ev.on('creds.update', saveCreds);
 }
 
-connectToWhatsApp();
+ensureSingleInstance().then(connectToWhatsApp);
 
 // -------------------------------------------------------------
 // CIERRE SEGURO (GRACEFUL SHUTDOWN)

@@ -134,6 +134,124 @@ def health_check():
         "fallbacks": [f"OpenRouter ({OPENROUTER_MODEL})", "Gemini (gemini-flash-lite-latest)"]
     }
 
+
+# -------------------------------------------------------------
+# 🔒 INSTANCIA ÚNICA (evita "address already in use" confuso)
+# - Si ya hay un Brain corriendo (lock + PID vivo), avisa y sale.
+# - Uso: `python main.py --restart` cierra el Brain anterior y arranca uno nuevo.
+# -------------------------------------------------------------
+import os
+import sys
+import socket
+import atexit
+import signal
+import time
+
+BRAIN_PORT = int(os.getenv("BRAIN_PORT", "8000"))
+BRAIN_LOCK_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)), ".brain.lock")
+
+
+def _is_pid_alive(pid):
+    if not pid:
+        return False
+    try:
+        os.kill(pid, 0)
+        return True
+    except ProcessLookupError:
+        return False
+    except PermissionError:
+        return True
+
+
+def _port_in_use(port):
+    try:
+        with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
+            s.bind(("0.0.0.0", port))
+            return False
+    except OSError:
+        return True
+
+
+def _read_lock():
+    try:
+        with open(BRAIN_LOCK_FILE, "r", encoding="utf-8") as f:
+            return int(f.read().strip())
+    except (OSError, ValueError):
+        return None
+
+
+def _remove_lock():
+    try:
+        if _read_lock() == os.getpid():
+            os.remove(BRAIN_LOCK_FILE)
+    except OSError:
+        pass
+
+
+def ensure_singleton(allow_restart=False):
+    existing = _read_lock()
+    if existing and _is_pid_alive(existing):
+        if allow_restart:
+            print(f"♻️  Brain anterior detectado (PID {existing}). Cerrando y reiniciando...")
+            try:
+                os.kill(existing, signal.SIGTERM)
+                for _ in range(20):
+                    if not _is_pid_alive(existing):
+                        break
+                    time.sleep(0.25)
+            except Exception:
+                pass
+        else:
+            print(f"🔒 El Brain YA está corriendo (PID {existing}). Revisa: `ss -tlnp | grep {BRAIN_PORT}`")
+            print("   → Para reiniciarlo sin tocar nada: `python main.py --restart`")
+            sys.exit(1)
+    elif existing:
+        print(f"🧹 Lock huérfano detectado (PID {existing} ya no existe). Limpiando...")
+        try:
+            os.remove(BRAIN_LOCK_FILE)
+        except OSError:
+            pass
+
+    if _port_in_use(BRAIN_PORT):
+        print(f"🔒 El puerto {BRAIN_PORT} ya está ocupado por otro proceso.")
+        print("   → Si es un Brain: `python main.py --restart`. Si es otro programa, libéralo primero.")
+        sys.exit(1)
+
+    _write_lock()
+
+    # 🧹 Limpieza del lock en cualquier salida normal (finally), en salida
+    # excepcional (atexit) y ante señales (SIGTERM/SIGINT).
+    atexit.register(_remove_lock)
+
+
+def _handle_shutdown_signal(sig, frame):
+    # uvicorn, al cerrar, RE-EMITE la señal capturada con el handler original
+    # restaurado. Si dejamos el default (SIG_DFL), el proceso muere al instante
+    # sin ejecutar finally/atexit. Con nuestro handler limpiamos el lock y
+    # salimos de forma ordenada.
+    _remove_lock()
+    sys.exit(0)
+
+
+def _write_lock():
+    try:
+        with open(BRAIN_LOCK_FILE, "w", encoding="utf-8") as f:
+            f.write(str(os.getpid()))
+    except OSError:
+        pass
+
+
 if __name__ == "__main__":
     import uvicorn
-    uvicorn.run(app, host="0.0.0.0", port=8000)
+
+    # Nuestro handler de señal debe estar registrado ANTES de uvicorn.run():
+    # uvicorn guarda y restaura los handlers originales al capturar señales.
+    signal.signal(signal.SIGTERM, _handle_shutdown_signal)
+    signal.signal(signal.SIGINT, _handle_shutdown_signal)
+
+    ensure_singleton(allow_restart="--restart" in sys.argv)
+    try:
+        uvicorn.run(app, host="0.0.0.0", port=BRAIN_PORT)
+    finally:
+        # uvicorn no garantiza el retorno normal: limpiar el lock si llegamos aquí
+        _remove_lock()

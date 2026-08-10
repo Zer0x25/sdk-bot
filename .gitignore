@@ -12,6 +12,10 @@ gateway/contacts_db.json
 gateway/ignored_numbers.json
 gateway/allowed_numbers.json
 
+# Lock de instancia única (evita dobles instancias)
+.gateway.lock
+brain/.brain.lock
+
 # Environment variables
 .env
 .env.*
