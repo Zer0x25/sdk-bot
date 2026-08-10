@@ -12,9 +12,8 @@
 [Unit]
 Description=SDK-Bot Gateway (WhatsApp Baileys)
 # El brain debe estar levantado antes que el gateway
-Requires=sdk-bot-brain.service
 After=network-online.target sdk-bot-brain.service
-Wants=network-online.target
+Wants=network-online.target sdk-bot-brain.service
 
 [Service]
 Type=simple

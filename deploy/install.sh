@@ -15,17 +15,18 @@ systemctl enable sdk-bot-brain
 systemctl enable sdk-bot-gateway
 
 echo ""
-echo "✅ Listo. Ahora revisa (y ajusta si es necesario) los paths en:"
-echo "   /etc/systemd/system/sdk-bot-brain.service"
-echo "   /etc/systemd/system/sdk-bot-gateway.service"
+echo "🛑 Deteniendo instancias manuales (si las hay) para liberar los locks..."
+# Los procesos manuales bloquean el arranque de systemd (protección de instancia única)
+pkill -f "venv/bin/python main.py" || true
+pkill -f "node index.js" || true
+sleep 3
+
+echo "▶️ Arrancando services..."
+systemctl start sdk-bot-brain
+sleep 2
+systemctl start sdk-bot-gateway
+
 echo ""
-echo "Comandos útiles:"
-echo "  systemctl start sdk-bot-brain    # arrancar ahora"
-echo "  systemctl start sdk-bot-gateway"
-echo "  systemctl status sdk-bot-gateway # ver estado"
-echo "  journalctl -u sdk-bot-gateway -f # ver logs del gateway"
-echo ""
-echo "⚠️ IMPORTANTE: antes de activar systemd, detén las instancias manuales:"
-echo "  cd brain    && python main.py --restart   # detiene la manual"
-echo "  cd gateway  && npm start -- --restart     # detiene la manual"
-echo "  (el --restart de systemd NO aplica; usa systemctl start/stop)"
+echo "✅ Instalado. Verifica con:"
+echo "  systemctl status sdk-bot-brain sdk-bot-gateway"
+echo "  journalctl -u sdk-bot-gateway -f"
