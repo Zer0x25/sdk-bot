@@ -48,7 +48,7 @@ function findKeyByDigits(cleanTarget) {
         const cleanPhone = item.phone ? item.phone.replace(/[^0-9]/g, '') : '';
         const cleanLid = item.lid ? item.lid.replace(/[^0-9]/g, '') : '';
         return cleanPhone.includes(cleanTarget) || cleanLid.includes(cleanTarget) || k === cleanTarget;
-    });
+    }) ?? null;
 }
 
 function isJunkJid(jid) {

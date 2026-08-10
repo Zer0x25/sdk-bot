@@ -86,6 +86,14 @@ function chunkAdminText(text) {
     const chunks = [];
     let current = '';
     for (const line of text.split('\n')) {
+        if (line.length > ADMIN_MSG_MAX_CHARS) {
+            if (current) { chunks.push(current); current = ''; }
+            // Línea única monstruosa (sin saltos donde apoyarse): cortar por caracteres
+            for (let i = 0; i < line.length; i += ADMIN_MSG_MAX_CHARS) {
+                chunks.push(line.slice(i, i + ADMIN_MSG_MAX_CHARS));
+            }
+            continue;
+        }
         if (current && (current.length + line.length + 1) > ADMIN_MSG_MAX_CHARS) {
             chunks.push(current);
             current = line;

@@ -387,5 +387,8 @@ module.exports = {
     getProfileDetail,
     exportProfileFile,
     importProfileFile,
-    deleteProfileFile
+    deleteProfileFile,
+    splitIntoHumanBubbles,
+    calculateReadDelay,
+    calculateTypingDelay
 };

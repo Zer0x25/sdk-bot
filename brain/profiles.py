@@ -81,8 +81,9 @@ def _parse_md(content: str, profile_key: str) -> dict:
         secciones[seccion_actual] = "\n".join(buffer).strip()
 
     # Procesar ejemplos en pares Cliente/Asistente
+    # (lookahead no-greedy: el asistente termina en el siguiente par o fin del texto)
     ejemplos_texto = secciones.get("ejemplos", "")
-    for match in re.finditer(r"\*\*Cliente:\*\*\s*(.+?)\s*\n\*\*Asistente:\*\*\s*(.+)", ejemplos_texto, re.S):
+    for match in re.finditer(r"\*\*Cliente:\*\*\s*(.+?)\s*\n\*\*Asistente:\*\*\s*(.+?)(?=\n\*\*Cliente:\*\*|$)", ejemplos_texto, re.S):
         ejemplos.append({
             "cliente": match.group(1).strip(),
             "asistente": match.group(2).strip()

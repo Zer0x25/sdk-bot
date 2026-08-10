@@ -68,4 +68,11 @@ Setup primera vez (Linux Debian/Ubuntu): `sudo apt install python3-venv` → `cd
 - **Reconexión (F1):** al cerrarse una conexión, el gateway espera con backoff (2s→60s) antes de reconectar; NUNCA reconecta en loop inmediato. Si el socket se cae mientras responde una IA, el cliente queda en espera hasta la reconexión.
 - **Logs rotados:** `logs/` de gateway y brain están en `.gitignore`; borrarlos es seguro. El brain usa `logging` de Python — `print()` directo NO llega a `brain.log` (usar `safe_log` o `make_logger`).
 - Verificar cambios: arrancar brain + gateway manualmente (no hay tests).
+
+## Tests (F3-P4)
+
+- **Gateway:** `cd gateway; npm test` → `node --test` (runner nativo, sin dependencias). Descubre `tests/*.test.js` automáticamente. Cubren: `commandHelpers` (parseo/sanitize/chunk/citas), `pipeline` (matriz de decisión completa), `contactsRepository` (clean/upsert/dedupe/índices) y `brainService` (bubbles/delays).
+- **Brain:** `cd brain; venv/bin/python -m pytest tests/` → `test_profiles.py` cubre el parser markdown de perfiles (`_parse_md`, `_valid_key`, `_list_md_files`, fallback `default`). `pytest` instalado en el venv.
+- **Helpers de tests:** `gateway/tests/helpers/tmpPaths.js` redirige `config.js` a una DB temporal (nunca toca `contacts_db.json` real de prod). Cada archivo de test corre en su propio proceso.
+- Los tests ya encontraron bugs reales (arreglados y cubiertos): `chunkAdminText` no partía líneas únicas >2800 chars; `findKeyByDigits` devolvía `undefined` en vez de `null`; el regex de ejemplos del parser de perfiles era greedy (tragaba pares consecutivos de `**Cliente:**`/`**Asistente:**`).
 - Código, logs y comentarios en español.
