@@ -1,0 +1,256 @@
+const { getContactsDB, saveContactsDB, onContactsCacheUpdate } = require('./db');
+const { cat } = require("./logger");
+const logError = cat("ERROR");
+
+// Almacén en memoria de contactos de la sesión (RAM de Baileys)
+const contactStore = new Map();
+
+// -------------------------------------------------------------
+// ÍNDICES RAM (R1): eliminan los Object.keys().find() del hot path
+// -------------------------------------------------------------
+let phoneIndex = new Map();   // phone -> clave del registro
+let lidIndex = new Map();     // lid   -> clave del registro
+let digitsIndex = new Map();  // clave/phone/lid en dígitos puros -> clave (para comandos admin)
+
+function rebuildIndexes(db) {
+    phoneIndex = new Map();
+    lidIndex = new Map();
+    digitsIndex = new Map();
+    if (!db || typeof db !== 'object') return;
+    for (const [k, item] of Object.entries(db)) {
+        if (!item || typeof item !== 'object') continue;
+        if (item.phone) phoneIndex.set(item.phone, k);
+        if (item.lid) lidIndex.set(item.lid, k);
+        const d = String(k).replace(/[^0-9]/g, '');
+        if (d) digitsIndex.set(d, k);
+    }
+}
+
+// Los índices RAM siempre espejan la caché actual (se reconstruyen en
+// cada reemplazo/guardado de la caché de contactos)
+onContactsCacheUpdate(rebuildIndexes);
+
+// Búsqueda exacta por phone/lid (hot path: upsert, bulk, extractUserMetadata)
+function findExistingKey(phoneNumber, lid) {
+    if (phoneNumber && phoneIndex.has(phoneNumber)) return phoneIndex.get(phoneNumber);
+    if (lid && lidIndex.has(lid)) return lidIndex.get(lid);
+    return null;
+}
+
+// Búsqueda por dígitos puros (comandos admin: /p /i /q /n, estados, perfiles).
+// Índice RAM de dígitos puros; scan completo solo si no hubo match exacto.
+function findKeyByDigits(cleanTarget) {
+    if (!cleanTarget) return null;
+    if (digitsIndex.has(cleanTarget)) return digitsIndex.get(cleanTarget);
+    const db = getContactsDB();
+    return Object.keys(db).find(k => {
+        const item = db[k];
+        const cleanPhone = item.phone ? item.phone.replace(/[^0-9]/g, '') : '';
+        const cleanLid = item.lid ? item.lid.replace(/[^0-9]/g, '') : '';
+        return cleanPhone.includes(cleanTarget) || cleanLid.includes(cleanTarget) || k === cleanTarget;
+    });
+}
+
+function isJunkJid(jid) {
+    if (!jid) return true;
+    const str = String(jid).toLowerCase();
+    if (str.endsWith('@g.us')) return true;
+    if (str.endsWith('@newsletter')) return true;
+    if (str.endsWith('@broadcast')) return true;
+    if (str.startsWith('status@')) return true;
+    if (str.startsWith('0@')) return true;
+    return false;
+}
+
+function cleanContactsDB() {
+    const db = getContactsDB();
+    let updated = false;
+
+    Object.keys(db).forEach(k => {
+        const item = db[k];
+        
+        // A) Eliminar grupos, broadcast, canales o IDs inválidos
+        if (isJunkJid(k) || (item.phone && isJunkJid(item.phone)) || (item.lid && isJunkJid(item.lid))) {
+            delete db[k];
+            updated = true;
+            return;
+        }
+
+        // B) Eliminar entradas fantasma (sin teléfono Y sin nombres Y sin foto)
+        if (!item.phone && !item.savedName && !item.pushName && !item.verifiedName && !item.profilePicUrl) {
+            delete db[k];
+            updated = true;
+            return;
+        }
+
+        // C) Si la clave es un LID pero existe otra entrada con el mismo LID que ya posee Teléfono, fusionar y eliminar la clave LID
+        if (!item.phone && item.lid) {
+            const matchingPhoneKey = Object.keys(db).find(otherKey => otherKey !== k && db[otherKey].lid === item.lid && db[otherKey].phone);
+            if (matchingPhoneKey) {
+                const target = db[matchingPhoneKey];
+                if (item.savedName && !target.savedName) target.savedName = item.savedName;
+                if (item.pushName && !target.pushName) target.pushName = item.pushName;
+                if (item.profilePicUrl && !target.profilePicUrl) target.profilePicUrl = item.profilePicUrl;
+                if (item.bio && !target.bio) target.bio = item.bio;
+                if (item.handoff !== undefined) target.handoff = item.handoff;
+                delete db[k];
+                updated = true;
+            }
+        }
+
+        // D) Sanitizar bio: registros legados pueden tener el OBJETO {status,setAt} en vez
+        //    de string (rompe la API del brain con 422 de validación)
+        if (item.bio && typeof item.bio !== 'string') {
+            item.bio = null;
+            updated = true;
+        }
+    });
+
+    if (updated) {
+        saveContactsDB(db);
+    }
+    return db;
+}
+
+function upsertContactMetadata(metadata) {
+    const { phoneNumber, lid, savedName, pushName, verifiedName, country, language, isContact, bio, profilePicUrl, isBusiness, lastEnrichedAt } = metadata;
+
+    if (phoneNumber && isJunkJid(phoneNumber)) return null;
+    if (lid && isJunkJid(lid)) return null;
+    if (!phoneNumber && !lid) return null;
+
+    const hasAnyIdentity = phoneNumber || (savedName && savedName.trim()) || (pushName && pushName !== 'Desconocido' && pushName.trim()) || verifiedName || profilePicUrl;
+    if (!hasAnyIdentity) return null;
+
+    const db = cleanContactsDB();
+
+    // ⚡ Índice RAM: O(1) en vez de Object.keys().find()
+    let existingKey = findExistingKey(phoneNumber, lid);
+
+    let targetKey = phoneNumber || (existingKey && db[existingKey].phone ? db[existingKey].phone : lid);
+
+    if (existingKey && existingKey !== targetKey) {
+        const oldData = db[existingKey];
+        delete db[existingKey];
+        db[targetKey] = oldData;
+    }
+
+    const now = new Date().toISOString();
+    const record = db[targetKey] || {
+        phone: phoneNumber || null,
+        lid: lid || null,
+        savedName: (savedName && savedName.trim()) ? savedName.trim() : null,
+        pushName: (pushName && pushName !== 'Desconocido' && pushName.trim()) ? pushName.trim() : null,
+        verifiedName: (verifiedName && verifiedName.trim()) ? verifiedName.trim() : null,
+        country: country || "Desconocido",
+        language: language || null,
+        profilePicUrl: profilePicUrl || null,
+        bio: bio || null,
+        isBusiness: isBusiness || false,
+        isContact: isContact || false,
+        estado: "neutro", // Estado por defecto: "neutro", "handoff", "ignorado", "permitido"
+        lastEnrichedAt: lastEnrichedAt || null,
+        firstSeen: now,
+        lastSeen: now,
+        totalMessages: 0
+    };
+
+    if (phoneNumber) record.phone = phoneNumber;
+    if (lid) record.lid = lid;
+    if (savedName && savedName.trim()) record.savedName = savedName.trim();
+    if (pushName && pushName !== 'Desconocido' && pushName.trim()) record.pushName = pushName.trim();
+    if (verifiedName && verifiedName.trim()) record.verifiedName = verifiedName.trim();
+    if (country && country !== 'Desconocido') record.country = country;
+    if (language) record.language = language;
+    if (profilePicUrl) record.profilePicUrl = profilePicUrl;
+    if (bio && typeof bio === 'string') record.bio = bio;
+    if (isBusiness !== undefined) record.isBusiness = isBusiness;
+    if (isContact) record.isContact = true;
+    if (lastEnrichedAt) record.lastEnrichedAt = lastEnrichedAt;
+
+    record.lastSeen = now;
+    record.totalMessages = (record.totalMessages || 0) + 1;
+
+    db[targetKey] = record;
+    saveContactsDB(db);
+
+    return record;
+}
+
+function bulkUpsertContactsMetadata(contactsList) {
+    if (!Array.isArray(contactsList) || contactsList.length === 0) return 0;
+    
+    const db = cleanContactsDB();
+    let count = 0;
+    const now = new Date().toISOString();
+
+    contactsList.forEach(metadata => {
+        const { phoneNumber, lid, savedName, pushName, verifiedName, country, isContact, bio, profilePicUrl, isBusiness, lastEnrichedAt } = metadata;
+
+        if (phoneNumber && isJunkJid(phoneNumber)) return;
+        if (lid && isJunkJid(lid)) return;
+        if (!phoneNumber && !lid) return;
+
+        const hasAnyIdentity = phoneNumber || (savedName && savedName.trim()) || (pushName && pushName !== 'Desconocido' && pushName.trim()) || verifiedName || profilePicUrl;
+        if (!hasAnyIdentity) return;
+
+        // ⚡ Índice RAM: O(1) en vez de Object.keys().find()
+        let existingKey = findExistingKey(phoneNumber, lid);
+
+        let targetKey = phoneNumber || (existingKey && db[existingKey].phone ? db[existingKey].phone : lid);
+
+        if (existingKey && existingKey !== targetKey) {
+            const oldData = db[existingKey];
+            delete db[existingKey];
+            db[targetKey] = oldData;
+        }
+
+        const record = db[targetKey] || {
+            phone: phoneNumber || null,
+            lid: lid || null,
+            savedName: (savedName && savedName.trim()) ? savedName.trim() : null,
+            pushName: (pushName && pushName !== 'Desconocido' && pushName.trim()) ? pushName.trim() : null,
+            verifiedName: (verifiedName && verifiedName.trim()) ? verifiedName.trim() : null,
+            country: country || "Desconocido",
+            profilePicUrl: profilePicUrl || null,
+            bio: bio || null,
+            isBusiness: isBusiness || false,
+            isContact: isContact || false,
+            estado: "neutro", // Estado por defecto
+            lastEnrichedAt: lastEnrichedAt || null,
+            firstSeen: now,
+            lastSeen: now,
+            totalMessages: 0
+        };
+
+        if (phoneNumber) record.phone = phoneNumber;
+        if (lid) record.lid = lid;
+        if (savedName && savedName.trim()) record.savedName = savedName.trim();
+        if (pushName && pushName !== 'Desconocido' && pushName.trim()) record.pushName = pushName.trim();
+        if (verifiedName && verifiedName.trim()) record.verifiedName = verifiedName.trim();
+        if (country && country !== 'Desconocido') record.country = country;
+        if (profilePicUrl) record.profilePicUrl = profilePicUrl;
+        if (bio && typeof bio === 'string') record.bio = bio;
+        if (isBusiness !== undefined) record.isBusiness = isBusiness;
+        if (isContact) record.isContact = true;
+        if (lastEnrichedAt) record.lastEnrichedAt = lastEnrichedAt;
+
+        record.lastSeen = now;
+
+        db[targetKey] = record;
+        count++;
+    });
+
+    saveContactsDB(db);
+    return count;
+}
+
+module.exports = {
+    contactStore,
+    isJunkJid,
+    findExistingKey,
+    findKeyByDigits,
+    cleanContactsDB,
+    upsertContactMetadata,
+    bulkUpsertContactsMetadata
+};

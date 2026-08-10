@@ -21,8 +21,8 @@ function getBrainApiKey() {
 }
 
 // Rutas de archivos de bases de datos
-const CONTACTS_FILE_PATH = path.join(__dirname, 'contacts_db.json');
-const SETTINGS_FILE_PATH = path.join(__dirname, 'settings_db.json');
+const CONTACTS_FILE_PATH = "/tmp/sdkbot-test-RQe4zL/contacts_db.json";
+const SETTINGS_FILE_PATH = "/tmp/sdkbot-test-RQe4zL/settings_db.json";
 
 // Estado Global del Bot
 const state = {

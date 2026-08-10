@@ -1,11 +1,13 @@
 const { state, isBotSentMessage, registerSentMessage } = require('../config');
 const { extractUserMetadata, enrichContactExtraData, isSelfChat } = require('../services/metadataService');
 const { 
-    upsertContactMetadata, 
+    upsertContactMetadata
+} = require('../services/contactsRepository');
+const { 
     getSettingsDB,
-    getContactsDB,
-    setNumberState 
-} = require('../services/storageService');
+    getContactsDB
+} = require('../services/db');
+const { setNumberState } = require('../services/stateService');
 const { processAIChat } = require('../services/brainService');
 const { enqueueAI, poolStats } = require('../services/aiQueue');
 const { handleAdminCommand } = require('./commandHandler');
