@@ -63,6 +63,36 @@ function isValidTargetId(targetId) {
     return targetId === '*' || /^\d{7,}$/.test(targetId);
 }
 
+/**
+ * 📖 Help por comando canónico: sintaxis + ejemplos. Un solo lugar para mantener.
+ * En cualquier error de sintaxis, el bot responde con el Uso del comando.
+ */
+const COMMAND_USAGE = {
+    ia:      '/ia <numero_o_lid> — o responde (cita) un mensaje del cliente.\n\n*Ejemplo copiable:*\n```/a +56 9 4252 3669```',
+    humano:  '/humano <numero_o_lid> — o responde (cita) un mensaje del cliente.\n\n*Ejemplo copiable:*\n```/h +56 9 4252 3669```',
+    limpiar: '/limpiar <numero_o_lid> — o responde (cita) un mensaje del cliente.\n\n*Ejemplo copiable:*\n```/c +56 9 4252 3669```',
+    ignorar: '/ignorar <num|agenda|*> —\n\n*Ejemplos copiables:*\n```/i +56 9 4252 3669```\n```/i agenda```\n```/i *```',
+    permitir: '/permitir <numero_o_lid|*> —\n\n*Ejemplos copiables:*\n```/p +56 9 4252 3669```\n```/p *```',
+    quitar:  '/quitar <numero_o_lid|*> —\n\n*Ejemplo copiable:*\n```/q +56 9 4252 3669```',
+    buscar:  '/buscar <nombre_tel_o_lid> —\n\n*Ejemplos copiables:*\n```/s Pedro```\n```/s +56 9 4252 3669```',
+    nombre:  '/nombre <numero_o_lid> <nombre_agenda> —\n\n*Ejemplo copiable:*\n```/n +56 9 4252 3669 Pedro Pizzería```',
+    update:  'cita un archivo `.md` y escribe `/update` (o envíalo con caption `/update`).\n\n*Exportar un perfil para editar:* `/perfil exportar <key>`'
+};
+
+/**
+ * 📖 Formatea el help de un comando ("⚠️ *Uso:* ...").
+ */
+function usageOf(cmd) {
+    return `⚠️ *Uso:* ${COMMAND_USAGE[cmd] || 'revisa el menú con `/e`'}`;
+}
+
+/**
+ * 📖 Respuesta de error de sintaxis: detalle + help del comando en cuestión.
+ */
+function syntaxError(cmd, detail) {
+    return `⚠️ ${detail}\n\n${usageOf(cmd)}`;
+}
+
 // 📏 WhatsApp limita los mensajes de texto (~4096 chars); nos quedamos por debajo con margen
 const ADMIN_MSG_MAX_CHARS = 2800;
 
@@ -212,14 +242,18 @@ async function handleAdminCommand(textMessage, remoteJid, sock, metadata, rawMsg
         case '/auto':
         case '/unpause':
             if (!queryParam) {
-                adminResponse = "⚠️ *Uso:* `/ia <numero_o_lid>` o responde (cita) un mensaje del cliente.\n\n*Ejemplo copiable:*\n```/a +56 9 4252 3669```";
+                adminResponse = usageOf('ia');
             } else {
                 const targetId = parsePhoneOrLid(queryParam);
-                const res = setNumberState(targetId, 'neutral');
-                if (res.success) {
-                    adminResponse = `🤖 *IA Reactivada para el cliente:*\n\`${res.target}\`. (Pasó a estado: ${res.state})`;
+                if (!isValidTargetId(targetId)) {
+                    adminResponse = syntaxError('ia', `ID/Número no válido: *"${sanitizeMarkdown(queryParam)}"*.`);
                 } else {
-                    adminResponse = `⚠️ Error al reactivar IA para *${targetId}*.`;
+                    const res = setNumberState(targetId, 'neutral');
+                    if (res.success) {
+                        adminResponse = `🤖 *IA Reactivada para el cliente:*\n\`${res.target}\`. (Pasó a estado: ${res.state})`;
+                    } else {
+                        adminResponse = syntaxError('ia', `No pude reactivar la IA para *${sanitizeMarkdown(queryParam)}*.`);
+                    }
                 }
             }
             break;
@@ -228,14 +262,18 @@ async function handleAdminCommand(textMessage, remoteJid, sock, metadata, rawMsg
         case '/h':
         case '/handoff':
             if (!queryParam) {
-                adminResponse = "⚠️ *Uso:* `/humano <numero_o_lid>` o responde (cita) un mensaje del cliente.\n\n*Ejemplo copiable:*\n```/h +56 9 4252 3669```";
+                adminResponse = usageOf('humano');
             } else {
                 const targetId = parsePhoneOrLid(queryParam);
-                const res = setNumberState(targetId, 'handoff');
-                if (res.success) {
-                    adminResponse = `🤝 *Atención Humana activada para:*\n\`${res.target}\`.\nLa IA permanecerá en silencio para este chat.`;
+                if (!isValidTargetId(targetId)) {
+                    adminResponse = syntaxError('humano', `ID/Número no válido: *"${sanitizeMarkdown(queryParam)}"*.`);
                 } else {
-                    adminResponse = `⚠️ Error al activar atención humana para *${targetId}*.`;
+                    const res = setNumberState(targetId, 'handoff');
+                    if (res.success) {
+                        adminResponse = `🤝 *Atención Humana activada para:*\n\`${res.target}\`.\nLa IA permanecerá en silencio para este chat.`;
+                    } else {
+                        adminResponse = syntaxError('humano', `No pude activar atención humana para *${sanitizeMarkdown(queryParam)}*.`);
+                    }
                 }
             }
             break;
@@ -244,9 +282,13 @@ async function handleAdminCommand(textMessage, remoteJid, sock, metadata, rawMsg
         case '/c':
         case '/reset':
             if (!queryParam) {
-                adminResponse = "⚠️ *Uso:* `/limpiar <numero_o_lid>` o responde (cita) un mensaje del cliente.\n\n*Ejemplo copiable:*\n```/c +56 9 4252 3669```";
+                adminResponse = usageOf('limpiar');
             } else {
                 const targetId = parsePhoneOrLid(queryParam);
+                if (!isValidTargetId(targetId)) {
+                    adminResponse = syntaxError('limpiar', `ID/Número no válido: *"${sanitizeMarkdown(queryParam)}"*.`);
+                    break;
+                }
                 const db = getContactsDB();
                 const record = Object.values(db).find(c => (c.phone && c.phone.includes(targetId)) || (c.lid && c.lid.includes(targetId)));
                 
@@ -256,7 +298,7 @@ async function handleAdminCommand(textMessage, remoteJid, sock, metadata, rawMsg
                 if (success) {
                     adminResponse = `🧹 *Memoria de IA borrada con éxito para:*\n${record ? (record.savedName || record.pushName || targetId) : targetId}. El historial conversacional ha sido reiniciado.`;
                 } else {
-                    adminResponse = `⚠️ No había memoria previa registrada o no se pudo limpiar para *${targetId}*.`;
+                    adminResponse = syntaxError('limpiar', `No pude limpiar la memoria para *${sanitizeMarkdown(queryParam)}* (¿existe el contacto?).`);
                 }
             }
             break;
@@ -270,7 +312,7 @@ async function handleAdminCommand(textMessage, remoteJid, sock, metadata, rawMsg
         case '/b':
         case '/ignore':
             if (!queryParam) {
-                adminResponse = "⚠️ *Uso:* `/ignorar <num|agenda|*>`\n\n*Ejemplos copiables:*\n```/i +56 9 4252 3669```\n```/i agenda```\n```/i *```";
+                adminResponse = usageOf('ignorar');
             } else if (queryParam.toLowerCase() === 'agenda') {
                 const res = ignoreAllAgendaContacts();
                 adminResponse = `🚫 *Ignorado Masivo de Agenda Ejecutado:*\nSe agregaron *${res.addedCount}* contactos de tu libreta a la Lista de Ignorados.\nTotal ignorados en lista: *${res.totalIgnored}*.`;
@@ -280,13 +322,13 @@ async function handleAdminCommand(textMessage, remoteJid, sock, metadata, rawMsg
             } else {
                 const targetId = parsePhoneOrLid(queryParam);
                 if (!isValidTargetId(targetId)) {
-                    adminResponse = `⚠️ *ID/Número no válido:* "${sanitizeMarkdown(queryParam)}". Debe ser un teléfono o LID (mínimo 7 dígitos).`;
+                    adminResponse = syntaxError('ignorar', `ID/Número no válido: *"${sanitizeMarkdown(queryParam)}"*.`);
                 } else {
                     const res = setNumberState(targetId, 'ignored');
                     if (res.success) {
                         adminResponse = `🚫 ID/Número \`${res.target}\` asignado a la *Lista de Ignorados* (reubicado de permitidos si existía).`;
                     } else {
-                        adminResponse = `⚠️ No pude ignorar *${sanitizeMarkdown(queryParam)}*.`;
+                        adminResponse = syntaxError('ignorar', `No pude ignorar *${sanitizeMarkdown(queryParam)}*.`);
                     }
                 }
             }
@@ -296,20 +338,20 @@ async function handleAdminCommand(textMessage, remoteJid, sock, metadata, rawMsg
         case '/p':
         case '/allow':
             if (!queryParam) {
-                adminResponse = "⚠️ *Uso:* `/permitir <numero_o_lid|*>`\n\n*Ejemplos copiables:*\n```/p +56 9 4252 3669```\n```/p *```";
+                adminResponse = usageOf('permitir');
             } else if (queryParam === '*' || queryParam.toLowerCase() === 'all') {
                 const res = setNumberState('*', 'allowed');
                 adminResponse = `🌐 *Modo Global Cambiado:* ${res.message}.\nLa IA responderá a todos los clientes por defecto (excepto los que estén en la Lista de Ignorados).`;
             } else {
                 const targetId = parsePhoneOrLid(queryParam);
                 if (!isValidTargetId(targetId)) {
-                    adminResponse = `⚠️ *ID/Número no válido:* "${sanitizeMarkdown(queryParam)}". Debe ser un teléfono o LID (mínimo 7 dígitos).`;
+                    adminResponse = syntaxError('permitir', `ID/Número no válido: *"${sanitizeMarkdown(queryParam)}"*.`);
                 } else {
                     const res = setNumberState(targetId, 'allowed');
                     if (res.success) {
                         adminResponse = `✅ ID/Número \`${res.target}\` asignado a la *Lista de Permitidos* (reubicado de ignorados si existía).`;
                     } else {
-                        adminResponse = `⚠️ No pude permitir *${sanitizeMarkdown(queryParam)}*.`;
+                        adminResponse = syntaxError('permitir', `No pude permitir *${sanitizeMarkdown(queryParam)}*.`);
                     }
                 }
             }
@@ -320,20 +362,20 @@ async function handleAdminCommand(textMessage, remoteJid, sock, metadata, rawMsg
         case '/remove':
         case '/rem':
             if (!queryParam) {
-                adminResponse = "⚠️ *Uso:* `/quitar <numero_o_lid|*>`\n\n*Ejemplo copiable:*\n```/q +56 9 4252 3669```";
+                adminResponse = usageOf('quitar');
             } else if (queryParam === '*') {
                 const res = setNumberState('*', 'neutral');
                 adminResponse = `🔄 Comodín (\`*\`) removido de ambas listas. Transición a estado neutro.`;
             } else {
                 const targetId = parsePhoneOrLid(queryParam);
                 if (!isValidTargetId(targetId)) {
-                    adminResponse = `⚠️ *ID/Número no válido:* "${sanitizeMarkdown(queryParam)}". Debe ser un teléfono o LID (mínimo 7 dígitos).`;
+                    adminResponse = syntaxError('quitar', `ID/Número no válido: *"${sanitizeMarkdown(queryParam)}"*.`);
                 } else {
                     const res = setNumberState(targetId, 'neutral');
                     if (res.success) {
                         adminResponse = `🔄 ID/Número \`${res.target}\` removido de ambas listas. Regresado a *Estado 0 (Neutro)*.`;
                     } else {
-                        adminResponse = `⚠️ No pude quitar *${sanitizeMarkdown(queryParam)}* de las listas.`;
+                        adminResponse = syntaxError('quitar', `No pude quitar *${sanitizeMarkdown(queryParam)}* de las listas.`);
                     }
                 }
             }
@@ -376,7 +418,7 @@ async function handleAdminCommand(textMessage, remoteJid, sock, metadata, rawMsg
         case '/s':
         case '/search':
             if (!queryParam) {
-                adminResponse = "⚠️ *Uso:* `/buscar <nombre_tel_o_lid>`\n\n*Ejemplos copiables:*\n```/s Pedro```\n```/s +56 9 4252 3669```";
+                adminResponse = usageOf('buscar');
             } else {
                 const db = getContactsDB();
                 const cleanQuery = queryParam.toLowerCase().replace(/[^a-z0-9]/g, '');
@@ -413,7 +455,7 @@ async function handleAdminCommand(textMessage, remoteJid, sock, metadata, rawMsg
         case '/alias':
             const { targetId: nameTarget, customName } = parseNameArgs(queryParam);
             if (!nameTarget || !customName) {
-                adminResponse = "⚠️ *Uso:* `/nombre <numero_o_lid> <nombre_agenda>`\n\n*Ejemplo copiable:*\n```/n +56 9 4252 3669 Pedro Pizzería```";
+                adminResponse = usageOf('nombre');
             } else {
                 const db = getContactsDB();
                 
@@ -425,6 +467,11 @@ async function handleAdminCommand(textMessage, remoteJid, sock, metadata, rawMsg
                     if (cleanLid && cleanLid.includes(nameTarget)) return true;
                     return k === nameTarget;
                 });
+
+                if (!isValidTargetId(nameTarget) || nameTarget === '*') {
+                    adminResponse = syntaxError('nombre', `ID/Número no válido: *"${sanitizeMarkdown(nameTarget)}"*.`);
+                    break;
+                }
 
                 if (existingKey) {
                     db[existingKey].savedName = customName;
@@ -611,7 +658,7 @@ async function handleAdminCommand(textMessage, remoteJid, sock, metadata, rawMsg
             } : rawMsg;
 
             if (!docMsg) {
-                adminResponse = "⚠️ *Uso:* cita un archivo \`.md\` y escribe \`/update\` (o envíalo con caption \`/update\`).\n\n*Exportar un perfil para editar:* \`/perfil exportar <key>\`";
+                adminResponse = usageOf('update');
                 break;
             }
 
