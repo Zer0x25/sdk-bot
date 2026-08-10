@@ -55,6 +55,14 @@ function parsePhoneOrLid(input) {
     return str;
 }
 
+/**
+ * 🎯 Validar target para comandos de listas (/p /i /q): "*" o 7+ dígitos puros
+ * (número de WhatsApp o LID). Evita crear registros "undefined"/basura.
+ */
+function isValidTargetId(targetId) {
+    return targetId === '*' || /^\d{7,}$/.test(targetId);
+}
+
 // 📏 WhatsApp limita los mensajes de texto (~4096 chars); nos quedamos por debajo con margen
 const ADMIN_MSG_MAX_CHARS = 2800;
 
@@ -271,8 +279,16 @@ async function handleAdminCommand(textMessage, remoteJid, sock, metadata, rawMsg
                 adminResponse = `🔒 *Modo Global Cambiado:* ${res.message}.\nLa IA estará en *Modo Estricto (Whitelist)*. Solo responderá a los números explícitamente permitidos.`;
             } else {
                 const targetId = parsePhoneOrLid(queryParam);
-                const res = setNumberState(targetId, 'ignored');
-                adminResponse = `🚫 ID/Número \`${res.target}\` asignado a la *Lista de Ignorados* (reubicado de permitidos si existía).`;
+                if (!isValidTargetId(targetId)) {
+                    adminResponse = `⚠️ *ID/Número no válido:* "${sanitizeMarkdown(queryParam)}". Debe ser un teléfono o LID (mínimo 7 dígitos).`;
+                } else {
+                    const res = setNumberState(targetId, 'ignored');
+                    if (res.success) {
+                        adminResponse = `🚫 ID/Número \`${res.target}\` asignado a la *Lista de Ignorados* (reubicado de permitidos si existía).`;
+                    } else {
+                        adminResponse = `⚠️ No pude ignorar *${sanitizeMarkdown(queryParam)}*.`;
+                    }
+                }
             }
             break;
 
@@ -286,8 +302,16 @@ async function handleAdminCommand(textMessage, remoteJid, sock, metadata, rawMsg
                 adminResponse = `🌐 *Modo Global Cambiado:* ${res.message}.\nLa IA responderá a todos los clientes por defecto (excepto los que estén en la Lista de Ignorados).`;
             } else {
                 const targetId = parsePhoneOrLid(queryParam);
-                const res = setNumberState(targetId, 'allowed');
-                adminResponse = `✅ ID/Número \`${res.target}\` asignado a la *Lista de Permitidos* (reubicado de ignorados si existía).`;
+                if (!isValidTargetId(targetId)) {
+                    adminResponse = `⚠️ *ID/Número no válido:* "${sanitizeMarkdown(queryParam)}". Debe ser un teléfono o LID (mínimo 7 dígitos).`;
+                } else {
+                    const res = setNumberState(targetId, 'allowed');
+                    if (res.success) {
+                        adminResponse = `✅ ID/Número \`${res.target}\` asignado a la *Lista de Permitidos* (reubicado de ignorados si existía).`;
+                    } else {
+                        adminResponse = `⚠️ No pude permitir *${sanitizeMarkdown(queryParam)}*.`;
+                    }
+                }
             }
             break;
 
@@ -302,8 +326,16 @@ async function handleAdminCommand(textMessage, remoteJid, sock, metadata, rawMsg
                 adminResponse = `🔄 Comodín (\`*\`) removido de ambas listas. Transición a estado neutro.`;
             } else {
                 const targetId = parsePhoneOrLid(queryParam);
-                const res = setNumberState(targetId, 'neutral');
-                adminResponse = `🔄 ID/Número \`${res.target}\` removido de ambas listas. Regresado a *Estado 0 (Neutro)*.`;
+                if (!isValidTargetId(targetId)) {
+                    adminResponse = `⚠️ *ID/Número no válido:* "${sanitizeMarkdown(queryParam)}". Debe ser un teléfono o LID (mínimo 7 dígitos).`;
+                } else {
+                    const res = setNumberState(targetId, 'neutral');
+                    if (res.success) {
+                        adminResponse = `🔄 ID/Número \`${res.target}\` removido de ambas listas. Regresado a *Estado 0 (Neutro)*.`;
+                    } else {
+                        adminResponse = `⚠️ No pude quitar *${sanitizeMarkdown(queryParam)}* de las listas.`;
+                    }
+                }
             }
             break;
 
