@@ -1,3 +1,4 @@
+// @ts-check
 const pino = require('pino');
 const path = require('path');
 const fs = require('fs');
@@ -32,4 +33,11 @@ function cat(category) {
     return logger.child({ cat: category });
 }
 
-module.exports = { logger, cat };
+/**
+ * 🧰 Mensaje de error a string (los catch de JS moderno tipan `unknown`)
+ */
+function errMsg(e) {
+    return e instanceof Error ? e.message : String(e);
+}
+
+module.exports = { logger, cat, errMsg };

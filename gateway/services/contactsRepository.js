@@ -1,4 +1,29 @@
+// @ts-check
 const { getContactsDB, saveContactsDB, onContactsCacheUpdate } = require('./db');
+
+/**
+ * 🧾 Forma de un registro de contacto en contacts_db.json
+ * (typedef compartido: db.js, stateService.js y pipeline.js lo usan vía import()).
+ * @typedef {Object} ContactRecord
+ * @property {string|null} phone
+ * @property {string|null} lid
+ * @property {string|null} [savedName]
+ * @property {string|null} [pushName]
+ * @property {string|null} [verifiedName]
+ * @property {string} [country]
+ * @property {string|null} [language]
+ * @property {string|null} [profilePicUrl]
+ * @property {string|null} [bio]
+ * @property {boolean} [isBusiness]
+ * @property {boolean} [isContact]
+ * @property {('neutro'|'permitido'|'ignorado'|'handoff')} [estado]
+ * @property {string|null} [lastEnrichedAt]
+ * @property {string} [firstSeen]
+ * @property {string} [lastSeen]
+ * @property {number} [totalMessages]
+ * @property {boolean} [handoff]
+ * @property {string} [perfil]
+ */
 
 // Almacén en memoria de contactos de la sesión (RAM de Baileys)
 const contactStore = new Map();
@@ -10,6 +35,9 @@ let phoneIndex = new Map();   // phone -> clave del registro
 let lidIndex = new Map();     // lid   -> clave del registro
 let digitsIndex = new Map();  // clave/phone/lid en dígitos puros -> clave (para comandos admin)
 
+/**
+ * @param {Object<string, ContactRecord>} db
+ */
 function rebuildIndexes(db) {
     phoneIndex = new Map();
     lidIndex = new Map();
@@ -110,6 +138,27 @@ function cleanContactsDB() {
     return db;
 }
 
+/**
+ * 📝 Datos enriquecidos de un contacto para upsert (entrada normalizada)
+ * @typedef {Object} ContactMetadataInput
+ * @property {string|null} phoneNumber
+ * @property {string|null} lid
+ * @property {string|null} [savedName]
+ * @property {string|null} [pushName]
+ * @property {string|null} [verifiedName]
+ * @property {string} [country]
+ * @property {string|null} [language]
+ * @property {string|null} [profilePicUrl]
+ * @property {string|null} [bio]
+ * @property {boolean} [isBusiness]
+ * @property {boolean} [isContact]
+ * @property {string|null} [lastEnrichedAt]
+ */
+
+/**
+ * @param {ContactMetadataInput} metadata
+ * @returns {ContactRecord|null}
+ */
 function upsertContactMetadata(metadata) {
     const { phoneNumber, lid, savedName, pushName, verifiedName, country, language, isContact, bio, profilePicUrl, isBusiness, lastEnrichedAt } = metadata;
 
@@ -126,6 +175,8 @@ function upsertContactMetadata(metadata) {
     let existingKey = findExistingKey(phoneNumber, lid);
 
     let targetKey = phoneNumber || (existingKey && db[existingKey].phone ? db[existingKey].phone : lid);
+
+    if (!targetKey) return null;
 
     if (existingKey && existingKey !== targetKey) {
         const oldData = db[existingKey];
@@ -175,6 +226,10 @@ function upsertContactMetadata(metadata) {
     return record;
 }
 
+/**
+ * @param {ContactMetadataInput[]} contactsList
+ * @returns {number}
+ */
 function bulkUpsertContactsMetadata(contactsList) {
     if (!Array.isArray(contactsList) || contactsList.length === 0) return 0;
     
@@ -196,6 +251,8 @@ function bulkUpsertContactsMetadata(contactsList) {
         let existingKey = findExistingKey(phoneNumber, lid);
 
         let targetKey = phoneNumber || (existingKey && db[existingKey].phone ? db[existingKey].phone : lid);
+
+        if (!targetKey) return;
 
         if (existingKey && existingKey !== targetKey) {
             const oldData = db[existingKey];

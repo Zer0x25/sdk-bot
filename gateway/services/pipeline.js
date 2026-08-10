@@ -1,3 +1,4 @@
+// @ts-check
 const { state } = require('../config');
 const { getSettingsDB, getContactsDB } = require('./db');
 const { cat } = require('./logger');
@@ -122,8 +123,8 @@ function extractTextMessage(msg) {
  * 🚦 DECIDIR EL FLUJO DE UN MENSAJE ENTRANTE (puro, sin side effects)
  * @param {object} ctx
  * @param {string} ctx.textMessage - texto extraído del mensaje
- * @param {object} ctx.metadata - salida de extractUserMetadata()
- * @param {object} ctx.contactRecord - registro actual del contacto (upsert previo)
+ * @param {import('./metadataService.js').UserMetadata} ctx.metadata - salida de extractUserMetadata()
+ * @param {import('./contactsRepository.js').ContactRecord} ctx.contactRecord - registro actual del contacto (upsert previo)
  * @param {boolean} ctx.isSelf - true si es el self-chat del admin
  * @param {boolean} ctx.isFromMe - true si el mensaje lo envió el propio admin
  * @returns {object} descriptor de acción (ver cabecera del módulo)

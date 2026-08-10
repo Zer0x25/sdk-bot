@@ -1,3 +1,4 @@
+// @ts-check
 /**
  * 🧹 Helpers compartidos de comandos admin: sanitización, parseo de targets,
  * ayuda contextual (COMMAND_USAGE / usageOf / syntaxError) y particionado

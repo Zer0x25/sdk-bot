@@ -1,3 +1,4 @@
+// @ts-check
 const path = require('path');
 const fs = require('fs');
 
@@ -34,6 +35,10 @@ const state = {
     ADMIN_PHONE: '',
     ADMIN_LID: ''
 };
+
+/**
+ * @typedef {typeof state} GlobalState
+ */
 
 // 🛑 Registro de IDs de mensajes enviados por el bot para PREVENIR BUCLE INFINITO
 const botSentMessageIds = new Set();

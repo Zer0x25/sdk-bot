@@ -1,5 +1,6 @@
+// @ts-check
 const { BRAIN_API_BASE, BRAIN_API_URL, BRAIN_API_KEY, state, registerSentMessage } = require('../config');
-const { cat } = require("../services/logger");
+const { cat, errMsg } = require("../services/logger");
 const log = cat("AI");
 const logError = cat("ERROR");
 
@@ -136,7 +137,7 @@ async function notifyAdminError(sock, metadata, textMessage, errorDetails) {
         const sentAlert = await sock.sendMessage(adminJid, { text: adminAlert });
         registerSentMessage(sentAlert);
     } catch (err) {
-        logError.error("Error al enviar alerta a Self-Chat del Admin:", err.message);
+        logError.error("Error al enviar alerta a Self-Chat del Admin: " + errMsg(err));
     }
 }
 
@@ -152,18 +153,18 @@ async function requestBrain(payload) {
         body: JSON.stringify(payload)
     });
 
-    const data = await response.json();
+    const data = /** @type {any} */ (await response.json());
 
     if (!response.ok) {
         // FastAPI devuelve {"detail": [...]} en 422 (validación) — loguear la causa real
         const detail = (data && data.detail) ? JSON.stringify(data.detail) : `HTTP ${response.status}`;
-        const err = new Error(`Brain rechazó la petición (${response.status}): ${detail}`);
+        const err = /** @type {Error & {status?: number}} */ (new Error(`Brain rechazó la petición (${response.status}): ${detail}`));
         err.status = response.status;
         throw err;
     }
 
     if (!data.response && data.error) {
-        const err = new Error(data.error);
+        const err = /** @type {Error & {status?: number}} */ (new Error(data.error));
         err.status = 502; // error del proveedor de IA = transitorio, reintentar
         throw err;
     }
@@ -197,12 +198,13 @@ async function processAIChat(textMessage, remoteJid, metadata, sock) {
             data = await requestBrain(payload);
         } catch (error) {
             // ↻ Retry 1x solo en errores transitorios (red, timeout, 5xx). 4xx = bug, no reintentar.
-            if (!error.status || error.status >= 500) {
-                log.warn(`↻ Error transitorio del cerebro (${error.message}). Reintentando (1/1)...`);
+            const err = /** @type {Error & {status?: number}} */ (error);
+            if (!err.status || err.status >= 500) {
+                log.warn(`↻ Error transitorio del cerebro (${err.message}). Reintentando (1/1)...`);
                 await new Promise(r => setTimeout(r, 1500));
                 data = await requestBrain(payload);
             } else {
-                throw error;
+                throw err;
             }
         }
 
@@ -243,8 +245,8 @@ async function processAIChat(textMessage, remoteJid, metadata, sock) {
             await notifyAdminError(sock, metadata, textMessage, data.error || "Respuesta vacía del cerebro IA");
         }
     } catch (error) {
-        logError.error("Error al conectar con el cerebro:", error.message);
-        await notifyAdminError(sock, metadata, textMessage, error.message);
+        logError.error("Error al conectar con el cerebro: " + errMsg(error));
+        await notifyAdminError(sock, metadata, textMessage, errMsg(error));
     } finally {
         await sock.sendPresenceUpdate('paused', remoteJid).catch(() => {});
     }
@@ -257,10 +259,10 @@ async function clearAIMemory(userJid) {
             headers: authHeaders({ 'Content-Type': 'application/json' }),
             body: JSON.stringify({ user_id: userJid })
         });
-        const data = await response.json();
+        const data = /** @type {any} */ (await response.json());
         return data && data.status === 'ok';
     } catch (e) {
-        logError.error("Error al resetear memoria en Brain:", e.message);
+        logError.error("Error al resetear memoria en Brain: " + errMsg(e));
         return false;
     }
 }
@@ -279,12 +281,12 @@ async function getAvailableProfiles() {
             headers: authHeaders(),
             signal: AbortSignal.timeout(5000)
         });
-        const data = await response.json();
+        const data = /** @type {any} */ (await response.json());
         cachedProfiles = (data && Array.isArray(data.profiles)) ? data.profiles : [];
         cachedProfilesAt = Date.now();
         return cachedProfiles;
     } catch (e) {
-        logError.error("Error al obtener perfiles del Brain:", e.message);
+        logError.error("Error al obtener perfiles del Brain: " + errMsg(e));
         return [];
     }
 }
@@ -303,7 +305,7 @@ async function getProfileDetail(profileKey) {
         if (!response.ok) return null;
         return await response.json();
     } catch (e) {
-        logError.error("Error al obtener detalle de perfil:", e.message);
+        logError.error("Error al obtener detalle de perfil: " + errMsg(e));
         return null;
     }
 }
@@ -324,7 +326,7 @@ async function exportProfileFile(profileKey) {
         const content = await response.text();
         return { content, filename: `${profileKey}.md` };
     } catch (e) {
-        logError.error("Error al exportar archivo de perfil:", e.message);
+        logError.error("Error al exportar archivo de perfil: " + errMsg(e));
         return null;
     }
 }
@@ -342,7 +344,7 @@ async function importProfileFile(profileKey, content) {
             signal: AbortSignal.timeout(5000),
             body: JSON.stringify({ key: profileKey, content })
         });
-        const result = await response.json();
+        const result = /** @type {any} */ (await response.json());
         if (result && result.success) {
             // 🔄 Invalidar caché: un perfil nuevo/modificado debe verse de inmediato
             cachedProfiles = null;
@@ -350,7 +352,7 @@ async function importProfileFile(profileKey, content) {
         }
         return result;
     } catch (e) {
-        logError.error("Error al importar perfil al Brain:", e.message);
+        logError.error("Error al importar perfil al Brain: " + errMsg(e));
         return null;
     }
 }
@@ -367,7 +369,7 @@ async function deleteProfileFile(profileKey) {
             headers: authHeaders(),
             signal: AbortSignal.timeout(5000)
         });
-        const result = await response.json();
+        const result = /** @type {any} */ (await response.json());
         if (result && result.success) {
             // 🔄 Invalidar caché: el perfil ya no debe verse
             cachedProfiles = null;
@@ -375,7 +377,7 @@ async function deleteProfileFile(profileKey) {
         }
         return result;
     } catch (e) {
-        logError.error("Error al eliminar perfil del Brain:", e.message);
+        logError.error("Error al eliminar perfil del Brain: " + errMsg(e));
         return null;
     }
 }

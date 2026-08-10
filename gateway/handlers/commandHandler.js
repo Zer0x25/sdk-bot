@@ -1,15 +1,29 @@
+// @ts-check
 const { registerSentMessage } = require('../config');
 const { cat } = require("../services/logger");
 const log = cat("COMANDO");
 const logError = cat("ERROR");
 const { createRateLimiter } = require('../services/rateLimit');
 const { extractPhoneFromQuoted, chunkAdminText } = require('./commandHelpers');
+const { errMsg } = require("../services/logger");
 
-const chatControlCommands = require('./commands/chatControl');
-const listsCommands = require('./commands/lists');
-const contactsCommands = require('./commands/contacts');
-const systemCommands = require('./commands/system');
-const profilesModule = require('./commands/profiles');
+/**
+ * 🧩 Definición de un comando admin en la tabla de registro
+ * @typedef {Object} CommandDef
+ * @property {string[]} aliases
+ * @property {(ctx: {sock: any, remoteJid: string, queryParam: string, rawMsg: any}) => (string|null) | Promise<string|null>} run
+ */
+
+/** @type {CommandDef[]} */
+const chatControlCommands = /** @type {CommandDef[]} */ (require('./commands/chatControl'));
+/** @type {CommandDef[]} */
+const listsCommands = /** @type {CommandDef[]} */ (require('./commands/lists'));
+/** @type {CommandDef[]} */
+const contactsCommands = /** @type {CommandDef[]} */ (require('./commands/contacts'));
+/** @type {CommandDef[]} */
+const systemCommands = /** @type {CommandDef[]} */ (require('./commands/system'));
+/** @type {CommandDef[] & {handleProfileUpload: (ctx: any) => Promise<any>}} */
+const profilesModule = /** @type {CommandDef[] & {handleProfileUpload: (ctx: any) => Promise<any>}} */ (require('./commands/profiles'));
 
 // -------------------------------------------------------------
 // 📋 TABLA DE REGISTRO DE COMANDOS (aliases -> handler)
@@ -33,6 +47,14 @@ for (const def of COMMANDS) {
 const ADMIN_CMD_MAX_PER_MIN = 20;
 const adminCommandLimiter = createRateLimiter(ADMIN_CMD_MAX_PER_MIN, 60 * 1000);
 
+/**
+ * 👑 Despachador de comandos admin (self-chat)
+ * @param {string} textMessage
+ * @param {string} remoteJid
+ * @param {any} sock
+ * @param {import('../services/metadataService.js').UserMetadata} metadata
+ * @param {any} [rawMsg]
+ */
 async function handleAdminCommand(textMessage, remoteJid, sock, metadata, rawMsg = null) {
     // ⏱️ S2 — Rate limit de comandos admin (protege de spam accidental de comandos)
     if (adminCommandLimiter(remoteJid)) {
@@ -73,7 +95,7 @@ async function handleAdminCommand(textMessage, remoteJid, sock, metadata, rawMsg
             registerSentMessage(sentMsg);
         }
     } catch (e) {
-        logError.error("⚠️ No se pudo enviar confirmación admin por reconexión temporal de WhatsApp:", e.message);
+        logError.error("⚠️ No se pudo enviar confirmación admin por reconexión temporal de WhatsApp: " + errMsg(e));
     }
 }
 

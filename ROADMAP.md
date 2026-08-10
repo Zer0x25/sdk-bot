@@ -86,7 +86,7 @@ Objetivo: deuda técnica grande, testes y CI.
 - [ ] **Tests unitarios** — `node:test` (ya incluido en Node, sin dependencias): `splitIntoHumanBubbles`, `getAdaptiveDebounceMs`, `parsePhoneOrLid`, `getCountryFromPhone`, `cleanContactsDB`, parser de `profiles.py` (pytest).
 - [ ] **Lint** — ESLint (gateway) + `ruff` (brain) + script `npm run lint` y `make lint`.
 - [x] **CI** — GitHub Actions: `npm test` + `pytest` + lint en cada push/PR (`.github/workflows/ci.yml`: 2 jobs paralelos — gateway Node 22 + brain Python 3.12).
-- [ ] **ESM/TypeScript progresivo** — opcional: migrar gateway a ESM (`"type": "module"`) o añadir JSDoc estricto para typecoverage.
+- [x] **JSDoc estricto (typecheck)** — opción elegida en vez de ESM: `tsc -p jsconfig.json` (`checkJs` + `strictNullChecks`) sobre los módulos núcleo con `// @ts-check`, typedefs compartidos (`ContactRecord`, `UserMetadata`, `SettingsDB`, `CommandDef`) y `errMsg()` para catches tipados `unknown`. Corrigió bugs latentes (rutas de /tmp leakadas a prod, nullability de targetKey). Script `npm run typecheck` + paso en CI.
 - [x] **Verificación:** `npm test` y `pytest` verdes en CI; el bot funciona igual tras refactor (prueba de humo completa).
 
 ### 🟣 Fase 4 — Features y escala (sesiones 8+, siguiente gran fase)

@@ -1,3 +1,4 @@
+// @ts-check
 /**
  * ⏱️ Rate limiter con ventana deslizante por clave (Fase 2, S2).
  * createRateLimiter(max, windowMs) → fn(key) devuelve true si EXCEDE el límite.

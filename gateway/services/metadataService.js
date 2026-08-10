@@ -1,6 +1,27 @@
+// @ts-check
 const { state } = require('../config');
 const { getContactsDB } = require('./db');
 const { upsertContactMetadata, findExistingKey } = require('./contactsRepository');
+
+/**
+ * 🧾 Metadata normalizada de un usuario (salida de extractUserMetadata)
+ * @typedef {Object} UserMetadata
+ * @property {string} remoteJid
+ * @property {string|null} [remoteJidAlt]
+ * @property {string|null} phoneNumber
+ * @property {string|null} lid
+ * @property {string|null} savedName
+ * @property {string|null} pushName
+ * @property {string|null} perfil
+ * @property {string} country
+ * @property {string|null} language
+ * @property {string|null} bio
+ * @property {string|null} profilePicUrl
+ * @property {boolean} isBusiness
+ * @property {boolean} isContact
+ * @property {string|null} lastEnrichedAt
+ * @property {string[]} candidateIds
+ */
 
 const TTL_ENRICHMENT_MS = 24 * 60 * 60 * 1000; // 24 Horas de TTL para refresco de foto/bio
 

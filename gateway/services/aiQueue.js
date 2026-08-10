@@ -1,3 +1,4 @@
+// @ts-check
 const { cat } = require('./logger');
 
 const log = cat('AI');

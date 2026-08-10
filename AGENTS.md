@@ -73,7 +73,14 @@ Setup primera vez (Linux Debian/Ubuntu): `sudo apt install python3-venv` → `cd
 
 - **Gateway (ESLint 10, flat config):** `cd gateway; npm run lint` (o `npm run lint:fix`). Config en `eslint.config.js`: globals de Node 22 (`fetch`, `AbortSignal`), `no-unused-vars` en warn con `argsIgnorePattern: '^_'` y `caughtErrors: 'none'` (los catch ignorados por diseño), `no-empty` con `allowEmptyCatch`. Correr antes de cada commit.
 - **Brain (ruff):** `cd brain; venv/bin/ruff check .` (instalar: `venv/bin/pip install ruff`). Config en `brain/ruff.toml`: `select` = E/F/I/UP/B/FURB/RUF; `ignore` = BLE001, TRY002, S110 (los `except Exception` ciegos son DEFENSIVOS a propósito: cascada de proveedores, fallback de perfiles, `safe_log`). No usar `--fix` global sin revisar el diff.
-- Comando único por componente: `npm run check` (lint + tests) en gateway; en brain, ruff + pytest.
+- Comando único por componente: `npm run check` (lint + typecheck + tests) en gateway; en brain, ruff + pytest.
+
+## Typecheck (F3-P7)
+
+- **JSDoc estricto + `tsc`** (sin migrar a TS): `cd gateway; npm run typecheck` → `tsc -p jsconfig.json` (`checkJs` solo en archivos con `// @ts-check`, `strictNullChecks` activo). Se chequean los módulos núcleo: `config.js`, `pipeline.js`, `services/db.js`, `contactsRepository.js`, `stateService.js`, `metadataService.js`, `brainService.js`, `logger.js`, `rateLimit.js`, `aiQueue.js`, `commandHelpers.js`, `commandHandler.js`.
+- **Typedefs compartidos (JSDoc):** `ContactRecord` (contactsRepository.js), `SettingsDB`/`ContactsDB` (db.js), `UserMetadata` (metadataService.js), `CommandDef` (commandHandler.js). Referenciar con `import('./ruta.js').Typedef`, nunca duplicar.
+- **`any` honesto:** `response.json()` de fetch se castea a `any` (`/** @type {any} */`) porque la API del brain no tiene tipos; los catch tipan `unknown` → usar `errMsg()` de `services/logger.js` (`e instanceof Error ? e.message : String(e)`), nunca `e.message` directo.
+- Al añadir `// @ts-check` a un archivo nuevo: correr `npm run typecheck`, arreglar errores y que siga verde el CI.
 
 ## CI (F3-P6)
 

@@ -1,3 +1,4 @@
+// @ts-check
 const { state } = require('../config');
 const { getSettingsDB, saveSettingsDB, getContactsDB, saveContactsDB } = require('./db');
 const { findKeyByDigits } = require('./contactsRepository');
@@ -31,6 +32,7 @@ function setNumberState(targetId, stateType) {
 
     if (existingKey) {
         // Mapeo del stateType al campo "estado" string
+        /** @type {Record<string, import('./contactsRepository.js').ContactRecord['estado']>} */
         const stateMap = {
             'allowed': 'permitido',
             'ignored': 'ignorado',
