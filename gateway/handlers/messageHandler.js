@@ -12,6 +12,7 @@ const { handleAdminCommand } = require('./commandHandler');
 // 🧠 DE-BOUNCE QUEUE CON VINCULACIÓN DUAL PHONE/LID EN PRESENCIA Y MEMORIA LOCAL
 const messageBuffers = new Map();
 const activePresences = new Map();   // Mapa global en memoria RAM del estado de presencia
+const chatInFlight = new Set();      // JIDs con una llamada de IA en curso (serialización por chat)
 const TYPING_TTL_MS = 5000;           // 5.0 segundos: el estado de tecleo expira si el teclado queda inactivo
 
 /**
@@ -57,9 +58,10 @@ function getAdaptiveDebounceMs(messagesArray = []) {
     return normalMs;
 }
 
-// 🧹 Limpieza automática de RAM para evitar memory leaks en activePresences
+// 🧹 Limpieza automática de RAM para evitar memory leaks en activePresences y messageBuffers
 const PRESENCE_CLEANUP_INTERVAL_MS = 10 * 60 * 1000; // 10 minutos
 const PRESENCE_MAX_AGE_MS = 15 * 60 * 1000; // 15 minutos
+const BUFFER_MAX_AGE_MS = 15 * 60 * 1000; // 15 minutos: buffer huérfano se descarta
 
 setInterval(() => {
     const now = Date.now();
@@ -71,6 +73,19 @@ setInterval(() => {
         }
     }
     if (cleaned > 0) console.log(`🧹 [LIMPIEZA RAM] Eliminados ${cleaned} registros de presencia antiguos.`);
+
+    // Descartar buffers huérfanos (bot pausado, handoff, caída de conexión, etc.)
+    let cleanedBuffers = 0;
+    for (const [jid, buf] of messageBuffers.entries()) {
+        if (chatInFlight.has(jid)) continue; // No tocar chats con IA en curso
+        if (now - buf.lastActivity > BUFFER_MAX_AGE_MS) {
+            if (buf.timer) clearTimeout(buf.timer);
+            if (buf.typingExpiryTimer) clearTimeout(buf.typingExpiryTimer);
+            messageBuffers.delete(jid);
+            cleanedBuffers++;
+        }
+    }
+    if (cleanedBuffers > 0) console.log(`🧹 [LIMPIEZA RAM] Descartados ${cleanedBuffers} buffers de mensajes huérfanos.`);
 }, PRESENCE_CLEANUP_INTERVAL_MS);
 
 // Palabras clave para derivación automática a atención humana
@@ -145,6 +160,7 @@ function handlePresenceUpdate(id, presences) {
         const isMatch = candidates.some(cid => bufferJid.includes(cid) || cleanBuffer.includes(cid));
         
         if (isMatch) {
+            buffer.lastActivity = Date.now();
             if (isTyping) {
                 buffer.isTyping = true;
                 buffer.lastTypingTime = Date.now();
@@ -324,11 +340,82 @@ async function handleIncomingMessage(m, sock) {
     // -------------------------------------------------------------
     // 🧠 DE-BOUNCE QUEUE CON VERIFICACIÓN EN MEMORIA LOCAL Y EN SEGUNDO PLANO
     // -------------------------------------------------------------
+
+    // 🔒 SERIALIZACIÓN POR CHAT: si la IA ya está respondiendo para este cliente,
+    // acumulamos mensajes sin timer; al terminar la llamada se programa el siguiente lote.
+    if (chatInFlight.has(remoteJid)) {
+        let inflightBuffer = messageBuffers.get(remoteJid);
+        if (inflightBuffer) {
+            inflightBuffer.messages.push(textMessage);
+            inflightBuffer.lastActivity = Date.now();
+            inflightBuffer.onTimeout = createBufferTimeout(remoteJid, metadata, sock);
+            if (inflightBuffer.timer) clearTimeout(inflightBuffer.timer);
+            if (inflightBuffer.typingExpiryTimer) clearTimeout(inflightBuffer.typingExpiryTimer);
+            inflightBuffer.timer = null;
+        } else {
+            messageBuffers.set(remoteJid, {
+                messages: [textMessage],
+                isTyping: false,
+                lastTypingTime: null,
+                lastActivity: Date.now(),
+                onTimeout: createBufferTimeout(remoteJid, metadata, sock),
+                timer: null,
+                typingExpiryTimer: null
+            });
+        }
+        console.log(`⏳ [IA EN CURSO] Cliente (${displayName}) escribió mientras la IA responde. ${messageBuffers.get(remoteJid).messages.length} msg(s) en espera.`);
+        return;
+    }
+
     let existingBuffer = messageBuffers.get(remoteJid);
 
-    const onTimeout = async () => {
+    const onTimeout = createBufferTimeout(remoteJid, metadata, sock);
+
+    if (existingBuffer) {
+        if (existingBuffer.timer) clearTimeout(existingBuffer.timer);
+        existingBuffer.messages.push(textMessage);
+        existingBuffer.onTimeout = onTimeout;
+        existingBuffer.lastActivity = Date.now();
+
+        // Resetear timer al recibir mensaje físico con delay estocástico/adaptativo
+        const delayMs = getAdaptiveDebounceMs(existingBuffer.messages);
+        existingBuffer.timer = setTimeout(onTimeout, delayMs);
+        console.log(`⏳ [DE-BOUNCE RESET] Nuevo mensaje recibido de ${displayName}. Timer de ${(delayMs / 1000).toFixed(1)}s de silencio iniciado.`);
+    } else {
+        const newBuffer = {
+            messages: [textMessage],
+            isTyping: false,
+            lastTypingTime: null,
+            lastActivity: Date.now(),
+            onTimeout: onTimeout,
+            timer: null,
+            typingExpiryTimer: null
+        };
+
+        const delayMs = getAdaptiveDebounceMs(newBuffer.messages);
+        newBuffer.timer = setTimeout(onTimeout, delayMs);
+        messageBuffers.set(remoteJid, newBuffer);
+        console.log(`⏳ [DE-BOUNCE START] Primer mensaje de ${displayName}. Timer de ${(delayMs / 1000).toFixed(1)}s de silencio iniciado.`);
+    }
+}
+
+/**
+ * ⏱️ Crea el cierre (closure) del timer de de-bounce para un chat específico.
+ * Al expirar el silencio, verifica presencia local, envía a la IA y, si durante
+ * la llamada llegaron mensajes nuevos, programa el siguiente lote (serializado).
+ */
+function createBufferTimeout(remoteJid, metadata, sock) {
+    const displayName = metadata.savedName ? `${metadata.savedName} (Agenda)` : (metadata.pushName || 'Desconocido');
+    const phoneNumber = metadata.phoneNumber;
+    const lid = metadata.lid;
+
+    return async function onTimeout() {
         const buf = messageBuffers.get(remoteJid);
         if (!buf) return;
+
+        // 🔒 Guarda: si otra llamada de IA sigue en curso para este chat, no hacer nada
+        // (el lote pendiente se reprograma cuando finalice la llamada activa).
+        if (chatInFlight.has(remoteJid)) return;
 
         // 🧠 REVISAR ESTADO EN LA MEMORIA LOCAL DE LA APP (Candidatos Múltiples)
         const candidates = getCandidateIdsForPresence(remoteJid);
@@ -360,36 +447,29 @@ async function handleIncomingMessage(m, sock) {
         if (buf.timer) clearTimeout(buf.timer);
 
         const fullBufferedText = buf.messages.join('\n');
-        messageBuffers.delete(remoteJid);
+        buf.messages = []; // Los mensajes procesados salen del buffer; no se borra el buffer aún
 
-        console.log(`\n📦 [DE-BOUNCE BATCH FINAL] Silencio confirmado. Procesando ${buf.messages.length} mensaje(s) de ${displayName}:\n"${fullBufferedText}"`);
-        await processAIChat(fullBufferedText, remoteJid, metadata, sock);
+        console.log(`\n📦 [DE-BOUNCE BATCH FINAL] Silencio confirmado. Procesando mensaje(s) de ${displayName}:\n"${fullBufferedText}"`);
+
+        chatInFlight.add(remoteJid);
+        try {
+            await processAIChat(fullBufferedText, remoteJid, metadata, sock);
+        } finally {
+            chatInFlight.delete(remoteJid);
+
+            // Si llegaron mensajes durante la llamada de IA, programar el siguiente lote
+            const bufAfter = messageBuffers.get(remoteJid);
+            if (bufAfter && bufAfter.messages.length > 0) {
+                if (bufAfter.timer) clearTimeout(bufAfter.timer);
+                const delayMs = getAdaptiveDebounceMs(bufAfter.messages);
+                bufAfter.timer = setTimeout(bufAfter.onTimeout, delayMs);
+                console.log(`⏳ [IA TERMINADA] Cliente (${displayName}) tiene ${bufAfter.messages.length} msg(s) en espera. Timer de ${(delayMs / 1000).toFixed(1)}s iniciado.`);
+            } else if (bufAfter) {
+                if (bufAfter.timer) clearTimeout(bufAfter.timer);
+                messageBuffers.delete(remoteJid);
+            }
+        }
     };
-
-    if (existingBuffer) {
-        if (existingBuffer.timer) clearTimeout(existingBuffer.timer);
-        existingBuffer.messages.push(textMessage);
-        existingBuffer.onTimeout = onTimeout;
-
-        // Resetear timer al recibir mensaje físico con delay estocástico/adaptativo
-        const delayMs = getAdaptiveDebounceMs(existingBuffer.messages);
-        existingBuffer.timer = setTimeout(onTimeout, delayMs);
-        console.log(`⏳ [DE-BOUNCE RESET] Nuevo mensaje recibido de ${displayName}. Timer de ${(delayMs / 1000).toFixed(1)}s de silencio iniciado.`);
-    } else {
-        const newBuffer = {
-            messages: [textMessage],
-            isTyping: false,
-            lastTypingTime: null,
-            onTimeout: onTimeout,
-            timer: null,
-            typingExpiryTimer: null
-        };
-
-        const delayMs = getAdaptiveDebounceMs(newBuffer.messages);
-        newBuffer.timer = setTimeout(onTimeout, delayMs);
-        messageBuffers.set(remoteJid, newBuffer);
-        console.log(`⏳ [DE-BOUNCE START] Primer mensaje de ${displayName}. Timer de ${(delayMs / 1000).toFixed(1)}s de silencio iniciado.`);
-    }
 }
 
 module.exports = {

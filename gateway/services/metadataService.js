@@ -120,7 +120,9 @@ function extractUserMetadata(msg) {
 
     const savedName = existingKey ? db[existingKey].savedName : null;
     const perfil = existingKey ? db[existingKey].perfil : null;
-    const bio = existingKey ? db[existingKey].bio : null;
+    // 🧼 Sanitizar bio: registros legados pueden tener el OBJETO {status,setAt} en vez de string
+    const rawBio = existingKey ? db[existingKey].bio : null;
+    const bio = (rawBio && typeof rawBio === 'string') ? rawBio : null;
     const profilePicUrl = existingKey ? db[existingKey].profilePicUrl : null;
     const isBusiness = existingKey ? db[existingKey].isBusiness : false;
     const isContact = existingKey ? db[existingKey].isContact : false;
@@ -185,8 +187,10 @@ async function enrichContactExtraData(sock, jid, metadata, forceRefresh = false)
 
         // 2. Consultar Biografía / Estado
         if (forceRefresh || !record || !record.bio) {
-            const statusObj = await sock.fetchStatus(jid).catch(() => null);
-            if (statusObj && statusObj.status && statusObj.status !== metadata.bio) {
+            // ⚠️ fetchStatus devuelve un ARRAY de resultados USync, no un objeto único
+            const statusResults = await sock.fetchStatus(jid).catch(() => null);
+            const statusObj = Array.isArray(statusResults) ? statusResults[0] : statusResults;
+            if (statusObj && typeof statusObj.status === 'string' && statusObj.status !== metadata.bio) {
                 metadata.bio = statusObj.status;
                 updated = true;
             }

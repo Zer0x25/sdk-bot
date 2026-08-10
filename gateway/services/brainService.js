@@ -2,6 +2,8 @@ const { BRAIN_API_URL, state, registerSentMessage } = require('../config');
 
 // Caché en memoria de perfiles SOUL disponibles en el brain
 let cachedProfiles = null;
+let cachedProfilesAt = 0;
+const PROFILES_CACHE_TTL_MS = 60 * 1000; // 1 minuto: refresco para ver perfiles nuevos sin reiniciar
 
 /**
  * 🧩 Dividir respuestas largas de la IA en globos de chat naturales (Multi-Bubble)
@@ -158,7 +160,13 @@ async function processAIChat(textMessage, remoteJid, metadata, sock) {
         });
         
         const data = await response.json();
-        
+
+        if (!response.ok) {
+            // FastAPI devuelve {"detail": [...]} en 422 (validación) — loguear la causa real
+            const detail = (data && data.detail) ? JSON.stringify(data.detail) : `HTTP ${response.status}`;
+            throw new Error(`Brain rechazó la petición (${response.status}): ${detail}`);
+        }
+
         if (data.response) {
             console.log(`[BOT RESPONDE A ${displayName}]: ${data.response}`);
             
@@ -225,7 +233,7 @@ async function clearAIMemory(userJid) {
  * (el comando /perfil informará que no puede listarlos).
  */
 async function getAvailableProfiles() {
-    if (cachedProfiles) return cachedProfiles;
+    if (cachedProfiles && (Date.now() - cachedProfilesAt < PROFILES_CACHE_TTL_MS)) return cachedProfiles;
     try {
         const profilesUrl = BRAIN_API_URL.replace('/chat', '/profiles');
         const response = await fetch(profilesUrl, {
@@ -234,6 +242,7 @@ async function getAvailableProfiles() {
         });
         const data = await response.json();
         cachedProfiles = (data && Array.isArray(data.profiles)) ? data.profiles : [];
+        cachedProfilesAt = Date.now();
         return cachedProfiles;
     } catch (e) {
         console.error("Error al obtener perfiles del Brain:", e.message);
@@ -292,7 +301,13 @@ async function importProfileFile(profileKey, content) {
             signal: AbortSignal.timeout(5000),
             body: JSON.stringify({ key: profileKey, content })
         });
-        return await response.json();
+        const result = await response.json();
+        if (result && result.success) {
+            // 🔄 Invalidar caché: un perfil nuevo/modificado debe verse de inmediato
+            cachedProfiles = null;
+            cachedProfilesAt = 0;
+        }
+        return result;
     } catch (e) {
         console.error("Error al importar perfil al Brain:", e.message);
         return null;

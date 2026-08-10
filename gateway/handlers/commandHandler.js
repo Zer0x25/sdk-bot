@@ -35,6 +35,31 @@ function parsePhoneOrLid(input) {
     return str;
 }
 
+// 📏 WhatsApp limita los mensajes de texto (~4096 chars); nos quedamos por debajo con margen
+const ADMIN_MSG_MAX_CHARS = 2800;
+
+/**
+ * ✂️ Divide una respuesta larga del admin en varios mensajes de WhatsApp.
+ * Respeta los saltos de línea para no cortar elementos de listas.
+ */
+function chunkAdminText(text) {
+    if (!text) return [];
+    if (text.length <= ADMIN_MSG_MAX_CHARS) return [text];
+
+    const chunks = [];
+    let current = '';
+    for (const line of text.split('\n')) {
+        if (current && (current.length + line.length + 1) > ADMIN_MSG_MAX_CHARS) {
+            chunks.push(current);
+            current = line;
+        } else {
+            current = current ? current + '\n' + line : line;
+        }
+    }
+    if (current) chunks.push(current);
+    return chunks;
+}
+
 /**
  * 📥 SUBIR UN PERFIL .MD DESDE UN DOCUMENTO DE WHATSAPP
  * Descarga el documento (adjunto o citado), valida el nombre y lo envía al brain.
@@ -627,9 +652,14 @@ async function handleAdminCommand(textMessage, remoteJid, sock, metadata, rawMsg
             break;
     }
 
+    // ✂️ Enviar por partes si la respuesta es demasiado larga (WhatsApp rechaza >~4096 chars)
     try {
-        const sentMsg = await sock.sendMessage(remoteJid, { text: adminResponse });
-        registerSentMessage(sentMsg);
+        const chunks = chunkAdminText(adminResponse);
+        for (let i = 0; i < chunks.length; i++) {
+            const suffix = chunks.length > 1 ? `\n_(Mensaje ${i + 1}/${chunks.length})_` : '';
+            const sentMsg = await sock.sendMessage(remoteJid, { text: chunks[i] + suffix });
+            registerSentMessage(sentMsg);
+        }
     } catch (e) {
         console.error("⚠️ No se pudo enviar confirmación admin por reconexión temporal de WhatsApp:", e.message);
     }

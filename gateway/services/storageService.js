@@ -166,6 +166,13 @@ function cleanContactsDB() {
                 updated = true;
             }
         }
+
+        // D) Sanitizar bio: registros legados pueden tener el OBJETO {status,setAt} en vez
+        //    de string (rompe la API del brain con 422 de validación)
+        if (item.bio && typeof item.bio !== 'string') {
+            item.bio = null;
+            updated = true;
+        }
     });
 
     if (updated) {
@@ -235,7 +242,7 @@ function upsertContactMetadata(metadata) {
     if (country && country !== 'Desconocido') record.country = country;
     if (language) record.language = language;
     if (profilePicUrl) record.profilePicUrl = profilePicUrl;
-    if (bio) record.bio = bio;
+    if (bio && typeof bio === 'string') record.bio = bio;
     if (isBusiness !== undefined) record.isBusiness = isBusiness;
     if (isContact) record.isContact = true;
     if (lastEnrichedAt) record.lastEnrichedAt = lastEnrichedAt;
@@ -306,7 +313,7 @@ function bulkUpsertContactsMetadata(contactsList) {
         if (verifiedName && verifiedName.trim()) record.verifiedName = verifiedName.trim();
         if (country && country !== 'Desconocido') record.country = country;
         if (profilePicUrl) record.profilePicUrl = profilePicUrl;
-        if (bio) record.bio = bio;
+        if (bio && typeof bio === 'string') record.bio = bio;
         if (isBusiness !== undefined) record.isBusiness = isBusiness;
         if (isContact) record.isContact = true;
         if (lastEnrichedAt) record.lastEnrichedAt = lastEnrichedAt;
