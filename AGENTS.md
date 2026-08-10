@@ -7,9 +7,9 @@ Plataforma WhatsApp multi-bot: `gateway/` (Node.js + Baileys) + `brain/` (Python
 1. Brain primero: `cd brain; python main.py` (venv: `venv/bin/python` Linux / `venv\Scripts\python.exe` Windows) → FastAPI en `0.0.0.0:8000`. El puerto es fijo: `gateway/config.js` tiene `BRAIN_API_URL` hardcodeado a `http://127.0.0.1:8000/chat`.
 2. Gateway: `cd gateway; npm start` (o `node index.js`).
 3. QR nuevo / re-sincronizar libreta: `cd gateway; npm run reset` (borra `auth_info_baileys/` tras confirmar y lanza index.js).
-4. **Producción (F1):** systemd units en `deploy/` — `sudo bash deploy/install.sh` y ajustar rutas/usuario. Verificar con `systemctl status sdk-bot-{brain,gateway}` y `journalctl -u sdk-bot-gateway -f`.
+4. **Producción (F1):** despliegue unificado por plataforma en `deploy/` (`linux/` systemd, `termux/` runit, `windows/` scripts). Linux: `sudo bash deploy/linux/install.sh`; Termux: `bash deploy/termux/setup-termux.sh`; Windows: `deploy/windows/startBrain.bat` + `startGateway.bat`. Verificar con `systemctl status sdk-bot-{brain,gateway}` y `journalctl -u sdk-bot-gateway -f`.
 
-**Desarrollo vs producción:** nunca corras manual y systemd del mismo componente a la vez (el lock de instancia única bloquea al segundo). Usa `bash deploy/dev.sh`:
+**Desarrollo vs producción:** nunca corras manual y systemd del mismo componente a la vez (el lock de instancia única bloquea al segundo). Usa `bash deploy/linux/dev.sh`:
 - `dev.sh manual brain|gateway|ambos` — detiene el service systemd y lanza la instancia manual (foreground, Ctrl+C al terminar; `ambos` imprime los comandos para 2 terminales).
 - `dev.sh reset brain|gateway|ambos` — mata las instancias manuales y relanza los services de systemd.
 - `dev.sh status` — estado de services y locks.

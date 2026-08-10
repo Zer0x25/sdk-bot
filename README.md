@@ -99,30 +99,53 @@ npm start
 ```
 > 🔒 **Instancia única:** abrir una segunda instancia del brain o del gateway se bloquea automáticamente (mensaje claro + salida). Esto protege la sesión de WhatsApp de corrupción por doble conexión.
 
-### 3. Producción (systemd) — ejecutar en segundo plano:
+### 3. Producción — despliegue por plataforma
 
+El código del bot es **idéntico en las 3 plataformas**; solo cambia el supervisor que lo mantiene vivo. Todos los despliegues viven en `deploy/`:
+
+| Plataforma | Supervisor | Cómo se despliega |
+|---|---|---|
+| 🐧 **Linux (servidor)** | systemd | `sudo bash deploy/linux/install.sh` → `systemctl status sdk-bot-{brain,gateway}` |
+| 🤖 **Android (Termux)** | runit | `bash deploy/termux/setup-termux.sh` (o el manual en `deploy/termux/README.md`) |
+| 🪟 **Windows (PC)** | Programador de tareas | `deploy/windows/startBrain.bat` + `startGateway.bat` (ver `deploy/windows/README.md`) |
+
+**Linux — producción en segundo plano:**
 ```bash
 cd ~/playground/SDK-bot
-sudo bash deploy/install.sh        # instala, habilita y arranca sdk-bot-brain + sdk-bot-gateway
+sudo bash deploy/linux/install.sh            # instala, habilita y arranca sdk-bot-brain + sdk-bot-gateway
 systemctl status sdk-bot-brain sdk-bot-gateway   # ambos: active (running)
-journalctl -u sdk-bot-gateway -f   # logs en vivo
+journalctl -u sdk-bot-gateway -f             # logs en vivo
 ```
 
-### 4. Desarrollo — alternar entre manual y systemd:
+**Termux — todo en un comando:**
+```bash
+pkg install -y git
+git clone https://github.com/Zer0x25/SDK-Bot.git && cd SDK-Bot
+bash deploy/termux/setup-termux.sh           # dependencias + runit + boot automático
+# (luego edita brain/.env con tus API keys)
+```
+
+**Windows — dos terminales:**
+```powershell
+deploy\windows\startBrain.bat    # terminal 1 (siempre primero)
+deploy\windows\startGateway.bat  # terminal 2
+```
+
+### 4. Desarrollo en Linux — alternar entre manual y systemd:
 
 Nunca corras manual y systemd del mismo componente a la vez (el lock de instancia única bloquea al segundo que arranque).
 
 ```bash
 cd ~/playground/SDK-bot
-bash deploy/dev.sh manual brain      # apaga systemd + lanza brain manual (Ctrl+C al terminar)
-bash deploy/dev.sh manual gateway    # idem para el gateway
-bash deploy/dev.sh manual ambos      # imprime los comandos para 2 terminales
-bash deploy/dev.sh reset             # mata lo manual + relanza todo en systemd
-bash deploy/dev.sh reset brain       # solo el brain
-bash deploy/dev.sh status            # estado de services y locks
+bash deploy/linux/dev.sh manual brain      # apaga systemd + lanza brain manual (Ctrl+C al terminar)
+bash deploy/linux/dev.sh manual gateway    # idem para el gateway
+bash deploy/linux/dev.sh manual ambos      # imprime los comandos para 2 terminales
+bash deploy/linux/dev.sh reset             # mata lo manual + relanza todo en systemd
+bash deploy/linux/dev.sh reset brain       # solo el brain
+bash deploy/linux/dev.sh status            # estado de services y locks
 ```
 
-> 📋 **Logs:** rotación automática (5MB × 3) en `gateway/logs/gateway.log` y `brain/logs/brain.log`.
+> 📋 **Logs:** rotación automática (5MB × 3) en `gateway/logs/gateway.log` y `brain/logs/brain.log` (en Termux: `~/logs/sdk-gateway.log`).
 
 ### 5. Re-sincronizar Libreta Completa de Contactos (Fresh QR):
 ```bash

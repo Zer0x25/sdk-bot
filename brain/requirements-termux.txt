@@ -1,0 +1,9 @@
+# Dependencias del brain para Termux/Android.
+# google-generativeai SE OMITE a propósito: no tiene wheel precompilado para
+# bionic (Termux) y su compilación nativa falla. main.py ya lo trata como
+# fallback opcional (try/except ImportError), así que el bot funciona sin él.
+fastapi
+uvicorn
+openai
+python-dotenv
+pydantic
