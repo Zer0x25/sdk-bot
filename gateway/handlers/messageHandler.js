@@ -1,15 +1,10 @@
 const { state, isBotSentMessage, registerSentMessage } = require('../config');
 const { extractUserMetadata, enrichContactExtraData, isSelfChat } = require('../services/metadataService');
-const { 
-    upsertContactMetadata
-} = require('../services/contactsRepository');
-const { 
-    getSettingsDB,
-    getContactsDB
-} = require('../services/db');
+const { upsertContactMetadata } = require('../services/contactsRepository');
 const { setNumberState } = require('../services/stateService');
 const { processAIChat } = require('../services/brainService');
 const { enqueueAI, poolStats } = require('../services/aiQueue');
+const { getAdaptiveDebounceMs, getCandidateIdsForPresence, extractTextMessage, decideMessageFlow } = require('../services/pipeline');
 const { handleAdminCommand } = require('./commandHandler');
 const { cat } = require('../services/logger');
 
@@ -25,49 +20,6 @@ const messageBuffers = new Map();
 const activePresences = new Map();   // Mapa global en memoria RAM del estado de presencia
 const chatInFlight = new Set();      // JIDs con una llamada de IA en curso (serialización por chat)
 const TYPING_TTL_MS = 5000;           // 5.0 segundos: el estado de tecleo expira si el teclado queda inactivo
-
-/**
- * 🎲 CALCULAR DEBOUNCE ADAPTATIVO CON DISTRACCIÓN/OCUPACIÓN HUMANA (RANDOM SOBRE RANDOM)
- * Capa 1 (Distracción/Ocupación):
- *   - ~5%  probabilidad: "Muy Ocupado / AFK" -> Espera de 3 a 4 min (180s - 240s)
- *   - ~12% probabilidad: "Ocupado / Distraído" -> Espera de 1 a 2 min (60s - 120s)
- * Capa 2 (Adaptativo Normal ~83%):
- *   - 1 mensaje corto (<20 chars): Espera de 5s a 7s
- *   - Múltiples mensajes o texto largo: Espera de 7.5s a 12s
- */
-function getAdaptiveDebounceMs(messagesArray = []) {
-    const roll = Math.random(); // 0.0 a 1.0
-
-    // 1. Probabilidad del 5% de estar muy ocupado / AFK (3 - 4 min)
-    if (roll < 0.05) {
-        const afkMs = Math.floor(180000 + Math.random() * 60000); // 180s a 240s
-        log.info(`🎲 [HUMAN RANDOM] Roll ${(roll * 100).toFixed(1)}%: Bot ocupado/distraído (AFK). Esperando ${(afkMs / 1000).toFixed(0)}s (${(afkMs / 60000).toFixed(1)}m)...`);
-        return afkMs;
-    }
-
-    // 2. Probabilidad del 12% de estar medianamente ocupado (1 - 2 min)
-    if (roll < 0.17) { // 0.05 + 0.12 = 0.17
-        const busyMs = Math.floor(60000 + Math.random() * 60000); // 60s a 120s
-        log.info(`🎲 [HUMAN RANDOM] Roll ${(roll * 100).toFixed(1)}%: Bot ocupado brevemente. Esperando ${(busyMs / 1000).toFixed(0)}s (${(busyMs / 60000).toFixed(1)}m)...`);
-        return busyMs;
-    }
-
-    // 3. Adaptativo Normal (~83% restante)
-    const msgs = Array.isArray(messagesArray) ? messagesArray : [];
-    const totalLength = msgs.join(' ').length;
-    const msgCount = msgs.length;
-
-    let normalMs;
-    if (msgCount === 1 && totalLength < 20) {
-        // Mensaje único y corto ("Hola", "Precio", etc.) -> 5s a 7s
-        normalMs = Math.floor(5000 + Math.random() * 2000);
-    } else {
-        // Mensajes largos o múltiples -> 7.5s a 12s
-        normalMs = Math.floor(7500 + Math.random() * 4500);
-    }
-
-    return normalMs;
-}
 
 // 🧹 Limpieza automática de RAM para evitar memory leaks en activePresences y messageBuffers
 const PRESENCE_CLEANUP_INTERVAL_MS = 10 * 60 * 1000; // 10 minutos
@@ -98,49 +50,6 @@ setInterval(() => {
     }
     if (cleanedBuffers > 0) log.info(`🧹 [LIMPIEZA RAM] Descartados ${cleanedBuffers} buffers de mensajes huérfanos.`);
 }, PRESENCE_CLEANUP_INTERVAL_MS);
-
-// Palabras clave para derivación automática a atención humana
-const HUMAN_REQUEST_KEYWORDS = [
-    'hablar con una persona',
-    'hablar con persona',
-    'hablar con humano',
-    'atencion humana',
-    'atención humana',
-    'quiero un asesor',
-    'hablar con un asesor',
-    'hablar con asesor',
-    'persona real',
-    'necesito un ejecutivo',
-    'hablar con ejecutivo',
-    'hablar con un agente'
-];
-
-function checkHumanRequest(text) {
-    if (!text) return false;
-    const lower = text.toLowerCase();
-    return HUMAN_REQUEST_KEYWORDS.some(keyword => lower.includes(keyword));
-}
-
-/**
- * 🔀 Resolver todos los IDs vinculados (Phone y LID) para un JID entrante
- */
-function getCandidateIdsForPresence(id) {
-    const clean = String(id).split('@')[0].split(':')[0].replace(/[^0-9]/g, '');
-    const set = new Set([clean, String(id)]);
-
-    const db = getContactsDB();
-    const contact = Object.values(db).find(c => 
-        (c.phone && c.phone.includes(clean)) || 
-        (c.lid && c.lid.includes(clean))
-    );
-
-    if (contact) {
-        if (contact.phone) set.add(contact.phone.replace(/[^0-9]/g, ''));
-        if (contact.lid) set.add(contact.lid.replace(/[^0-9]/g, ''));
-    }
-
-    return Array.from(set);
-}
 
 /**
  * ⌨️ GESTIÓN DE PRESENCIA DE BAILEYS (composing / recording / paused / available)
@@ -220,7 +129,7 @@ async function handleIncomingMessage(m, sock) {
 
     const isFromMe = msg.key.fromMe;
     const metadata = extractUserMetadata(msg);
-    const { remoteJid, phoneNumber, lid, savedName, pushName, candidateIds } = metadata;
+    const { remoteJid, phoneNumber, lid, savedName, pushName } = metadata;
 
     // 🔔 SUSCRIBIR EN TIEMPO REAL A EVENTOS DE PRESENCIA (composing/paused) DE ESTE CLIENTE AL INICIAR
     sock.presenceSubscribe(remoteJid).catch(e => logError.error(`⚠️ Error al suscribir presencia de ${remoteJid}:`, e.message));
@@ -234,13 +143,7 @@ async function handleIncomingMessage(m, sock) {
     enrichContactExtraData(sock, remoteJid, metadata);
 
     // Extraer texto del mensaje
-    const textMessage = msg.message?.conversation || 
-                        msg.message?.extendedTextMessage?.text || 
-                        msg.message?.imageMessage?.caption || 
-                        msg.message?.documentMessage?.caption || 
-                        msg.message?.documentWithCaptionMessage?.message?.documentMessage?.caption || 
-                        "";
-        
+    const textMessage = extractTextMessage(msg);
     if (!textMessage) return; // Ignorar si no hay texto
 
     const isSelf = isSelfChat(remoteJid, isFromMe);
@@ -248,165 +151,116 @@ async function handleIncomingMessage(m, sock) {
 
     logAI.info(`\n🔍 [DEBUG CHAT] JID: ${remoteJid} | Phone: ${phoneNumber || 'N/A'} | LID: ${lid || 'N/A'} | From: "${displayName}" | isSelf: ${isSelf} | Texto: "${textMessage}"`);
 
-    // -------------------------------------------------------------
-    // SCENARIO 1: MENSAJES EN TU CHAT PROPIO (Self-Chat / Mensaje a ti mismo)
-    // -------------------------------------------------------------
-    if (isSelf) {
-        if (textMessage.trim().startsWith('/')) {
-            await handleAdminCommand(textMessage.trim(), remoteJid, sock, metadata, msg);
+    // 🚦 PIPELINE PURO: decidir qué hacer con este mensaje
+    const decision = decideMessageFlow({ textMessage, metadata, contactRecord, isSelf, isFromMe });
+
+    switch (decision.type) {
+        case 'admin_command': {
+            await handleAdminCommand(decision.text, remoteJid, sock, metadata, msg);
             return;
         }
 
-        logAI.info(`\n🤖 [ASISTENTE PERSONAL EN SELF-CHAT]: "${textMessage}"`);
-        await enqueueAI(() => processAIChat(textMessage, remoteJid, metadata, sock));
-        return;
-    }
-
-    // -------------------------------------------------------------
-    // SCENARIO 2: MENSAJES ENVIADOS POR TI EN CHATS DE CLIENTES
-    // -------------------------------------------------------------
-    if (isFromMe) {
-        log.info(`\n🙈 [IGNORADO FORZADO] Escribiste en chat de cliente (${remoteJid}). Bot en silencio.`);
-        return;
-    }
-
-    // -------------------------------------------------------------
-    // SCENARIO 3: MENSAJES RECIBIDOS DE CLIENTES / TERCEROS
-    // -------------------------------------------------------------
-
-    // 🛡️ SEGURIDAD: Bloquear intentos de comandos / desde clientes
-    if (textMessage.trim().startsWith('/')) {
-        logComando.info(`\n🚫 [SEGURIDAD] Cliente (${displayName} - ${remoteJid}) intentó ejecutar comando admin: ${textMessage}`);
-        return;
-    }
-
-    // 🛑 Si el bot está pausado globalmente, no responder a clientes
-    if (state.IS_BOT_PAUSED) {
-        log.info(`\n⏸️ [MENSAJE IGNORADO] Bot pausado globalmente. Mensaje de: ${displayName}`);
-        return;
-    }
-
-    // -------------------------------------------------------------
-    // 🛡️ REGLAS DE ESTADOS EN BASE DE DATOS (ContactsDB)
-    // -------------------------------------------------------------
-    const settings = getSettingsDB();
-    const estado = contactRecord.estado || 'neutro';
-
-    if (estado === 'ignorado') {
-        log.info(`\n🚫 [MENSAJE IGNORADO - ESTADO IGNORADO] De: ${displayName}`);
-        return;
-    }
-
-    if (estado === 'permitido') {
-        log.info(`\n✅ [PERMITIDO EXPLÍCITAMENTE] De: ${displayName}`);
-        // Puede proceder, se salta la evaluación del modo global
-    } else if (estado === 'neutro') {
-        // Evaluar Modo Global
-        const globalMode = state.GLOBAL_MODE || settings.globalMode || 'allowed_all';
-        if (globalMode === 'ignored_all') {
-            log.info(`\n🚫 [MENSAJE IGNORADO - MODO GLOBAL ESTRICTO] De: ${displayName}`);
+        case 'self_chat_ai': {
+            logAI.info(`\n🤖 [ASISTENTE PERSONAL EN SELF-CHAT]: "${decision.text}"`);
+            await enqueueAI(() => processAIChat(decision.text, remoteJid, metadata, sock));
             return;
         }
-    }
 
-    // -------------------------------------------------------------
-    // 🤝 REGLA 3: DERIVACIÓN Y HANDOFF A ATENCIÓN HUMANA
-    // -------------------------------------------------------------
+        case 'handoff': {
+            logAI.info(`\n🚨 [HANDOFF ACTIVADO] Cliente ${decision.displayName} (${decision.targetId}) solicitó atención humana.`);
+            setNumberState(decision.targetId, 'handoff');
 
-    // A) Verificar si el cliente activó palabras clave de atención humana
-    const wantsHuman = checkHumanRequest(textMessage);
-    if (wantsHuman) {
-        logAI.info(`\n🚨 [HANDOFF ACTIVADO] Cliente ${displayName} (${phoneNumber || lid}) solicitó atención humana.`);
-        const targetId = phoneNumber || lid;
-        setNumberState(targetId, 'handoff');
+            // 1. Notificar al Admin en Self-Chat
+            if (state.ADMIN_PHONE || state.ADMIN_LID) {
+                const adminJid = state.ADMIN_PHONE ? `${state.ADMIN_PHONE}@s.whatsapp.net` : `${state.ADMIN_LID}@lid`;
+                sock.sendMessage(adminJid, { text: decision.adminNotify }).catch(() => {});
+            }
 
-        // 1. Notificar al Admin en Self-Chat
-        const adminNotify = `🚨 *SOLICITUD DE ATENCIÓN HUMANA*\n\n` +
-            `• *Cliente:* ${displayName}\n` +
-            `• *Teléfono:* \`${phoneNumber || 'N/A'}\`\n` +
-            `• *LID:* \`${lid || 'N/A'}\`\n` +
-            `• *Mensaje:* "${textMessage}"\n\n` +
-            `📋 *Comando para reanudar IA (Toca para copiar):*\n` +
-            `\`\`\`/auto ${targetId}\`\`\`\n\n` +
-            `💡 *Tip:* También puedes responder (citar) a esta alerta escribiendo solo \`/auto\` o \`/a\`.`;
-
-        if (state.ADMIN_PHONE || state.ADMIN_LID) {
-            const adminJid = state.ADMIN_PHONE ? `${state.ADMIN_PHONE}@s.whatsapp.net` : `${state.ADMIN_LID}@lid`;
-            sock.sendMessage(adminJid, { text: adminNotify }).catch(() => {});
+            // 2. Avisar al cliente
+            const clientNotice = ` Un momento por favor. He notificado a un asesor humano para que revise tu solicitud a la brevedad.`;
+            const sentNotice = await sock.sendMessage(remoteJid, { text: clientNotice });
+            registerSentMessage(sentNotice);
+            return;
         }
 
-        // 2. Avisar al cliente
-        const clientNotice = ` Un momento por favor. He notificado a un asesor humano para que revise tu solicitud a la brevedad.`;
-        const sentNotice = await sock.sendMessage(remoteJid, { text: clientNotice });
-        registerSentMessage(sentNotice);
-        return;
-    }
-
-    // B) Verificar si el cliente ya tiene Handoff Activo (pausado individualmente)
-    if (estado === 'handoff') {
-        logAI.info(`\n🙈 [HANDOFF ACTIVO] IA pausada para cliente individual: ${displayName} (${phoneNumber || lid})`);
-        return;
-    }
-
-    // -------------------------------------------------------------
-    // 🧠 DE-BOUNCE QUEUE CON VERIFICACIÓN EN MEMORIA LOCAL Y EN SEGUNDO PLANO
-    // -------------------------------------------------------------
-
-    // 🔒 SERIALIZACIÓN POR CHAT: si la IA ya está respondiendo para este cliente,
-    // acumulamos mensajes sin timer; al terminar la llamada se programa el siguiente lote.
-    if (chatInFlight.has(remoteJid)) {
-        let inflightBuffer = messageBuffers.get(remoteJid);
-        if (inflightBuffer) {
-            inflightBuffer.messages.push(textMessage);
-            inflightBuffer.lastActivity = Date.now();
-            inflightBuffer.onTimeout = createBufferTimeout(remoteJid, metadata, sock);
-            if (inflightBuffer.timer) clearTimeout(inflightBuffer.timer);
-            if (inflightBuffer.typingExpiryTimer) clearTimeout(inflightBuffer.typingExpiryTimer);
-            inflightBuffer.timer = null;
-        } else {
-            messageBuffers.set(remoteJid, {
-                messages: [textMessage],
-                isTyping: false,
-                lastTypingTime: null,
-                lastActivity: Date.now(),
-                onTimeout: createBufferTimeout(remoteJid, metadata, sock),
-                timer: null,
-                typingExpiryTimer: null
-            });
+        case 'ignore': {
+            if (decision.reason === 'from_me') {
+                log.info(`\n🙈 [IGNORADO FORZADO] Escribiste en chat de cliente (${remoteJid}). Bot en silencio.`);
+            } else if (decision.reason === 'client_command') {
+                logComando.info(`\n🚫 [SEGURIDAD] Cliente (${displayName} - ${remoteJid}) intentó ejecutar comando admin: ${textMessage}`);
+            } else if (decision.reason === 'paused') {
+                log.info(`\n⏸️ [MENSAJE IGNORADO] Bot pausado globalmente. Mensaje de: ${displayName}`);
+            } else if (decision.reason === 'estado_ignorado') {
+                log.info(`\n🚫 [MENSAJE IGNORADO - ESTADO IGNORADO] De: ${displayName}`);
+            } else if (decision.reason === 'modo_global_estricto') {
+                log.info(`\n🚫 [MENSAJE IGNORADO - MODO GLOBAL ESTRICTO] De: ${displayName}`);
+            } else if (decision.reason === 'handoff_activo') {
+                logAI.info(`\n🙈 [HANDOFF ACTIVO] IA pausada para cliente individual: ${displayName} (${phoneNumber || lid})`);
+            }
+            return;
         }
-        logAI.info(`⏳ [IA EN CURSO] Cliente (${displayName}) escribió mientras la IA responde. ${messageBuffers.get(remoteJid).messages.length} msg(s) en espera.`);
-        return;
-    }
 
-    let existingBuffer = messageBuffers.get(remoteJid);
+        case 'respond': {
+            // 🔒 SERIALIZACIÓN POR CHAT: si la IA ya está respondiendo para este cliente,
+            // acumulamos mensajes sin timer; al terminar la llamada se programa el siguiente lote.
+            if (chatInFlight.has(remoteJid)) {
+                let inflightBuffer = messageBuffers.get(remoteJid);
+                if (inflightBuffer) {
+                    inflightBuffer.messages.push(decision.text);
+                    inflightBuffer.lastActivity = Date.now();
+                    inflightBuffer.onTimeout = createBufferTimeout(remoteJid, metadata, sock);
+                    if (inflightBuffer.timer) clearTimeout(inflightBuffer.timer);
+                    if (inflightBuffer.typingExpiryTimer) clearTimeout(inflightBuffer.typingExpiryTimer);
+                    inflightBuffer.timer = null;
+                } else {
+                    messageBuffers.set(remoteJid, {
+                        messages: [decision.text],
+                        isTyping: false,
+                        lastTypingTime: null,
+                        lastActivity: Date.now(),
+                        onTimeout: createBufferTimeout(remoteJid, metadata, sock),
+                        timer: null,
+                        typingExpiryTimer: null
+                    });
+                }
+                logAI.info(`⏳ [IA EN CURSO] Cliente (${displayName}) escribió mientras la IA responde. ${messageBuffers.get(remoteJid).messages.length} msg(s) en espera.`);
+                return;
+            }
 
-    const onTimeout = createBufferTimeout(remoteJid, metadata, sock);
+            let existingBuffer = messageBuffers.get(remoteJid);
 
-    if (existingBuffer) {
-        if (existingBuffer.timer) clearTimeout(existingBuffer.timer);
-        existingBuffer.messages.push(textMessage);
-        existingBuffer.onTimeout = onTimeout;
-        existingBuffer.lastActivity = Date.now();
+            const onTimeout = createBufferTimeout(remoteJid, metadata, sock);
 
-        // Resetear timer al recibir mensaje físico con delay estocástico/adaptativo
-        const delayMs = getAdaptiveDebounceMs(existingBuffer.messages);
-        existingBuffer.timer = setTimeout(onTimeout, delayMs);
-        log.info(`⏳ [DE-BOUNCE RESET] Nuevo mensaje recibido de ${displayName}. Timer de ${(delayMs / 1000).toFixed(1)}s de silencio iniciado.`);
-    } else {
-        const newBuffer = {
-            messages: [textMessage],
-            isTyping: false,
-            lastTypingTime: null,
-            lastActivity: Date.now(),
-            onTimeout: onTimeout,
-            timer: null,
-            typingExpiryTimer: null
-        };
+            if (existingBuffer) {
+                if (existingBuffer.timer) clearTimeout(existingBuffer.timer);
+                existingBuffer.messages.push(decision.text);
+                existingBuffer.onTimeout = onTimeout;
+                existingBuffer.lastActivity = Date.now();
 
-        const delayMs = getAdaptiveDebounceMs(newBuffer.messages);
-        newBuffer.timer = setTimeout(onTimeout, delayMs);
-        messageBuffers.set(remoteJid, newBuffer);
-        log.info(`⏳ [DE-BOUNCE START] Primer mensaje de ${displayName}. Timer de ${(delayMs / 1000).toFixed(1)}s de silencio iniciado.`);
+                // Resetear timer al recibir mensaje físico con delay estocástico/adaptativo
+                const delayMs = getAdaptiveDebounceMs(existingBuffer.messages);
+                existingBuffer.timer = setTimeout(onTimeout, delayMs);
+                log.info(`⏳ [DE-BOUNCE RESET] Nuevo mensaje recibido de ${displayName}. Timer de ${(delayMs / 1000).toFixed(1)}s de silencio iniciado.`);
+            } else {
+                const newBuffer = {
+                    messages: [decision.text],
+                    isTyping: false,
+                    lastTypingTime: null,
+                    lastActivity: Date.now(),
+                    onTimeout: onTimeout,
+                    timer: null,
+                    typingExpiryTimer: null
+                };
+
+                const delayMs = getAdaptiveDebounceMs(newBuffer.messages);
+                newBuffer.timer = setTimeout(onTimeout, delayMs);
+                messageBuffers.set(remoteJid, newBuffer);
+                log.info(`⏳ [DE-BOUNCE START] Primer mensaje de ${displayName}. Timer de ${(delayMs / 1000).toFixed(1)}s de silencio iniciado.`);
+            }
+            return;
+        }
+
+        // @@PART2@@
     }
 }
 
