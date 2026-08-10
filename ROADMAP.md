@@ -67,14 +67,15 @@ Objetivo: que el sistema sobreviva solo y sea debuggeable.
 - [x] **Retry 1x en brain** — `requestBrain()`: reintento solo en errores transitorios (red/timeout/5xx/proveedor); los 4xx (422 validación) NO se reintentan (son bugs).
 - [ ] **Verificación pendiente en vivo:** matar el gateway a mitad de conversación y ver reconexión con backoff (lógica verificada por código; requiere desconexión real de WhatsApp).
 
-### 🟠 Fase 2 — Seguridad y privacidad (sesión 4)
+### ✅ Fase 2 — Seguridad y privacidad (sesión 4)
 Objetivo: no dejar expuestos costos, memoria ni escritura de archivos.
 
 - [x] **S1** — Bind de uvicorn a `127.0.0.1` (el gateway está en la misma máquina) + `API_KEY` opcional en header `X-API-Key` verificada por middleware FastAPI. El gateway lee la key del mismo `brain/.env` (`getBrainApiKey()` en `config.js`), así que se pega UNA sola vez. `BRAIN_HOST` permite override.
-- [ ] **S2** — Rate-limit por `user_id` en el brain (ej: 10 msgs/min) y por admin en el gateway.
-- [ ] **Validar nombres en `/exportar`/`/buscar`** para evitar inyección de markdown (control de caracteres).
-- [ ] **Revisar `downloadMediaMessage`** en `handleProfileUpload` (`commandHandler.js:56`) — en Baileys 7 la firma cambió; confirmar que la descarga de documentos citados funciona.
-- [ ] **Verificación:** intentar POST /chat desde otro host → debe fallar; `/profiles/import` sin key → 401.
+- [x] **S2** — Rate-limit por `user_id` en el brain (10 llamadas/min en `/chat`, env `BRAIN_RATE_LIMIT_PER_MIN`, se puede desactivar con `BRAIN_RATE_LIMIT_ENABLED=0`) y 20 comandos/min por admin en el gateway (`services/rateLimit.js`, ventana deslizante).
+- [x] **Validar nombres en `/exportar`/`/buscar`** — `sanitizeMarkdown()` en `commandHandler.js`: neutraliza caracteres de formato de WhatsApp (`* _ ` ~`) y saltos de línea antes de interpolar nombres en mensajes markdown.
+- [x] **Revisar `downloadMediaMessage`** en `handleProfileUpload` (`commandHandler.js`) — en Baileys 7.0.0-rc14 la firma es `(msg: WAMessage, type, options, ctx?)`; `ctx.reuploadRequest` debe ser FUNCIÓN y `ctx.logger` un logger real (antes: booleano + undefined → TypeError si el media daba 404/410).
+- [x] **Verificación:** POST /chat desde la IP LAN → conexión rechazada (bind 127.0.0.1 verificado con `ss`); `/profiles/import` sin key → 401, con key → 400 (auth OK); 11ª llamada de `/chat` → 429.
+- [ ] **Pendiente en vivo:** subir un `.md` al self-chat con `/update` para confirmar la descarga real del documento (requiere WhatsApp).
 
 ### 🔵 Fase 3 — Refactor estructural y calidad (sesiones 5-7)
 Objetivo: deuda técnica grande, testes y CI.

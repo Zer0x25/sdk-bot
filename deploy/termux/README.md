@@ -158,11 +158,18 @@ El brain lee `.env` (NO versionado — está en `.gitignore`). Crea `brain/.env`
 OPENROUTER_API_KEY=sk-or-...
 GROQ_API_KEY=gsk-...
 GEMINI_API_KEY=...        # opcional, ignorado si no está instalado google-genai
+BRAIN_API_KEY=...         # RECOMENDADO (F2): protege el brain con header X-API-Key
+# BRAIN_HOST=127.0.0.1    # por defecto solo local; 0.0.0.0 SOLO si sabes lo que haces
 # (otros proveedores según el router en main.py)
 ```
 
-El gateway NO usa `.env`; la URL del brain está hardcodeada en `index.js`
-(`BRAIN_API_URL = 'http://127.0.0.1:8000/chat'`).
+> ⚠️ **Seguridad (F2):** si defines `BRAIN_API_KEY`, TODA ruta del brain (menos
+> `/`) exige el header `X-API-Key` → 401. El gateway la lee automáticamente del
+> MISMO `brain/.env`, así que solo hay que pegar la key una vez. Sin key, el
+> brain corre en modo legacy (sin auth) y sigue escuchando solo en `127.0.0.1`.
+
+El gateway NO usa `.env` propio; lee la URL del brain y la API key de
+`brain/.env` (`config.js` → `getBrainApiKey()`).
 
 ---
 
