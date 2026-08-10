@@ -137,7 +137,7 @@ cd ~/SDK-Bot/brain
 pip install -r requirements.txt
 # Paquetes clave: fastapi, uvicorn, openai, python-dotenv, pydantic
 ```
-> `google-generativeai` (Gemini) **NO está instalado** en Termux: no compila en
+> `google-genai` (Gemini) **NO está instalado** en Termux: no compila en
 > bionic (librerías nativas muy pesadas). Por eso `main.py` lo trata como fallback
 > opcional — si falta, el bot simplemente salta ese proveedor.
 
@@ -157,7 +157,7 @@ El brain lee `.env` (NO versionado — está en `.gitignore`). Crea `brain/.env`
 ```env
 OPENROUTER_API_KEY=sk-or-...
 GROQ_API_KEY=gsk-...
-GEMINI_API_KEY=...        # opcional, ignorado si no está instalado google-generativeai
+GEMINI_API_KEY=...        # opcional, ignorado si no está instalado google-genai
 # (otros proveedores según el router en main.py)
 ```
 
@@ -205,7 +205,7 @@ Desde la unificación (todo vive en `main`), lo único exclusivo de Android es:
 |---|---|
 | `deploy/termux/startBrain.sh` / `startGateway.sh` | scripts de arranque manual con rutas de Termux |
 | `deploy/termux/setup-termux.sh` | bootstrap idempotente (dependencias + runit + boot) |
-| `brain/requirements-termux.txt` | sin `google-generativeai` (no compila en bionic) |
+| `brain/requirements-termux.txt` | sin `google-genai` (no compila en bionic) |
 | `brain/.env` (local, NO versionado) | keys de API sin Gemini obligatorio |
 
 Todo lo demás (instancia única, backoff de reconexión, logs rotados, pool de
@@ -236,20 +236,20 @@ bash deploy/termux/setup-termux.sh   # hace los pasos 9.3-9.7 automáticamente
 > No hay rama separada: el código es idéntico en las 3 plataformas.
 
 ### 9.3 Dependencias del brain (Python)
-El `requirements.txt` original incluye `google-generativeai`, que **NO compila
+El `requirements.txt` original incluye `google-genai`, que **NO compila
 en Termux** (bionic, sin wheel precompilado). Por eso existe
 `brain/requirements-termux.txt` SIN ese paquete. Úsalo:
 ```bash
 cd ~/SDK-Bot/brain
 pip install -r requirements-termux.txt
 # fastapi, uvicorn, openai, python-dotenv, pydantic — todos instalan bien
-# google-generativeai se OMITE a propósito:
+# google-genai se OMITE a propósito:
 #   - no compila en Termux
-#   - main.py ya lo trata como fallback opcional (try/except ImportError)
+#   - providers.py ya lo trata como fallback opcional (try/except ImportError)
 #   - el bot funciona sin él (usa OpenRouter/Groq como proveedores principales)
 ```
 > Si algún día necesitas Gemini en Termux, la única vía fiable es `pip install
-> google-generativeai` tras instalar `rustc`/`cargo` y las herramientas de
+> google-genai` tras instalar `rustc`/`cargo` y las herramientas de
 > compilación de Termux (`pkg install rust clang`), pero es lento y frágil.
 > Mejor: dejar Gemini como fallback de escritorio y no en el celular.
 
@@ -266,7 +266,7 @@ cd ~/SDK-Bot/brain
 cat > .env <<'EOF'
 OPENROUTER_API_KEY=sk-or-...
 GROQ_API_KEY=gsk-...
-# GEMINI_API_KEY=...   # opcional, ignorado si no está google-generativeai
+# GEMINI_API_KEY=...   # opcional, ignorado si no está google-genai
 EOF
 chmod 600 .env
 ```
@@ -310,7 +310,49 @@ tail -f ~/logs/sdk-gateway.log
 
 ---
 
-## 10. Sobre "deploy desde imagen" (aislar para evitar conflictos)
+## 10. Problemas conocidos (bitácora del deploy real en Termux)
+
+> Verificado en: Android 16, Python 3.13.13 (sistema, sin venv), Node v26.3.1,
+> runit en `$PREFIX/var/service`. PyPI en bionic NO tiene wheels precompilados
+> para muchas librerías nativas.
+
+### 10.1 El brain muere al arrancar si `google-genai` falta (CORREGIDO en main)
+**Síntoma:** `AttributeError: 'NoneType' object has no attribute 'Client'` al
+importar `providers`.
+**Causa:** `providers.py` hacía `from google import genai` y
+`genai.Client(...)` al nivel superior del módulo. En Termux `google-genai` NO
+tiene wheel para bionic, no se instala, y el import rompía TODO el brain aunque
+Gemini solo sea un fallback opcional.
+**Solución (commit `50a745c` en main):** imports envueltos en
+`try/except ImportError` → `genai = None`; `gemini_client` solo se instancia si
+`genai is not None and GEMINI_API_KEY`.
+**Regla para futuros cambios:** cualquier dependencia opcional (Gemini, etc.)
+debe quedar detrás de `try/except ImportError`. `requirements-termux.txt` omite
+`google-genai` a propósito.
+
+### 10.2 El gateway no arranca tras un pull: falta `npm install`
+**Síntoma:** `Cannot find module 'pino-roll'` al arrancar el gateway.
+**Causa:** `git pull` NO ejecuta `npm install`; un cambio en
+`gateway/package.json` (p.ej. `pino-roll` de F1) deja `node_modules` desincronizado.
+**Solución:** `cd gateway && npm install` antes de reiniciar. El
+`update-termux.sh` ya lo hace solo (compara el hash de `package.json` antes y
+después del pull). El `package-lock.json` versionado evita que el lock se
+corrompa con la resolución de Termux.
+
+### 10.3 Ruta del log del brain cambió (F1)
+El brain ahora escribe con `RotatingFileHandler` a `brain/logs/brain.log`
+(5 MB × 3 backups). Antes se monitorizaba `~/logs/sdk-brain.log`. El gateway
+sigue en `~/logs/sdk-gateway.log`. `print()` directo NO llega al log del brain;
+usar `safe_log()` o `make_logger()`.
+
+### 10.4 Archivos legacy
+`gateway/qr.js` y `gateway/pair.js` eran restos sin trackear en el working tree
+(ya no se usan; el QR/pairing lo maneja `index.js` + `qrcode-terminal`).
+Eliminar con `rm` si reaparecen tras un pull.
+
+---
+
+## 11. Sobre "deploy desde imagen" (aislar para evitar conflictos)
 
 Termux **no tiene Docker** (no hay kernel containerizado en Android estándar),
 pero hay dos formas de lograr un entorno reproducible y aislado:
@@ -346,16 +388,16 @@ Así los servicios vuelven solos tras reiniciar el celular.
 
 ### Recomendación
 Para evitar el "conflicto en Termux" (versiones de python/node mezcladas,
-`google-generativeai` roto, rutas hardcodeadas): usa la **Opción A** (el
+`google-genai` roto, rutas hardcodeadas): usa la **Opción A** (el
 bootstrap `deploy/termux/setup-termux.sh` versionado en `main`) como fuente
 de verdad del deploy. En lugar de una imagen binaria, es un script idempotente
 que reconstruye el entorno idéntico en cualquier celular.
 
 ---
 
-## 11. Problemas conocidos durante el deploy
+## 12. Apéndice: problemas vistos durante el deploy
 
-- **`pip install -r requirements.txt` falla** en Termux por `google-generativeai`.
+- **`pip install -r requirements.txt` falla** en Termux por `google-genai`.
   Solución: instalar dependencias selectivamente (sección 9.3). El bot igual
   funciona sin Gemini.
 - **QR de WhatsApp frágil** en Baileys 7.0.0-rc14: el flujo por QR se queda
