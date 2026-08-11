@@ -1,0 +1,159 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>SDK-Bot · Panel</title>
+<style>
+  :root { color-scheme: dark; }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; padding: 16px; font: 14px/1.5 system-ui, sans-serif;
+    background: #0f1115; color: #e6e6e6;
+  }
+  h1 { font-size: 18px; margin: 0 0 12px; }
+  .grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(220px, 1fr)); gap: 10px; }
+  .card { background: #171a21; border: 1px solid #262b36; border-radius: 8px; padding: 12px; }
+  .card h2 { font-size: 12px; text-transform: uppercase; letter-spacing: .05em; color: #8b93a5; margin: 0 0 8px; }
+  .card .val { font-size: 20px; font-weight: 600; }
+  .card .row { display: flex; justify-content: space-between; margin: 3px 0; }
+  .card .row span:first-child { color: #8b93a5; }
+  .ok { color: #4ade80; } .warn { color: #facc15; } .bad { color: #f87171; }
+  section { margin-top: 16px; }
+  #terminal { display: flex; gap: 8px; margin-bottom: 8px; }
+  #cmd { flex: 1; background: #171a21; border: 1px solid #262b36; color: #e6e6e6;
+    border-radius: 8px; padding: 10px; font: 13px/1.4 ui-monospace, monospace; }
+  #cmd:focus { outline: none; border-color: #4a9eff; }
+  #run { background: #2563eb; border: none; color: #fff; border-radius: 8px; padding: 0 18px;
+    font-weight: 600; cursor: pointer; }
+  #run:disabled { opacity: .5; cursor: default; }
+  #out { background: #0a0c10; border: 1px solid #1c212b; border-radius: 8px; padding: 10px;
+    font: 13px/1.5 ui-monospace, monospace; white-space: pre-wrap; max-height: 380px; overflow: auto; }
+  .out-block { border-left: 3px solid #2563eb; padding-left: 8px; margin: 6px 0; }
+  .out-cmd { color: #facc15; }
+  a { color: #4a9eff; }
+</style>
+</head>
+<body>
+<h1>🖥️ SDK-Bot · Panel de administración</h1>
+
+<div class="grid" id="cards"></div>
+
+<section>
+  <div id="terminal">
+    <input id="cmd" placeholder="Comando admin, ej: /estado  o  /pausar" autocomplete="off">
+    <button id="run">Ejecutar</button>
+  </div>
+  <div id="out"><i>La terminal ejecuta los mismos comandos del self-chat (vía commandHandler).</i></div>
+</section>
+
+<script>
+const $ = s => document.querySelector(s);
+const cards = $('#cards'), out = $('#out'), cmd = $('#cmd'), run = $('#run');
+
+function card(title, lines) {
+  return '<div class="card"><h2>' + title + '</h2>' + lines.map(([k, v, cls]) =>
+    '<div class="row"><span>' + k + '</span><span class="' + (cls || '') + '">' + v + '</span></div>'
+  ).join('') + '</div>';
+}
+
+const fmt = n => (n ?? 0).toLocaleString();
+const mem = n => Math.round(n / 1048576) + ' MB';
+
+async function refresh() {
+  try {
+    const r = await fetch('/api/status');
+    const d = await r.json();
+    const conn = d.runtime || {};
+    const paused = d.bot && d.bot.paused ? 'bad' : 'ok';
+    cards.innerHTML =
+      card('Conexión', [
+        ['estado', conn.connection || '?', conn.connection === 'open' ? 'ok' : 'warn'],
+        ['reconexión', '#' + (conn.reconnectAttempt ?? 0)],
+        ['último motivo', (conn.lastDisconnectReason || '-').slice(0, 24)],
+        ['uptime', Math.round(d.uptime_seconds / 60) + ' min']
+      ]) +
+      card('Bot', [
+        ['número', d.bot && d.bot.number || '-'],
+        ['perfil', d.bot && d.bot.profile || '-'],
+        ['modo', d.bot && d.bot.globalMode || '-'],
+        ['pausado', d.bot && d.bot.paused ? 'SÍ' : 'no', paused]
+      ]) +
+      card('Contactos', [
+        ['agenda', fmt(d.database && d.database.contacts)],
+        ['modo global', d.database && d.database.globalMode || '-'],
+        ['perfil global', d.database && d.database.currentProfile || '-']
+      ]) +
+      card('Broadcast', [
+        ['estado', d.broadcast && d.broadcast.enabled ? 'ACTIVADO' : 'desactivado', d.broadcast && d.broadcast.enabled ? 'ok' : 'warn'],
+        ['pendientes', fmt(d.broadcast && d.broadcast.pending)],
+        ['límite diario', d.broadcast && d.broadcast.dailyLimit]
+      ]) +
+      card('Cola', [
+        ['mensajes', fmt(d.queue && d.queue.pending)]
+      ]) +
+      card('Brain', [
+        ['estado', (d.brain && d.brain.ok !== undefined) ? (d.brain.ok ? 'ok' : 'caído') : '?',
+          d.brain && d.brain.ok ? 'ok' : 'warn'],
+        ['llamadas', fmt(d.brain && d.brain.calls)]
+      ]) +
+      card('Memoria', [
+        ['RSS', mem(d.memory && d.memory.rss)],
+        ['heap', mem(d.memory && d.memory.heapUsed) + ' / ' + mem(d.memory && d.memory.heapTotal)]
+      ]);
+  } catch (e) {
+    cards.innerHTML = '<div class="card"><h2>Panel</h2><div class="row"><span>error</span><span class="bad">' + e.message + '</span></div></div>';
+  }
+}
+
+function esc(s) { return s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;'); }
+
+async function runCmd() {
+  const text = cmd.value.trim();
+  if (!text) return;
+  run.disabled = true;
+  const block = document.createElement('div');
+  block.className = 'out-block';
+  block.innerHTML = '<span class="out-cmd">$ ' + esc(text) + '</span>';
+  out.prepend(block);
+  const status = document.createElement('div');
+  status.textContent = 'Ejecutando…';
+  block.appendChild(status);
+  try {
+    const r = await fetch('/api/command', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ command: text })
+    });
+    const d = await r.json();
+    status.remove();
+    for (const rep of (d.replies || [])) {
+      const el = document.createElement('div');
+      if (rep.type === 'document') {
+        el.innerHTML = '<a href="data:application/octet-stream;base64,' + rep.base64 +
+          '" download="' + esc(rep.fileName || 'archivo') + '">📄 Descargar ' + esc(rep.fileName || 'archivo') + '</a>' +
+          (rep.caption ? '<br><i>' + esc(rep.caption) + '</i>' : '');
+      } else {
+        el.textContent = rep.text || JSON.stringify(rep);
+      }
+      block.appendChild(el);
+    }
+    if (!d.replies || !d.replies.length) {
+      block.appendChild(document.createTextNode('(sin respuesta)'));
+    }
+  } catch (e) {
+    status.textContent = 'Error: ' + e.message;
+  } finally {
+    run.disabled = false;
+    cmd.value = '';
+    cmd.focus();
+  }
+}
+
+run.addEventListener('click', runCmd);
+cmd.addEventListener('keydown', e => { if (e.key === 'Enter') runCmd(); });
+refresh();
+setInterval(refresh, 10000);
+</script>
+</body>
+</html>

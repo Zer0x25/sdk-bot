@@ -231,6 +231,13 @@ ensureSingleInstance().then(connectToWhatsApp);
 // 📊 F4-P3: servidor de métricas local (GET /status y /health en 127.0.0.1)
 startStatusServer();
 
+// 🖥️ F6-P1: panel de administración web OPCIONAL — solo con SDK_ADMIN_WEB_ENABLED=1.
+// Módulo consumidor: no altera el motor (sin el env, el bot es idéntico).
+if (process.env.SDK_ADMIN_WEB_ENABLED === '1') {
+    const { startAdminWebServer } = require('./services/adminWebServer');
+    startAdminWebServer();
+}
+
 // 📥 F4-P4: red de seguridad — si el brain vuelve sin una llamada IA exitosa que
 // dispare el flush, intentar vaciar la cola cada 30s (no mantiene el proceso vivo).
 setInterval(() => messageQueue.scheduleFlush(), 30 * 1000).unref();
