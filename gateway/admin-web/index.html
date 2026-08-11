@@ -46,6 +46,11 @@
   .toolbar input, .toolbar select { background: #171a21; border: 1px solid #262b36; color: #e6e6e6;
     border-radius: 8px; padding: 8px; }
   .toolbar input { flex: 1; }
+  .searchbox { flex: 1; position: relative; }
+  .searchbox input { width: 100%; padding-right: 32px; }
+  #cclear { position: absolute; right: 8px; top: 50%; transform: translateY(-50%);
+    background: none; border: none; color: #8b93a5; font-size: 15px; cursor: pointer; padding: 2px 6px; }
+  #cclear:hover { color: #e6e6e6; }
   .toolbar button { background: #2563eb; border: none; color: #fff; border-radius: 8px; padding: 0 14px;
     font-weight: 600; cursor: pointer; }
   .hint { align-self: center; color: #8b93a5; }
@@ -63,6 +68,8 @@
   .b-permitido { background: #14532d; color: #86efac; }
   .b-ignorado { background: #7f1d1d; color: #fca5a5; }
   .b-handoff { background: #78350f; color: #fdba74; }
+  #cList { max-height: 460px; overflow-y: auto; border-radius: 8px; }
+  #csentry { padding: 10px; text-align: center; color: #8b93a5; font-size: 12px; }
   .pag { display: flex; gap: 10px; align-items: center; margin-top: 8px; }
   .pag button { background: #262b36; border: none; color: #e6e6e6; border-radius: 8px; padding: 6px 12px; cursor: pointer; }
   .pag button:disabled { opacity: .4; cursor: default; }
@@ -178,7 +185,10 @@
 <section id="page-contactos" class="page" hidden>
   <h2>📇 Agenda de contactos</h2>
   <div class="toolbar">
-    <input id="cq" placeholder="Buscar (nombre, teléfono, LID)…" autocomplete="off">
+    <div class="searchbox">
+      <input id="cq" placeholder="Buscar (nombre, teléfono, LID)… búsqueda en vivo" autocomplete="off">
+      <button id="cclear" hidden aria-label="Limpiar búsqueda">✕</button>
+    </div>
     <select id="ce">
       <option value="">Todos los estados</option>
       <option value="neutro">Neutro</option>
@@ -186,14 +196,15 @@
       <option value="ignorado">Ignorado</option>
       <option value="handoff">Handoff</option>
     </select>
-    <button id="csearch">Buscar</button>
     <span id="ctotal" class="hint"></span>
   </div>
-  <table id="contacts">
-    <thead><tr><th>Nombre</th><th>Teléfono</th><th>LID</th><th>Estado</th><th>Perfil</th><th>Acciones</th></tr></thead>
-    <tbody></tbody>
-  </table>
-  <div class="pag"><button id="cprev">← Anterior</button><span id="cpage"></span><button id="cnext">Siguiente →</button></div>
+  <div id="cList">
+    <table id="contacts">
+      <thead><tr><th>Nombre</th><th>Teléfono</th><th>LID</th><th>Estado</th><th>Perfil</th><th>Acciones</th></tr></thead>
+      <tbody></tbody>
+    </table>
+    <div id="csentry">Cargando…</div>
+  </div>
 </section>
 
 <section id="page-logs" class="page" hidden>
@@ -233,7 +244,7 @@ function showPage(name) {
     $('.nav .tab[data-page="' + p + '"]').classList.toggle('on', p === name);
   }
   if (name === 'pairing') refreshSession();
-  if (name === 'contactos') loadContacts();
+  if (name === 'contactos') resetContactList();
   if (name === 'logs' && !paused) startLogs();
   if (location.hash !== '#' + name) history.replaceState(null, '', '#' + name);
 }
@@ -584,45 +595,71 @@ resetbtn.addEventListener('click', async () => {
 });
 
 // ─── Agenda de contactos (F6-P2) ───
+// Scroll infinito: carga la siguiente página (50) cuando el sentry al final
+// de la lista se acerca al viewport del contenedor. Búsqueda/filtro/cambio
+// de estado reinician la lista desde la página 1.
 const cq = $('#cq'), ce = $('#ce'), ctotal = $('#ctotal'), ctb = $('#contacts tbody');
-const cprev = $('#cprev'), cnext = $('#cnext'), cpage = $('#cpage');
+const cList = $('#cList'), csentry = $('#csentry');
 let cState = { page: 1, limit: 50, q: '', estado: '' };
+let cLoading = false, cDone = false;
 
 const badge = { neutro: 'b-neutro', permitido: 'b-permitido', ignorado: 'b-ignorado', handoff: 'b-handoff' };
 
-async function loadContacts() {
+function resetContactList() {
+  cState.page = 1;
+  cDone = false;
+  ctb.innerHTML = '';
+  csentry.textContent = 'Cargando…';
+  loadMore();
+}
+
+async function loadMore() {
+  if (cLoading || cDone) return;
+  cLoading = true;
   try {
     const r = await fetch('/api/contacts?q=' + encodeURIComponent(cState.q) +
       '&estado=' + encodeURIComponent(cState.estado) + '&page=' + cState.page + '&limit=' + cState.limit);
     const d = await r.json();
-    ctotal.textContent = d.contacts.length ? (d.total + ' contacto(s)') : 'sin resultados';
-    cpage.textContent = 'página ' + d.page + ' de ' + Math.max(1, Math.ceil(d.total / d.limit));
-    cprev.disabled = d.page <= 1;
-    cnext.disabled = d.page * d.limit >= d.total;
-    ctb.innerHTML = d.contacts.map(c => {
+    ctotal.textContent = d.total + ' contacto(s)';
+    for (const c of d.contacts) {
+      const tr = document.createElement('tr');
       const cls = badge[c.estado] || badge.neutro;
       const perfil = c.isContact ? '<select data-key="' + c.key + '" data-kind="perfil"><option>' + (c.perfil || 'default') + '</option><option>lucia</option><option>mateo</option><option>ventas</option><option>cobranzas</option><option>recepcion</option></select>'
         : (c.perfil || '—');
-      return '<tr><td>' + esc(c.savedName || '—') + '</td><td>' + esc(c.phone || '—') + '</td><td>' + esc(c.lid || '—') +
+      tr.innerHTML = '<td>' + esc(c.savedName || '—') + '</td><td>' + esc(c.phone || '—') + '</td><td>' + esc(c.lid || '—') +
         '</td><td><span class="badge ' + cls + '">' + c.estado + '</span></td><td>' + perfil + '</td>' +
         '<td><div class="chips">' +
         (c.estado !== 'permitido' ? '<button data-key="' + c.key + '" data-act="permitir">Permitir</button>' : '') +
         (c.estado !== 'ignorado' ? '<button data-key="' + c.key + '" data-act="ignorar">Ignorar</button>' : '') +
         (c.estado !== 'neutro' ? '<button data-key="' + c.key + '" data-act="neutro">Neutro</button>' : '') +
-        '</div></td></tr>';
-    }).join('');
-    if (!d.contacts.length) ctb.innerHTML = '<tr><td colspan="6" style="color:#8b93a5">Nada por aquí.</td></tr>';
+        '</div></td>';
+      ctb.appendChild(tr);
+    }
+    cState.page++;
+    if (d.contacts.length < cState.limit) {
+      cDone = true;
+      csentry.textContent = d.total ? '— fin de la lista —' : (cState.q || cState.estado ? 'Sin resultados para el filtro actual.' : 'Sin contactos todavía.');
+    }
   } catch (e) {
-    ctb.innerHTML = '<tr><td colspan="6" class="bad">Error: ' + esc(e.message) + '</td></tr>';
+    cDone = true;
+    csentry.textContent = 'Error: ' + e.message;
+  } finally {
+    cLoading = false;
   }
 }
+
+// Sentry al pie de la lista: pide la siguiente página cuando se acerca
+const cObserver = new IntersectionObserver(entries => {
+  if (entries[0].isIntersecting) loadMore();
+}, { root: cList, rootMargin: '250px' });
+cObserver.observe(csentry);
 
 function setContactState(key, estado) {
   fetch('/api/contacts/' + key + '/estado', {
     method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ estado })
   }).then(r => r.json()).then(d => {
     if (!d.success) alert('⚠️ ' + d.message);
-    loadContacts();
+    resetContactList();
   });
 }
 
@@ -638,15 +675,43 @@ ctb.addEventListener('change', e => {
   }).then(r => r.json()).then(d => { if (!d.success) alert('⚠️ ' + d.message); });
 });
 
-$('#csearch').addEventListener('click', () => {
-  cState.q = cq.value.trim();
-  cState.estado = ce.value;
-  cState.page = 1;
-  loadContacts();
+// Búsqueda en vivo con debounce: cada tecla reinicia el timer; tras ~300ms
+// de pausa se filtra desde la página 1. Enter cancela la espera y busca ya.
+// La ✕ limpia el cuadro y vuelve a la lista completa.
+let cSearchTimer = null;
+const cclear = $('#cclear');
+cq.addEventListener('input', () => {
+  cclear.hidden = !cq.value;
+  clearTimeout(cSearchTimer);
+  cSearchTimer = setTimeout(() => {
+    const q = cq.value.trim();
+    if (q === cState.q && ce.value === cState.estado) return;
+    cState.q = q;
+    resetContactList();
+  }, 300);
 });
-cq.addEventListener('keydown', e => { if (e.key === 'Enter') $('#csearch').click(); });
-cprev.addEventListener('click', () => { if (cState.page > 1) { cState.page--; loadContacts(); } });
-cnext.addEventListener('click', () => { cState.page++; loadContacts(); });
+cclear.addEventListener('click', () => {
+  clearTimeout(cSearchTimer);
+  cq.value = '';
+  cclear.hidden = true;
+  if (cState.q) {
+    cState.q = '';
+    resetContactList();
+  }
+  cq.focus();
+});
+cq.addEventListener('keydown', e => {
+  if (e.key !== 'Enter') return;
+  clearTimeout(cSearchTimer);
+  const q = cq.value.trim();
+  if (q === cState.q && ce.value === cState.estado) return;
+  cState.q = q;
+  resetContactList();
+});
+ce.addEventListener('change', () => {
+  cState.estado = ce.value;
+  resetContactList();
+});
 
 // ─── Logs en vivo (F6-P3) ───
 // El SSE de logs solo se abre al entrar a la pestaña; al volver a ella se
