@@ -7,7 +7,7 @@ before(() => {}); // (las rutas ya quedaron parcheadas al importar los módulos)
 
 after(() => tmp.restore());
 
-const { decideMessageFlow, getAdaptiveDebounceMs, checkHumanRequest, extractTextMessage } = require('../services/pipeline');
+const { decideMessageFlow, getAdaptiveDebounceMs, checkHumanRequest, extractTextMessage, decideReconnect } = require('../services/pipeline');
 const { state } = require('../config');
 
 // Estado base de un mensaje de cliente normal
@@ -101,4 +101,17 @@ test('extractTextMessage: extrae texto de todos los tipos de mensaje', () => {
     assert.strictEqual(extractTextMessage({ message: { documentWithCaptionMessage: { message: { documentMessage: { caption: 'doc2' } } } } }), 'doc2');
     assert.strictEqual(extractTextMessage({ message: { audioMessage: {} } }), '');
     assert.strictEqual(extractTextMessage({}), '');
+});
+
+test('decideReconnect: con sesión válida reconecta (backoff normal)', () => {
+    assert.deepStrictEqual(decideReconnect({ hasSession: true, loggedOut: false }), { reconnect: true, reason: 'normal' });
+});
+
+test('decideReconnect: SIN sesión NO reconecta (anti-loop QR, F6-P4)', () => {
+    assert.deepStrictEqual(decideReconnect({ hasSession: false, loggedOut: false }), { reconnect: false, reason: 'sin_sesion' });
+});
+
+test('decideReconnect: loggedOut (sesión revocada) NO reconecta', () => {
+    assert.deepStrictEqual(decideReconnect({ hasSession: true, loggedOut: true }), { reconnect: false, reason: 'logged_out' });
+    assert.deepStrictEqual(decideReconnect({ hasSession: false, loggedOut: true }), { reconnect: false, reason: 'logged_out' });
 });

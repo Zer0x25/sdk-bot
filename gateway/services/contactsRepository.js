@@ -35,9 +35,14 @@ let phoneIndex = new Map();   // phone -> clave del registro
 let lidIndex = new Map();     // lid   -> clave del registro
 let digitsIndex = new Map();  // clave/phone/lid en dígitos puros -> clave (para comandos admin)
 
-/**
- * @param {Object<string, ContactRecord>} db
- */
+// Mantenimiento INCREMENTAL: los índices se actualizan O(1) en cada
+// upsert/bulk (indexAdd/indexRemove) y solo se reconstruyen por completo
+// (O(N), raro) cuando la caché se REEMPLAZA o la DB se limpia. Antes se
+// reconstruían en CADA saveContactsDB (por mensaje/lote): con miles de
+// contactos entrando en la sync inicial, ese O(N) repetido saturaba el
+// event loop y WhatsApp cortaba la conexión a mitad de la agenda.
+let indexesDirty = true;
+
 function rebuildIndexes(db) {
     phoneIndex = new Map();
     lidIndex = new Map();
@@ -52,12 +57,40 @@ function rebuildIndexes(db) {
     }
 }
 
-// Los índices RAM siempre espejan la caché actual (se reconstruyen en
-// cada reemplazo/guardado de la caché de contactos)
-onContactsCacheUpdate(rebuildIndexes);
+function ensureIndexes() {
+    if (!indexesDirty) return;
+    rebuildIndexes(getContactsDB());
+    indexesDirty = false;
+}
+
+function markIndexesDirty() {
+    indexesDirty = true;
+}
+
+// Mantenimiento incremental O(1) tras mutar un registro (upsert/bulk)
+function indexAdd(key, record) {
+    if (!key || !record || typeof record !== 'object') return;
+    if (record.phone) phoneIndex.set(record.phone, key);
+    if (record.lid) lidIndex.set(record.lid, key);
+    const d = String(key).replace(/[^0-9]/g, '');
+    if (d) digitsIndex.set(d, key);
+}
+
+function indexRemove(key, record) {
+    if (!key || !record || typeof record !== 'object') return;
+    if (record.phone && phoneIndex.get(record.phone) === key) phoneIndex.delete(record.phone);
+    if (record.lid && lidIndex.get(record.lid) === key) lidIndex.delete(record.lid);
+    const d = String(key).replace(/[^0-9]/g, '');
+    if (d && digitsIndex.get(d) === key) digitsIndex.delete(d);
+}
+
+// Los índices RAM siempre espejan la caché actual (se reconstruyen si la
+// caché se REEMPLAZA; las mutaciones las mantienen los propios upserts)
+onContactsCacheUpdate(markIndexesDirty);
 
 // Búsqueda exacta por phone/lid (hot path: upsert, bulk, extractUserMetadata)
 function findExistingKey(phoneNumber, lid) {
+    ensureIndexes();
     if (phoneNumber && phoneIndex.has(phoneNumber)) return phoneIndex.get(phoneNumber);
     if (lid && lidIndex.has(lid)) return lidIndex.get(lid);
     return null;
@@ -67,6 +100,7 @@ function findExistingKey(phoneNumber, lid) {
 // Índice RAM de dígitos puros; scan completo solo si no hubo match exacto.
 function findKeyByDigits(cleanTarget) {
     if (!cleanTarget) return null;
+    ensureIndexes();
     if (digitsIndex.has(cleanTarget)) return digitsIndex.get(cleanTarget);
     const db = getContactsDB();
     return Object.keys(db).find(k => {
@@ -86,6 +120,25 @@ function isJunkJid(jid) {
     if (str.startsWith('status@')) return true;
     if (str.startsWith('0@')) return true;
     return false;
+}
+
+// Extrae phone/lid de un contacto CRUDO de Baileys rc14 (history sync).
+// rc14 entrega `{id, name, username, lid, phoneNumber}`: `id` es el JID del
+// chat (ahora mayoritariamente LID: `...@lid`), `phoneNumber` es el PN JID
+// (`...@s.whatsapp.net` o `...@hosted`) y `lid` el LID JID. Los PUSH_NAME
+// llegan como `{id, notify}`. Sin estos campos, la agenda LID-únicamente se
+// rechazaba en el upsert (identidad vacía) y la libreta no crecía.
+function contactIdentityFromRaw(c) {
+    const id = (c && c.id) ? String(c.id) : '';
+    const phoneJid = (c && (c.phoneNumber || id)) || '';
+    const lidJid = (c && (c.lid || id)) || '';
+    const phone = /@s\.whatsapp\.net$/.test(phoneJid) || phoneJid.endsWith('@hosted')
+        ? phoneJid.split('@')[0]
+        : null;
+    const lid = /@lid$/.test(lidJid) || lidJid.endsWith('@hosted.lid')
+        ? lidJid.split('@')[0]
+        : null;
+    return { phone, lid };
 }
 
 function cleanContactsDB() {
@@ -133,6 +186,7 @@ function cleanContactsDB() {
     });
 
     if (updated) {
+        markIndexesDirty(); // mutó claves: los índices RAM se reconstruyen en la próxima búsqueda
         saveContactsDB(db);
     }
     return db;
@@ -166,12 +220,13 @@ function upsertContactMetadata(metadata) {
     if (lid && isJunkJid(lid)) return null;
     if (!phoneNumber && !lid) return null;
 
-    const hasAnyIdentity = phoneNumber || (savedName && savedName.trim()) || (pushName && pushName !== 'Desconocido' && pushName.trim()) || verifiedName || profilePicUrl;
+    const hasAnyIdentity = phoneNumber || lid || (savedName && savedName.trim()) || (pushName && pushName !== 'Desconocido' && pushName.trim()) || verifiedName || profilePicUrl;
     if (!hasAnyIdentity) return null;
 
-    const db = cleanContactsDB();
+    const db = getContactsDB();
 
-    // ⚡ Índice RAM: O(1) en vez de Object.keys().find()
+    // ⚡ Índice RAM: O(1) en vez de Object.keys().find() (y SIN el
+    // cleanContactsDB() por llamada: mantenimiento aparte, solo arranque)
     let existingKey = findExistingKey(phoneNumber, lid);
 
     let targetKey = phoneNumber || (existingKey && db[existingKey].phone ? db[existingKey].phone : lid);
@@ -181,6 +236,7 @@ function upsertContactMetadata(metadata) {
     if (existingKey && existingKey !== targetKey) {
         const oldData = db[existingKey];
         delete db[existingKey];
+        indexRemove(existingKey, oldData);
         db[targetKey] = oldData;
     }
 
@@ -221,6 +277,7 @@ function upsertContactMetadata(metadata) {
     record.totalMessages = (record.totalMessages || 0) + 1;
 
     db[targetKey] = record;
+    indexAdd(targetKey, record);
     saveContactsDB(db);
 
     return record;
@@ -232,8 +289,14 @@ function upsertContactMetadata(metadata) {
  */
 function bulkUpsertContactsMetadata(contactsList) {
     if (!Array.isArray(contactsList) || contactsList.length === 0) return 0;
-    
-    const db = cleanContactsDB();
+
+    // Sin cleanContactsDB() por lote (O(N) + merge LID O(N²) + guardado):
+    // la sync inicial entra en ráfagas de miles de contactos y ese costo
+    // repetido saturaba el event loop → el socket perdía pings y WhatsApp
+    // cortaba la conexión a mitad de la agenda. La limpieza se hace en el
+    // arranque y bajo demanda (cleanContactsDB()), los upserts mantienen
+    // los índices RAM de forma incremental (O(1)).
+    const db = getContactsDB();
     let count = 0;
     const now = new Date().toISOString();
 
@@ -244,7 +307,7 @@ function bulkUpsertContactsMetadata(contactsList) {
         if (lid && isJunkJid(lid)) return;
         if (!phoneNumber && !lid) return;
 
-        const hasAnyIdentity = phoneNumber || (savedName && savedName.trim()) || (pushName && pushName !== 'Desconocido' && pushName.trim()) || verifiedName || profilePicUrl;
+        const hasAnyIdentity = phoneNumber || lid || (savedName && savedName.trim()) || (pushName && pushName !== 'Desconocido' && pushName.trim()) || verifiedName || profilePicUrl;
         if (!hasAnyIdentity) return;
 
         // ⚡ Índice RAM: O(1) en vez de Object.keys().find()
@@ -257,6 +320,7 @@ function bulkUpsertContactsMetadata(contactsList) {
         if (existingKey && existingKey !== targetKey) {
             const oldData = db[existingKey];
             delete db[existingKey];
+            indexRemove(existingKey, oldData);
             db[targetKey] = oldData;
         }
 
@@ -293,6 +357,7 @@ function bulkUpsertContactsMetadata(contactsList) {
         record.lastSeen = now;
 
         db[targetKey] = record;
+        indexAdd(targetKey, record);
         count++;
     });
 
@@ -303,6 +368,7 @@ function bulkUpsertContactsMetadata(contactsList) {
 module.exports = {
     contactStore,
     isJunkJid,
+    contactIdentityFromRaw,
     findExistingKey,
     findKeyByDigits,
     cleanContactsDB,

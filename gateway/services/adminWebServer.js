@@ -11,6 +11,8 @@
 const http = require('http');
 const fs = require('fs');
 const path = require('path');
+const { execFile } = require('child_process');
+const QRCode = require('qrcode');
 const { handleAdminCommand } = require('../handlers/commandHandler');
 const { buildStatus } = require('./statusServer');
 const { getContactsDB } = require('./db');
@@ -321,6 +323,266 @@ function streamLogs(req, res, params) {
 }
 
 // -------------------------------------------------------------
+// F6-P4: CONEXIÓN Y PAIRING DESDE EL PANEL
+// El motor solo hace adminWeb?.setSock(sock) y reenvía el
+// connection.update de Baileys; el panel re-renderiza el QR y lo
+// difunde por SSE /api/qr, pide el código de enlace (pairing) y
+// ofrece reset de sesión (borrar auth_info_baileys + reiniciar).
+// -------------------------------------------------------------
+
+const AUTH_DIR_RESOLVER = () => process.env.SDK_AUTH_DIR || path.join(__dirname, '..', 'auth_info_baileys');
+
+/** @type {any|null} socket real de Baileys (patrón setSock de broadcastService) */
+let activeSock = null;
+/** @type {string|null} PNG data URL del último QR renderizado */
+let lastQrDataUrl = null;
+/** @type {Set<http.ServerResponse>} clientes SSE de /api/qr */
+const qrClients = new Set();
+// Ventana de QR: cada intento (arranque sin sesión, pairing manual) vale
+// 1 min. Mientras la ventana está abierta el panel muestra el QR y el
+// botón de pairing queda bloqueado; al expirar, se vuelve a "no
+// disponible" y solo un pairing nuevo (SIEMPRE manual) la reabre.
+const QR_TTL_MS = 60000;
+let qrExpiresAt = 0;
+let qrTtlMs = QR_TTL_MS;
+/** @type {NodeJS.Timeout|null} */
+let qrExpiryTimer = null;
+let qrWindowOpen = true; // socket nuevo/arranque: el QR puede aparecer solo
+
+/**
+ * Difunde el estado del QR a todos los clientes de /api/qr.
+ * @param {boolean} expired — true = ventana cerrada (QR expirado)
+ */
+function broadcastQr(expired) {
+    const payload = expired
+        ? { qr: null, expiresAt: null, expired: true }
+        : { qr: lastQrDataUrl, expiresAt: qrExpiresAt, expired: false };
+    const data = JSON.stringify(payload);
+    for (const client of qrClients) {
+        try { client.write(`data: ${data}\n\n`); } catch (e) { qrClients.delete(client); }
+    }
+}
+
+/** Abre (o renueva) la ventana de 1 min del QR; al expirar, cierra y avisa. */
+function openQrWindow() {
+    if (qrExpiryTimer) clearTimeout(qrExpiryTimer);
+    qrWindowOpen = true;
+    qrExpiresAt = Date.now() + qrTtlMs;
+    qrExpiryTimer = setTimeout(() => {
+        qrWindowOpen = false;
+        lastQrDataUrl = null;
+        qrExpiresAt = 0;
+        broadcastQr(true);
+    }, qrTtlMs);
+    if (qrExpiryTimer.unref) qrExpiryTimer.unref();
+}
+
+/**
+ * El motor entrega el socket activo (misma línea aditiva que el hook de
+ * montaje: adminWeb?.setSock(sock)). Un socket nuevo = QR nuevo.
+ * @param {any} sock
+ */
+function setSock(sock) {
+    activeSock = sock;
+    lastQrDataUrl = null;
+    qrWindowOpen = true;
+    qrExpiresAt = 0;
+    if (qrExpiryTimer) clearTimeout(qrExpiryTimer);
+    qrExpiryTimer = null;
+}
+
+/**
+ * Reenvío del connection.update de Baileys: captura el QR crudo, lo
+ * renderiza a PNG (data URL) y lo difunde a los clientes de /api/qr.
+ * El QR es solo un string: la "herramienta" (node-qrcode) dibuja donde
+ * sea; aquí se convierte en imagen para el navegador.
+ * Con la ventana cerrada los QRs regenerados de Baileys se IGNORAN:
+ * tras expirar, solo un pairing manual (POST /api/pairing) la reabre.
+ * @param {{qr?: string}} update
+ */
+async function handleConnectionUpdate(update) {
+    if (!update || typeof update.qr !== 'string') return;
+    if (!qrWindowOpen) return;
+    if (Date.now() >= qrExpiresAt) openQrWindow(); // primer QR de la ventana
+    try {
+        lastQrDataUrl = await QRCode.toDataURL(update.qr, { margin: 1, width: 280 });
+    } catch (e) {
+        logError.error(`🖥️ [ADMIN-WEB] Error renderizando QR: ${errMsg(e)}`);
+        lastQrDataUrl = null;
+    }
+    broadcastQr(false);
+}
+
+/**
+ * GET /api/qr — SSE: estado actual del QR (data URL PNG o null, con la
+ * ventana de expiración) y actualizaciones en vivo. Misma técnica de
+ * streaming que /api/logs.
+ * @param {http.IncomingMessage} req
+ * @param {http.ServerResponse} res
+ */
+function streamQr(req, res) {
+    res.writeHead(200, {
+        'Content-Type': 'text/event-stream; charset=utf-8',
+        'Cache-Control': 'no-cache',
+        Connection: 'keep-alive',
+        'X-Accel-Buffering': 'no'
+    });
+    res.write('retry: 3000\n\n');
+
+    const active = qrWindowOpen && lastQrDataUrl && Date.now() < qrExpiresAt;
+    const payload = active
+        ? { qr: lastQrDataUrl, expiresAt: qrExpiresAt, expired: false }
+        : { qr: null, expiresAt: null, expired: false };
+    try { res.write(`data: ${JSON.stringify(payload)}\n\n`); } catch (e) { /* cerrado */ }
+
+    qrClients.add(res);
+    const hb = setInterval(() => { if (!res.writableEnded) res.write(': ping\n\n'); }, 15000).unref();
+    req.on('close', () => {
+        qrClients.delete(res);
+        clearInterval(hb);
+    });
+}
+
+/**
+ * POST /api/pairing — pide el código de enlace de 8 dígitos a WhatsApp
+ * (pairing con número de teléfono) o abre la ventana del QR (sin número).
+ * Mientras haya un QR vigente NO permite otro: hay que esperar a que
+ * expire (1 min) y pedirlo de nuevo, siempre manual. Si el gateway no
+ * tiene socket activo (primera vez, o tras el anti-loop sin sesión), se
+ * LANZA el gateway: reinicia el proceso para que conecte y genere el
+ * QR/pairing. El front lo muestra como "lanzando gateway…".
+ * @param {string} phone
+ * @returns {Promise<{success: boolean, code?: string, message?: string, needsRestart?: boolean}>}
+ */
+async function requestPairing(phone) {
+    const clean = String(phone || '').replace(/[^0-9]/g, '');
+    if (clean.length > 0 && clean.length < 9) {
+        return { success: false, message: 'Número inválido: se espera el número completo con código de país (ej: 56912345678)' };
+    }
+    if (qrWindowOpen && Date.now() < qrExpiresAt) {
+        const s = Math.ceil((qrExpiresAt - Date.now()) / 1000);
+        return { success: false, message: `QR vigente: escanéalo (${s}s restantes) o espera a que expire para pedir otro.` };
+    }
+    // Socket cerrado (Baileys CLOSED=3, p.ej. tras el anti-loop sin sesión)
+    // cuenta como "sin socket": el QR no va a llegar solo, hay que relanzar.
+    const sockClosed = activeSock && activeSock.ws && activeSock.ws.readyState === 3;
+    if (!activeSock || sockClosed) {
+        log.warn('🖥️ [ADMIN-WEB] Pairing sin socket activo: lanzando gateway para regenerar QR/pairing…');
+        scheduleRestart();
+        return {
+            success: false,
+            needsRestart: true,
+            message: 'El gateway no está conectado (primera vez o sesión nueva). Lanzando gateway… el QR aparecerá aquí en unos segundos.'
+        };
+    }
+    if (clean.length >= 9) {
+        try {
+            const code = await activeSock.requestPairingCode(clean);
+            return { success: true, code: String(code) };
+        } catch (e) {
+            return { success: false, message: `No se pudo pedir el código de enlace: ${errMsg(e)}` };
+        }
+    }
+    // Sin teléfono: abrir la ventana del QR (si el socket ya lo emite,
+    // llega por SSE; si no, el usuario usa "Lanzar gateway").
+    openQrWindow();
+    return { success: true, message: 'QR generado — escanéalo antes de que expire (1 min). Si el QR no aparece en ~20s, usa "Lanzar gateway".' };
+}
+
+let resetInProgress = false;
+
+/**
+ * Solo tests: libera el flag de "reinicio en curso" (los tests comparten el
+ * módulo en el mismo proceso; en producción el proceso muere/reinicia antes).
+ */
+function resetInProgressForTests() {
+    resetInProgress = false;
+}
+
+/**
+ * Solo tests: acorta la ventana del QR para probar la expiración rápido.
+ * @param {number} ms
+ */
+function setQrTtlForTests(ms) {
+    qrTtlMs = ms;
+}
+
+/**
+ * Solo tests: limpia el estado del QR (ventana abierta, sin QR vigente).
+ * Los tests comparten el módulo en el mismo proceso; en producción el
+ * estado lo gobierna el flujo real de Baileys.
+ */
+function resetQrForTests() {
+    qrWindowOpen = true;
+    qrExpiresAt = 0;
+    lastQrDataUrl = null;
+    if (qrExpiryTimer) clearTimeout(qrExpiryTimer);
+    qrExpiryTimer = null;
+}
+
+/**
+ * Reinicia el proceso del gateway (para regenerar QR/pairing o tras reset):
+ * bajo systemd vía `systemctl restart` (exit como fallback → Restart=always);
+ * en manual/dev solo exit(0) y el admin relanza (`npm start`). Da margen de
+ * 500ms al cliente HTTP para recibir la respuesta.
+ * (SDK_RESET_NO_EXIT=1: solo tests — el proceso del runner no muere)
+ */
+function scheduleRestart() {
+    setTimeout(() => {
+        if (process.env.SDK_RESET_NO_EXIT === '1') return;
+        if (process.env.SYSTEMD_EXEC_PID) {
+            execFile('systemctl', ['restart', process.env.SDK_GATEWAY_SERVICE || 'sdk-bot-gateway'], (e) => {
+                if (e) {
+                    logError.error(`🖥️ [ADMIN-WEB] systemctl restart falló: ${errMsg(e)} — saliendo igualmente`);
+                    process.exit(0);
+                }
+            });
+        } else {
+            process.exit(0);
+        }
+    }, 500);
+}
+
+/**
+ * POST /api/reset — borra la sesión (auth_info_baileys) para forzar un
+ * QR nuevo y reinicia el proceso. Requiere confirm: true (el front pide
+ * confirmación).
+ */
+async function performReset() {
+    if (resetInProgress) return { success: false, message: 'Reset ya en curso…' };
+    resetInProgress = true;
+
+    let deleted = false;
+    try {
+        const authDir = AUTH_DIR_RESOLVER();
+        if (fs.existsSync(authDir)) {
+            fs.rmSync(authDir, { recursive: true, force: true });
+            deleted = true;
+        }
+    } catch (e) {
+        return { success: false, message: `No se pudo borrar la sesión: ${errMsg(e)}` };
+    }
+    log.warn(`🖥️ [ADMIN-WEB] Reset de sesión: auth_info_baileys ${deleted ? 'eliminado' : 'no existía'}; reiniciando gateway…`);
+    scheduleRestart();
+
+    return { success: true, message: `Sesión ${deleted ? 'eliminada' : 'ya borrada'}; reiniciando gateway… La página se reconectará sola.` };
+}
+
+/**
+ * POST /api/restart — LANZA/REINICIA el gateway SIN borrar la sesión.
+ * Sirve para la primera vez (gateway apagado o sin socket tras el
+ * anti-loop sin sesión): reinicia el proceso y conecta → genera QR o
+ * reusa la sesión. Requiere confirm: true.
+ */
+async function performRestart() {
+    if (resetInProgress) return { success: false, message: 'Reinicio ya en curso…' };
+    resetInProgress = true;
+    log.warn('🖥️ [ADMIN-WEB] Lanzando/reiniciando gateway (sin borrar sesión)…');
+    scheduleRestart();
+    return { success: true, message: 'Lanzando gateway… La página se reconectará sola (~10s).' };
+}
+
+// -------------------------------------------------------------
 // SERVICIOS HTTP
 // -------------------------------------------------------------
 
@@ -338,6 +600,73 @@ function routeApi(req, res, pathname, params) {
 
     if (pathname === '/api/logs' && req.method === 'GET') {
         streamLogs(req, res, params);
+        return;
+    }
+
+    if (pathname === '/api/qr' && req.method === 'GET') {
+        streamQr(req, res);
+        return;
+    }
+
+    if (pathname === '/api/pairing' && req.method === 'POST') {
+        let body = '';
+        req.on('data', (chunk) => {
+            body += chunk;
+            if (body.length > 10_000) req.destroy();
+        });
+        req.on('end', async () => {
+            try {
+                const parsed = JSON.parse(body || '{}');
+                const result = await requestPairing(String(parsed.phone || ''));
+                sendJson(res, result.success ? 200 : 400, result);
+            } catch (e) {
+                sendJson(res, 500, { success: false, message: `Error interno: ${errMsg(e)}` });
+            }
+        });
+        return;
+    }
+
+    if (pathname === '/api/reset' && req.method === 'POST') {
+        let body = '';
+        req.on('data', (chunk) => {
+            body += chunk;
+            if (body.length > 10_000) req.destroy();
+        });
+        req.on('end', async () => {
+            try {
+                const parsed = JSON.parse(body || '{}');
+                if (parsed.confirm !== true) {
+                    sendJson(res, 400, { success: false, message: 'Se requiere confirm: true (el front pide confirmación antes de llamar)' });
+                    return;
+                }
+                const result = await performReset();
+                sendJson(res, result.success ? 200 : 400, result);
+            } catch (e) {
+                sendJson(res, 500, { success: false, message: `Error interno: ${errMsg(e)}` });
+            }
+        });
+        return;
+    }
+
+    if (pathname === '/api/restart' && req.method === 'POST') {
+        let body = '';
+        req.on('data', (chunk) => {
+            body += chunk;
+            if (body.length > 10_000) req.destroy();
+        });
+        req.on('end', async () => {
+            try {
+                const parsed = JSON.parse(body || '{}');
+                if (parsed.confirm !== true) {
+                    sendJson(res, 400, { success: false, message: 'Se requiere confirm: true' });
+                    return;
+                }
+                const result = await performRestart();
+                sendJson(res, result.success ? 200 : 400, result);
+            } catch (e) {
+                sendJson(res, 500, { success: false, message: `Error interno: ${errMsg(e)}` });
+            }
+        });
         return;
     }
 
@@ -438,4 +767,4 @@ function startAdminWebServer(opts = {}) {
     return server;
 }
 
-module.exports = { startAdminWebServer, runAdminCommand, makeVirtualSock };
+module.exports = { startAdminWebServer, runAdminCommand, makeVirtualSock, setSock, handleConnectionUpdate, resetInProgressForTests, setQrTtlForTests, resetQrForTests };

@@ -2,7 +2,7 @@
  * 🔍 CATEGORÍA 3: LIBRETA Y AGENDA DE CONTACTOS (/buscar /nombre /contactos /sincronizar /exportar)
  */
 const { getContactsDB, saveContactsDB } = require('../../services/db');
-const { contactStore, isJunkJid, cleanContactsDB, upsertContactMetadata, bulkUpsertContactsMetadata, findKeyByDigits } = require('../../services/contactsRepository');
+const { contactStore, isJunkJid, cleanContactsDB, upsertContactMetadata, bulkUpsertContactsMetadata, findKeyByDigits, contactIdentityFromRaw } = require('../../services/contactsRepository');
 const { getCountryFromPhone } = require('../../services/metadataService');
 const { parsePhoneOrLid, isValidTargetId, usageOf, syntaxError, sanitizeMarkdown } = require('../commandHelpers');
 
@@ -109,9 +109,8 @@ function runSincronizar() {
 
     contactsList.forEach(c => {
         if (c && c.id && !isJunkJid(c.id)) {
-            const phone = c.id.endsWith('@s.whatsapp.net') ? c.id.split('@')[0] : null;
-            const lid = c.lid ? c.lid.split('@')[0] : (c.id.endsWith('@lid') ? c.id.split('@')[0] : null);
-            
+            const { phone, lid } = contactIdentityFromRaw(c);
+
             batch.push({
                 phoneNumber: phone,
                 lid: lid,

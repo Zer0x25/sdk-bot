@@ -1,10 +1,15 @@
 const { test, before, after } = require('node:test');
 const assert = require('node:assert');
-const { startAdminWebServer, runAdminCommand } = require('../services/adminWebServer');
+// OJO: withTempDbPaths() DEBE ejecutarse ANTES de requerir módulos que
+// cargan config.js (lee SDK_CONTACTS_DB_PATH al cargar). Antes esto estaba
+// después de los requires y saveContactsDB() escribía el fixture en la DB
+// real de producción (reincidencia del bug F3-P1). Ver adminLogs.test.js.
 const { withTempDbPaths } = require('./helpers/tmpPaths');
-const { saveContactsDB } = require('../services/db');
 
 const t = withTempDbPaths();
+
+const { startAdminWebServer, runAdminCommand } = require('../services/adminWebServer');
+const { saveContactsDB } = require('../services/db');
 
 // Libreta de prueba para los tests de agenda (F6-P2)
 const agenda = {

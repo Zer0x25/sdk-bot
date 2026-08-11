@@ -205,10 +205,29 @@ function decideMessageFlow({ textMessage, metadata, contactRecord, isSelf, isFro
     return { type: 'respond', text: textMessage };
 }
 
+/**
+ * 🚦 ¿RECONECTAR TRAS UN CIERRE DE CONEXIÓN? (puro, F6-P4)
+ * Reglas de reconexión automática tras `connection === 'close'`:
+ *   - loggedOut (sesión revocada/cerrada en el teléfono): NO reconectar,
+ *     el admin debe escanear un QR nuevo a propósito.
+ *   - Sin sesión guardada (creds.json no existe): NO reconectar en loop —
+ *     WhatsApp espera un QR/pairing y el loop solo martillea al servidor
+ *     (riesgo de baneo). El QR nuevo lo dispara el admin (panel o reset).
+ *   - Con sesión válida: reconectar con backoff (caso normal).
+ * @param {{hasSession: boolean, loggedOut: boolean}} ctx
+ * @returns {{reconnect: boolean, reason: string}}
+ */
+function decideReconnect({ hasSession, loggedOut }) {
+    if (loggedOut) return { reconnect: false, reason: 'logged_out' };
+    if (!hasSession) return { reconnect: false, reason: 'sin_sesion' };
+    return { reconnect: true, reason: 'normal' };
+}
+
 module.exports = {
     getAdaptiveDebounceMs,
     checkHumanRequest,
     getCandidateIdsForPresence,
     extractTextMessage,
-    decideMessageFlow
+    decideMessageFlow,
+    decideReconnect
 };

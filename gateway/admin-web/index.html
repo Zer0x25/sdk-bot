@@ -70,12 +70,55 @@
   .lv-info { color: #86efac; } .lv-warn { color: #facc15; } .lv-error { color: #f87171; }
   .lv-debug { color: #94a3b8; }
   .log-msg { color: #d5dbe6; }
+  .con {
+    display: flex; gap: 16px; align-items: flex-start; flex-wrap: wrap;
+    background: #171a21; border: 1px solid #262b36; border-radius: 8px; padding: 12px;
+  }
+  #qrbox { background: #fff; border-radius: 8px; padding: 8px; }
+  #qrbox img { display: block; width: 220px; height: 220px; image-rendering: pixelated; }
+  #qrbox .empty { width: 220px; height: 220px; display: flex; flex-direction: column; align-items: center; justify-content: center;
+    gap: 10px; color: #5b6472; text-align: center; font-size: 12px; padding: 8px; }
+  /* Placeholder "QR no disponible": patrón tipo QR en gris + símbolo de prohibido */
+  #qrbox .noqr { width: 204px; height: 204px; display: flex; align-items: center; justify-content: center;
+    border-radius: 6px;
+    background: conic-gradient(#e5e7eb 25%, #f9fafb 0 50%, #e5e7eb 0 75%, #f9fafb 0) 0 0/16px 16px; }
+  .con .side { flex: 1; min-width: 260px; }
+  .con .side .row { display: flex; align-items: center; gap: 8px; margin: 6px 0; }
+  .con input[type="tel"] { background: #0f1115; border: 1px solid #262b36; color: #e6e6e6;
+    border-radius: 8px; padding: 8px; flex: 1; min-width: 0; }
+  .con .btn { background: #2563eb; border: none; color: #fff; border-radius: 8px; padding: 8px 14px;
+    font-weight: 600; cursor: pointer; white-space: nowrap; }
+  .con .btn.danger { background: #7f1d1d; color: #fca5a5; }
+  .con .btn:disabled { opacity: .5; cursor: default; }
+  #pairmsg, #resetmsg { font-size: 12px; color: #aab3c5; margin: 6px 0 0; }
+  #pairmsg.ok, #resetmsg.ok { color: #4ade80; }
+  #pairmsg.err, #resetmsg.err { color: #f87171; }
 </style>
 </head>
 <body>
 <h1>🖥️ SDK-Bot · Panel de administración</h1>
 
 <div class="grid" id="cards"></div>
+
+<section>
+  <h2>📲 Conexión y pairing</h2>
+  <div class="con">
+    <div id="qrbox"><div class="empty">Esperando QR…</div></div>
+    <div class="side">
+      <div class="row"><span id="qrst"></span></div>
+      <div class="row">
+        <input type="tel" id="pairphone" placeholder="Número con código de país (ej: 56912345678) — opcional" autocomplete="off">
+        <button class="btn" id="pairbtn">📲 Iniciar pairing</button>
+      </div>
+      <div id="pairmsg">El QR generado vale 1 minuto: escanéalo con WhatsApp > Dispositivos vinculados > Vincular dispositivo antes de que expire. Si expira, tendrás que iniciar pairing de nuevo (siempre manual). Opcional: escribe un número para recibir un código de enlace de 8 dígitos en vez del QR. Si el gateway está apagado, se lanza solo con el primer intento.</div>
+      <div class="row" style="margin-top:12px">
+        <button class="btn" id="launchbtn">🚀 Lanzar gateway (primera vez)</button>
+        <button class="btn danger" id="resetbtn">🔄 Resetear sesión (QR nuevo)</button>
+      </div>
+      <div id="resetmsg">Lanzar: arranca el gateway si está apagado o sin conexión (genera QR/pairing). Resetear: borra la sesión guardada y reinicia el gateway.</div>
+    </div>
+  </div>
+</section>
 
 <section>
   <h2>📇 Agenda de contactos</h2>
@@ -231,6 +274,150 @@ async function runCmd() {
 
 run.addEventListener('click', runCmd);
 cmd.addEventListener('keydown', e => { if (e.key === 'Enter') runCmd(); });
+
+// ─── Conexión y pairing (F6-P4) ───
+// QR con ventana de 1 min: sin QR vigente → placeholder "no disponible"
+// (símbolo de prohibido); con QR → imagen + countdown regresivo y botón de
+// pairing bloqueado hasta que expire (siempre manual: solo se reabre con
+// un pairing nuevo).
+const qrbox = $('#qrbox'), qrst = $('#qrst');
+const pairphone = $('#pairphone'), pairbtn = $('#pairbtn'), pairmsg = $('#pairmsg');
+const launchbtn = $('#launchbtn'), resetbtn = $('#resetbtn'), resetmsg = $('#resetmsg');
+
+const QR_BADGE = '<div class="noqr"><svg viewBox="0 0 100 100" width="84" height="84" aria-hidden="true">' +
+  '<circle cx="50" cy="50" r="43" fill="none" stroke="#dc2626" stroke-width="9"/>' +
+  '<line x1="17" y1="17" x2="83" y2="83" stroke="#dc2626" stroke-width="9" stroke-linecap="round"/>' +
+  '</svg></div>';
+
+let qrExpiresAt = 0;
+let qrCountdownTimer = null;
+let pairingInProgress = false;
+
+function stopQrCountdown() {
+  if (qrCountdownTimer) { clearInterval(qrCountdownTimer); qrCountdownTimer = null; }
+}
+
+function renderQrState(d) {
+  if (d && d.qr) {
+    stopQrCountdown();
+    qrExpiresAt = d.expiresAt || 0;
+    qrbox.innerHTML = '<img src="' + d.qr + '" alt="Código QR de WhatsApp">';
+    qrst.className = 'ok';
+    qrst.textContent = 'Escanea el QR con WhatsApp > Dispositivos vinculados > Vincular dispositivo.';
+    startQrCountdown();
+  } else {
+    stopQrCountdown();
+    const exp = !!(d && d.expired);
+    qrbox.innerHTML = '<div class="empty">' + QR_BADGE + '<span>' + (exp ? 'QR expirado' : 'QR no disponible') + '</span></div>';
+    qrst.className = exp ? 'warn' : '';
+    qrst.textContent = exp ? 'El QR expiró (1 min sin escanear). Puedes iniciar otro pairing.' : 'Inicia pairing para generar un QR (válido 1 min).';
+    pairbtn.disabled = pairingInProgress;
+    pairbtn.textContent = '📲 Iniciar pairing';
+  }
+}
+
+// Countdown regresivo: bloquea el botón de pairing mientras el QR es válido
+function startQrCountdown() {
+  stopQrCountdown();
+  qrCountdownTimer = setInterval(() => {
+    const remain = qrExpiresAt - Date.now();
+    if (remain <= 0) {
+      renderQrState({ qr: null, expired: true });
+      return;
+    }
+    const s = Math.ceil(remain / 1000);
+    pairbtn.disabled = true;
+    pairbtn.textContent = '⏳ QR vigente: ' + s + 's';
+  }, 500);
+}
+
+function startQrFeed() {
+  const es = new EventSource('/api/qr');
+  es.onmessage = e => {
+    try { renderQrState(JSON.parse(e.data)); } catch (err) { /* evento inválido */ }
+  };
+  es.onopen = () => { pairingInProgress = false; }; // reconexión = proceso nuevo
+  es.onerror = () => { /* el EventSource reintenta solo */ };
+}
+startQrFeed();
+
+// Lanza (reinicia) el gateway: arranca si estaba apagado/sin conexión
+async function launchGateway() {
+  resetmsg.className = '';
+  resetmsg.textContent = 'Lanzando gateway… la página se reconectará sola.';
+  launchbtn.disabled = true;
+  try {
+    const r = await fetch('/api/restart', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ confirm: true }) });
+    const d = await r.json();
+    resetmsg.className = d.success ? 'ok' : 'err';
+    resetmsg.textContent = (d.success ? '✅ ' : '⚠️ ') + (d.message || '');
+  } catch (e) {
+    resetmsg.className = 'err';
+    resetmsg.textContent = '⚠️ Error: ' + e.message;
+  } finally {
+    launchbtn.disabled = false;
+  }
+}
+launchbtn.addEventListener('click', launchGateway);
+
+pairbtn.addEventListener('click', async () => {
+  const phone = pairphone.value.trim();
+  if (pairingInProgress) return;
+  pairingInProgress = true;
+  pairbtn.disabled = true;
+  pairbtn.textContent = '⏳ Iniciando…';
+  pairmsg.className = '';
+  pairmsg.textContent = 'Iniciando pairing…';
+  try {
+    const r = await fetch('/api/pairing', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ phone })
+    });
+    const d = await r.json();
+    if (d.success) {
+      pairmsg.className = 'ok';
+      pairmsg.textContent = d.code
+        ? '✅ Código de enlace: ' + d.code + ' — ingrésalo en WhatsApp > Dispositivos vinculados > Vincular con número de teléfono.'
+        : '✅ ' + (d.message || 'QR generado — escanéalo antes de que expire.');
+    } else if (d.needsRestart) {
+      // El proceso se reinicia: pairingInProgress se mantiene hasta que el
+      // SSE reconecte (onopen lo libera); el QR llega con su countdown.
+      pairmsg.className = 'ok';
+      pairmsg.textContent = '🚀 ' + (d.message || 'Lanzando gateway… el QR aparecerá aquí en unos segundos.');
+    } else {
+      pairmsg.className = 'err';
+      pairmsg.textContent = '⚠️ ' + (d.message || 'No se pudo iniciar el pairing');
+      pairingInProgress = false;
+      if (!(qrExpiresAt > Date.now())) {
+        pairbtn.disabled = false;
+        pairbtn.textContent = '📲 Iniciar pairing';
+      }
+    }
+  } catch (e) {
+    pairmsg.className = 'err';
+    pairmsg.textContent = '⚠️ Error: ' + e.message;
+    pairingInProgress = false;
+    pairbtn.disabled = false;
+    pairbtn.textContent = '📲 Iniciar pairing';
+  }
+});
+
+resetbtn.addEventListener('click', async () => {
+  if (!confirm('⚠️ ¿Borrar la sesión guardada y reiniciar el gateway?\n\nSe desvinculará el número actual y habrá que escanear un QR nuevo.')) return;
+  resetmsg.className = '';
+  resetmsg.textContent = 'Borrando sesión y reiniciando…';
+  resetbtn.disabled = true;
+  try {
+    const r = await fetch('/api/reset', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ confirm: true })
+    });
+    const d = await r.json();
+    resetmsg.className = d.success ? 'ok' : 'err';
+    resetmsg.textContent = (d.success ? '✅ ' : '⚠️ ') + (d.message || '');
+  } catch (e) {
+    resetmsg.className = 'err';
+    resetmsg.textContent = '⚠️ Error: ' + e.message;
+  }
+});
 
 // ─── Agenda de contactos (F6-P2) ───
 const cq = $('#cq'), ce = $('#ce'), ctotal = $('#ctotal'), ctb = $('#contacts tbody');

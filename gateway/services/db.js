@@ -127,8 +127,14 @@ function saveSettingsDB(settings) {
 
 /** @param {ContactsDB} db */
 function saveContactsDB(db) {
+    // Los listeners (índices RAM) solo necesitan enterarse si la caché se
+    // REEMPLAZA (objeto nuevo). Las mutaciones del mismo objeto las mantiene
+    // el propio contactsRepository de forma incremental; notificar en cada
+    // guardado hacía reconstruir índices O(N) por mensaje/lote (saturaba el
+    // event loop durante la sync inicial de la agenda).
+    const replaced = db !== cachedContactsDB;
     cachedContactsDB = db;
-    notifyContactsCache();
+    if (replaced) notifyContactsCache();
     if (saveContactsTimer) clearTimeout(saveContactsTimer);
     saveContactsTimer = setTimeout(async () => {
         try {

@@ -4,10 +4,12 @@ const qrcode = require('qrcode-terminal');
 const fs = require('fs');
 const path = require('path');
 const { state } = require('./config');
-const { bulkUpsertContactsMetadata, isJunkJid, cleanContactsDB, contactStore } = require('./services/contactsRepository');
+const { bulkUpsertContactsMetadata, isJunkJid, cleanContactsDB, contactStore, contactIdentityFromRaw } = require('./services/contactsRepository');
+const contactSyncQueue = require('./services/contactSyncQueue');
 const { flushToDisk } = require('./services/db');
 const { getCountryFromPhone } = require('./services/metadataService');
 const { handleIncomingMessage, handlePresenceUpdate } = require('./handlers/messageHandler');
+const { decideReconnect } = require('./services/pipeline');
 const messageQueue = require('./services/messageQueue');
 const broadcastService = require('./services/broadcastService');
 const { startStatusServer, runtime } = require('./services/statusServer');
@@ -95,12 +97,24 @@ let currentSocket = null;          // Socket activo (para cerrar el anterior ant
 let reconnectAttempt = 0;          // Intento actual de reconexión (reset en 'open')
 let reconnectTimer = null;         // Timer de backoff pendiente
 
+// 🖥️ F6-P4: referencia al panel web opcional (null si no está montado).
+// El motor NO depende de él: solo usa `?.` para avisarle del socket y del QR.
+let adminWeb = null;
+
 // ⚠️ Backoff exponencial: 2s → 5s → 15s → 60s (tope) para no martillear a WhatsApp
 const RECONNECT_BACKOFF_MS = [2000, 5000, 15000, 60000];
 
 function getReconnectDelay() {
     const idx = Math.min(reconnectAttempt, RECONNECT_BACKOFF_MS.length - 1);
     return RECONNECT_BACKOFF_MS[idx];
+}
+
+// ¿Hay una sesión guardada en disco? Sin creds.json, WhatsApp espera un QR
+// nuevo y NO hay nada que reconectar: un loop de reconexión solo martillea
+// a WhatsApp (riesgo de baneo). En ese estado, esperar acción del admin
+// (escanear QR, pairing o reset desde el panel/terminal).
+function hasSavedSession() {
+    return fs.existsSync(path.join(__dirname, 'auth_info_baileys', 'creds.json'));
 }
 
 function scheduleReconnect() {
@@ -134,43 +148,67 @@ async function connectToWhatsApp () {
     currentSocket = sock;
     messageQueue.setSock(sock);
     broadcastService.setSock(sock);
+    adminWeb?.setSock(sock); // F6-P4: el panel se entera del socket nuevo (QR fresco)
 
-    // Capturar eventos de sincronización de contactos de WhatsApp (Agenda del Teléfono)
-    const handleContactSync = contacts => {
-        if (!Array.isArray(contacts)) return;
+    // Capturar eventos de sincronización de contactos de WhatsApp (Agenda del Teléfono).
+    // La sync completa ocurre SOLO al vincular el dispositivo por primera vez
+    // (no se puede repetir después): si se corta a mitad, la agenda queda
+    // parcial. Por eso el procesamiento va a una COLA POR CHUNKS que cede el
+    // event loop entre lote y lote (300 contactos por tick): procesar miles
+    // de contactos en un solo tick saturaba el proceso, el socket no
+    // respondía los pings y WhatsApp cortaba la conexión.
+    let agendaProcessed = 0; // total de contactos procesados por esta conexión
+
+    contactSyncQueue.setProcessor(chunk => {
         const batch = [];
 
-        contacts.forEach(c => {
-            if (c && c.id && !isJunkJid(c.id)) {
-                // Guardar en el almacén de sesión local
-                contactStore.set(c.id, c);
+        chunk.forEach(c => {
+            if (!c || !c.id) return;
+            // Guardar en el almacén de sesión local
+            contactStore.set(c.id, c);
 
-                const phone = c.id.endsWith('@s.whatsapp.net') ? c.id.split('@')[0] : null;
-                const lid = c.lid ? c.lid.split('@')[0] : (c.id.endsWith('@lid') ? c.id.split('@')[0] : null);
-                
-                batch.push({
-                    phoneNumber: phone,
-                    lid: lid,
-                    savedName: c.name || null,
-                    pushName: c.notify || c.pushName || null,
-                    verifiedName: c.verifiedName || null,
-                    isContact: true,
-                    country: getCountryFromPhone(phone)
-                });
-            }
+            const { phone, lid } = contactIdentityFromRaw(c);
+
+            batch.push({
+                phoneNumber: phone,
+                lid: lid,
+                savedName: c.name || null,
+                pushName: c.notify || c.pushName || null,
+                verifiedName: c.verifiedName || null,
+                isContact: true,
+                country: getCountryFromPhone(phone)
+            });
         });
 
         if (batch.length > 0) {
-            bulkUpsertContactsMetadata(batch);
+            const accepted = bulkUpsertContactsMetadata(batch);
+            agendaProcessed += batch.length;
+            log.info(`✅ Cola de agenda: ${batch.length} procesados (${accepted} guardados)`);
         }
+        if (contactSyncQueue.pendingCount() === 0) {
+            log.info(`✅ Cola de agenda drenada: ${agendaProcessed} contactos procesados en esta conexión`);
+        }
+    });
+
+    const handleContactSync = (contacts, source) => {
+        if (!Array.isArray(contacts) || contacts.length === 0) return;
+        log.info(`📇 [${source}] ${contacts.length} contactos encolados`);
+        contactSyncQueue.push(contacts.filter(c => c && c.id && !isJunkJid(c.id)));
     };
 
-    sock.ev.on('contacts.upsert', handleContactSync);
-    sock.ev.on('contacts.update', handleContactSync);
-    
+    sock.ev.on('contacts.upsert', c => handleContactSync(c, 'contacts.upsert'));
+    sock.ev.on('contacts.update', c => handleContactSync(c, 'contacts.update'));
+
     // Capturar sincronización de historial completo inicial de WhatsApp Web
-    sock.ev.on('messaging-history.set', ({ contacts }) => {
-        if (contacts) handleContactSync(contacts);
+    sock.ev.on('messaging-history.set', ({ contacts, chats, messages, progress, syncType }) => {
+        if (contacts) handleContactSync(contacts, 'history');
+        log.info(`📜 History sync: type=${syncType} progreso=${progress}% chats=${chats?.length ?? 0} contactos=${contacts?.length ?? 0} msgs=${messages?.length ?? 0}`);
+    });
+
+    // Progreso de la sync de historial (INITIAL_BOOTSTRAP / RECENT): si al
+    // vincular la agenda se corta, este log dice en qué fase quedó.
+    sock.ev.on('messaging-history.status', ({ syncType, status }) => {
+        log.info(`🔄 Sync de historial: ${syncType} → ${status}`);
     });
 
     // Capturar eventos de presencia (detección de escritura "composing" para reiniciar el timer de inactividad de 8s)
@@ -181,6 +219,8 @@ async function connectToWhatsApp () {
     sock.ev.on('connection.update', (update) => {
         // Ignorar eventos de sockets reemplazados o cerrados por una reconexión nueva
         if (currentSocket !== sock) return;
+
+        adminWeb?.handleConnectionUpdate(update); // F6-P4: el panel captura el QR (si lo hay)
 
         const { connection, lastDisconnect, qr } = update;
         
@@ -193,12 +233,17 @@ async function connectToWhatsApp () {
             currentSocket = null;
             runtime.connection = 'close';
             runtime.lastDisconnectReason = lastDisconnect.error?.message || null;
-            const shouldReconnect = (lastDisconnect.error)?.output?.statusCode !== DisconnectReason.loggedOut;
-            log.warn('Conexión cerrada. Motivo:', lastDisconnect.error?.message, '| Reconectando:', shouldReconnect);
-            if (shouldReconnect) {
+            const loggedOut = (lastDisconnect.error)?.output?.statusCode === DisconnectReason.loggedOut;
+            const { reconnect, reason } = decideReconnect({ hasSession: hasSavedSession(), loggedOut });
+            log.warn('Conexión cerrada. Motivo:', lastDisconnect.error?.message, '| Reconectando:', reconnect);
+            if (reconnect) {
                 runtime.connection = 'reconnecting';
                 runtime.reconnectAttempt = reconnectAttempt;
                 scheduleReconnect();
+            } else if (reason === 'sin_sesion') {
+                // Sin sesión: nada que reconectar. El QR/pairing lo resuelve
+                // el admin (terminal o panel web); no reintentar en loop.
+                log.warn('ℹ️ Sin sesión guardada: no se reintenta reconectar automáticamente. Escanea el QR o usa el panel web (pairing/reset) para obtener un QR nuevo.');
             }
         } else if (connection === 'open') {
             runtime.connection = 'open';
@@ -234,8 +279,8 @@ startStatusServer();
 // 🖥️ F6-P1: panel de administración web OPCIONAL — solo con SDK_ADMIN_WEB_ENABLED=1.
 // Módulo consumidor: no altera el motor (sin el env, el bot es idéntico).
 if (process.env.SDK_ADMIN_WEB_ENABLED === '1') {
-    const { startAdminWebServer } = require('./services/adminWebServer');
-    startAdminWebServer();
+    adminWeb = require('./services/adminWebServer');
+    adminWeb.startAdminWebServer();
 }
 
 // 📥 F4-P4: red de seguridad — si el brain vuelve sin una llamada IA exitosa que
