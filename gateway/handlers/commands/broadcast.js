@@ -3,21 +3,34 @@
  * (/broadcast /programar /broadcast cancelar /broadcast estado)
  */
 const {
-    enqueueBroadcast,
     cancelPending,
     buildStatusText,
     getEligibleContacts,
     parseScheduleTime,
     requestConfirmation,
     hasPendingConfirmation,
+    isEnabled,
+    setEnabled,
     DAILY_LIMIT
 } = require('../../services/broadcastService');
 
 function runBroadcast({ queryParam }) {
     if (!queryParam) {
         return `⚠️ *Uso:* \`/broadcast <texto>\` — envía un mensaje a todos los contactos de la agenda (excepto ignorados/handoff).\n` +
-            `🔒 Límite anti-ban: ${DAILY_LIMIT} mensaje(s)/día por contacto.\n\n` +
-            `Ejemplos:\n• \`/broadcast Hola, ¿cómo estás?\`\n• \`/programar 20:00 Recordatorio de mañana\`\n• \`/broadcast cancelar\` — cancela lo pendiente\n• \`/broadcast estado\` — ver pendientes y envíos de hoy`;
+            `🔒 Límite anti-ban: ${DAILY_LIMIT} mensaje(s)/día por contacto.\n` +
+            `🔴 *Estado actual:* ${isEnabled() ? '✅ ACTIVADO' : 'DESACTIVADO'} — activa con \`/broadcast on\`.\n\n` +
+            `Ejemplos:\n• \`/broadcast on\` — activar broadcasts\n• \`/broadcast Hola, ¿cómo estás?\`\n• \`/programar 20:00 Recordatorio de mañana\`\n• \`/broadcast cancelar\` — cancela lo pendiente\n• \`/broadcast estado\` — ver pendientes y envíos de hoy`;
+    }
+
+    if (queryParam === 'on' || queryParam === 'activar' || queryParam === 'activado') {
+        setEnabled(true);
+        return '✅ *Broadcasts ACTIVADOS.* Puedes enviar con `/broadcast <texto>` o `/programar <HH:MM> <texto>`.';
+    }
+
+    if (queryParam === 'off' || queryParam === 'apagar' || queryParam === 'desactivar' || queryParam === 'desactivado') {
+        const cancelled = cancelPending();
+        setEnabled(false);
+        return `🔴 *Broadcasts DESACTIVADOS.* ${cancelled > 0 ? `${cancelled} broadcast(s) pendiente(s) cancelado(s).` : 'No había broadcasts pendientes.'}`;
     }
 
     if (queryParam === 'cancelar' || queryParam === 'cancel' || queryParam === 'cancelar todos') {
@@ -29,6 +42,10 @@ function runBroadcast({ queryParam }) {
 
     if (queryParam === 'estado' || queryParam === 'status' || queryParam === 'info') {
         return buildStatusText();
+    }
+
+    if (!isEnabled()) {
+        return '🔴 *Broadcasts desactivados.* Actívalos primero con `/broadcast on`.';
     }
 
     if (hasPendingConfirmation()) {
@@ -45,6 +62,10 @@ function runBroadcast({ queryParam }) {
 }
 
 function runProgramar({ queryParam }) {
+    if (!isEnabled()) {
+        return '🔴 *Broadcasts desactivados.* Actívalos primero con `/broadcast on`.';
+    }
+
     const match = /^(\d{1,2}:\d{2})\s+(.+)$/s.exec(queryParam);
     if (!match) {
         return `⚠️ *Uso:* \`/programar <HH:MM> <texto>\` — programa un broadcast para una hora.\n\n` +

@@ -47,6 +47,7 @@ const CONFIRMATION_TTL_MS = 60 * 1000; // 1 minuto para confirmar con "si"
  * @typedef {Object} BroadcastDB
  * @property {BroadcastEntry[]} broadcasts
  * @property {Object<string, {date: string, count: number}>} dailySends
+ * @property {boolean} [enabled]   // F4-P6: broadcasts apagados por defecto
  */
 
 let db = /** @type {BroadcastDB} */ ({ broadcasts: [], dailySends: {} });
@@ -84,6 +85,12 @@ function load() {
     } catch (e) {
         logError.error('📢 [BROADCAST] Error al leer broadcast_db.json: ' + errMsg(e));
     }
+    // 🔴 F4-P6: apagado por defecto. El valor persistido manda; si no existe,
+    // el admin lo enciende con /broadcast on o el deploy con SDK_BROADCAST_ENABLED=1.
+    if (db.enabled === undefined) {
+        db.enabled = process.env.SDK_BROADCAST_ENABLED === '1';
+    }
+    if (!db.enabled) log.warn('📢 [BROADCAST] Desactivado por defecto. Actívalo con `/broadcast on` (o SDK_BROADCAST_ENABLED=1).');
 }
 load();
 
@@ -173,6 +180,26 @@ function parseScheduleTime(input, now = new Date()) {
 // -------------------------------------------------------------
 // API para comandos
 // -------------------------------------------------------------
+/** @returns {boolean} */
+function isEnabled() {
+    return db.enabled === true;
+}
+
+/**
+ * Enciende/apaga los broadcasts. Al apagar se cancelan los pendientes/en curso.
+ * @param {boolean} on
+ */
+function setEnabled(on) {
+    db.enabled = on;
+    if (!on) {
+        for (const b of db.broadcasts) {
+            if (b.status === 'pending' || b.status === 'sending') b.status = 'cancelled';
+        }
+    }
+    persist();
+    log.warn(`📢 [BROADCAST] ${on ? 'Activado' : 'Desactivado'} por el admin.`);
+}
+
 /** @returns {BroadcastDB['dailySends']} */
 function getDailySends() {
     return db.dailySends;
@@ -185,11 +212,13 @@ function getBroadcasts() {
 
 /**
  * Encola un broadcast (inmediato si scheduledAt es null).
+ * Devuelve null si los broadcasts están desactivados.
  * @param {string} text
  * @param {string|null} scheduledAt
- * @returns {BroadcastEntry}
+ * @returns {BroadcastEntry|null}
  */
 function enqueueBroadcast(text, scheduledAt = null) {
+    if (!isEnabled()) return null;
     const eligible = getEligibleContacts();
     const entry = /** @type {BroadcastEntry} */ ({
         id: crypto.randomUUID(),
@@ -243,6 +272,7 @@ function buildStatusText() {
         lines.push(`• \`${b.text.slice(0, 50)}...\` - ${when} (${b.eligible} contactos)`);
     }
     return `📢 *Broadcasts:*\n` +
+        `• *Estado:* ${isEnabled() ? '✅ ACTIVADO' : '🔴 DESACTIVADO'}\n` +
         `• *Límite diario por contacto:* ${DAILY_LIMIT} mensaje(s)\n` +
         `• *Enviados hoy:* ${todaySends}\n` +
         (pending.length
@@ -267,14 +297,16 @@ function setSock(activeSock) {
 function getBroadcastStats() {
     const pending = db.broadcasts.filter(b => b.status === 'pending').length;
     const sending = db.broadcasts.filter(b => b.status === 'sending').length;
-    return { pending, sending, total: db.broadcasts.length, dailyLimit: DAILY_LIMIT };
+    return { enabled: isEnabled(), pending, sending, total: db.broadcasts.length, dailyLimit: DAILY_LIMIT };
 }
 
 /**
  * Un paso del worker: si hay un broadcast por empezar/enviando, manda un mensaje.
- * Resume-safe: el cursor se persiste tras cada envío.
+ * Resume-safe: el cursor se persiste tras cada envío. No hace nada si los
+ * broadcasts están desactivados.
  */
 async function tick() {
+    if (!isEnabled()) return;
     if (!sock || !isConnectedFn()) return;
 
     const now = new Date();
@@ -380,6 +412,10 @@ async function tryConfirm(text, activeSock, remoteJid) {
         const conf = pendingConfirmation;
         pendingConfirmation = null;
         const entry = enqueueBroadcast(conf.text, conf.scheduledAt);
+        if (!entry) {
+            await activeSock.sendMessage(remoteJid, { text: '🔴 *Broadcasts desactivados.* Actívalos con `/broadcast on`.' });
+            return true;
+        }
         await activeSock.sendMessage(remoteJid, {
             text: conf.scheduledAt
                 ? `📅 *Broadcast programado* para ${new Date(conf.scheduledAt).toLocaleString('es-CL')} (${entry.eligible} contactos aptos).`
@@ -414,6 +450,8 @@ module.exports = {
     tryConfirm,
     getDailySends,
     getBroadcasts,
+    isEnabled,
+    setEnabled,
     todayStr,
     DAILY_LIMIT
 };

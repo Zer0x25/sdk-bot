@@ -20,6 +20,7 @@ function setupEnv() {
                 delete process.env[k];
             }
             delete process.env.SDK_BROADCAST_DAILY_LIMIT;
+            delete process.env.SDK_BROADCAST_ENABLED;
             fs.rmSync(tmpDir, { recursive: true, force: true });
         }
     };
@@ -111,6 +112,7 @@ test('parseScheduleTime: hoy si no pasó, mañana si pasó, null si inválido', 
 test('worker envía 1 mensaje por tick y termina en done con notificación al admin', async () => {
     const t = setupEnv();
     try {
+        process.env.SDK_BROADCAST_ENABLED = '1';
         writeContacts({
             '56911111111': contact({ phone: '56911111111', savedName: 'A' }),
             '56922222222': contact({ phone: '56922222222', savedName: 'B' })
@@ -149,6 +151,7 @@ test('worker envía 1 mensaje por tick y termina en done con notificación al ad
 test('worker omite contactos que ya superaron el límite diario', async () => {
     const t = setupEnv();
     try {
+        process.env.SDK_BROADCAST_ENABLED = '1';
         process.env.SDK_BROADCAST_DAILY_LIMIT = '1';
         writeContacts({
             '56911111111': contact({ phone: '56911111111', savedName: 'A' }),
@@ -189,6 +192,7 @@ test('worker omite contactos que ya superaron el límite diario', async () => {
 test('un broadcast a medias se retoma tras recargar el módulo (cursor persistido)', async () => {
     const t = setupEnv();
     try {
+        process.env.SDK_BROADCAST_ENABLED = '1';
         writeContacts({
             '56911111111': contact({ phone: '56911111111', savedName: 'A' }),
             '56922222222': contact({ phone: '56922222222', savedName: 'B' })
@@ -226,9 +230,89 @@ test('un broadcast a medias se retoma tras recargar el módulo (cursor persistid
     }
 });
 
+test('broadcast desactivado por defecto: enqueue rechaza y tick no envía', async () => {
+    const t = setupEnv();
+    try {
+        writeContacts({
+            '56911111111': contact({ phone: '56911111111', savedName: 'A' })
+        });
+        const bs = freshModules();
+        assert.strictEqual(bs.isEnabled(), false, 'OFF por defecto sin env');
+
+        const sentTo = [];
+        const fakeSock = {
+            sendMessage: async (jid) => {
+                sentTo.push(jid);
+                return { key: { id: `test-${jid}` } };
+            }
+        };
+        bs.setSock(fakeSock);
+        bs.setIsConnected(() => true);
+
+        // Enqueue rechazado
+        assert.strictEqual(bs.enqueueBroadcast('nope', null), null);
+        assert.strictEqual(bs.getBroadcasts().length, 0);
+
+        // Tick tampoco envía nada
+        await bs.tick();
+        assert.deepStrictEqual(sentTo, []);
+    } finally {
+        t.restore();
+    }
+});
+
+test('SDK_BROADCAST_ENABLED=1 lo enciende al arrancar', () => {
+    const t = setupEnv();
+    try {
+        process.env.SDK_BROADCAST_ENABLED = '1';
+        const bs = freshModules();
+        assert.strictEqual(bs.isEnabled(), true);
+    } finally {
+        t.restore();
+    }
+});
+
+test('setEnabled(false) cancela los broadcasts pendientes', () => {
+    const t = setupEnv();
+    try {
+        process.env.SDK_BROADCAST_ENABLED = '1';
+        writeContacts({
+            '56911111111': contact({ phone: '56911111111', savedName: 'A' })
+        });
+        const bs = freshModules();
+        bs.enqueueBroadcast('promo', null);
+        assert.strictEqual(bs.getBroadcasts()[0].status, 'pending');
+        assert.strictEqual(bs.getBroadcasts()[0].eligible, 1);
+
+        bs.setEnabled(false);
+        assert.strictEqual(bs.isEnabled(), false);
+        assert.strictEqual(bs.getBroadcasts()[0].status, 'cancelled');
+    } finally {
+        t.restore();
+    }
+});
+
+test('el estado on/off persiste tras recargar el módulo', () => {
+    const t = setupEnv();
+    try {
+        const bs = freshModules();
+        assert.strictEqual(bs.isEnabled(), false);
+        bs.setEnabled(true);
+        assert.strictEqual(bs.isEnabled(), true);
+
+        // Recargar: el valor persistido manda sobre el default OFF
+        delete require.cache[require.resolve('../services/broadcastService')];
+        const bs2 = require('../services/broadcastService');
+        assert.strictEqual(bs2.isEnabled(), true, 'se mantiene activado tras reinicio');
+    } finally {
+        t.restore();
+    }
+});
+
 test('tryConfirm consume "si" (encola) y "cancelar", ignora otros textos', async () => {
     const t = setupEnv();
     try {
+        process.env.SDK_BROADCAST_ENABLED = '1';
         writeContacts({
             '56911111111': contact({ phone: '56911111111', savedName: 'A' })
         });
