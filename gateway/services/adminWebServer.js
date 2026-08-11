@@ -13,6 +13,9 @@ const fs = require('fs');
 const path = require('path');
 const { handleAdminCommand } = require('../handlers/commandHandler');
 const { buildStatus } = require('./statusServer');
+const { getContactsDB } = require('./db');
+const { findKeyByDigits } = require('./contactsRepository');
+const { setNumberState, setContactProfile } = require('./stateService');
 const { cat, errMsg } = require('./logger');
 
 const log = cat('CORE');
@@ -97,6 +100,177 @@ function sendJson(res, status, obj) {
 }
 
 /**
+ * Parser mínimo de query string (evita dependencias y globals de Node).
+ * @param {string} raw
+ * @returns {Map<string, string>}
+ */
+function parseQuery(raw) {
+    const out = new Map();
+    for (const part of String(raw || '').split('&')) {
+        if (!part) continue;
+        const [k, v] = part.split('=');
+        out.set(decodeURIComponent(k), decodeURIComponent(v || ''));
+    }
+    return out;
+}
+
+// -------------------------------------------------------------
+// F6-P2: AGENDA DE CONTACTOS (consume contactsRepository/stateService)
+// -------------------------------------------------------------
+
+/** Mapea el valor de estado de ContactRecord al stateType de setNumberState */
+const ESTADO_TO_TYPE = {
+    neutro: 'neutral',
+    permitido: 'allowed',
+    ignorado: 'ignored',
+    handoff: 'handoff'
+};
+
+/** @param {import('./contactsRepository.js').ContactRecord} c */
+function publicContact(key, c) {
+    return {
+        key,
+        phone: c.phone || null,
+        lid: c.lid || null,
+        savedName: c.savedName || null,
+        estado: c.estado || 'neutro',
+        perfil: c.perfil || null,
+        isContact: !!c.isContact,
+        firstSeen: c.firstSeen || null,
+        lastSeen: c.lastSeen || null
+    };
+}
+
+/** @param {string} q */
+function contactMatches(c, q) {
+    if (!q) return true;
+    const hay = [c.savedName, c.phone, c.lid].filter(Boolean).join(' ').toLowerCase();
+    return hay.includes(q.toLowerCase());
+}
+
+/**
+ * GET /api/contacts?q=&estado=&page=&limit=
+ * @param {Map<string, string>} params
+ */
+function listContacts(params) {
+    const q = (params.get('q') || '').trim();
+    const estado = (params.get('estado') || '').trim();
+    const limit = Math.min(Math.max(Number(params.get('limit')) || 50, 1), 200);
+    const page = Math.max(Number(params.get('page')) || 1, 1);
+
+    let items = [];
+    for (const [key, c] of Object.entries(getContactsDB())) {
+        if (c && contactMatches(c, q) && (!estado || (c.estado || 'neutro') === estado)) {
+            items.push(publicContact(key, c));
+        }
+    }
+    items.sort((a, b) => (a.savedName || '').localeCompare(b.savedName || '') || a.key.localeCompare(b.key));
+
+    const total = items.length;
+    const slice = items.slice((page - 1) * limit, page * limit);
+    return { total, page, limit, contacts: slice };
+}
+
+/** @param {string} key */
+function getContactDetail(key) {
+    const clean = String(key).replace(/[^0-9]/g, '');
+    if (!clean) return null;
+    const found = findKeyByDigits(clean);
+    if (!found) return null;
+    return publicContact(found, getContactsDB()[found]);
+}
+
+/** @param {string} key @param {string} estado */
+function setContactEstado(key, estado) {
+    const stateType = ESTADO_TO_TYPE[estado];
+    if (!stateType) return { success: false, message: `Estado inválido: ${estado}` };
+    return setNumberState(key, stateType);
+}
+
+/** @param {string} key @param {string} perfil */
+function setContactPerfil(key, perfil) {
+    if (!perfil || !/^[a-z0-9_-]{1,32}$/i.test(perfil)) {
+        return { success: false, message: 'Perfil no válido' };
+    }
+    return setContactProfile(key, perfil);
+}
+
+// -------------------------------------------------------------
+// SERVICIOS HTTP
+// -------------------------------------------------------------
+
+/**
+ * @param {http.IncomingMessage} req
+ * @param {http.ServerResponse} res
+ * @param {string} pathname
+ * @param {Map<string, string>} params
+ */
+function routeApi(req, res, pathname, params) {
+    if (pathname === '/api/status' && req.method === 'GET') {
+        sendJson(res, 200, buildStatus());
+        return;
+    }
+
+    if (pathname === '/api/command' && req.method === 'POST') {
+        let body = '';
+        req.on('data', (chunk) => {
+            body += chunk;
+            if (body.length > 10_000) req.destroy();
+        });
+        req.on('end', async () => {
+            try {
+                const parsed = JSON.parse(body || '{}');
+                const result = await runAdminCommand(parsed.command || '');
+                sendJson(res, 200, result);
+            } catch (e) {
+                const msg = errMsg(e);
+                logError.error('🖥️ [ADMIN-WEB] Error ejecutando comando: ' + msg);
+                sendJson(res, 500, { ok: false, replies: [{ type: 'text', text: '⚠️ Error interno: ' + msg }] });
+            }
+        });
+        return;
+    }
+
+    // Agenda: /api/contacts, /api/contacts/<key>, /api/contacts/<key>/estado|perfil
+    const m = /^\/api\/contacts(?:\/(\d+))?(?:\/(estado|perfil))?$/.exec(pathname);
+    if (m) {
+        if (req.method === 'GET' && !m[1]) {
+            sendJson(res, 200, listContacts(params));
+            return;
+        }
+        if (req.method === 'GET' && m[1] && !m[2]) {
+            const detail = getContactDetail(m[1]);
+            if (!detail) return sendJson(res, 404, { error: 'contacto no encontrado' });
+            sendJson(res, 200, detail);
+            return;
+        }
+        if (req.method === 'POST' && m[1] && m[2]) {
+            let body = '';
+            req.on('data', (chunk) => {
+                body += chunk;
+                if (body.length > 10_000) req.destroy();
+            });
+            req.on('end', () => {
+                try {
+                    const parsed = JSON.parse(body || '{}');
+                    const result = m[2] === 'estado'
+                        ? setContactEstado(m[1], String(parsed.estado || ''))
+                        : setContactPerfil(m[1], String(parsed.perfil || ''));
+                    sendJson(res, result.success ? 200 : 400, result);
+                } catch (e) {
+                    const msg = errMsg(e);
+                    logError.error('🖥️ [ADMIN-WEB] Error en agenda: ' + msg);
+                    sendJson(res, 500, { ok: false, error: msg });
+                }
+            });
+            return;
+        }
+    }
+
+    sendJson(res, 404, { error: 'not found' });
+}
+
+/**
  * Arranca el servidor del panel. EADDRINUSE se loguea y no tira el gateway.
  * @param {{port?: number}} [opts]
  * @returns {http.Server}
@@ -105,33 +279,14 @@ function startAdminWebServer(opts = {}) {
     const port = opts.port ?? Number(process.env.ADMIN_WEB_PORT || 3200);
     const server = http.createServer((req, res) => {
         const pathname = (req.url || '/').split('?')[0];
+        const params = parseQuery((req.url || '').split('?')[1] || '');
 
-        if (req.method === 'GET' && pathname === '/api/status') {
-            sendJson(res, 200, buildStatus());
+        if (pathname.startsWith('/api/')) {
+            routeApi(req, res, pathname, params);
             return;
         }
 
-        if (req.method === 'POST' && pathname === '/api/command') {
-            let body = '';
-            req.on('data', (chunk) => {
-                body += chunk;
-                if (body.length > 10_000) req.destroy();
-            });
-            req.on('end', async () => {
-                try {
-                    const parsed = JSON.parse(body || '{}');
-                    const result = await runAdminCommand(parsed.command || '');
-                    sendJson(res, 200, result);
-                } catch (e) {
-                    const msg = errMsg(e);
-                    logError.error('🖥️ [ADMIN-WEB] Error ejecutando comando: ' + msg);
-                    sendJson(res, 500, { ok: false, replies: [{ type: 'text', text: '⚠️ Error interno: ' + msg }] });
-                }
-            });
-            return;
-        }
-
-        if (req.method === 'GET' && !pathname.startsWith('/api/')) {
+        if (req.method === 'GET') {
             serveStatic(pathname, res);
             return;
         }

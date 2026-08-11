@@ -2,8 +2,19 @@ const { test, before, after } = require('node:test');
 const assert = require('node:assert');
 const { startAdminWebServer, runAdminCommand } = require('../services/adminWebServer');
 const { withTempDbPaths } = require('./helpers/tmpPaths');
+const { saveContactsDB } = require('../services/db');
 
 const t = withTempDbPaths();
+
+// Libreta de prueba para los tests de agenda (F6-P2)
+const agenda = {
+    '56911111111': { phone: '56911111111', lid: null, savedName: 'Ana', isContact: true, estado: 'neutro', firstSeen: '2026-01-01T00:00:00Z' },
+    '56922222222': { phone: '56922222222', lid: null, savedName: 'Bruno', isContact: true, estado: 'ignorado' },
+    '56933333333': { phone: '56933333333', lid: '123400000003', savedName: 'Carla invaded', isContact: true, estado: 'permitido', perfil: 'lucia' },
+    '999999999999': { phone: null, lid: '999999999999', savedName: 'Solo LID', isContact: true, estado: 'handoff' },
+    '56944444444': { phone: '56944444444', lid: null, savedName: 'No agenda', isContact: false, estado: 'neutro' }
+};
+saveContactsDB(agenda);
 
 let server;
 let port;
@@ -80,4 +91,78 @@ test('path traversal fuera del front se bloquea', async () => {
 test('POST inválido devuelve 404 (no existe la ruta)', async () => {
     const res = await fetch(`http://127.0.0.1:${port}/api/foo`, { method: 'POST' });
     assert.strictEqual(res.status, 404);
+});
+
+// ─── Agenda (F6-P2) ───
+
+test('GET /api/contacts lista la agenda con paginación', async () => {
+    const res = await fetch(`http://127.0.0.1:${port}/api/contacts?limit=2`);
+    assert.strictEqual(res.status, 200);
+    const d = await res.json();
+    assert.strictEqual(d.total, 5);
+    assert.strictEqual(d.contacts.length, 2);
+    assert.strictEqual(d.page, 1);
+    // Orden por savedName: Ana, Bruno, Carla…, No agenda, Solo LID
+    assert.strictEqual(d.contacts[0].savedName, 'Ana');
+});
+
+test('GET /api/contacts filtra por búsqueda y estado', async () => {
+    const byName = await (await fetch(`http://127.0.0.1:${port}/api/contacts?q=bruno`)).json();
+    assert.strictEqual(byName.total, 1);
+    assert.strictEqual(byName.contacts[0].phone, '56922222222');
+
+    const byDigits = await (await fetch(`http://127.0.0.1:${port}/api/contacts?q=123400000003`)).json();
+    assert.strictEqual(byDigits.total, 1);
+    assert.strictEqual(byDigits.contacts[0].savedName, 'Carla invaded');
+
+    const ignored = await (await fetch(`http://127.0.0.1:${port}/api/contacts?estado=ignorado`)).json();
+    assert.strictEqual(ignored.total, 1);
+    assert.strictEqual(ignored.contacts[0].phone, '56922222222');
+});
+
+test('GET /api/contacts/<key> devuelve el detalle y 404 si no existe', async () => {
+    const ok = await (await fetch(`http://127.0.0.1:${port}/api/contacts/56911111111`)).json();
+    assert.strictEqual(ok.savedName, 'Ana');
+    assert.strictEqual(ok.estado, 'neutro');
+    assert.strictEqual(ok.isContact, true);
+
+    const notFound = await fetch(`http://127.0.0.1:${port}/api/contacts/56999999999`);
+    assert.strictEqual(notFound.status, 404);
+});
+
+test('POST /api/contacts/<key>/estado cambia el estado del contacto', async () => {
+    const res = await fetch(`http://127.0.0.1:${port}/api/contacts/56911111111/estado`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ estado: 'ignorado' })
+    });
+    assert.strictEqual(res.status, 200);
+    const d = await res.json();
+    assert.strictEqual(d.success, true);
+    assert.strictEqual(d.state, 'ignorado');
+
+    const detail = await (await fetch(`http://127.0.0.1:${port}/api/contacts/56911111111`)).json();
+    assert.strictEqual(detail.estado, 'ignorado');
+});
+
+test('estado inválido rechaza con 400', async () => {
+    const res = await fetch(`http://127.0.0.1:${port}/api/contacts/56911111111/estado`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ estado: 'superpermitido' })
+    });
+    assert.strictEqual(res.status, 400);
+});
+
+test('POST /api/contacts/<key>/perfil asigna un perfil por contacto', async () => {
+    const res = await fetch(`http://127.0.0.1:${port}/api/contacts/56922222222/perfil`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ perfil: 'ventas' })
+    });
+    assert.strictEqual(res.status, 200);
+    assert.strictEqual((await res.json()).success, true);
+
+    const detail = await (await fetch(`http://127.0.0.1:${port}/api/contacts/56922222222`)).json();
+    assert.strictEqual(detail.perfil, 'ventas');
 });

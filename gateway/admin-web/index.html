@@ -32,12 +32,58 @@
   .out-block { border-left: 3px solid #2563eb; padding-left: 8px; margin: 6px 0; }
   .out-cmd { color: #facc15; }
   a { color: #4a9eff; }
+  section h2 { font-size: 15px; margin: 0 0 8px; }
+  .toolbar { display: flex; gap: 8px; margin-bottom: 8px; }
+  .toolbar input, .toolbar select { background: #171a21; border: 1px solid #262b36; color: #e6e6e6;
+    border-radius: 8px; padding: 8px; }
+  .toolbar input { flex: 1; }
+  .toolbar button { background: #2563eb; border: none; color: #fff; border-radius: 8px; padding: 0 14px;
+    font-weight: 600; cursor: pointer; }
+  .hint { align-self: center; color: #8b93a5; }
+  table { width: 100%; border-collapse: collapse; background: #171a21;
+    border: 1px solid #262b36; border-radius: 8px; font-size: 13px; }
+  th, td { padding: 6px 10px; text-align: left; border-bottom: 1px solid #1c212b; }
+  th { color: #8b93a5; font-size: 11px; text-transform: uppercase; letter-spacing: .05em; }
+  td select { background: #0f1115; color: #e6e6e6; border: 1px solid #262b36; border-radius: 6px; padding: 3px 6px; }
+  .chips { display: flex; gap: 6px; flex-wrap: wrap; }
+  .chips button { background: #262b36; border: none; color: #e6e6e6; border-radius: 6px;
+    padding: 4px 8px; font-size: 12px; cursor: pointer; }
+  .chips button:hover { background: #333b4a; }
+  .badge { display: inline-block; padding: 2px 8px; border-radius: 999px; font-size: 11px; }
+  .b-neutro { background: #262b36; color: #aab3c5; }
+  .b-permitido { background: #14532d; color: #86efac; }
+  .b-ignorado { background: #7f1d1d; color: #fca5a5; }
+  .b-handoff { background: #78350f; color: #fdba74; }
+  .pag { display: flex; gap: 10px; align-items: center; margin-top: 8px; }
+  .pag button { background: #262b36; border: none; color: #e6e6e6; border-radius: 8px; padding: 6px 12px; cursor: pointer; }
+  .pag button:disabled { opacity: .4; cursor: default; }
 </style>
 </head>
 <body>
 <h1>🖥️ SDK-Bot · Panel de administración</h1>
 
 <div class="grid" id="cards"></div>
+
+<section>
+  <h2>📇 Agenda de contactos</h2>
+  <div class="toolbar">
+    <input id="cq" placeholder="Buscar (nombre, teléfono, LID)…" autocomplete="off">
+    <select id="ce">
+      <option value="">Todos los estados</option>
+      <option value="neutro">Neutro</option>
+      <option value="permitido">Permitido</option>
+      <option value="ignorado">Ignorado</option>
+      <option value="handoff">Handoff</option>
+    </select>
+    <button id="csearch">Buscar</button>
+    <span id="ctotal" class="hint"></span>
+  </div>
+  <table id="contacts">
+    <thead><tr><th>Nombre</th><th>Teléfono</th><th>LID</th><th>Estado</th><th>Perfil</th><th>Acciones</th></tr></thead>
+    <tbody></tbody>
+  </table>
+  <div class="pag"><button id="cprev">← Anterior</button><span id="cpage"></span><button id="cnext">Siguiente →</button></div>
+</section>
 
 <section>
   <div id="terminal">
@@ -152,6 +198,74 @@ async function runCmd() {
 
 run.addEventListener('click', runCmd);
 cmd.addEventListener('keydown', e => { if (e.key === 'Enter') runCmd(); });
+
+// ─── Agenda de contactos (F6-P2) ───
+const cq = $('#cq'), ce = $('#ce'), ctotal = $('#ctotal'), ctb = $('#contacts tbody');
+const cprev = $('#cprev'), cnext = $('#cnext'), cpage = $('#cpage');
+let cState = { page: 1, limit: 50, q: '', estado: '' };
+
+const badge = { neutro: 'b-neutro', permitido: 'b-permitido', ignorado: 'b-ignorado', handoff: 'b-handoff' };
+
+async function loadContacts() {
+  try {
+    const r = await fetch('/api/contacts?q=' + encodeURIComponent(cState.q) +
+      '&estado=' + encodeURIComponent(cState.estado) + '&page=' + cState.page + '&limit=' + cState.limit);
+    const d = await r.json();
+    ctotal.textContent = d.contacts.length ? (d.total + ' contacto(s)') : 'sin resultados';
+    cpage.textContent = 'página ' + d.page + ' de ' + Math.max(1, Math.ceil(d.total / d.limit));
+    cprev.disabled = d.page <= 1;
+    cnext.disabled = d.page * d.limit >= d.total;
+    ctb.innerHTML = d.contacts.map(c => {
+      const cls = badge[c.estado] || badge.neutro;
+      const perfil = c.isContact ? '<select data-key="' + c.key + '" data-kind="perfil"><option>' + (c.perfil || 'default') + '</option><option>lucia</option><option>mateo</option><option>ventas</option><option>cobranzas</option><option>recepcion</option></select>'
+        : (c.perfil || '—');
+      return '<tr><td>' + esc(c.savedName || '—') + '</td><td>' + esc(c.phone || '—') + '</td><td>' + esc(c.lid || '—') +
+        '</td><td><span class="badge ' + cls + '">' + c.estado + '</span></td><td>' + perfil + '</td>' +
+        '<td><div class="chips">' +
+        (c.estado !== 'permitido' ? '<button data-key="' + c.key + '" data-act="permitir">Permitir</button>' : '') +
+        (c.estado !== 'ignorado' ? '<button data-key="' + c.key + '" data-act="ignorar">Ignorar</button>' : '') +
+        (c.estado !== 'neutro' ? '<button data-key="' + c.key + '" data-act="neutro">Neutro</button>' : '') +
+        '</div></td></tr>';
+    }).join('');
+    if (!d.contacts.length) ctb.innerHTML = '<tr><td colspan="6" style="color:#8b93a5">Nada por aquí.</td></tr>';
+  } catch (e) {
+    ctb.innerHTML = '<tr><td colspan="6" class="bad">Error: ' + esc(e.message) + '</td></tr>';
+  }
+}
+
+function setContactState(key, estado) {
+  fetch('/api/contacts/' + key + '/estado', {
+    method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ estado })
+  }).then(r => r.json()).then(d => {
+    if (!d.success) alert('⚠️ ' + d.message);
+    loadContacts();
+  });
+}
+
+ctb.addEventListener('click', e => {
+  const btn = e.target.closest('button[data-act]');
+  if (btn) setContactState(btn.dataset.key, btn.dataset.act);
+});
+ctb.addEventListener('change', e => {
+  const sel = e.target.closest('select[data-kind="perfil"]');
+  if (!sel) return;
+  fetch('/api/contacts/' + sel.dataset.key + '/perfil', {
+    method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ perfil: sel.value })
+  }).then(r => r.json()).then(d => { if (!d.success) alert('⚠️ ' + d.message); });
+});
+
+$('#csearch').addEventListener('click', () => {
+  cState.q = cq.value.trim();
+  cState.estado = ce.value;
+  cState.page = 1;
+  loadContacts();
+});
+cq.addEventListener('keydown', e => { if (e.key === 'Enter') $('#csearch').click(); });
+cprev.addEventListener('click', () => { if (cState.page > 1) { cState.page--; loadContacts(); } });
+cnext.addEventListener('click', () => { cState.page++; loadContacts(); });
+
+loadContacts();
+
 refresh();
 setInterval(refresh, 10000);
 </script>
