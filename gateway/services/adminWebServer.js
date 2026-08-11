@@ -90,7 +90,9 @@ function serveStatic(urlPath, res) {
         return;
     }
     const ext = path.extname(file).toLowerCase();
-    res.writeHead(200, { 'Content-Type': MIME[ext] || 'application/octet-stream' });
+    // Sin caché: el front es estático pero evoluciona con el server; un
+    // cache sin revalidar mostró versiones viejas (pairing con sesión activa).
+    res.writeHead(200, { 'Content-Type': MIME[ext] || 'application/octet-stream', 'Cache-Control': 'no-store' });
     fs.createReadStream(file).pipe(res);
 }
 
@@ -350,14 +352,56 @@ let qrExpiryTimer = null;
 let qrWindowOpen = true; // socket nuevo/arranque: el QR puede aparecer solo
 
 /**
- * Difunde el estado del QR a todos los clientes de /api/qr.
- * @param {boolean} expired — true = ventana cerrada (QR expirado)
+ * Estado del WebSocket de Baileys (rc14: `sock.ws` es un WebSocketClient
+ * wrapper con isOpen()/isClosed(); el readyState numérico ya no existe).
+ * Soporta ambos: readyState estándar (tests/sock fakes) y wrapper rc14.
+ * Devuelve: 0 CONNECTING, 1 OPEN, 2 CLOSING, 3 CLOSED, null sin ws.
+ * @param {any} sock
+ * @returns {number|null}
  */
-function broadcastQr(expired) {
-    const payload = expired
-        ? { qr: null, expiresAt: null, expired: true }
-        : { qr: lastQrDataUrl, expiresAt: qrExpiresAt, expired: false };
-    const data = JSON.stringify(payload);
+function wsReadyState(sock) {
+    const ws = sock && sock.ws;
+    if (!ws) return null;
+    if (typeof ws.readyState === 'number') return ws.readyState;
+    // rc14: WebSocketClient con getters booleanos isOpen/isClosed/isClosing/isConnecting
+    if (typeof ws.isOpen === 'boolean') {
+        if (ws.isOpen) return 1;
+        if (ws.isClosed) return 3;
+        if (ws.isClosing) return 2;
+        if (ws.isConnecting) return 0;
+        return null;
+    }
+    // fallback: métodos (otros wrappers)
+    if (typeof ws.isOpen === 'function') {
+        if (ws.isOpen()) return 1;
+        if (ws.isClosed()) return 3;
+        if (ws.isClosing()) return 2;
+        if (ws.isConnecting()) return 0;
+    }
+    return null;
+}
+
+/**
+ * Estado de sesión: socket de Baileys conectado (ws OPEN).
+ * @returns {boolean}
+ */
+function hasActiveSession() {
+    return wsReadyState(activeSock) === 1;
+}
+
+/** Payload actual del QR (null si no hay ventana/QR vigente) + estado de sesión. */
+function qrPayload() {
+    const active = qrWindowOpen && lastQrDataUrl && Date.now() < qrExpiresAt;
+    return active
+        ? { qr: lastQrDataUrl, expiresAt: qrExpiresAt, expired: false, session: hasActiveSession() }
+        : { qr: null, expiresAt: null, expired: !qrWindowOpen, session: hasActiveSession() };
+}
+
+/**
+ * Difunde el estado del QR + sesión a todos los clientes de /api/qr.
+ */
+function broadcastQrState() {
+    const data = JSON.stringify(qrPayload());
     for (const client of qrClients) {
         try { client.write(`data: ${data}\n\n`); } catch (e) { qrClients.delete(client); }
     }
@@ -372,7 +416,7 @@ function openQrWindow() {
         qrWindowOpen = false;
         lastQrDataUrl = null;
         qrExpiresAt = 0;
-        broadcastQr(true);
+        broadcastQrState();
     }, qrTtlMs);
     if (qrExpiryTimer.unref) qrExpiryTimer.unref();
 }
@@ -389,6 +433,7 @@ function setSock(sock) {
     qrExpiresAt = 0;
     if (qrExpiryTimer) clearTimeout(qrExpiryTimer);
     qrExpiryTimer = null;
+    broadcastQrState(); // sesión nueva: el front se entera del cambio en vivo
 }
 
 /**
@@ -398,10 +443,17 @@ function setSock(sock) {
  * sea; aquí se convierte en imagen para el navegador.
  * Con la ventana cerrada los QRs regenerados de Baileys se IGNORAN:
  * tras expirar, solo un pairing manual (POST /api/pairing) la reabre.
- * @param {{qr?: string}} update
+ * @param {{qr?: string, connection?: string}} update
  */
 async function handleConnectionUpdate(update) {
-    if (!update || typeof update.qr !== 'string') return;
+    if (!update) return;
+    // Sesión abierta/cerrada: re-difunde el estado (el front decide qué
+    // mostrar: pairing cuando no hay sesión, reset cuando la hay).
+    if (update.connection === 'open' || update.connection === 'close') {
+        broadcastQrState();
+        return;
+    }
+    if (typeof update.qr !== 'string') return;
     if (!qrWindowOpen) return;
     if (Date.now() >= qrExpiresAt) openQrWindow(); // primer QR de la ventana
     try {
@@ -410,7 +462,7 @@ async function handleConnectionUpdate(update) {
         logError.error(`🖥️ [ADMIN-WEB] Error renderizando QR: ${errMsg(e)}`);
         lastQrDataUrl = null;
     }
-    broadcastQr(false);
+    broadcastQrState();
 }
 
 /**
@@ -429,11 +481,7 @@ function streamQr(req, res) {
     });
     res.write('retry: 3000\n\n');
 
-    const active = qrWindowOpen && lastQrDataUrl && Date.now() < qrExpiresAt;
-    const payload = active
-        ? { qr: lastQrDataUrl, expiresAt: qrExpiresAt, expired: false }
-        : { qr: null, expiresAt: null, expired: false };
-    try { res.write(`data: ${JSON.stringify(payload)}\n\n`); } catch (e) { /* cerrado */ }
+    try { res.write(`data: ${JSON.stringify(qrPayload())}\n\n`); } catch (e) { /* cerrado */ }
 
     qrClients.add(res);
     const hb = setInterval(() => { if (!res.writableEnded) res.write(': ping\n\n'); }, 15000).unref();
@@ -465,7 +513,7 @@ async function requestPairing(phone) {
     }
     // Socket cerrado (Baileys CLOSED=3, p.ej. tras el anti-loop sin sesión)
     // cuenta como "sin socket": el QR no va a llegar solo, hay que relanzar.
-    const sockClosed = activeSock && activeSock.ws && activeSock.ws.readyState === 3;
+    const sockClosed = wsReadyState(activeSock) === 3;
     if (!activeSock || sockClosed) {
         log.warn('🖥️ [ADMIN-WEB] Pairing sin socket activo: lanzando gateway para regenerar QR/pairing…');
         scheduleRestart();

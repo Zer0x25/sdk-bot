@@ -12,6 +12,15 @@
     background: #0f1115; color: #e6e6e6;
   }
   h1 { font-size: 18px; margin: 0 0 12px; }
+  .topbar { display: flex; align-items: center; justify-content: space-between; gap: 12px; flex-wrap: wrap; margin-bottom: 14px; }
+  .topbar h1 { margin: 0; }
+  .nav { display: flex; gap: 4px; background: #171a21; border: 1px solid #262b36; border-radius: 8px; padding: 4px; }
+  .nav .tab { background: transparent; border: none; color: #aab3c5; padding: 7px 14px; border-radius: 6px; cursor: pointer; font-size: 13px; }
+  .nav .tab:hover { background: #262b36; color: #e6e6e6; }
+  .nav .tab.on { background: #2563eb; color: #fff; }
+  /* [hidden] global con !important: las reglas display del autor (p.ej.
+     .con{display:flex}) anulan el display:none del user agent si no se fuerza */
+  [hidden] { display: none !important; }
   .grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(220px, 1fr)); gap: 10px; }
   .card { background: #171a21; border: 1px solid #262b36; border-radius: 8px; padding: 12px; }
   .card h2 { font-size: 12px; text-transform: uppercase; letter-spacing: .05em; color: #8b93a5; margin: 0 0 8px; }
@@ -59,9 +68,9 @@
   .pag button:disabled { opacity: .4; cursor: default; }
   .tabs { display: flex; gap: 0; }
   .tab { background: #171a21; border: 1px solid #262b36; color: #aab3c5; padding: 8px 14px; cursor: pointer; }
-  .tab:first-child { border-radius: 8px 0 0 8px; }
-  .tab:last-child { border-radius: 0 8px 8px 0; border-left: none; }
-  .tab.on { background: #2563eb; color: #fff; border-color: #2563eb; }
+  .tabs .tab:first-child { border-radius: 8px 0 0 8px; }
+  .tabs .tab:last-child { border-radius: 0 8px 8px 0; border-left: none; }
+  .tabs .tab.on { background: #2563eb; color: #fff; border-color: #2563eb; }
   #logbox { background: #0a0c10; border: 1px solid #1c212b; border-radius: 8px; padding: 8px 10px;
     font: 12px/1.5 ui-monospace, monospace; height: 420px; overflow: auto; white-space: pre-wrap; word-break: break-all; }
   .log-line { display: flex; gap: 8px; padding: 1px 0; }
@@ -72,7 +81,7 @@
   .log-msg { color: #d5dbe6; }
   .con {
     display: flex; gap: 16px; align-items: flex-start; flex-wrap: wrap;
-    background: #171a21; border: 1px solid #262b36; border-radius: 8px; padding: 12px;
+    background: #171a21; border: 1px solid #262b36; border-radius: 8px; padding: 16px;
   }
   #qrbox { background: #fff; border-radius: 8px; padding: 8px; }
   #qrbox img { display: block; width: 220px; height: 220px; image-rendering: pixelated; }
@@ -83,44 +92,90 @@
     border-radius: 6px;
     background: conic-gradient(#e5e7eb 25%, #f9fafb 0 50%, #e5e7eb 0 75%, #f9fafb 0) 0 0/16px 16px; }
   .con .side { flex: 1; min-width: 260px; }
-  .con .side .row { display: flex; align-items: center; gap: 8px; margin: 6px 0; }
+  .con .side .row { display: flex; align-items: center; gap: 8px; margin: 8px 0; flex-wrap: wrap; }
   .con input[type="tel"] { background: #0f1115; border: 1px solid #262b36; color: #e6e6e6;
     border-radius: 8px; padding: 8px; flex: 1; min-width: 0; }
   .con .btn { background: #2563eb; border: none; color: #fff; border-radius: 8px; padding: 8px 14px;
     font-weight: 600; cursor: pointer; white-space: nowrap; }
+  .con .btn.ghost { background: #262b36; color: #e6e6e6; }
   .con .btn.danger { background: #7f1d1d; color: #fca5a5; }
   .con .btn:disabled { opacity: .5; cursor: default; }
-  #pairmsg, #resetmsg { font-size: 12px; color: #aab3c5; margin: 6px 0 0; }
-  #pairmsg.ok, #resetmsg.ok { color: #4ade80; }
-  #pairmsg.err, #resetmsg.err { color: #f87171; }
+  .con .choice { flex: 1; min-width: 150px; padding: 16px 18px; font-size: 14px; }
+  #pairmsg, #pairmsg2, #resetmsg { font-size: 12px; color: #aab3c5; margin: 6px 0 0; }
+  #pairmsg.ok, #pairmsg2.ok, #resetmsg.ok { color: #4ade80; }
+  #pairmsg.err, #pairmsg2.err, #resetmsg.err { color: #f87171; }
 </style>
 </head>
 <body>
-<h1>🖥️ SDK-Bot · Panel de administración</h1>
+<header class="topbar">
+  <h1>🖥️ SDK-Bot · Panel de administración</h1>
+  <nav class="nav">
+    <button class="tab" data-page="dashboard">📊 Dashboard</button>
+    <button class="tab" data-page="pairing">📲 Pairing</button>
+    <button class="tab" data-page="contactos">📇 Contactos</button>
+    <button class="tab" data-page="logs">📜 Logs</button>
+  </nav>
+</header>
 
-<div class="grid" id="cards"></div>
+<section id="page-dashboard" class="page">
+  <div class="grid" id="cards"></div>
+  <section>
+    <h2>🛠️ Terminal de comandos</h2>
+    <div id="terminal">
+      <input id="cmd" placeholder="Comando admin, ej: /estado  o  /pausar" autocomplete="off">
+      <button id="run">Ejecutar</button>
+    </div>
+    <div id="out"><i>La terminal ejecuta los mismos comandos del self-chat (vía commandHandler).</i></div>
+  </section>
+</section>
 
-<section>
+<section id="page-pairing" class="page" hidden>
   <h2>📲 Conexión y pairing</h2>
-  <div class="con">
-    <div id="qrbox"><div class="empty">Esperando QR…</div></div>
+
+  <!-- VISTA: sin sesión de WhatsApp — elegir método de vinculación -->
+  <div class="con" id="noview">
     <div class="side">
-      <div class="row"><span id="qrst"></span></div>
-      <div class="row">
-        <input type="tel" id="pairphone" placeholder="Número con código de país (ej: 56912345678) — opcional" autocomplete="off">
-        <button class="btn" id="pairbtn">📲 Iniciar pairing</button>
+      <div class="row"><span class="warn">● Sin sesión de WhatsApp activa</span></div>
+      <div class="row" id="pair-choice">
+        <button class="btn choice" id="qrchoice">🔳 Pair con QR</button>
+        <button class="btn choice" id="numchoice">📞 Pair con número</button>
       </div>
-      <div id="pairmsg">El QR generado vale 1 minuto: escanéalo con WhatsApp > Dispositivos vinculados > Vincular dispositivo antes de que expire. Si expira, tendrás que iniciar pairing de nuevo (siempre manual). Opcional: escribe un número para recibir un código de enlace de 8 dígitos en vez del QR. Si el gateway está apagado, se lanza solo con el primer intento.</div>
+      <div class="row" id="method-back" hidden>
+        <button class="btn ghost" id="backchoice">← Elegir otro método</button>
+      </div>
+      <div id="pairmode-qr" hidden>
+        <div class="row"><div id="qrbox"><div class="empty">Esperando QR…</div></div></div>
+        <div class="row"><span id="qrst"></span></div>
+        <div class="row">
+          <button class="btn" id="genqrbtn">🔄 Generar QR</button>
+          <button class="btn ghost" id="launchbtn">🚀 Lanzar gateway</button>
+        </div>
+        <div id="pairmsg">El QR generado vale 1 minuto: escanéalo con WhatsApp > Dispositivos vinculados > Vincular dispositivo antes de que expire. Si el gateway está apagado, primero usa "Lanzar gateway".</div>
+      </div>
+      <div id="pairmode-num" hidden>
+        <div class="row">
+          <input type="tel" id="pairphone" placeholder="Número con código de país (ej: 56912345678)" autocomplete="off">
+          <button class="btn" id="pairbtn">📲 Obtener código de 8 dígitos</button>
+        </div>
+        <div id="pairmsg2">Recibirás un código de enlace de 8 dígitos en WhatsApp (Dispositivos vinculados > Vincular con número de teléfono). Si el gateway está apagado, se lanza solo con el primer intento.</div>
+      </div>
+    </div>
+  </div>
+
+  <!-- VISTA: sesión activa — solo reset (desvincular) -->
+  <div class="con" id="connview" hidden>
+    <div class="side">
+      <div class="row"><span class="ok">● Conectado como <b id="connnum">—</b></span></div>
+      <div class="row"><span class="hint" style="align-self:flex-start">El bot ya está vinculado a WhatsApp. Para vincular otro número tendrás que resetear la sesión.</span></div>
       <div class="row" style="margin-top:12px">
-        <button class="btn" id="launchbtn">🚀 Lanzar gateway (primera vez)</button>
         <button class="btn danger" id="resetbtn">🔄 Resetear sesión (QR nuevo)</button>
       </div>
-      <div id="resetmsg">Lanzar: arranca el gateway si está apagado o sin conexión (genera QR/pairing). Resetear: borra la sesión guardada y reinicia el gateway.</div>
+      <div id="resetmsg">Resetear: borra la sesión guardada y reinicia el gateway. Después tendrás que volver a vincular con QR o con número.</div>
     </div>
   </div>
 </section>
 
-<section>
+<section id="page-contactos" class="page" hidden>
   <h2>📇 Agenda de contactos</h2>
   <div class="toolbar">
     <input id="cq" placeholder="Buscar (nombre, teléfono, LID)…" autocomplete="off">
@@ -141,7 +196,7 @@
   <div class="pag"><button id="cprev">← Anterior</button><span id="cpage"></span><button id="cnext">Siguiente →</button></div>
 </section>
 
-<section>
+<section id="page-logs" class="page" hidden>
   <h2>📜 Logs en vivo</h2>
   <div class="toolbar">
     <div class="tabs">
@@ -161,17 +216,29 @@
   <div id="logbox"></div>
 </section>
 
-<section>
-  <div id="terminal">
-    <input id="cmd" placeholder="Comando admin, ej: /estado  o  /pausar" autocomplete="off">
-    <button id="run">Ejecutar</button>
-  </div>
-  <div id="out"><i>La terminal ejecuta los mismos comandos del self-chat (vía commandHandler).</i></div>
-</section>
-
 <script>
 const $ = s => document.querySelector(s);
 const cards = $('#cards'), out = $('#out'), cmd = $('#cmd'), run = $('#run');
+let currentPage = 'dashboard';
+
+// ─── Navegación por pestañas ───
+// Cada pestaña es una sección `#page-<name>`; las conexiones (SSE del QR,
+// logs) y cargas (contactos) se hacen perezosamente al abrir la pestaña.
+const pages = { dashboard: 'page-dashboard', pairing: 'page-pairing', contactos: 'page-contactos', logs: 'page-logs' };
+function showPage(name) {
+  if (!pages[name]) name = 'dashboard';
+  currentPage = name;
+  for (const p of Object.keys(pages)) {
+    document.getElementById(pages[p]).hidden = p !== name;
+    $('.nav .tab[data-page="' + p + '"]').classList.toggle('on', p === name);
+  }
+  if (name === 'pairing') refreshSession();
+  if (name === 'contactos') loadContacts();
+  if (name === 'logs' && !paused) startLogs();
+  if (location.hash !== '#' + name) history.replaceState(null, '', '#' + name);
+}
+document.querySelectorAll('.nav .tab').forEach(t => t.addEventListener('click', () => showPage(t.dataset.page)));
+window.addEventListener('hashchange', () => showPage(location.hash.replace('#', '')));
 
 function card(title, lines) {
   return '<div class="card"><h2>' + title + '</h2>' + lines.map(([k, v, cls]) =>
@@ -276,12 +343,17 @@ run.addEventListener('click', runCmd);
 cmd.addEventListener('keydown', e => { if (e.key === 'Enter') runCmd(); });
 
 // ─── Conexión y pairing (F6-P4) ───
-// QR con ventana de 1 min: sin QR vigente → placeholder "no disponible"
-// (símbolo de prohibido); con QR → imagen + countdown regresivo y botón de
-// pairing bloqueado hasta que expire (siempre manual: solo se reabre con
-// un pairing nuevo).
+// Dos vistas según el estado de la sesión (el SSE /api/qr trae `session`):
+//   - sin sesión → elegir "Pair con QR" o "Pair con número"; el QR con
+//     ventana de 1 min (countdown, "Generar QR" para reabrirla) y el
+//     flujo por número con código de 8 dígitos.
+//   - con sesión → solo "Resetear sesión" (desvincular + QR nuevo).
+const noview = $('#noview'), connview = $('#connview'), connnum = $('#connnum');
+const pairChoice = $('#pair-choice'), methodBack = $('#method-back');
+const pairmodeQr = $('#pairmode-qr'), pairmodeNum = $('#pairmode-num');
 const qrbox = $('#qrbox'), qrst = $('#qrst');
-const pairphone = $('#pairphone'), pairbtn = $('#pairbtn'), pairmsg = $('#pairmsg');
+const pairphone = $('#pairphone'), pairbtn = $('#pairbtn'), pairmsg2 = $('#pairmsg2');
+const genqrbtn = $('#genqrbtn'), pairmsg = $('#pairmsg');
 const launchbtn = $('#launchbtn'), resetbtn = $('#resetbtn'), resetmsg = $('#resetmsg');
 
 const QR_BADGE = '<div class="noqr"><svg viewBox="0 0 100 100" width="84" height="84" aria-hidden="true">' +
@@ -292,6 +364,50 @@ const QR_BADGE = '<div class="noqr"><svg viewBox="0 0 100 100" width="84" height
 let qrExpiresAt = 0;
 let qrCountdownTimer = null;
 let pairingInProgress = false;
+let qrFeedStarted = false;
+let sessionNumber = '';
+
+// Muestra la vista correcta según haya o no sesión de WhatsApp activa.
+function setSession(open, number) {
+  if (number) sessionNumber = number;
+  noview.hidden = open;
+  connview.hidden = !open;
+  if (open) {
+    connnum.textContent = sessionNumber || '—';
+    resetmsg.className = '';
+  }
+}
+
+async function refreshSession() {
+  try {
+    const r = await fetch('/api/status');
+    const d = await r.json();
+    setSession(!!(d.runtime && d.runtime.connection === 'open'), (d.bot && d.bot.number) || '');
+  } catch (e) { /* reintenta en el próximo tick */ }
+}
+setInterval(() => { if (currentPage === 'pairing') refreshSession(); }, 15000);
+
+// Elige el método de vinculación: QR o número de teléfono.
+function showPairMode(mode) {
+  pairChoice.hidden = true;
+  methodBack.hidden = false;
+  pairmodeQr.hidden = mode !== 'qr';
+  pairmodeNum.hidden = mode !== 'num';
+  if (mode === 'qr' && !qrFeedStarted) {
+    qrFeedStarted = true;
+    startQrFeed();
+  }
+  refreshSession();
+}
+$('#qrchoice').addEventListener('click', () => showPairMode('qr'));
+$('#numchoice').addEventListener('click', () => showPairMode('num'));
+$('#backchoice').addEventListener('click', () => {
+  pairChoice.hidden = false;
+  methodBack.hidden = true;
+  pairmodeQr.hidden = true;
+  pairmodeNum.hidden = true;
+  stopQrCountdown();
+});
 
 function stopQrCountdown() {
   if (qrCountdownTimer) { clearInterval(qrCountdownTimer); qrCountdownTimer = null; }
@@ -310,13 +426,13 @@ function renderQrState(d) {
     const exp = !!(d && d.expired);
     qrbox.innerHTML = '<div class="empty">' + QR_BADGE + '<span>' + (exp ? 'QR expirado' : 'QR no disponible') + '</span></div>';
     qrst.className = exp ? 'warn' : '';
-    qrst.textContent = exp ? 'El QR expiró (1 min sin escanear). Puedes iniciar otro pairing.' : 'Inicia pairing para generar un QR (válido 1 min).';
-    pairbtn.disabled = pairingInProgress;
-    pairbtn.textContent = '📲 Iniciar pairing';
+    qrst.textContent = exp ? 'El QR expiró (1 min sin escanear). Puedes generar otro.' : 'Genera un QR para vincular (válido 1 min).';
+    genqrbtn.disabled = pairingInProgress;
+    genqrbtn.textContent = '🔄 Generar QR';
   }
 }
 
-// Countdown regresivo: bloquea el botón de pairing mientras el QR es válido
+// Countdown regresivo: bloquea "Generar QR" mientras el QR es válido
 function startQrCountdown() {
   stopQrCountdown();
   qrCountdownTimer = setInterval(() => {
@@ -326,20 +442,108 @@ function startQrCountdown() {
       return;
     }
     const s = Math.ceil(remain / 1000);
-    pairbtn.disabled = true;
-    pairbtn.textContent = '⏳ QR vigente: ' + s + 's';
+    genqrbtn.disabled = true;
+    genqrbtn.textContent = '⏳ QR vigente: ' + s + 's';
   }, 500);
 }
 
+// El SSE trae el QR renderizado y el estado de sesión en vivo (cuando el
+// pairing completa, la vista cambia sola a "Conectado").
 function startQrFeed() {
   const es = new EventSource('/api/qr');
   es.onmessage = e => {
-    try { renderQrState(JSON.parse(e.data)); } catch (err) { /* evento inválido */ }
+    try {
+      const d = JSON.parse(e.data);
+      if (d.session !== undefined) setSession(!!d.session, '');
+      renderQrState(d);
+    } catch (err) { /* evento inválido */ }
   };
   es.onopen = () => { pairingInProgress = false; }; // reconexión = proceso nuevo
   es.onerror = () => { /* el EventSource reintenta solo */ };
 }
-startQrFeed();
+
+// "Generar QR": pide un QR nuevo al gateway (abre la ventana de 1 min o,
+// si el gateway está apagado, lo lanza y el QR llega por SSE al volver).
+genqrbtn.addEventListener('click', async () => {
+  if (pairingInProgress) return;
+  pairingInProgress = true;
+  genqrbtn.disabled = true;
+  genqrbtn.textContent = '⏳ Generando…';
+  pairmsg.className = '';
+  pairmsg.textContent = 'Pidiendo QR…';
+  try {
+    const r = await fetch('/api/pairing', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ phone: '' }) });
+    const d = await r.json();
+    if (d.success) {
+      pairmsg.className = 'ok';
+      pairmsg.textContent = '✅ ' + (d.message || 'QR generado — escanéalo antes de que expire.');
+    } else if (d.needsRestart) {
+      // El proceso se reinicia: pairingInProgress se mantiene hasta que el
+      // SSE reconecte (onopen lo libera); el QR llega con su countdown.
+      pairmsg.className = 'ok';
+      pairmsg.textContent = '🚀 ' + (d.message || 'Lanzando gateway… el QR aparecerá aquí en unos segundos.');
+    } else {
+      pairmsg.className = 'err';
+      pairmsg.textContent = '⚠️ ' + (d.message || 'No se pudo generar el QR');
+      pairingInProgress = false;
+      if (!(qrExpiresAt > Date.now())) {
+        genqrbtn.disabled = false;
+        genqrbtn.textContent = '🔄 Generar QR';
+      }
+    }
+  } catch (e) {
+    pairmsg.className = 'err';
+    pairmsg.textContent = '⚠️ Error: ' + e.message;
+    pairingInProgress = false;
+    genqrbtn.disabled = false;
+    genqrbtn.textContent = '🔄 Generar QR';
+  }
+});
+
+// "Pair con número": pide el código de enlace de 8 dígitos a WhatsApp.
+pairbtn.addEventListener('click', async () => {
+  const phone = pairphone.value.trim();
+  if (pairingInProgress) return;
+  if (!phone) {
+    pairmsg2.className = 'err';
+    pairmsg2.textContent = '⚠️ Escribe el número con código de país (ej: 56912345678).';
+    return;
+  }
+  pairingInProgress = true;
+  pairbtn.disabled = true;
+  pairbtn.textContent = '⏳ Solicitando…';
+  pairmsg2.className = '';
+  pairmsg2.textContent = 'Solicitando código de enlace…';
+  try {
+    const r = await fetch('/api/pairing', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ phone })
+    });
+    const d = await r.json();
+    if (d.success) {
+      pairmsg2.className = 'ok';
+      pairmsg2.textContent = d.code
+        ? '✅ Código de enlace: ' + d.code + ' — ingrésalo en WhatsApp > Dispositivos vinculados > Vincular con número de teléfono.'
+        : '✅ ' + (d.message || 'QR generado — escanéalo antes de que expire.');
+    } else if (d.needsRestart) {
+      // El proceso se reinicia: pairingInProgress se mantiene hasta que el
+      // SSE reconecte (onopen lo libera); el QR llega con su countdown.
+      pairmsg2.className = 'ok';
+      pairmsg2.textContent = '🚀 ' + (d.message || 'Lanzando gateway… el QR aparecerá aquí en unos segundos.');
+    } else {
+      pairmsg2.className = 'err';
+      pairmsg2.textContent = '⚠️ ' + (d.message || 'No se pudo iniciar el pairing');
+      pairingInProgress = false;
+      pairbtn.disabled = false;
+      pairbtn.textContent = '📲 Obtener código de 8 dígitos';
+    }
+  } catch (e) {
+    pairmsg2.className = 'err';
+    pairmsg2.textContent = '⚠️ Error: ' + e.message;
+    pairingInProgress = false;
+    pairbtn.disabled = false;
+    pairbtn.textContent = '📲 Obtener código de 8 dígitos';
+  }
+});
 
 // Lanza (reinicia) el gateway: arranca si estaba apagado/sin conexión
 async function launchGateway() {
@@ -360,47 +564,7 @@ async function launchGateway() {
 }
 launchbtn.addEventListener('click', launchGateway);
 
-pairbtn.addEventListener('click', async () => {
-  const phone = pairphone.value.trim();
-  if (pairingInProgress) return;
-  pairingInProgress = true;
-  pairbtn.disabled = true;
-  pairbtn.textContent = '⏳ Iniciando…';
-  pairmsg.className = '';
-  pairmsg.textContent = 'Iniciando pairing…';
-  try {
-    const r = await fetch('/api/pairing', {
-      method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ phone })
-    });
-    const d = await r.json();
-    if (d.success) {
-      pairmsg.className = 'ok';
-      pairmsg.textContent = d.code
-        ? '✅ Código de enlace: ' + d.code + ' — ingrésalo en WhatsApp > Dispositivos vinculados > Vincular con número de teléfono.'
-        : '✅ ' + (d.message || 'QR generado — escanéalo antes de que expire.');
-    } else if (d.needsRestart) {
-      // El proceso se reinicia: pairingInProgress se mantiene hasta que el
-      // SSE reconecte (onopen lo libera); el QR llega con su countdown.
-      pairmsg.className = 'ok';
-      pairmsg.textContent = '🚀 ' + (d.message || 'Lanzando gateway… el QR aparecerá aquí en unos segundos.');
-    } else {
-      pairmsg.className = 'err';
-      pairmsg.textContent = '⚠️ ' + (d.message || 'No se pudo iniciar el pairing');
-      pairingInProgress = false;
-      if (!(qrExpiresAt > Date.now())) {
-        pairbtn.disabled = false;
-        pairbtn.textContent = '📲 Iniciar pairing';
-      }
-    }
-  } catch (e) {
-    pairmsg.className = 'err';
-    pairmsg.textContent = '⚠️ Error: ' + e.message;
-    pairingInProgress = false;
-    pairbtn.disabled = false;
-    pairbtn.textContent = '📲 Iniciar pairing';
-  }
-});
-
+// Resetear sesión: solo visible con sesión activa (desvincular + QR nuevo)
 resetbtn.addEventListener('click', async () => {
   if (!confirm('⚠️ ¿Borrar la sesión guardada y reiniciar el gateway?\n\nSe desvinculará el número actual y habrá que escanear un QR nuevo.')) return;
   resetmsg.className = '';
@@ -484,9 +648,9 @@ cq.addEventListener('keydown', e => { if (e.key === 'Enter') $('#csearch').click
 cprev.addEventListener('click', () => { if (cState.page > 1) { cState.page--; loadContacts(); } });
 cnext.addEventListener('click', () => { cState.page++; loadContacts(); });
 
-loadContacts();
-
 // ─── Logs en vivo (F6-P3) ───
+// El SSE de logs solo se abre al entrar a la pestaña; al volver a ella se
+// reconecta y refresca el historial (salvo que esté en pausa).
 const logbox = $('#logbox'), lstatus = $('#lstatus'), lvl = $('#lvl');
 const ltg = $('#ltg'), lbr = $('#lbr'), lplay = $('#lplay'), lclear = $('#lclear');
 let es = null, logComp = 'gateway', paused = false, logLines = 0;
@@ -558,10 +722,9 @@ lplay.addEventListener('click', () => {
 });
 lclear.addEventListener('click', () => { logbox.innerHTML = ''; logLines = 0; });
 
-startLogs();
-
 refresh();
 setInterval(refresh, 10000);
+showPage((location.hash || '').replace('#', ''));
 </script>
 </body>
 </html>

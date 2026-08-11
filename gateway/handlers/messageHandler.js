@@ -368,7 +368,6 @@ function getRuntimeStats() {
 
 // 📥 F4-P4: procesar mensajes encolados cuando el brain vuelve
 const MAX_QUEUE_ATTEMPTS = 5; // un mensaje encolado se intenta hasta 5 veces antes de descartarse
-let flushInProgress = false;
 
 /**
  * Procesa la cola persistente de mensajes (FIFO, uno a la vez).

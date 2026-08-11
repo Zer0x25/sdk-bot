@@ -111,6 +111,38 @@ test('handleConnectionUpdate ignora updates sin QR', async () => {
     assert.ok(true);
 });
 
+test('SSE /api/qr informa session (rc14 wrapper con getters y readyState clásico)', async () => {
+    resetQrForTests();
+
+    // rc14: sock.ws es un WebSocketClient con getters isOpen/isClosed (sin readyState numérico)
+    setSock({ ws: { get isOpen() { return true; }, get isClosed() { return false; } } });
+    let res = await fetch(`http://127.0.0.1:${port}/api/qr`);
+    let { hit, reader } = await readSse(res, ev => ev.session === true);
+    assert.ok(hit, 'session true con wrapper rc14 (getters)');
+    reader.cancel();
+
+    // API clásica: readyState numérico (sock fakes/tests)
+    setSock({ ws: { readyState: 1 } });
+    res = await fetch(`http://127.0.0.1:${port}/api/qr`);
+    ({ hit, reader } = await readSse(res, ev => ev.session === true));
+    assert.ok(hit, 'session true con readyState OPEN=1');
+    reader.cancel();
+
+    // Socket cerrado (deadSock del test de pairing) → session false
+    setSock({ ws: { readyState: 3 } });
+    res = await fetch(`http://127.0.0.1:${port}/api/qr`);
+    ({ hit, reader } = await readSse(res, ev => ev.session === false));
+    assert.ok(hit, 'session false con socket cerrado');
+    reader.cancel();
+
+    // Sin socket → session false
+    setSock(null);
+    res = await fetch(`http://127.0.0.1:${port}/api/qr`);
+    ({ hit, reader } = await readSse(res, ev => ev.session === false));
+    assert.ok(hit, 'session false sin socket');
+    reader.cancel();
+});
+
 test('POST /api/pairing pide el código de enlace al socket', async () => {
     resetQrForTests();
     setSock(fakeSock);
