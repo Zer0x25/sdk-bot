@@ -42,6 +42,9 @@ test('GET /status devuelve métricas completas del gateway', async () => {
     assert.strictEqual(typeof data.runtimeStats.buffers, 'number');
     assert.ok(data.runtimeStats.aiPool, 'pool de IA');
     assert.strictEqual(data.runtimeStats.aiPool.max, 3);
+    assert.ok(data.queue, 'cola persistente');
+    assert.strictEqual(typeof data.queue.pending, 'number');
+    assert.strictEqual(typeof data.queue.max, 'number');
     assert.ok(data.memory, 'memoria');
     assert.ok(data.memory.heapUsed > 0);
 });

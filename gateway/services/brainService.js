@@ -1,6 +1,7 @@
 // @ts-check
 const { BRAIN_API_BASE, BRAIN_API_URL, BRAIN_API_KEY, state, registerSentMessage } = require('../config');
 const { cat, errMsg } = require("../services/logger");
+const { enqueue, scheduleFlush } = require("./messageQueue");
 const log = cat("AI");
 const logError = cat("ERROR");
 
@@ -187,7 +188,9 @@ async function requestBrain(payload) {
     return data;
 }
 
-async function processAIChat(textMessage, remoteJid, metadata, sock) {
+async function processAIChat(textMessage, remoteJid, metadata, sock, opts = {}) {
+    // opts.fromQueue = true cuando el mensaje viene de la cola persistente (F4-P4):
+    // no re-encolar y no repetir la alerta al admin (el flush lo gestiona).
     brainStats.aiCalls += 1;
     brainStats.lastAiAt = new Date().toISOString();
     const displayName = metadata.savedName || metadata.pushName || 'Usuario';
@@ -230,7 +233,10 @@ async function processAIChat(textMessage, remoteJid, metadata, sock) {
         if (data.response) {
             brainStats.lastOkAt = new Date().toISOString();
             log.info(`[BOT RESPONDE A ${displayName}]: ${data.response}`);
-            
+
+            // 📥 F4-P4: si había mensajes encolados y el brain volvió, procesarlos
+            if (!opts.fromQueue) scheduleFlush();
+
             // 🧠 1. Simulación de Lectura / Pensamiento Humano (antes de teclear)
             const readDelay = calculateReadDelay(textMessage);
             log.info(`[SIMULACIÓN HUMANA] 📖 Leyendo/pensando durante ${(readDelay / 1000).toFixed(2)}s...`);
@@ -262,16 +268,63 @@ async function processAIChat(textMessage, remoteJid, metadata, sock) {
             }
         } else {
             logError.error("Error del cerebro:", data.error);
+            if (opts.fromQueue) {
+                throw new Error(data.error || "Respuesta vacía del cerebro IA");
+            }
             await notifyAdminError(sock, metadata, textMessage, data.error || "Respuesta vacía del cerebro IA");
         }
     } catch (error) {
         brainStats.lastErrorAt = new Date().toISOString();
         brainStats.lastErrorMsg = errMsg(error);
         logError.error("Error al conectar con el cerebro: " + errMsg(error));
-        await notifyAdminError(sock, metadata, textMessage, errMsg(error));
+        await handleBrainFailure(error, textMessage, remoteJid, metadata, sock, opts);
+        // 📥 F4-P4: en modo cola, el error debe llegar al flush (que marca el intento
+        // y reintenta después). En el flujo normal, el error queda manejado aquí.
+        if (opts.fromQueue) throw error;
     } finally {
         await sock.sendPresenceUpdate('paused', remoteJid).catch(() => {});
     }
+}
+
+// ⏱️ Alerta al admin como máximo cada 15 minutos (F4-P4: evita spam de mensajes
+// "cerebro apagado" si el brain está caído mucho tiempo y llegan muchos clientes).
+const BRAIN_ALERT_THROTTLE_MS = 15 * 60 * 1000;
+let lastBrainAlertAt = 0;
+
+/**
+ * 🛠️ Fallo transitorio del brain: encola el mensaje en disco (F4-P4) y avisa al
+ * admin con throttle. Los 4xx (bug) NO se encolan: se avisa tal cual.
+ */
+async function handleBrainFailure(error, textMessage, remoteJid, metadata, sock, opts) {
+    const err = /** @type {Error & {status?: number}} */ (error);
+    const transitory = !err.status || err.status >= 500;
+    const msg = errMsg(error);
+    const now = Date.now();
+
+    if (opts.fromQueue) {
+        // El flush reintentará o descartará según attempts; solo loguear aquí.
+        return;
+    }
+
+    let queued = false;
+    if (transitory) {
+        // 📥 Encolar en disco: el mensaje del cliente no se pierde
+        queued = enqueue({ jid: remoteJid, text: textMessage, metadata });
+        scheduleFlush();
+    }
+
+    if (now - lastBrainAlertAt < BRAIN_ALERT_THROTTLE_MS) {
+        log.warn(`⏳ [COLA] Alerta al admin omitida (throttle 15 min). Mensaje ${queued ? 'ENCOLADO' : 'fallido'}: ${msg}`);
+        return;
+    }
+    lastBrainAlertAt = now;
+
+    const suffix = queued
+        ? '\n📥 *El mensaje del cliente quedó ENCOLADO en disco y se responderá automáticamente cuando el brain vuelva.*'
+        : (transitory
+            ? '\n❌ *Cola de mensajes llena — este mensaje del cliente se PERDIÓ.*'
+            : '');
+    await notifyAdminError(sock, metadata, textMessage, msg + suffix);
 }
 
 async function clearAIMemory(userJid) {

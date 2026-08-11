@@ -4,6 +4,7 @@ const { upsertContactMetadata } = require('../services/contactsRepository');
 const { setNumberState } = require('../services/stateService');
 const { processAIChat } = require('../services/brainService');
 const { enqueueAI, poolStats } = require('../services/aiQueue');
+const messageQueue = require('../services/messageQueue');
 const { getAdaptiveDebounceMs, getCandidateIdsForPresence, extractTextMessage, decideMessageFlow } = require('../services/pipeline');
 const { handleAdminCommand } = require('./commandHandler');
 const { cat } = require('../services/logger');
@@ -360,6 +361,54 @@ function getRuntimeStats() {
         aiPool: poolStats()
     };
 }
+
+// 📥 F4-P4: procesar mensajes encolados cuando el brain vuelve
+const MAX_QUEUE_ATTEMPTS = 5; // un mensaje encolado se intenta hasta 5 veces antes de descartarse
+let flushInProgress = false;
+
+/**
+ * Procesa la cola persistente de mensajes (FIFO, uno a la vez).
+ * - Respeta la serialización por chat (chatInFlight): si el cliente está en una
+ *   llamada IA viva, se detiene y reintenta en el próximo flush.
+ * - Pausa de 2-5s entre mensajes para no parecer un bot spam.
+ */
+async function flushQueuedMessages() {
+    while (true) {
+        const item = messageQueue.peek();
+        const sock = messageQueue.getSock();
+        if (!item || !sock) return;
+
+        // No pisar un chat con IA en curso (buffer timer activo)
+        if (chatInFlight.has(item.jid)) return;
+
+        if (item.attempts >= MAX_QUEUE_ATTEMPTS) {
+            messageQueue.removeHead();
+            logError.error(`📥 [COLA] Descartado mensaje de ${item.jid} tras ${MAX_QUEUE_ATTEMPTS} intentos fallidos: "${item.text.slice(0, 60)}"`);
+            continue;
+        }
+
+        const displayName = item.metadata.savedName || item.metadata.pushName || 'Desconocido';
+        log.warn(`📥 [COLA] Respondiendo mensaje encolado de ${displayName} (${item.jid})...`);
+
+        chatInFlight.add(item.jid);
+        try {
+            await enqueueAI(() => processAIChat(item.text, item.jid, item.metadata, sock, { fromQueue: true }));
+            messageQueue.removeHead();
+            // ⏱️ Pausa humana entre mensajes encolados (2-5s)
+            await new Promise(r => setTimeout(r, 2000 + Math.random() * 3000));
+        } catch {
+            // processAIChat gestiona sus propios errores internos; aquí solo se
+            // marca el intento y se detiene el flush (el brain sigue caído).
+            item.attempts += 1;
+            messageQueue.saveHead();
+            return;
+        } finally {
+            chatInFlight.delete(item.jid);
+        }
+    }
+}
+
+messageQueue.setFlushHandler(flushQueuedMessages);
 
 module.exports = {
     handleIncomingMessage,

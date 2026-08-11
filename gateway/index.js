@@ -8,6 +8,7 @@ const { bulkUpsertContactsMetadata, isJunkJid, cleanContactsDB, contactStore } =
 const { flushToDisk } = require('./services/db');
 const { getCountryFromPhone } = require('./services/metadataService');
 const { handleIncomingMessage, handlePresenceUpdate } = require('./handlers/messageHandler');
+const messageQueue = require('./services/messageQueue');
 const { startStatusServer, runtime } = require('./services/statusServer');
 const { cat } = require('./services/logger');
 
@@ -130,6 +131,7 @@ async function connectToWhatsApp () {
         markOnlineOnConnect: true
     });
     currentSocket = sock;
+    messageQueue.setSock(sock);
 
     // Capturar eventos de sincronización de contactos de WhatsApp (Agenda del Teléfono)
     const handleContactSync = contacts => {
@@ -226,6 +228,10 @@ ensureSingleInstance().then(connectToWhatsApp);
 
 // 📊 F4-P3: servidor de métricas local (GET /status y /health en 127.0.0.1)
 startStatusServer();
+
+// 📥 F4-P4: red de seguridad — si el brain vuelve sin una llamada IA exitosa que
+// dispare el flush, intentar vaciar la cola cada 30s (no mantiene el proceso vivo).
+setInterval(() => messageQueue.scheduleFlush(), 30 * 1000).unref();
 
 // -------------------------------------------------------------
 // CIERRE SEGURO (GRACEFUL SHUTDOWN)

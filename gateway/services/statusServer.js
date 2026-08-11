@@ -12,6 +12,7 @@ const { getContactsDB, getSettingsDB } = require('./db');
 const { getBrainStats } = require('./brainService');
 const { getRuntimeStats } = require('../handlers/messageHandler');
 const { getCommandStats } = require('../handlers/commandHandler');
+const { getQueueStats } = require('./messageQueue');
 const { cat } = require('./logger');
 
 const log = cat('CORE');
@@ -51,6 +52,7 @@ function buildStatus() {
         brain: getBrainStats(),
         commands: getCommandStats(),
         runtimeStats: getRuntimeStats(),
+        queue: getQueueStats(),
         memory: {
             rss: mem.rss,
             heapUsed: mem.heapUsed,
