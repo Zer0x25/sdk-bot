@@ -9,6 +9,7 @@ brain/venv/
 # WhatsApp session, auth & private contact data (SENSITIVE / PRIVACY)
 gateway/auth_info_baileys/
 gateway/contacts_db.json
+gateway/settings_db.json
 gateway/ignored_numbers.json
 gateway/allowed_numbers.json
 
