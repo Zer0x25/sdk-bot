@@ -56,7 +56,7 @@ SDK-Bot/
 │   ├── config.py                 # API Keys y modelos (Groq, OpenRouter, Gemini)
 │   ├── memory.py                 # Gestor de memoria en RAM por user_id (máx 15 mensajes)
 │   ├── providers.py              # Router multi-proveedor (Groq 25s → OpenRouter 25s → Gemini 40s)
-│   ├── profiles/                 # Perfiles SOUL editables en Markdown (default, lucia, mateo, ventas, cobranzas, recepcion)
+│   ├── profiles/                 # Perfiles SOUL editables en Markdown (default, lucia, mateo, cobranzas, recepcion)
 │   ├── .env                      # API Keys (gitignored)
 │   └── requirements.txt          # Dependencias Python
 └── PLAN-ARQUITECTURA.md          # Documentación técnica completa
@@ -175,7 +175,7 @@ Envía estos comandos desde tu propio chat de WhatsApp ("Mensaje a ti mismo"). *
 | `/exportar` | `/export` | Exportar la libreta completa de contactos mapeados |
 | `/pausar` | `/pg`, `/pause`, `/stop` | Pausar el auto-respondedor globalmente para todos los chats |
 | `/reanudar` | `/ag`, `/resume`, `/start`, `/run` | Reanudar el auto-respondedor globalmente |
-| `/perfil <nombre>` | `/pf`, `/profile` | Cambiar personalidad del bot (`default`, `lucia`, `mateo`, `ventas`, `cobranzas`, `recepcion`) |
+| `/perfil <nombre>` | `/pf`, `/profile` | Cambiar personalidad del bot (`default`, `lucia`, `mateo`, `cobranzas`, `recepcion`) |
 | `/info` | `/whoami` | Ver datos de conexión admin (Phone, LID, País, JID) |
 | `/estado` | `/e`, `/menu`, `/status`, `/help`, `/admin` | Panel de estado general del bot y menú de ayuda |
 | `/init` | `/guia`, `/startguide` | Ver guía rápida de inicio explicativa interactiva |

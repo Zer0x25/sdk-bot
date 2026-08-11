@@ -18,6 +18,7 @@ const { buildStatus } = require('./statusServer');
 const { getContactsDB } = require('./db');
 const { findKeyByDigits } = require('./contactsRepository');
 const { setNumberState, setContactProfile } = require('./stateService');
+const { getAvailableProfiles, getProfileDetail, exportProfileFile, importProfileFile, deleteProfileFile, reloadProfiles } = require('./brainService');
 const { cat, errMsg } = require('./logger');
 
 const log = cat('CORE');
@@ -770,6 +771,89 @@ function routeApi(req, res, pathname, params) {
                     sendJson(res, 500, { ok: false, error: msg });
                 }
             });
+            return;
+        }
+    }
+
+    // Perfiles SOUL: proxy del brain — listar, ver/editar el .md, importar,
+    // exportar, eliminar y recargar (el front de la pestaña #perfiles los usa).
+    // Orden importa: /reload e /import van ANTES del regex de clave.
+    if (pathname === '/api/profiles' && req.method === 'GET') {
+        getAvailableProfiles()
+            .then(list => sendJson(res, 200, { profiles: list }))
+            .catch(e => sendJson(res, 500, { error: errMsg(e) }));
+        return;
+    }
+
+    if (pathname === '/api/profiles/reload' && req.method === 'POST') {
+        reloadProfiles()
+            .then(r => sendJson(res, 200, r || { success: false, message: 'Brain sin respuesta' }))
+            .catch(e => sendJson(res, 500, { error: errMsg(e) }));
+        return;
+    }
+
+    if (pathname === '/api/profiles/import' && req.method === 'POST') {
+        let body = '';
+        req.on('data', (chunk) => {
+            body += chunk;
+            if (body.length > 100_000) req.destroy();
+        });
+        req.on('end', () => {
+            try {
+                const parsed = JSON.parse(body || '{}');
+                const key = String(parsed.key || '').trim();
+                const content = String(parsed.content || '');
+                if (!key || !content) {
+                    sendJson(res, 400, { success: false, message: 'Se requiere key y content' });
+                    return;
+                }
+                importProfileFile(key, content).then(result => {
+                    if (!result) return sendJson(res, 502, { success: false, message: 'Brain sin respuesta' });
+                    // El brain falla con HTTPException {detail} (sin success): normalizar
+                    if (result.success !== true) {
+                        return sendJson(res, 400, { success: false, message: result.detail || result.message || 'El brain rechazó el perfil' });
+                    }
+                    sendJson(res, 200, result);
+                }).catch(e => sendJson(res, 500, { error: errMsg(e) }));
+            } catch (e) {
+                sendJson(res, 500, { success: false, message: `Error interno: ${errMsg(e)}` });
+            }
+        });
+        return;
+    }
+
+    const pm = /^\/api\/profiles\/([\w.-]+)(?:\/file)?$/.exec(pathname);
+    if (pm) {
+        const key = decodeURIComponent(pm[1]);
+        if (req.method === 'GET' && pathname.endsWith('/file')) {
+            exportProfileFile(key)
+                .then(f => {
+                    if (!f) return sendJson(res, 404, { error: `Perfil '${key}' no encontrado` });
+                    sendJson(res, 200, f);
+                })
+                .catch(e => sendJson(res, 500, { error: errMsg(e) }));
+            return;
+        }
+        if (req.method === 'GET') {
+            getProfileDetail(key)
+                .then(detail => {
+                    if (!detail) return sendJson(res, 404, { error: `Perfil '${key}' no encontrado` });
+                    sendJson(res, 200, detail);
+                })
+                .catch(e => sendJson(res, 500, { error: errMsg(e) }));
+            return;
+        }
+        if (req.method === 'DELETE') {
+            deleteProfileFile(key)
+                .then(result => {
+                    if (!result) return sendJson(res, 502, { success: false, message: 'Brain sin respuesta' });
+                    // El brain falla con HTTPException {detail} (sin success): normalizar
+                    if (result.success !== true) {
+                        return sendJson(res, 400, { success: false, message: result.detail || result.message || 'Perfil no eliminado' });
+                    }
+                    sendJson(res, 200, result);
+                })
+                .catch(e => sendJson(res, 500, { error: errMsg(e) }));
             return;
         }
     }

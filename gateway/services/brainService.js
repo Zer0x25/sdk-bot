@@ -443,6 +443,28 @@ async function importProfileFile(profileKey, content) {
 }
 
 /**
+ * 🔄 Forzar la recarga de la carpeta profiles/ del brain (POST /profiles/reload)
+ * Devuelve el JSON del brain o null.
+ */
+async function reloadProfiles() {
+    try {
+        const reloadUrl = `${BRAIN_API_BASE}/profiles/reload`;
+        const response = await fetch(reloadUrl, {
+            method: 'POST',
+            headers: authHeaders(),
+            signal: AbortSignal.timeout(5000)
+        });
+        const result = /** @type {any} */ (await response.json());
+        cachedProfiles = null;
+        cachedProfilesAt = 0;
+        return result;
+    } catch (e) {
+        logError.error("Error al recargar perfiles del Brain: " + errMsg(e));
+        return null;
+    }
+}
+
+/**
  * 🗑️ Eliminar un perfil .md del brain (DELETE /profiles/{key})
  * Devuelve el JSON del brain o null.
  */
@@ -475,6 +497,7 @@ module.exports = {
     exportProfileFile,
     importProfileFile,
     deleteProfileFile,
+    reloadProfiles,
     splitIntoHumanBubbles,
     calculateReadDelay,
     calculateTypingDelay,

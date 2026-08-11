@@ -63,6 +63,22 @@
   .chips button { background: #262b36; border: none; color: #e6e6e6; border-radius: 6px;
     padding: 4px 8px; font-size: 12px; cursor: pointer; }
   .chips button:hover { background: #333b4a; }
+  .chips button.on { background: #2563eb; color: #fff; }
+  .editor { background: #171a21; border: 1px solid #262b36; border-radius: 8px; padding: 12px; }
+  .editor .row { display: flex; gap: 8px; align-items: center; margin: 8px 0; flex-wrap: wrap; }
+  .editor .row label { color: #8b93a5; font-size: 12px; text-transform: uppercase; letter-spacing: .05em; }
+  .editor input[type="text"] { background: #0f1115; border: 1px solid #262b36; color: #e6e6e6;
+    border-radius: 8px; padding: 8px; flex: 0 1 220px; font: 13px ui-monospace, monospace; }
+  .editor input[type="text"]:disabled { opacity: .5; }
+  .editor textarea { width: 100%; background: #0a0c10; border: 1px solid #1c212b; color: #e6e6e6;
+    border-radius: 8px; padding: 10px; font: 13px/1.5 ui-monospace, monospace; resize: vertical; min-height: 300px; }
+  .editor textarea:focus { outline: none; border-color: #4a9eff; }
+  #pmsg { font-size: 12px; color: #aab3c5; }
+  #pmsg.ok { color: #4ade80; }
+  #pmsg.err { color: #f87171; }
+  #ppromptview { background: #0a0c10; border: 1px solid #1c212b; border-radius: 8px; padding: 10px;
+    font: 12px/1.5 ui-monospace, monospace; white-space: pre-wrap; max-height: 320px; overflow: auto; margin-top: 10px; }
+  .toolbar .toolbtn { background: #262b36; color: #e6e6e6; }
   .badge { display: inline-block; padding: 2px 8px; border-radius: 999px; font-size: 11px; }
   .b-neutro { background: #262b36; color: #aab3c5; }
   .b-permitido { background: #14532d; color: #86efac; }
@@ -120,6 +136,7 @@
     <button class="tab" data-page="dashboard">📊 Dashboard</button>
     <button class="tab" data-page="pairing">📲 Pairing</button>
     <button class="tab" data-page="contactos">📇 Contactos</button>
+    <button class="tab" data-page="perfiles">🧠 Perfiles</button>
     <button class="tab" data-page="logs">📜 Logs</button>
   </nav>
 </header>
@@ -207,6 +224,36 @@
   </div>
 </section>
 
+<section id="page-perfiles" class="page" hidden>
+  <h2>🧠 Perfiles SOUL</h2>
+  <div class="toolbar">
+    <select id="pselect">
+      <option value="">— Seleccionar perfil —</option>
+    </select>
+    <button class="toolbtn" id="pnew">➕ Nuevo</button>
+    <button class="toolbtn" id="preload">🔄 Recargar</button>
+    <button class="toolbtn" id="pimport">📥 Importar .md</button>
+    <input type="file" id="pfile" accept=".md,.txt" hidden>
+    <span id="pstate" class="hint"></span>
+  </div>
+  <div class="editor">
+    <div class="row">
+      <label>Clave (nombre del .md)</label>
+      <input type="text" id="pkey" placeholder="ej: ventas" autocomplete="off">
+      <span class="hint" id="pstate"></span>
+    </div>
+    <textarea id="pcontent" spellcheck="false" placeholder="Contenido del perfil en Markdown:&#10;# nombre&#10;descripción&#10;## Personalidad&#10;## Reglas&#10;## Formato&#10;## Ejemplos&#10;**Cliente:** …&#10;**Asistente:** …"></textarea>
+    <div class="row">
+      <button class="btn" id="psave">💾 Guardar</button>
+      <button class="btn ghost" id="pexport">⬇️ Exportar .md</button>
+      <button class="btn ghost" id="pprompt">📄 Ver prompt compilado</button>
+      <button class="btn danger" id="pdel">🗑️ Eliminar</button>
+      <span id="pmsg"></span>
+    </div>
+  </div>
+  <div id="ppromptview" hidden></div>
+</section>
+
 <section id="page-logs" class="page" hidden>
   <h2>📜 Logs en vivo</h2>
   <div class="toolbar">
@@ -235,7 +282,7 @@ let currentPage = 'dashboard';
 // ─── Navegación por pestañas ───
 // Cada pestaña es una sección `#page-<name>`; las conexiones (SSE del QR,
 // logs) y cargas (contactos) se hacen perezosamente al abrir la pestaña.
-const pages = { dashboard: 'page-dashboard', pairing: 'page-pairing', contactos: 'page-contactos', logs: 'page-logs' };
+const pages = { dashboard: 'page-dashboard', pairing: 'page-pairing', contactos: 'page-contactos', perfiles: 'page-perfiles', logs: 'page-logs' };
 function showPage(name) {
   if (!pages[name]) name = 'dashboard';
   currentPage = name;
@@ -245,6 +292,7 @@ function showPage(name) {
   }
   if (name === 'pairing') refreshSession();
   if (name === 'contactos') resetContactList();
+  if (name === 'perfiles') loadProfiles();
   if (name === 'logs' && !paused) startLogs();
   if (location.hash !== '#' + name) history.replaceState(null, '', '#' + name);
 }
@@ -306,7 +354,10 @@ async function refresh() {
   }
 }
 
-function esc(s) { return s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;'); }
+function esc(s) {
+  s = String(s ?? '');
+  return s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+}
 
 async function runCmd() {
   const text = cmd.value.trim();
@@ -711,6 +762,168 @@ cq.addEventListener('keydown', e => {
 ce.addEventListener('change', () => {
   cState.estado = ce.value;
   resetContactList();
+});
+
+// ─── Perfiles SOUL (F6-P5) ───
+// Lista los perfiles del brain (chips), edita el .md crudo en un textarea,
+// importa/exporta/elimina y muestra el prompt compilado. El brain define
+// la clave por el nombre del archivo: al guardar con otra clave se crea
+// un perfil nuevo.
+const plist = $('#pselect'), pkey = $('#pkey'), pcontent = $('#pcontent');
+const pstate = $('#pstate'), pmsg = $('#pmsg'), pfile = $('#pfile');
+const ppromptview = $('#ppromptview');
+const pdel = $('#pdel');
+let currentProfile = null;
+
+function setProfileMsg(text, cls) {
+  pmsg.className = cls || '';
+  pmsg.textContent = text;
+}
+
+// Puebla el selector desplegable con los perfiles del brain.
+function loadProfiles(selected) {
+  fetch('/api/profiles')
+    .then(r => r.json())
+    .then(d => {
+      const list = d.profiles || [];
+      const opts = list.map(p => {
+        const key = typeof p === 'string' ? p : (p && p.key);
+        const nombre = (typeof p === 'object' && p && p.nombre) ? p.nombre : key;
+        return '<option value="' + esc(key) + '"' + (key === (selected || currentProfile) ? ' selected' : '') + '>' + esc(nombre + ' (' + key + ')') + '</option>';
+      }).join('');
+      plist.innerHTML = '<option value="">' + (list.length ? '— Seleccionar perfil —' : 'Sin perfiles (brain apagado o carpeta vacía)') + '</option>' + opts;
+    })
+    .catch(e => {
+      plist.innerHTML = '<option value="">Error: ' + esc(e.message) + '</option>';
+    });
+}
+
+function openProfileEditor(key, content, editableKey) {
+  currentProfile = key;
+  pkey.value = key || '';
+  pkey.disabled = !editableKey;
+  pcontent.value = content || '';
+  pstate.textContent = key === 'default' ? 'perfil protegido (no se puede eliminar)' : '';
+  pdel.disabled = !key || key === 'default';
+  ppromptview.hidden = true;
+  setProfileMsg('');
+}
+
+async function openProfile(key) {
+  try {
+    const r = await fetch('/api/profiles/' + encodeURIComponent(key) + '/file');
+    if (!r.ok) throw new Error('perfil no encontrado');
+    const d = await r.json();
+    openProfileEditor(key, d.content, false);
+  } catch (e) {
+    setProfileMsg('⚠️ ' + e.message, 'err');
+  }
+}
+
+// Elegir un perfil en el selector lo carga en el editor para editar
+plist.addEventListener('change', () => {
+  const key = plist.value;
+  if (key) openProfile(key);
+});
+
+$('#pnew').addEventListener('click', () => {
+  openProfileEditor('', '', true);
+  pkey.focus();
+});
+
+$('#preload').addEventListener('click', async () => {
+  await fetch('/api/profiles/reload', { method: 'POST' }).catch(() => {});
+  loadProfiles(currentProfile);
+  setProfileMsg('🔄 Perfiles recargados del brain.', 'ok');
+});
+
+// Importar desde archivo: el nombre del archivo define la clave inicial
+$('#pimport').addEventListener('click', () => pfile.click());
+pfile.addEventListener('change', async () => {
+  const f = pfile.files && pfile.files[0];
+  pfile.value = '';
+  if (!f) return;
+  try {
+    const key = f.name.replace(/\.(md|txt)$/i, '');
+    openProfileEditor(key, await f.text(), true);
+    setProfileMsg('📥 Archivo cargado. Revisa y guarda.', 'ok');
+  } catch (e) {
+    setProfileMsg('⚠️ No se pudo leer el archivo: ' + e.message, 'err');
+  }
+});
+
+$('#psave').addEventListener('click', async () => {
+  const key = pkey.value.trim();
+  const content = pcontent.value;
+  if (!/^[a-z0-9_-]{1,32}$/i.test(key)) {
+    setProfileMsg('⚠️ Clave inválida: solo letras, números, _ y - (hasta 32 caracteres).', 'err');
+    return;
+  }
+  if (!content.trim()) {
+    setProfileMsg('⚠️ El contenido no puede estar vacío.', 'err');
+    return;
+  }
+  try {
+    const r = await fetch('/api/profiles/import', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ key, content })
+    });
+    const d = await r.json();
+    if (!d.success) throw new Error(d.message || 'el brain rechazó el perfil');
+    openProfileEditor(key, content, false);
+    setProfileMsg('✅ Perfil "' + d.nombre + '" guardado (' + d.reglas + ' reglas, ' + d.ejemplos + ' ejemplos).', 'ok');
+    loadProfiles(key);
+  } catch (e) {
+    setProfileMsg('⚠️ ' + e.message, 'err');
+  }
+});
+
+$('#pexport').addEventListener('click', async () => {
+  const key = currentProfile || pkey.value.trim();
+  if (!key) return setProfileMsg('⚠️ No hay perfil para exportar.', 'err');
+  try {
+    const r = await fetch('/api/profiles/' + encodeURIComponent(key) + '/file');
+    if (!r.ok) throw new Error('perfil no encontrado');
+    const d = await r.json();
+    const a = document.createElement('a');
+    a.href = URL.createObjectURL(new Blob([d.content], { type: 'text/markdown' }));
+    a.download = key + '.md';
+    a.click();
+    setProfileMsg('⬇️ Exportado: ' + key + '.md', 'ok');
+  } catch (e) {
+    setProfileMsg('⚠️ ' + e.message, 'err');
+  }
+});
+
+$('#pprompt').addEventListener('click', async () => {
+  const key = currentProfile || pkey.value.trim();
+  if (!key) return setProfileMsg('⚠️ No hay perfil seleccionado.', 'err');
+  try {
+    const r = await fetch('/api/profiles/' + encodeURIComponent(key));
+    if (!r.ok) throw new Error('perfil no encontrado');
+    const d = await r.json();
+    ppromptview.hidden = !ppromptview.hidden;
+    if (!ppromptview.hidden) {
+      ppromptview.textContent = '# ' + d.nombre + '\n' + (d.descripcion || '') + '\n\n--- PROMPT COMPILADO ---\n\n' + (d.prompt || '(vacío)');
+    }
+  } catch (e) {
+    setProfileMsg('⚠️ ' + e.message, 'err');
+  }
+});
+
+$('#pdel').addEventListener('click', async () => {
+  const key = currentProfile;
+  if (!key || key === 'default') return;
+  if (!confirm('⚠️ ¿Eliminar el perfil "' + key + '" del brain?\n\nLos contactos asignados a él pasarán al perfil default.')) return;
+  try {
+    const r = await fetch('/api/profiles/' + encodeURIComponent(key), { method: 'DELETE' });
+    const d = await r.json();
+    if (!d.success) throw new Error(d.message || 'no se pudo eliminar');
+    setProfileMsg('🗑️ Perfil "' + key + '" eliminado.', 'ok');
+    openProfileEditor('', '', true);
+    loadProfiles();  } catch (e) {
+    setProfileMsg('⚠️ ' + e.message, 'err');
+  }
 });
 
 // ─── Logs en vivo (F6-P3) ───
