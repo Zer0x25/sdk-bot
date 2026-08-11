@@ -57,7 +57,8 @@ function loadDataOnStartup() {
     
     try {
         if (!fs.existsSync(SETTINGS_FILE_PATH)) {
-            const defaultSettings = { globalMode: 'allowed_all' };
+            // 🔒 Default seguro de deploy: nadie habla con el bot hasta que el admin lo permita
+            const defaultSettings = { globalMode: 'ignored_all' };
             fs.writeFileSync(SETTINGS_FILE_PATH, JSON.stringify(defaultSettings, null, 2));
             cachedSettingsDB = defaultSettings;
         } else {
@@ -65,12 +66,12 @@ function loadDataOnStartup() {
         }
     } catch (e) {
         logError.error("Error al leer settings_db.json: " + errMsg(e));
-        cachedSettingsDB = { globalMode: 'allowed_all' };
-        state.GLOBAL_MODE = 'allowed_all';
+        cachedSettingsDB = { globalMode: 'ignored_all' };
+        state.GLOBAL_MODE = 'ignored_all';
     }
 
     // Sincronizar con el state global (cachedSettingsDB ya quedó cargado)
-    const settingsLoaded = cachedSettingsDB ?? { globalMode: 'allowed_all' };
+    const settingsLoaded = cachedSettingsDB ?? { globalMode: 'ignored_all' };
     if (settingsLoaded.globalMode) {
         state.GLOBAL_MODE = settingsLoaded.globalMode;
     }

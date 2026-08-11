@@ -31,7 +31,7 @@ const SETTINGS_FILE_PATH = process.env.SDK_SETTINGS_DB_PATH || path.join(__dirna
 const state = {
     IS_BOT_PAUSED: false,
     CURRENT_PROFILE: 'default',
-    GLOBAL_MODE: 'allowed_all', // 'allowed_all' o 'ignored_all'
+    GLOBAL_MODE: 'ignored_all', // 🔒 default seguro: db.js lo sobrescribe con settings_db.json
     ADMIN_PHONE: '',
     ADMIN_LID: ''
 };
