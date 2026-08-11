@@ -57,6 +57,19 @@
   .pag { display: flex; gap: 10px; align-items: center; margin-top: 8px; }
   .pag button { background: #262b36; border: none; color: #e6e6e6; border-radius: 8px; padding: 6px 12px; cursor: pointer; }
   .pag button:disabled { opacity: .4; cursor: default; }
+  .tabs { display: flex; gap: 0; }
+  .tab { background: #171a21; border: 1px solid #262b36; color: #aab3c5; padding: 8px 14px; cursor: pointer; }
+  .tab:first-child { border-radius: 8px 0 0 8px; }
+  .tab:last-child { border-radius: 0 8px 8px 0; border-left: none; }
+  .tab.on { background: #2563eb; color: #fff; border-color: #2563eb; }
+  #logbox { background: #0a0c10; border: 1px solid #1c212b; border-radius: 8px; padding: 8px 10px;
+    font: 12px/1.5 ui-monospace, monospace; height: 420px; overflow: auto; white-space: pre-wrap; word-break: break-all; }
+  .log-line { display: flex; gap: 8px; padding: 1px 0; }
+  .log-time { color: #5b6472; flex: none; }
+  .log-cat { color: #7c86ff; flex: none; }
+  .lv-info { color: #86efac; } .lv-warn { color: #facc15; } .lv-error { color: #f87171; }
+  .lv-debug { color: #94a3b8; }
+  .log-msg { color: #d5dbe6; }
 </style>
 </head>
 <body>
@@ -83,6 +96,26 @@
     <tbody></tbody>
   </table>
   <div class="pag"><button id="cprev">← Anterior</button><span id="cpage"></span><button id="cnext">Siguiente →</button></div>
+</section>
+
+<section>
+  <h2>📜 Logs en vivo</h2>
+  <div class="toolbar">
+    <div class="tabs">
+      <button id="ltg" class="tab on">Gateway</button>
+      <button id="lbr" class="tab">Brain</button>
+    </div>
+    <select id="lvl">
+      <option value="all">Todos los niveles</option>
+      <option value="info">Info+</option>
+      <option value="warn">Warn+</option>
+      <option value="error">Solo errores</option>
+    </select>
+    <button id="lplay">⏸️ Pausar</button>
+    <button id="lclear">🗑️ Limpiar</button>
+    <span id="lstatus" class="hint"></span>
+  </div>
+  <div id="logbox"></div>
 </section>
 
 <section>
@@ -265,6 +298,80 @@ cprev.addEventListener('click', () => { if (cState.page > 1) { cState.page--; lo
 cnext.addEventListener('click', () => { cState.page++; loadContacts(); });
 
 loadContacts();
+
+// ─── Logs en vivo (F6-P3) ───
+const logbox = $('#logbox'), lstatus = $('#lstatus'), lvl = $('#lvl');
+const ltg = $('#ltg'), lbr = $('#lbr'), lplay = $('#lplay'), lclear = $('#lclear');
+let es = null, logComp = 'gateway', paused = false, logLines = 0;
+
+function pinoLevel(n) {
+  if (n >= 50) return 'error'; if (n >= 40) return 'warn'; if (n >= 30) return 'info'; return 'debug';
+}
+function pythonLevel(s) {
+  const m = /\b(DEBUG|INFO|WARN(?:ING)?|ERROR|CRITICAL)\b/.exec(s);
+  return m ? m[1].toLowerCase().replace('warning', 'warn') : 'info';
+}
+function acceptsLevel(lv) {
+  const want = lvl.value;
+  if (want === 'all') return true;
+  const rank = { debug: 0, info: 1, warn: 2, error: 3 };
+  return (want === 'error') ? lv === 'error' : rank[lv] >= rank[want];
+}
+function appendLine(d) {
+  const row = document.createElement('div');
+  row.className = 'log-line';
+  let lv = 'info', time = '', cat = '', msg = String(d.line).replace(/\s+$/, '');
+  if (logComp === 'gateway' && d.line.startsWith('{')) {
+    try {
+      const j = JSON.parse(d.line);
+      lv = pinoLevel(j.level);
+      time = (j.time ? new Date(j.time) : new Date()).toLocaleTimeString('es-CL', { hour12: false });
+      cat = j.cat || '';
+      msg = j.msg || '';
+    } catch (e) { /* línea no JSON: se muestra cruda */ }
+  } else {
+    const m = /^(\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}(?:,\d+)?)\s+(\w+)\s+(.*)$/.exec(msg);
+    if (m) { time = m[1].slice(11); lv = pythonLevel(m[2]); msg = m[3]; }
+  }
+  if (!acceptsLevel(lv)) return;
+  const tm = document.createElement('span');
+  tm.className = 'log-time'; tm.textContent = time || new Date().toLocaleTimeString('es-CL', { hour12: false });
+  const ca = document.createElement('span');
+  ca.className = 'log-cat'; ca.textContent = (logComp === 'gateway' && cat) ? '[' + cat + ']' : '';
+  const mg = document.createElement('span');
+  mg.className = 'log-msg lv-' + lv; mg.textContent = msg;
+  row.append(tm, ca, mg);
+  const stick = logbox.scrollTop + logbox.clientHeight >= logbox.scrollHeight - 40;
+  logbox.appendChild(row);
+  logLines++;
+  while (logLines > 800) { logbox.firstChild.remove(); logLines--; }
+  if (stick) logbox.scrollTop = logbox.scrollHeight;
+}
+
+function startLogs() {
+  if (es) es.close();
+  logbox.innerHTML = '';
+  logLines = 0;
+  lstatus.textContent = 'conectando…';
+  es = new EventSource('/api/logs?component=' + logComp + '&history=100');
+  const tabOn = logComp === 'gateway' ? ltg : lbr, tabOff = logComp === 'gateway' ? lbr : ltg;
+  tabOn.classList.add('on'); tabOff.classList.remove('on');
+  es.onmessage = e => {
+    lstatus.textContent = 'en vivo';
+    if (!paused) appendLine(JSON.parse(e.data));
+  };
+  es.onerror = () => { lstatus.textContent = 'conexión perdida — reintentando…'; };
+}
+ltg.addEventListener('click', () => { if (logComp !== 'gateway') { logComp = 'gateway'; startLogs(); } });
+lbr.addEventListener('click', () => { if (logComp !== 'brain') { logComp = 'brain'; startLogs(); } });
+lplay.addEventListener('click', () => {
+  paused = !paused;
+  lplay.textContent = paused ? '▶️ Reanudar' : '⏸️ Pausar';
+  if (!paused) startLogs();
+});
+lclear.addEventListener('click', () => { logbox.innerHTML = ''; logLines = 0; });
+
+startLogs();
 
 refresh();
 setInterval(refresh, 10000);

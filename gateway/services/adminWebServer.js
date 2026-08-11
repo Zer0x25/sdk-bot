@@ -196,6 +196,131 @@ function setContactPerfil(key, perfil) {
 }
 
 // -------------------------------------------------------------
+// F6-P3: LOGS EN VIVO POR SSE (tail de gateway.log y brain.log)
+// El panel lee los archivos: el bot no se entera. Tolera cualquier
+// esquema de rotación (rename, archivo nuevo, truncación).
+// -------------------------------------------------------------
+
+// Rutas de logs con override por env (tests con archivos fake, nunca tocar los reales)
+const LOG_DIRS = {
+    gateway: process.env.SDK_ADMIN_WEB_LOG_GATEWAY || path.join(__dirname, '..', 'logs'),
+    brain: process.env.SDK_ADMIN_WEB_LOG_BRAIN || path.join(__dirname, '..', '..', 'brain', 'logs')
+};
+// Cubre gateway.log (activo), gateway.1.log (rotado pino-roll real, número
+// antes de .log) y gateway.log.1 (formato que usa el test de rotación del suite).
+const LOG_PATTERNS = { gateway: /^gateway(\.\d+)?\.log(\.\d+)?$/, brain: /^brain(\.\d+)?\.log(\.\d+)?$/ };
+const LINE_CAP = 8192;
+
+/**
+ * @param {http.IncomingMessage} req
+ * @param {http.ServerResponse} res
+ * @param {Map<string, string>} params
+ */
+function streamLogs(req, res, params) {
+    const component = params.get('component') === 'brain' ? 'brain' : 'gateway';
+    // 0 = sin historial; ausente = 100 (default). `|| 100` convertiría 0 en 100,
+    // haciendo imposible pedir "sin historial" (bug detectado en verificación F6-P3).
+    const rawHist = params.get('history');
+    // `Map.get` devuelve undefined (no null) para clave ausente → usar == null.
+    const history = rawHist == null ? 100 : Math.min(Math.max(Number(rawHist) || 0, 0), 500);
+    const dir = LOG_DIRS[component];
+    const pattern = LOG_PATTERNS[component];
+
+    res.writeHead(200, {
+        'Content-Type': 'text/event-stream; charset=utf-8',
+        'Cache-Control': 'no-cache',
+        Connection: 'keep-alive',
+        'X-Accel-Buffering': 'no'
+    });
+    res.write('retry: 3000\n\n');
+
+    let closed = false;
+    /** @type {Map<string, {size: number, mtimeMs: number}>} posición por archivo */
+    const positions = new Map();
+
+    const send = (line) => {
+        if (closed) return;
+        const text = line.length > LINE_CAP ? line.slice(0, LINE_CAP) + '…' : line;
+        res.write(`data: ${JSON.stringify({ component, line: text })}\n\n`);
+    };
+
+    // Heartbeat: mantiene la conexión viva a través de proxies
+    const hb = setInterval(() => { if (!closed) res.write(': ping\n\n'); }, 15000).unref();
+
+    /**
+     * Lee las últimas N líneas del archivo más reciente como historial.
+     * N=0 ⇒ sin historial (corrige slice(-0) que devolvía todo el archivo).
+     */
+    function sendHistory() {
+        /** @type {string|null} */
+        let best = null;
+        let bestMtime = 0;
+        let files;
+        try { files = fs.readdirSync(dir); } catch { return; }
+        for (const f of files) {
+            if (!pattern.test(f)) continue;
+            const p = path.join(dir, f);
+            let st;
+            try { st = fs.statSync(p); } catch (e) { continue; }
+            if (st.mtimeMs > bestMtime) { bestMtime = st.mtimeMs; best = p; }
+        }
+        if (!best) return;
+        const st = fs.statSync(best);
+        const chunk = Math.max(0, st.size - 64 * 1024);
+        const fd = fs.openSync(best, 'r');
+        const buf = Buffer.alloc(st.size - chunk);
+        try { fs.readSync(fd, buf, 0, buf.length, chunk); } finally { fs.closeSync(fd); }
+        const lines = buf.toString('utf8').split('\n').filter(Boolean);
+        const hist = history > 0 ? lines.slice(-history) : [];
+        for (const l of hist) send(l);
+        positions.set(best, { size: st.size, mtimeMs: st.mtimeMs });
+    }
+
+    /**
+     * Lee las líneas nuevas de todos los archivos que crecieron, se truncaron
+     * o se reescribieron (mismo tamaño pero mtime distinto). Tolerante a que el
+     * cambio ocurra entre dos ticks: el mtime detecta reescrituras a igual tamaño
+     * que el tamaño por sí solo no vería (ver test de truncación F6-P3).
+     */
+    function tick() {
+        if (closed) return;
+        let files;
+        try { files = fs.readdirSync(dir); } catch { return; }
+        const seen = new Set();
+        for (const f of files) {
+            if (!pattern.test(f)) continue;
+            const p = path.join(dir, f);
+            seen.add(p);
+            let st;
+            try { st = fs.statSync(p); } catch { positions.delete(p); continue; }
+            const prev = positions.get(p);
+            if (!prev) { positions.set(p, { size: st.size, mtimeMs: st.mtimeMs }); continue; }
+            let start;
+            if (st.size < prev.size) start = 0;                      // truncación
+            else if (st.size > prev.size) start = prev.size;         // crecimiento normal
+            else if (st.mtimeMs !== prev.mtimeMs) start = 0;         // reescritura a igual tamaño
+            else continue;                                          // sin cambios
+            const fd = fs.openSync(p, 'r');
+            const buf = Buffer.alloc(st.size - start);
+            try { fs.readSync(fd, buf, 0, buf.length, start); } finally { fs.closeSync(fd); }
+            const lines = buf.toString('utf8').split('\n');
+            for (const l of lines) if (l) send(l);
+            positions.set(p, { size: st.size, mtimeMs: st.mtimeMs });
+        }
+        for (const p of positions.keys()) if (!seen.has(p)) positions.delete(p);
+    }
+
+    const iv = setInterval(tick, 1000).unref();
+    req.on('close', () => {
+        closed = true;
+        clearInterval(iv);
+        clearInterval(hb);
+    });
+    sendHistory();
+    tick();
+}
+
+// -------------------------------------------------------------
 // SERVICIOS HTTP
 // -------------------------------------------------------------
 
@@ -208,6 +333,11 @@ function setContactPerfil(key, perfil) {
 function routeApi(req, res, pathname, params) {
     if (pathname === '/api/status' && req.method === 'GET') {
         sendJson(res, 200, buildStatus());
+        return;
+    }
+
+    if (pathname === '/api/logs' && req.method === 'GET') {
+        streamLogs(req, res, params);
         return;
     }
 
