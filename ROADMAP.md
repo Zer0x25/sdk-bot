@@ -1,7 +1,7 @@
 # 🗺️ Hoja de Ruta SDK-Bot (Guía de Sesiones Futuras)
 
 > Documento vivo. Cada sesión se elige una fase, se trabaja por tareas checkbox, se verifica arrancando brain + gateway, y se commitea con mensaje descriptivo (`feat:` / `fix:` / `refactor:` / `docs:`).
-> Última actualización: 2026-08-09 (tras análisis completo del repo).
+> Última actualización: 2026-08-11 (Fase 3 cerrada, Fase 5 definida).
 
 ---
 
@@ -77,17 +77,17 @@ Objetivo: no dejar expuestos costos, memoria ni escritura de archivos.
 - [x] **Verificación:** POST /chat desde la IP LAN → conexión rechazada (bind 127.0.0.1 verificado con `ss`); `/profiles/import` sin key → 401, con key → 400 (auth OK); 11ª llamada de `/chat` → 429.
 - [ ] **Pendiente en vivo:** subir un `.md` al self-chat con `/update` para confirmar la descarga real del documento (requiere WhatsApp).
 
-### 🔵 Fase 3 — Refactor estructural y calidad (sesiones 5-7)
+### ✅ Fase 3 — Refactor estructural y calidad (sesiones 5-7)
 Objetivo: deuda técnica grande, testes y CI.
 
-- [ ] **Split de `storageService.js`** — hoy hace de todo: I/O atómico, cache, estados, perfiles, agenda. Separar: `db.js` (I/O), `contactsRepository.js`, `stateService.js`.
-- [ ] **Split de `commandHandler.js`** (641 líneas) — mover a `commands/` con módulos por categoría (chat, listas, agenda, sistema, perfiles) + tabla de registro de comandos.
-- [ ] **Extraer reglas de negocio del pipeline** — el flujo del mensaje (anti-bucle, self-chat, estados, handoff, de-bounce) a un módulo `pipeline.js` testeable sin Baileys (inyectar `sock` fake).
-- [ ] **Tests unitarios** — `node:test` (ya incluido en Node, sin dependencias): `splitIntoHumanBubbles`, `getAdaptiveDebounceMs`, `parsePhoneOrLid`, `getCountryFromPhone`, `cleanContactsDB`, parser de `profiles.py` (pytest).
-- [ ] **Lint** — ESLint (gateway) + `ruff` (brain) + script `npm run lint` y `make lint`.
+- [x] **Split de `storageService.js`** — hoy hace de todo: I/O atómico, cache, estados, perfiles, agenda. Separar: `db.js` (I/O), `contactsRepository.js`, `stateService.js`.
+- [x] **Split de `commandHandler.js`** (641 líneas) — mover a `commands/` con módulos por categoría (chat, listas, agenda, sistema, perfiles) + tabla de registro de comandos.
+- [x] **Extraer reglas de negocio del pipeline** — el flujo del mensaje (anti-bucle, self-chat, estados, handoff, de-bounce) a un módulo `pipeline.js` testeable sin Baileys (inyectar `sock` fake).
+- [x] **Tests unitarios** — `node:test` (ya incluido en Node, sin dependencias): `splitIntoHumanBubbles`, `getAdaptiveDebounceMs`, `parsePhoneOrLid`, `getCountryFromPhone`, `cleanContactsDB`, parser de `profiles.py` (pytest).
+- [x] **Lint** — ESLint (gateway) + `ruff` (brain) + script `npm run lint` y `make lint`.
 - [x] **CI** — GitHub Actions: `npm test` + `pytest` + lint en cada push/PR (`.github/workflows/ci.yml`: 2 jobs paralelos — gateway Node 22 + brain Python 3.12).
 - [x] **JSDoc estricto (typecheck)** — opción elegida en vez de ESM: `tsc -p jsconfig.json` (`checkJs` + `strictNullChecks`) sobre los módulos núcleo con `// @ts-check`, typedefs compartidos (`ContactRecord`, `UserMetadata`, `SettingsDB`, `CommandDef`) y `errMsg()` para catches tipados `unknown`. Corrigió bugs latentes (rutas de /tmp leakadas a prod, nullability de targetKey). Script `npm run typecheck` + paso en CI.
-- [x] **Verificación:** `npm test` y `pytest` verdes en CI; el bot funciona igual tras refactor (prueba de humo completa).
+- [x] **Verificación:** `npm test` y `pytest` verdes en CI; el bot funciona igual tras refactor (prueba de humo completa). Checkboxes marcados retroactivamente en 2026-08-11: el trabajo ya estaba hecho (módulos split, 55 tests gateway, eslint/ruff en CI).
 
 ### 🟣 Fase 4 — Features y escala (sesiones 8+, siguiente gran fase)
 Objetivo: cumplir el objetivo del PLAN: **N bots, cada uno con su número, memoria aislada y perfil SOUL**.
@@ -98,6 +98,17 @@ Objetivo: cumplir el objetivo del PLAN: **N bots, cada uno con su número, memor
 - [x] **Cola persistente de mensajes** — si el brain está caído (error transitorio), el mensaje del cliente se encola en disco (`gateway/queue/pending_messages.jsonl`, JSONL, límite 50 items env `SDK_MESSAGE_QUEUE_MAX`, TTL 24h) y se responde automáticamente cuando el brain vuelve. `services/messageQueue.js` (persistencia atómica tmp+rename, `attempts` máx 5 antes de descartar). El flush lo dispara un brain call exitoso (debounce 3s) + timer de red de seguridad cada 30s; respeta `chatInFlight` y el pool global. Alerta al admin con throttle de 15 min.
 - [x] **Respuestas programadas / broadcast** — `/broadcast <texto>` (confirmación en 2 pasos con "si"/"cancelar") y `/programar <HH:MM> <texto>` (hoy si la hora no pasó, si no mañana). `services/broadcastService.js`: worker de 1 mensaje/tick (10s, pacing anti-ban), límite diario por contacto (env `SDK_BROADCAST_DAILY_LIMIT`, default 2), persistencia atómica en `gateway/broadcast_db.json` (env `SDK_BROADCAST_DB_PATH`) con cursor resume-safe tras reinicio, omite ignorados/handoff/no-agenda, `/broadcast cancelar` y `/broadcast estado`, notificación al admin al terminar. Métrica `broadcast` en GET /status. **Kill-switch (F4-P6): apagados por defecto, toggle `/broadcast on|off` (persistido en `broadcast_db.json`), arranque con `SDK_BROADCAST_ENABLED=1` en el service systemd, al apagar se cancelan los pendientes.** 11 tests.
 - [ ] **~~Multitenant~~ (descartado, anotación)** — decisión del admin (2026-08-10): NO implementar config multi-bot en este repo. Para más de un bot se levantan instancias independientes del repo (cada una con su propio número, memoria y perfil, totalmente aisladas). NOTA PARA FUTURAS AMPLIACIONES: si este repo se clona con otro fin y se necesita multi-tenant, el diseño sería `config/<bot_id>.json` (número, perfil default, admin, debounce) + aislamiento por `bot_id` (ya existe en `brain/memory.py` y en `payload.bot_id` del gateway).
+
+### 🟢 Fase 5 — Recordatorios y To-Do (sesión siguiente)
+Objetivo: el admin gestiona sus pendientes y avisos desde el self-chat. Reusa el worker de `broadcastService.js` (tick 10s, solo con conexión) en vez de duplicar timers.
+
+- [ ] **Recordatorios únicos** — `/recordar <HH:MM> <texto>` (hoy si la hora no pasó, si no mañana): al llegar la hora, el gateway envía el aviso al self-chat del admin. Confirmación en 2 pasos como `/programar`, persistencia atómica (jsonl o `reminders.json`), lista `/recordar listar` y borrado `/recordar borrar <n>`.
+- [ ] **Recordatorios recurrentes** — sintaxis `/recordar <HH:MM> diario|lunes,miercoles <texto>` (días de la semana): se reprograman solos al dispararse. Frecuencias: diario, días concretos, semanal.
+- [ ] **To-Do list** — `/todo` (lista con checkboxes), `/todo + <texto>`, `/todo done <n>`, `/todo rm <n>`, `/todo clear`. Persistido en `settings_db.json` (sección `todos`).
+- [ ] **Avisos a contactos** — opcional: `/recordar <HH:MM> <num> <texto>` (citando o con número) envía el aviso a un contacto en vez del admin (usa el envío directo de `broadcastService`, respetando el límite diario).
+- [ ] **Métrica y estado** — `reminders` y `todos` en GET /status; notificación al admin si un recordatorio falla (throttle 15 min como la cola).
+- [ ] **Tests** — unidad (parseo de frecuencia/días, reprogramación, persistencia, límites) + worker de recordatorios con socket fake; 8-10 tests.
+- [ ] **Verificación en vivo** — programar un recordatorio para 2 minutos después y confirmar el aviso en self-chat; repetir con recurrencia diaria.
 
 ---
 
@@ -115,4 +126,4 @@ Objetivo: cumplir el objetivo del PLAN: **N bots, cada uno con su número, memor
 
 ## 🔥 Orden recomendado de ataque para la PRÓXIMA sesión
 
-> Fase 0 completa, en este orden: **B1 → B2 → B3 → B4 → B5 → limpieza legacy (R2/R3/R4) → docs (D1/D2/D3) → prueba de humo final.**
+> Fases 0-4 completas. Siguiente: **Fase 5 (Recordatorios y To-Do)**, en el orden de sus checkboxes: recordatorios únicos → recurrentes → to-do list → avisos a contactos → métricas → tests → verificación en vivo. Pendientes transversales (verificación real, requieren WhatsApp): reconexión con backoff a mitad de conversación (Fase 1) y `/update` con `.md` real (Fase 2).
