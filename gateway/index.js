@@ -9,6 +9,7 @@ const { flushToDisk } = require('./services/db');
 const { getCountryFromPhone } = require('./services/metadataService');
 const { handleIncomingMessage, handlePresenceUpdate } = require('./handlers/messageHandler');
 const messageQueue = require('./services/messageQueue');
+const broadcastService = require('./services/broadcastService');
 const { startStatusServer, runtime } = require('./services/statusServer');
 const { cat } = require('./services/logger');
 
@@ -132,6 +133,7 @@ async function connectToWhatsApp () {
     });
     currentSocket = sock;
     messageQueue.setSock(sock);
+    broadcastService.setSock(sock);
 
     // Capturar eventos de sincronización de contactos de WhatsApp (Agenda del Teléfono)
     const handleContactSync = contacts => {
@@ -232,6 +234,11 @@ startStatusServer();
 // 📥 F4-P4: red de seguridad — si el brain vuelve sin una llamada IA exitosa que
 // dispare el flush, intentar vaciar la cola cada 30s (no mantiene el proceso vivo).
 setInterval(() => messageQueue.scheduleFlush(), 30 * 1000).unref();
+
+// 📢 F4-P5: worker de broadcasts — 1 mensaje por tick (pacing anti-ban) y solo
+// con la conexión abierta. No mantiene el proceso vivo.
+broadcastService.setIsConnected(() => runtime.connection === 'open');
+setInterval(() => { broadcastService.tick(); }, 10 * 1000).unref();
 
 // -------------------------------------------------------------
 // CIERRE SEGURO (GRACEFUL SHUTDOWN)

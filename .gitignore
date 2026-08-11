@@ -18,6 +18,7 @@ brain/memory.db
 
 # Cola persistente de mensajes del gateway (F4-P4, JSONL)
 gateway/queue/
+gateway/broadcast_db.json
 
 # Lock de instancia única (evita dobles instancias)
 .gateway.lock

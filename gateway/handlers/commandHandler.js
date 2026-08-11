@@ -22,6 +22,8 @@ const listsCommands = /** @type {CommandDef[]} */ (require('./commands/lists'));
 const contactsCommands = /** @type {CommandDef[]} */ (require('./commands/contacts'));
 /** @type {CommandDef[]} */
 const systemCommands = /** @type {CommandDef[]} */ (require('./commands/system'));
+/** @type {CommandDef[]} */
+const broadcastCommands = /** @type {CommandDef[]} */ (require('./commands/broadcast'));
 /** @type {CommandDef[] & {handleProfileUpload: (ctx: any) => Promise<any>}} */
 const profilesModule = /** @type {CommandDef[] & {handleProfileUpload: (ctx: any) => Promise<any>}} */ (require('./commands/profiles'));
 
@@ -33,6 +35,7 @@ const COMMANDS = [
     ...listsCommands,
     ...contactsCommands,
     ...systemCommands,
+    ...broadcastCommands,
     ...profilesModule
 ];
 

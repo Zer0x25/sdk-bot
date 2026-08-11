@@ -13,6 +13,7 @@ const { getBrainStats } = require('./brainService');
 const { getRuntimeStats } = require('../handlers/messageHandler');
 const { getCommandStats } = require('../handlers/commandHandler');
 const { getQueueStats } = require('./messageQueue');
+const { getBroadcastStats } = require('./broadcastService');
 const { cat } = require('./logger');
 
 const log = cat('CORE');
@@ -53,6 +54,7 @@ function buildStatus() {
         commands: getCommandStats(),
         runtimeStats: getRuntimeStats(),
         queue: getQueueStats(),
+        broadcast: getBroadcastStats(),
         memory: {
             rss: mem.rss,
             heapUsed: mem.heapUsed,

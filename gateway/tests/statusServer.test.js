@@ -45,6 +45,9 @@ test('GET /status devuelve métricas completas del gateway', async () => {
     assert.ok(data.queue, 'cola persistente');
     assert.strictEqual(typeof data.queue.pending, 'number');
     assert.strictEqual(typeof data.queue.max, 'number');
+    assert.ok(data.broadcast, 'broadcasts');
+    assert.strictEqual(typeof data.broadcast.pending, 'number');
+    assert.strictEqual(typeof data.broadcast.dailyLimit, 'number');
     assert.ok(data.memory, 'memoria');
     assert.ok(data.memory.heapUsed > 0);
 });
