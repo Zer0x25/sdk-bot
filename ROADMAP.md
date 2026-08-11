@@ -1,7 +1,7 @@
 # 🗺️ Hoja de Ruta SDK-Bot (Guía de Sesiones Futuras)
 
 > Documento vivo. Cada sesión se elige una fase, se trabaja por tareas checkbox, se verifica arrancando brain + gateway, y se commitea con mensaje descriptivo (`feat:` / `fix:` / `refactor:` / `docs:`).
-> Última actualización: 2026-08-11 (Fase 3 cerrada, Fase 5 definida).
+> Última actualización: 2026-08-11 (Fase 3 cerrada, Fases 5 y 6 definidas).
 
 ---
 
@@ -110,6 +110,16 @@ Objetivo: el admin gestiona sus pendientes y avisos desde el self-chat. Reusa el
 - [ ] **Tests** — unidad (parseo de frecuencia/días, reprogramación, persistencia, límites) + worker de recordatorios con socket fake; 8-10 tests.
 - [ ] **Verificación en vivo** — programar un recordatorio para 2 minutos después y confirmar el aviso en self-chat; repetir con recurrencia diaria.
 
+### 🟠 Fase 6 — Administración web (dashboard interactiva)
+Objetivo: panel web local (mismo proceso del gateway, `statusServer` extendido) que reutiliza `commandHandler.js` con un **sock virtual** (la respuesta del comando va al HTTP en vez de WhatsApp) → web y self-chat 100% equivalentes. Pairing, reset, agenda, comandos admin y logs en vivo de brain + gateway en una pantalla.
+
+- [ ] **API de acciones + UI básica** — endpoint que ejecuta los comandos admin existentes (pausar/reanudar, perfil, broadcast on/off, listas, etc.) vía el dispatcher de `commandHandler` con sock virtual; sin duplicar lógica ni tocar el pipeline. Front estático (HTML+JS puro, sin build) con tarjetas de estado (conexión, bot, contactos, memoria, brain), auto-refresh por polling 5-10s, terminal de comandos.
+- [ ] **Agenda de contactos** — tabla con búsqueda (reusa `findKeyByDigits`/`findExistingKey`), filtro por estado, edición de estado (permitir/ignorar) vía `stateService`, cambio de perfil por contacto, detalle (bio, LID, últimas interacciones).
+- [ ] **Logs en vivo (SSE)** — `GET /api/logs` con Server-Sent Events: tail de `gateway/logs/gateway.log` y `brain/logs/brain.log` (brain en la misma máquina), re-open del fd al rotar (pino-roll 5MB × 3), filtro por componente/nivel, pretty del JSON de pino client-side.
+- [ ] **Pairing y reset desde el panel** — re-pairing sin matar el proceso: cerrar socket actual, borrar `auth_info_baileys/` (respetando el lock de instancia), nuevo socket mostrando QR (evento `qr` ya capturado en `index.js`) y/o `requestPairingCode(numero)` (código de 8 dígitos, ideal en VPS sin pantalla). Reset = borrar auth + socket nuevo.
+- [ ] **Seguridad** — sigue en `127.0.0.1` (nunca expuesto); token opcional `STATUS_TOKEN` para escrituras (header `X-Status-Token`) + validación de `Origin` (una web maliciosa del navegador no debe poder llamar a `127.0.0.1`); acceso remoto documentado vía túnel SSH (`ssh -L 3100:localhost:3100`).
+- [ ] **Tests + docs** — API y sock virtual con `node:test` (requester contra el server local, sin WhatsApp), SSE/rotación con archivos fake, docs en AGENTS.md (endpoints, token, túnel).
+
 ---
 
 ## 🧭 Cómo avanza cada sesión (metodología)
@@ -126,4 +136,4 @@ Objetivo: el admin gestiona sus pendientes y avisos desde el self-chat. Reusa el
 
 ## 🔥 Orden recomendado de ataque para la PRÓXIMA sesión
 
-> Fases 0-4 completas. Siguiente: **Fase 5 (Recordatorios y To-Do)**, en el orden de sus checkboxes: recordatorios únicos → recurrentes → to-do list → avisos a contactos → métricas → tests → verificación en vivo. Pendientes transversales (verificación real, requieren WhatsApp): reconexión con backoff a mitad de conversación (Fase 1) y `/update` con `.md` real (Fase 2).
+> Fases 0-4 completas. Siguiente: **Fase 5 (Recordatorios y To-Do)**, en el orden de sus checkboxes: recordatorios únicos → recurrentes → to-do list → avisos a contactos → métricas → tests → verificación en vivo. Después **Fase 6 (Administración web)**: API de acciones + UI → agenda → logs SSE → pairing/reset → seguridad → tests. Pendientes transversales (verificación real, requieren WhatsApp): reconexión con backoff a mitad de conversación (Fase 1) y `/update` con `.md` real (Fase 2).
