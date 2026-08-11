@@ -293,9 +293,9 @@ async function refresh() {
         ['mensajes', fmt(d.queue && d.queue.pending)]
       ]) +
       card('Brain', [
-        ['estado', (d.brain && d.brain.ok !== undefined) ? (d.brain.ok ? 'ok' : 'caído') : '?',
+        ['estado', (d.brain && d.brain.ok !== undefined && d.brain.ok !== null) ? (d.brain.ok ? 'ok' : 'caído') : 'sin llamadas',
           d.brain && d.brain.ok ? 'ok' : 'warn'],
-        ['llamadas', fmt(d.brain && d.brain.calls)]
+        ['llamadas', fmt(d.brain && d.brain.aiCalls)]
       ]) +
       card('Memoria', [
         ['RSS', mem(d.memory && d.memory.rss)],

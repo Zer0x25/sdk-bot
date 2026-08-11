@@ -27,8 +27,18 @@ const brainStats = {
     lastErrorMsg: null
 };
 
+/**
+ * Stats de llamadas a la IA + estado de salud derivado:
+ * `ok`: null (nunca se llamó), true (el último evento fue un éxito),
+ * false (el último evento fue un error → brain caído/no responde).
+ */
 function getBrainStats() {
-    return { ...brainStats };
+    const lastOk = brainStats.lastOkAt ? Date.parse(brainStats.lastOkAt) : null;
+    const lastErr = brainStats.lastErrorAt ? Date.parse(brainStats.lastErrorAt) : null;
+    /** @type {boolean|null} */
+    let ok = null;
+    if (lastOk) ok = lastErr && lastErr > lastOk ? false : true;
+    return { ...brainStats, ok };
 }
 
 /**
