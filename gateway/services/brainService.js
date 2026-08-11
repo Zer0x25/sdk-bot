@@ -15,6 +15,21 @@ let cachedProfiles = null;
 let cachedProfilesAt = 0;
 const PROFILES_CACHE_TTL_MS = 60 * 1000; // 1 minuto: refresco para ver perfiles nuevos sin reiniciar
 
+// 📊 Métricas de llamadas a la IA para GET /status (F4-P3)
+/** @type {{aiCalls: number, retries: number, lastAiAt: string|null, lastOkAt: string|null, lastErrorAt: string|null, lastErrorMsg: string|null}} */
+const brainStats = {
+    aiCalls: 0,
+    retries: 0,
+    lastAiAt: null,       // última vez que se inició una llamada
+    lastOkAt: null,       // última respuesta exitosa del brain
+    lastErrorAt: null,    // último error
+    lastErrorMsg: null
+};
+
+function getBrainStats() {
+    return { ...brainStats };
+}
+
 /**
  * 🧩 Dividir respuestas largas de la IA en globos de chat naturales (Multi-Bubble)
  * Divide párrafos largos por oraciones (. ! ?) si superan los ~220 caracteres.
@@ -173,6 +188,8 @@ async function requestBrain(payload) {
 }
 
 async function processAIChat(textMessage, remoteJid, metadata, sock) {
+    brainStats.aiCalls += 1;
+    brainStats.lastAiAt = new Date().toISOString();
     const displayName = metadata.savedName || metadata.pushName || 'Usuario';
     const langLog = metadata.language ? ` | Idioma: ${metadata.language}` : '';
     log.info(`\n[ENVIANDO A IA] De: ${displayName} (${remoteJid}) | País: ${metadata.country}${langLog}`);
@@ -201,6 +218,7 @@ async function processAIChat(textMessage, remoteJid, metadata, sock) {
             // ↻ Retry 1x solo en errores transitorios (red, timeout, 5xx). 4xx = bug, no reintentar.
             const err = /** @type {Error & {status?: number}} */ (error);
             if (!err.status || err.status >= 500) {
+                brainStats.retries += 1;
                 log.warn(`↻ Error transitorio del cerebro (${err.message}). Reintentando (1/1)...`);
                 await new Promise(r => setTimeout(r, 1500));
                 data = await requestBrain(payload);
@@ -210,6 +228,7 @@ async function processAIChat(textMessage, remoteJid, metadata, sock) {
         }
 
         if (data.response) {
+            brainStats.lastOkAt = new Date().toISOString();
             log.info(`[BOT RESPONDE A ${displayName}]: ${data.response}`);
             
             // 🧠 1. Simulación de Lectura / Pensamiento Humano (antes de teclear)
@@ -246,6 +265,8 @@ async function processAIChat(textMessage, remoteJid, metadata, sock) {
             await notifyAdminError(sock, metadata, textMessage, data.error || "Respuesta vacía del cerebro IA");
         }
     } catch (error) {
+        brainStats.lastErrorAt = new Date().toISOString();
+        brainStats.lastErrorMsg = errMsg(error);
         logError.error("Error al conectar con el cerebro: " + errMsg(error));
         await notifyAdminError(sock, metadata, textMessage, errMsg(error));
     } finally {
@@ -393,5 +414,6 @@ module.exports = {
     deleteProfileFile,
     splitIntoHumanBubbles,
     calculateReadDelay,
-    calculateTypingDelay
+    calculateTypingDelay,
+    getBrainStats
 };

@@ -21,6 +21,9 @@ const activePresences = new Map();   // Mapa global en memoria RAM del estado de
 const chatInFlight = new Set();      // JIDs con una llamada de IA en curso (serialización por chat)
 const TYPING_TTL_MS = 5000;           // 5.0 segundos: el estado de tecleo expira si el teclado queda inactivo
 
+// 📊 Contadores y métricas para GET /status (F4-P3)
+const runtimeStats = { receivedMessages: 0, aiMessages: 0, adminCommands: 0 };
+
 // 🧹 Limpieza automática de RAM para evitar memory leaks en activePresences y messageBuffers
 const PRESENCE_CLEANUP_INTERVAL_MS = 10 * 60 * 1000; // 10 minutos
 const PRESENCE_MAX_AGE_MS = 15 * 60 * 1000; // 15 minutos
@@ -49,7 +52,7 @@ setInterval(() => {
         }
     }
     if (cleanedBuffers > 0) log.info(`🧹 [LIMPIEZA RAM] Descartados ${cleanedBuffers} buffers de mensajes huérfanos.`);
-}, PRESENCE_CLEANUP_INTERVAL_MS);
+}, PRESENCE_CLEANUP_INTERVAL_MS).unref();
 
 /**
  * ⌨️ GESTIÓN DE PRESENCIA DE BAILEYS (composing / recording / paused / available)
@@ -122,6 +125,8 @@ async function handleIncomingMessage(m, sock) {
     const msg = m.messages[0];
     if (!msg || !msg.message) return;
 
+    runtimeStats.receivedMessages += 1;
+
     // 🛑 ANTI-BUCLE: Ignorar mensajes generados por el propio bot
     if (msg.key.id && isBotSentMessage(msg.key.id)) {
         return;
@@ -153,6 +158,9 @@ async function handleIncomingMessage(m, sock) {
 
     // 🚦 PIPELINE PURO: decidir qué hacer con este mensaje
     const decision = decideMessageFlow({ textMessage, metadata, contactRecord, isSelf, isFromMe });
+    if (decision.type === 'respond') {
+        runtimeStats.aiMessages += 1;
+    }
 
     switch (decision.type) {
         case 'admin_command': {
@@ -340,7 +348,21 @@ function createBufferTimeout(remoteJid, metadata, sock) {
     };
 }
 
+/**
+ * 📊 Métricas de runtime para GET /status (F4-P3)
+ */
+function getRuntimeStats() {
+    return {
+        ...runtimeStats,
+        buffers: messageBuffers.size,
+        presences: activePresences.size,
+        chatInFlight: chatInFlight.size,
+        aiPool: poolStats()
+    };
+}
+
 module.exports = {
     handleIncomingMessage,
-    handlePresenceUpdate
+    handlePresenceUpdate,
+    getRuntimeStats
 };

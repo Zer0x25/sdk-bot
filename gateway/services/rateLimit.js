@@ -16,7 +16,7 @@ function createRateLimiter(maxCalls, windowMs) {
         }
     }
 
-    return function isLimited(key) {
+    const isLimited = function isLimited(key) {
         const now = Date.now();
         prune(now);
         const arr = (hits.get(key) || []).filter(t => now - t < windowMs);
@@ -28,6 +28,11 @@ function createRateLimiter(maxCalls, windowMs) {
         hits.set(key, arr);
         return false;
     };
+
+    // 📊 Métricas para GET /status (F4-P3)
+    isLimited.stats = () => ({ keys_tracked: hits.size, max_per_window: maxCalls, window_ms: windowMs });
+
+    return isLimited;
 }
 
 module.exports = { createRateLimiter };

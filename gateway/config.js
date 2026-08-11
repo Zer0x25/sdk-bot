@@ -43,9 +43,13 @@ const state = {
 // 🛑 Registro de IDs de mensajes enviados por el bot para PREVENIR BUCLE INFINITO
 const botSentMessageIds = new Set();
 
+// 📊 Contadores globales para GET /status (F4-P3)
+const counters = { sentMessages: 0 };
+
 function registerSentMessage(sentMsg) {
     if (sentMsg && sentMsg.key && sentMsg.key.id) {
         botSentMessageIds.add(sentMsg.key.id);
+        counters.sentMessages += 1;
         setTimeout(() => botSentMessageIds.delete(sentMsg.key.id), 60000);
     }
 }
@@ -61,6 +65,7 @@ module.exports = {
     CONTACTS_FILE_PATH,
     SETTINGS_FILE_PATH,
     state,
+    counters,
     registerSentMessage,
     isBotSentMessage
 };

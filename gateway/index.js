@@ -8,6 +8,7 @@ const { bulkUpsertContactsMetadata, isJunkJid, cleanContactsDB, contactStore } =
 const { flushToDisk } = require('./services/db');
 const { getCountryFromPhone } = require('./services/metadataService');
 const { handleIncomingMessage, handlePresenceUpdate } = require('./handlers/messageHandler');
+const { startStatusServer, runtime } = require('./services/statusServer');
 const { cat } = require('./services/logger');
 
 const log = cat('CORE');
@@ -186,13 +187,20 @@ async function connectToWhatsApp () {
         
         if (connection === 'close') {
             currentSocket = null;
+            runtime.connection = 'close';
+            runtime.lastDisconnectReason = lastDisconnect.error?.message || null;
             const shouldReconnect = (lastDisconnect.error)?.output?.statusCode !== DisconnectReason.loggedOut;
             log.warn('Conexión cerrada. Motivo:', lastDisconnect.error?.message, '| Reconectando:', shouldReconnect);
             if (shouldReconnect) {
+                runtime.connection = 'reconnecting';
+                runtime.reconnectAttempt = reconnectAttempt;
                 scheduleReconnect();
             }
         } else if (connection === 'open') {
+            runtime.connection = 'open';
+            runtime.lastConnectAt = new Date().toISOString();
             reconnectAttempt = 0;
+            runtime.reconnectAttempt = 0;
             if (reconnectTimer) { clearTimeout(reconnectTimer); reconnectTimer = null; }
             if (sock.user) {
                 state.ADMIN_PHONE = sock.user.id ? sock.user.id.split(':')[0].split('@')[0] : '';
@@ -215,6 +223,9 @@ async function connectToWhatsApp () {
 }
 
 ensureSingleInstance().then(connectToWhatsApp);
+
+// 📊 F4-P3: servidor de métricas local (GET /status y /health en 127.0.0.1)
+startStatusServer();
 
 // -------------------------------------------------------------
 // CIERRE SEGURO (GRACEFUL SHUTDOWN)

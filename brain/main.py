@@ -12,7 +12,7 @@ from pydantic import BaseModel
 
 from config import BRAIN_API_KEY, BRAIN_HOST, GROQ_MODEL, OPENROUTER_MODEL
 from logging_setup import make_logger
-from memory import append_exchange, clear_history, get_history
+from memory import append_exchange, clear_history, get_db_stats, get_history
 from profiles import (
     build_system_prompt,
     delete_profile,
@@ -24,14 +24,16 @@ from profiles import (
 )
 from providers import generate_ai_response, safe_log
 
+START_TIME = time.time()
+
 app = FastAPI(title="SDK-Bot Brain API (Modular Multi-Provider Router)")
 
 # 🔐 S1 — Autenticación opcional por API key (header X-API-Key).
-# Si BRAIN_API_KEY está definida en .env, toda ruta excepto "/" (health) exige
-# el header. La comparación es en tiempo constante (secrets.compare_digest).
+# Si BRAIN_API_KEY está definida en .env, toda ruta excepto la salud
+# ("/", "/health") exige el header. La comparación es en tiempo constante.
 @app.middleware("http")
 async def require_api_key(request: Request, call_next):
-    if BRAIN_API_KEY and request.url.path != "/":
+    if BRAIN_API_KEY and request.url.path not in ("/", "/health"):
         provided = request.headers.get("X-API-Key", "")
         if not secrets.compare_digest(provided, BRAIN_API_KEY):
             return JSONResponse(status_code=401, content={"detail": "API key inválida o faltante"})
@@ -176,6 +178,24 @@ def health_check():
         "status": "ok",
         "primary": f"Groq ({GROQ_MODEL})",
         "fallbacks": [f"OpenRouter ({OPENROUTER_MODEL})", "Gemini (gemini-flash-lite-latest)"]
+    }
+
+@app.get("/health")
+def health_endpoint():
+    """Salud y métricas para la futura dashboard (F4-P3). Sin API key."""
+    return {
+        "status": "ok",
+        "uptime_seconds": round(time.time() - START_TIME),
+        "providers": {
+            "primary": f"Groq ({GROQ_MODEL})",
+            "fallbacks": [f"OpenRouter ({OPENROUTER_MODEL})", "Gemini (gemini-flash-lite-latest)"],
+        },
+        "rate_limit": {
+            "enabled": RATE_LIMIT_ENABLED,
+            "max_per_min": RATE_LIMIT_MAX,
+            "users_tracked": len(_rate_hits),
+        },
+        "memory": get_db_stats(),
     }
 
 

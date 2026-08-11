@@ -47,6 +47,14 @@ for (const def of COMMANDS) {
 const ADMIN_CMD_MAX_PER_MIN = 20;
 const adminCommandLimiter = createRateLimiter(ADMIN_CMD_MAX_PER_MIN, 60 * 1000);
 
+// 📊 Métricas para GET /status (F4-P3)
+/** @type {{adminCommands: number, lastCommandAt: string|null}} */
+const commandStats = { adminCommands: 0, lastCommandAt: null };
+
+function getCommandStats() {
+    return { ...commandStats, rateLimit: adminCommandLimiter.stats() };
+}
+
 /**
  * 👑 Despachador de comandos admin (self-chat)
  * @param {string} textMessage
@@ -56,6 +64,9 @@ const adminCommandLimiter = createRateLimiter(ADMIN_CMD_MAX_PER_MIN, 60 * 1000);
  * @param {any} [rawMsg]
  */
 async function handleAdminCommand(textMessage, remoteJid, sock, metadata, rawMsg = null) {
+    commandStats.adminCommands += 1;
+    commandStats.lastCommandAt = new Date().toISOString();
+
     // ⏱️ S2 — Rate limit de comandos admin (protege de spam accidental de comandos)
     if (adminCommandLimiter(remoteJid)) {
         log.warn(`⏱️ [RATE LIMIT ADMIN] ${remoteJid} excedió ${ADMIN_CMD_MAX_PER_MIN} comandos/min. Ignorado: ${textMessage.slice(0, 60)}`);
@@ -101,5 +112,6 @@ async function handleAdminCommand(textMessage, remoteJid, sock, metadata, rawMsg
 
 module.exports = {
     handleAdminCommand,
+    getCommandStats,
     handleProfileUpload: profilesModule.handleProfileUpload
 };

@@ -94,7 +94,7 @@ Objetivo: cumplir el objetivo del PLAN: **N bots, cada uno con su número, memor
 
 - [x] **Memoria persistente** — `brain/memory.py` migrado a SQLite (`brain/memory.db`, gitignored, lazy init): `append_exchange` incremental, `get_history` con ventana temporal de 24h (sweep por chat + barrido global cada 50 escrituras), truncado por cantidad (15 msgs) y por tokens aproximados (chars/4, máx 2000). `/limpiar` sigue funcionando (reset-memory). Verificado en prod: el bot recordó el nombre tras reiniciar el brain.
 - [x] **Memoria aislada multi-bot** — esquema `messages(bot_id, user_id, role, content, created_at)` con índice `(bot_id, user_id, created_at)`; el gateway envía `bot_id` = su propio número (`ADMIN_PHONE`/`ADMIN_LID`). Verificado: mismo `user_id` en bots distintos no comparte memoria y el reset-memory solo afecta al bot indicado.
-- [ ] **Salud y métricas** — endpoint `GET /health` en brain y `GET /status` en gateway (conteo buffers, presencias, última IA, uptime) para futura dashboard.
+- [x] **Salud y métricas** — brain `GET /health` (uptime, proveedores, rate-limit, stats de DB de memoria, sin API key) y gateway `services/statusServer.js`: HTTP local `127.0.0.1:3100` (env `STATUS_PORT`), `GET /status` (conexión, bot, contactos, contadores, buffers/presencias, pool de IA, rate-limiter, memoria) y `GET /health`. Para futura dashboard; nunca exponer a la red.
 - [ ] **Cola persistente de mensajes** — si el brain está caído, encolar en disco (con límite) en vez de perder el mensaje del cliente.
 - [ ] **Respuestas programadas / broadcast** con límites diarios por número.
 - [ ] **Multitenant** — refactor de config por bot: `config/<bot_id>.json` con número, perfil default, admin, debounce tuning por bot.

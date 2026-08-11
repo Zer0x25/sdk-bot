@@ -120,3 +120,25 @@ def clear_history(bot_id: str, user_id: str):
         )
         conn.commit()
         return cur.rowcount > 0
+
+
+def get_db_stats():
+    """Métricas de la DB para GET /health (F4-P3)."""
+    conn = _connect()
+    message_count = conn.execute("SELECT count(*) FROM messages").fetchone()[0]
+    user_count = conn.execute(
+        "SELECT count(*) FROM (SELECT 1 FROM messages GROUP BY bot_id, user_id)"
+    ).fetchone()[0]
+    try:
+        size_bytes = os.path.getsize(DB_PATH)
+    except OSError:
+        size_bytes = 0
+    return {
+        "db_path": DB_PATH,
+        "size_bytes": size_bytes,
+        "messages": message_count,
+        "chats": user_count,
+        "window_hours": WINDOW_SECONDS // 3600,
+        "max_messages": MAX_HISTORY_MESSAGES,
+        "max_tokens": MAX_HISTORY_TOKENS,
+    }
