@@ -127,6 +127,14 @@
   #pairmsg, #pairmsg2, #resetmsg { font-size: 12px; color: #aab3c5; margin: 6px 0 0; }
   #pairmsg.ok, #pairmsg2.ok, #resetmsg.ok { color: #4ade80; }
   #pairmsg.err, #pairmsg2.err, #resetmsg.err { color: #f87171; }
+  .modal-back { position: fixed; inset: 0; background: rgba(5, 8, 14, 0.75); display: flex; align-items: center; justify-content: center; z-index: 50; }
+  .modal-card { background: #171c26; border: 1px solid #2a3443; border-radius: 10px; padding: 18px; max-width: 470px; width: 92%; box-shadow: 0 10px 30px rgba(0,0,0,.5); }
+  .modal-card h3 { margin: 0 0 8px; color: #f87171; }
+  .modal-list { list-style: none; margin: 8px 0; padding: 0; font-size: 13px; color: #d8dee9; }
+  .modal-list li { padding: 1px 0; }
+  #cleanread { font-size: 13px; color: #fbbf24; margin-top: 10px; }
+  #cleanerr { color: #f87171; font-size: 12px; margin-top: 6px; }
+  #cleanfinal { color: #4ade80; font-size: 13px; margin-top: 10px; }
 </style>
 </head>
 <body>
@@ -195,9 +203,45 @@
         <button class="btn danger" id="resetbtn">🔄 Resetear sesión (QR nuevo)</button>
       </div>
       <div id="resetmsg">Resetear: borra la sesión guardada y reinicia el gateway. Después tendrás que volver a vincular con QR o con número.</div>
+      <div class="row" style="margin-top:12px">
+        <button class="btn danger" id="cleanbtn">🧨 Reset limpio (fábrica)</button>
+      </div>
+      <div id="cleanmsg">Reset limpio (F7): borra TODO el estado de runtime — sesión, agenda de contactos, configuración, broadcasts y cola, memoria del brain y logs — y reinicia. La app queda como recién instalada. Los perfiles SOUL se conservan. Doble confirmación con timer de lectura y escritura de la palabra.</div>
     </div>
   </div>
 </section>
+
+<!-- 🧨 F7: modal de doble confirmación del reset limpio (timers de lectura + escritura) -->
+<div id="cleanmodal" hidden>
+  <div class="modal-back">
+    <div class="modal-card">
+      <h3>🧨 RESET LIMPIO (FÁBRICA)</h3>
+      <p class="hint">Se borrará <b>TODO</b> el estado de runtime:</p>
+      <ul class="modal-list">
+        <li>• Sesión de WhatsApp actual (habrá que vincular de nuevo)</li>
+        <li>• Agenda de contactos (contacts_db.json)</li>
+        <li>• Configuración (estados, perfil global)</li>
+        <li>• Broadcasts y cola de mensajes</li>
+        <li>• Memoria del brain (memory.db)</li>
+        <li>• Logs de gateway y brain</li>
+      </ul>
+      <p class="hint">✅ Los <b>perfiles SOUL</b> se conservan. La app quedará como recién instalada (default <b>ignored_all</b>).</p>
+      <div id="cleanread">⏳ <b>Timer de lectura:</b> lee el aviso completo… podrás escribir en <b id="cleanreadn">10</b>s</div>
+      <div id="cleanwrite" hidden>
+        <div class="row"><span class="hint">✍️ <b>Timer de escritura:</b> <span id="cleanwriten">60</span>s restantes para escribir la palabra.</span></div>
+        <div class="row">
+          <input type="text" id="cleanword" placeholder="Escribe BORRAR-TODO" autocomplete="off" disabled>
+          <button class="btn danger" id="cleanok" disabled>🧨 Ejecutar</button>
+        </div>
+        <div id="cleanerr"></div>
+      </div>
+      <div id="cleanfinal" hidden></div>
+      <div class="row" style="margin-top:12px">
+        <button class="btn ghost" id="cleancancel">✖️ Cancelar</button>
+      </div>
+    </div>
+  </div>
+</div>
 
 <section id="page-contactos" class="page" hidden>
   <h2>📇 Agenda de contactos</h2>
@@ -417,6 +461,7 @@ const qrbox = $('#qrbox'), qrst = $('#qrst');
 const pairphone = $('#pairphone'), pairbtn = $('#pairbtn'), pairmsg2 = $('#pairmsg2');
 const genqrbtn = $('#genqrbtn'), pairmsg = $('#pairmsg');
 const launchbtn = $('#launchbtn'), resetbtn = $('#resetbtn'), resetmsg = $('#resetmsg');
+const cleanbtn = $('#cleanbtn'), cleanmsg = $('#cleanmsg');
 
 const QR_BADGE = '<div class="noqr"><svg viewBox="0 0 100 100" width="84" height="84" aria-hidden="true">' +
   '<circle cx="50" cy="50" r="43" fill="none" stroke="#dc2626" stroke-width="9"/>' +
@@ -643,6 +688,115 @@ resetbtn.addEventListener('click', async () => {
     resetmsg.className = 'err';
     resetmsg.textContent = '⚠️ Error: ' + e.message;
   }
+});
+
+// Reset limpio (F7, factory reset): DOBLE confirmación + TIMERS de lectura
+// y escritura de la palabra mágica. 1º confirm(), 2º modal: timer de lectura
+// (10s, fuerza a leer el aviso; el input está bloqueado) y timer de escritura
+// (60s para escribir exactamente BORRAR-TODO). Al vencer cualquier timer, se
+// cancela solo y no se borra nada.
+const cleanModal = $('#cleanmodal'), cleanread = $('#cleanread'), cleanreadn = $('#cleanreadn');
+const cleanwrite = $('#cleanwrite'), cleanwriten = $('#cleanwriten'), cleanword = $('#cleanword');
+const cleanok = $('#cleanok'), cleanerr = $('#cleanerr'), cleanfinal = $('#cleanfinal');
+const cleancancel = $('#cleancancel');
+const CLEAN_READ_S = 10, CLEAN_WRITE_S = 60, CLEAN_WORD = 'BORRAR-TODO';
+let cleanTimer = null;
+
+function cleanCloseModal() {
+  if (cleanTimer) clearInterval(cleanTimer);
+  cleanTimer = null;
+  cleanModal.hidden = true;
+  cleanread.hidden = false;
+  cleanwrite.hidden = true;
+  cleanfinal.hidden = true;
+  cleanfinal.textContent = '';
+  cleanword.value = '';
+  cleanword.disabled = true;
+  cleanok.disabled = true;
+  cleanerr.textContent = '';
+  cleanbtn.disabled = false;
+}
+
+function cleanStartRead() {
+  let left = CLEAN_READ_S;
+  const tick = () => {
+    left -= 1;
+    if (left <= 0) {
+      clearInterval(cleanTimer);
+      cleanTimer = null;
+      cleanread.hidden = true;
+      cleanwrite.hidden = false;
+      cleanword.disabled = false;
+      cleanok.disabled = false;
+      cleanword.focus();
+      cleanStartWrite();
+    } else {
+      cleanreadn.textContent = left;
+    }
+  };
+  cleanreadn.textContent = CLEAN_READ_S;
+  cleanTimer = setInterval(tick, 1000);
+}
+
+function cleanStartWrite() {
+  let left = CLEAN_WRITE_S;
+  const tick = () => {
+    left -= 1;
+    if (left <= 0) {
+      cleanCloseModal();
+      cleanmsg.className = '';
+      cleanmsg.textContent = '⏰ Timer de escritura agotado — el reset limpio fue cancelado, no se borró nada.';
+    } else {
+      cleanwriten.textContent = left;
+    }
+  };
+  cleanwriten.textContent = CLEAN_WRITE_S;
+  cleanTimer = setInterval(tick, 1000);
+}
+
+cleanbtn.addEventListener('click', () => {
+  if (!confirm('🧨 RESET LIMPIO (FÁBRICA)\n\nSe borrará TODO el estado de runtime y habrá que volver a vincular WhatsApp.\n\n' +
+    'Confirmación 1/2. Se abrirá un aviso con timer de lectura (10s) y luego deberás escribir ' + CLEAN_WORD + ' en 60s.')) return;
+  cleanbtn.disabled = true;
+  cleanModal.hidden = false;
+  cleanStartRead();
+});
+
+cleanok.addEventListener('click', async () => {
+  if (cleanword.value.trim().toUpperCase() !== CLEAN_WORD) {
+    cleanerr.textContent = '⚠️ Palabra incorrecta. Escribe exactamente ' + CLEAN_WORD + ' (ventana de escritura sigue activa).';
+    return;
+  }
+  cleanword.disabled = true;
+  cleanok.disabled = true;
+  if (cleanTimer) clearInterval(cleanTimer);
+  cleanTimer = null;
+  try {
+    const r = await fetch('/api/reset', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ confirm: true, clean: true })
+    });
+    const d = await r.json();
+    cleanfinal.hidden = false;
+    cleanfinal.className = d.success ? '' : 'err';
+    cleanfinal.style.color = d.success ? '#4ade80' : '#f87171';
+    cleanfinal.textContent = (d.success ? '✅ ' : '⚠️ ') + (d.message || '');
+    if (d.success) {
+      cleanread.hidden = true;
+      cleanwrite.hidden = true;
+      resetbtn.disabled = true;
+      // El proceso se reinicia: la página se reconectará sola
+    }
+  } catch (e) {
+    cleanerr.textContent = '⚠️ Error: ' + e.message;
+    cleanword.disabled = false;
+    cleanok.disabled = false;
+  }
+});
+
+cleancancel.addEventListener('click', () => {
+  cleanCloseModal();
+  cleanmsg.className = '';
+  cleanmsg.textContent = '✖️ Reset limpio cancelado — no se borró nada.';
 });
 
 // ─── Agenda de contactos (F6-P2) ───

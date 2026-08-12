@@ -6,6 +6,7 @@
     "start": "node index.js",
     "reset": "node reset-session.js",
     "resync": "node reset-session.js",
+    "clean": "node reset-clean.js",
     "test": "node --test",
     "lint": "eslint .",
     "lint:fix": "eslint . --fix",

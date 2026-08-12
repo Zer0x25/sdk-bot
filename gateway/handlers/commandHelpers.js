@@ -56,7 +56,8 @@ const COMMAND_USAGE = {
     quitar:  '/quitar <numero_o_lid|*> —\n\n*Ejemplo copiable:*\n```/q +56 9 4252 3669```',
     buscar:  '/buscar <nombre_tel_o_lid> —\n\n*Ejemplos copiables:*\n```/s Pedro```\n```/s +56 9 4252 3669```',
     nombre:  '/nombre <numero_o_lid> <nombre_agenda> —\n\n*Ejemplo copiable:*\n```/n +56 9 4252 3669 Pedro Pizzería```',
-    update:  'cita un archivo `.md` y escribe `/update` (o envíalo con caption `/update`).\n\n*Exportar un perfil para editar:* `/perfil exportar <key>`'
+    update:  'cita un archivo `.md` y escribe `/update` (o envíalo con caption `/update`).\n\n*Exportar un perfil para editar:* `/perfil exportar <key>`',
+    'reset-clean': '/reset-clean — reset limpio (fábrica): borra TODO el estado (sesión, agenda, configuración, colas, memoria y logs) y reinicia; la app queda recién instalada (perfiles SOUL se conservan). Confirma escribiendo la palabra mágica tras el timer de lectura.'
 };
 
 /**

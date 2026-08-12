@@ -8,6 +8,7 @@ const messageQueue = require('../services/messageQueue');
 const { getAdaptiveDebounceMs, getCandidateIdsForPresence, extractTextMessage, decideMessageFlow } = require('../services/pipeline');
 const { handleAdminCommand } = require('./commandHandler');
 const { tryConfirm } = require('../services/broadcastService');
+const { tryCleanConfirm } = require('../services/resetCleanFlow');
 const { cat } = require('../services/logger');
 
 // 📢 Logging por categoría ([AI], [DEBOUNCE], [PRESENCIA], [COMANDO], [ERROR])
@@ -174,6 +175,9 @@ async function handleIncomingMessage(m, sock) {
             // 📢 F4-P5: si hay una confirmación de broadcast pendiente y el admin
             // respondió "si"/"cancelar", se consume aquí (no va a la IA).
             if (await tryConfirm(textMessage, sock, remoteJid)) return;
+            // 🧨 F7: confirmación del reset limpio (palabra mágica con timers) —
+            // se consume aquí igual que la de broadcast (no va a la IA).
+            if (await tryCleanConfirm(textMessage, sock, remoteJid)) return;
             logAI.info(`\n🤖 [ASISTENTE PERSONAL EN SELF-CHAT]: "${decision.text}"`);
             await enqueueAI(() => processAIChat(decision.text, remoteJid, metadata, sock));
             return;

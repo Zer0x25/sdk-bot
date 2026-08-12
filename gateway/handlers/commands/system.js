@@ -4,6 +4,8 @@
 const { state } = require('../../config');
 const { getContactsDB } = require('../../services/db');
 const { getCountryFromPhone } = require('../../services/metadataService');
+const { requestCleanReset } = require('../../services/resetCleanFlow');
+const { syntaxError } = require('../commandHelpers');
 
 function runPausar() {
     state.IS_BOT_PAUSED = true;
@@ -55,7 +57,18 @@ function runEstado() {
         `• \`/pf eliminar <perfil>\` -> Borrar un perfil (default protegido)\n` +
         `• \`/update\` (citando un .md) -> Importar perfil editado\n` +
         `• \`/info\` -> Datos de depuración\n` +
-        `• \`/init\` -> 📚 Leer guía rápida de inicio`;
+        `• \`/init\` -> 📚 Leer guía rápida de inicio\n` +
+        `• \`/reset-clean\` -> 🧨 Reset limpio (fábrica): borra TODO y deja la app recién instalada (doble confirmación con timers)`;
+}
+
+/**
+ * 🧨 F7: RESET LIMPIO (factory reset) desde el self-chat. Sin argumentos:
+ * el flujo de confirmación (doble confirmación con timers de lectura y
+ * escritura de la palabra mágica) vive en resetCleanFlow.js.
+ */
+function runResetClean(ctx) {
+    if (ctx.queryParam) return syntaxError('reset-clean', 'Este comando no acepta argumentos.');
+    return requestCleanReset(ctx.sock, ctx.remoteJid);
 }
 
 function runInit() {
@@ -82,5 +95,6 @@ module.exports = [
     { aliases: ['/reanudar', '/ag', '/resume', '/start', '/run'], run: runReanudar },
     { aliases: ['/info', '/whoami'], run: runInfo },
     { aliases: ['/estado', '/e', '/menu', '/status', '/help', '/admin'], run: runEstado },
-    { aliases: ['/init', '/startguide', '/guia'], run: runInit }
+    { aliases: ['/init', '/startguide', '/guia'], run: runInit },
+    { aliases: ['/reset-clean', '/fclean'], run: runResetClean }
 ];

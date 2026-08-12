@@ -11,6 +11,16 @@ const tmpAuthDir = fs.mkdtempSync(path.join(os.tmpdir(), 'sdkbot-auth-'));
 process.env.SDK_AUTH_DIR = tmpAuthDir;
 // Los tests no deben matar el proceso del runner con el exit del reset
 process.env.SDK_RESET_NO_EXIT = '1';
+// Rutas de estado para el test de RESET LIMPIO (F7) — todas a temporales:
+// el wipe NO debe tocar jamás los archivos reales del repo/instancia.
+const tmpWipeDir = fs.mkdtempSync(path.join(os.tmpdir(), 'sdkbot-wipe-'));
+process.env.SDK_BROADCAST_DB_PATH = path.join(tmpWipeDir, 'broadcast_db.json');
+process.env.SDK_MESSAGE_QUEUE_PATH = path.join(tmpWipeDir, 'queue', 'pending_messages.jsonl');
+process.env.BRAIN_MEMORY_DB = path.join(tmpWipeDir, 'memory.db');
+process.env.SDK_ADMIN_WEB_LOG_GATEWAY = path.join(tmpWipeDir, 'gwlogs');
+process.env.SDK_ADMIN_WEB_LOG_BRAIN = path.join(tmpWipeDir, 'brlogs');
+process.env.SDK_GATEWAY_LOCK_PATH = path.join(tmpWipeDir, '.gateway.lock');
+process.env.SDK_BRAIN_LOCK_PATH = path.join(tmpWipeDir, '.brain.lock');
 
 // DB temporal ANTES de los requires (config.js lee las env vars al cargar)
 const { withTempDbPaths } = require('./helpers/tmpPaths');
@@ -46,8 +56,14 @@ after(async () => {
     server.close();
     t.restore();
     fs.rmSync(tmpAuthDir, { recursive: true, force: true });
+    fs.rmSync(tmpWipeDir, { recursive: true, force: true });
     delete process.env.SDK_AUTH_DIR;
     delete process.env.SDK_RESET_NO_EXIT;
+    for (const k of [
+        'SDK_BROADCAST_DB_PATH', 'SDK_MESSAGE_QUEUE_PATH', 'BRAIN_MEMORY_DB',
+        'SDK_ADMIN_WEB_LOG_GATEWAY', 'SDK_ADMIN_WEB_LOG_BRAIN',
+        'SDK_GATEWAY_LOCK_PATH', 'SDK_BRAIN_LOCK_PATH'
+    ]) delete process.env[k];
 });
 
 // Lee el stream SSE acumulando eventos hasta que alguno cumple `predicate`.
@@ -308,6 +324,59 @@ test('POST /api/reset exige confirm:true y borra auth_info_baileys', async () =>
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ confirm: true })
+    })).json();
+    assert.strictEqual(again.success, false);
+    resetInProgressForTests();
+});
+
+test('POST /api/reset con clean:true borra TODO el estado (factory reset F7)', async () => {
+    resetInProgressForTests();
+    // Poblar todos los archivos de estado (apuntan a tmp por las env vars)
+    const paths = [
+        path.join(tmpAuthDir, 'creds.json'),
+        process.env.SDK_CONTACTS_DB_PATH,
+        process.env.SDK_SETTINGS_DB_PATH,
+        process.env.SDK_BROADCAST_DB_PATH,
+        process.env.SDK_MESSAGE_QUEUE_PATH,
+        process.env.BRAIN_MEMORY_DB,
+        path.join(process.env.SDK_ADMIN_WEB_LOG_GATEWAY, 'gateway.log'),
+        path.join(process.env.SDK_ADMIN_WEB_LOG_BRAIN, 'brain.log'),
+        process.env.SDK_GATEWAY_LOCK_PATH,
+        process.env.SDK_BRAIN_LOCK_PATH
+    ];
+    for (const p of paths) {
+        fs.mkdirSync(path.dirname(p), { recursive: true });
+        fs.writeFileSync(p, 'x');
+    }
+
+    // Sin confirmación → 400
+    const noConfirm = await fetch(`http://127.0.0.1:${port}/api/reset`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ confirm: false, clean: true })
+    });
+    assert.strictEqual(noConfirm.status, 400);
+
+    // Con confirmación + clean:true → wipe total (SDK_RESET_NO_EXIT evita el exit)
+    const ok = await fetch(`http://127.0.0.1:${port}/api/reset`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ confirm: true, clean: true })
+    });
+    assert.strictEqual(ok.status, 200);
+    const d = await ok.json();
+    assert.strictEqual(d.success, true);
+    assert.match(d.message, /Reset limpio/);
+    for (const p of paths) assert.ok(!fs.existsSync(p), `borrado: ${p}`);
+
+    // Los perfiles SOUL jamás se tocan
+    assert.ok(fs.existsSync(path.join(__dirname, '..', '..', 'brain', 'profiles', 'default.md')), 'perfil SOUL intacto');
+
+    // Reset en curso → el segundo intento queda bloqueado
+    const again = await (await fetch(`http://127.0.0.1:${port}/api/reset`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ confirm: true, clean: true })
     })).json();
     assert.strictEqual(again.success, false);
     resetInProgressForTests();

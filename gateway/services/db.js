@@ -2,6 +2,7 @@
 const fs = require('fs');
 const fsPromises = require('fs/promises');
 const { SETTINGS_FILE_PATH, CONTACTS_FILE_PATH, state } = require('../config');
+const { isWiping } = require('./factoryReset');
 const { cat, errMsg } = require("./logger");
 const log = cat("STORAGE");
 const logError = cat("ERROR");
@@ -116,6 +117,8 @@ function saveSettingsDB(settings) {
     cachedSettingsDB = settings;
     if (saveSettingsTimer) clearTimeout(saveSettingsTimer);
     saveSettingsTimer = setTimeout(async () => {
+        // 🧹 Reset limpio en curso: no reescribir las DBs recién borradas
+        if (isWiping()) return;
         try {
             await fsPromises.writeFile(SETTINGS_FILE_PATH, JSON.stringify(cachedSettingsDB, null, 2));
         } catch (e) {
@@ -137,6 +140,8 @@ function saveContactsDB(db) {
     if (replaced) notifyContactsCache();
     if (saveContactsTimer) clearTimeout(saveContactsTimer);
     saveContactsTimer = setTimeout(async () => {
+        // 🧹 Reset limpio en curso: no reescribir las DBs recién borradas
+        if (isWiping()) return;
         try {
             // Write atómico: .tmp + rename (máxima seguridad contra cortes)
             const tmpPath = `${CONTACTS_FILE_PATH}.tmp`;
@@ -153,6 +158,12 @@ function saveContactsDB(db) {
 // FUNCIÓN DE CIERRE SEGURO (Graceful Shutdown)
 // -------------------------------------------------------------
 function flushToDisk() {
+    // 🧹 Reset limpio en curso: la caché RAM es justamente lo que se quiere
+    // perder; volcarla a disco resistiría el wipe (recrearía las DBs borradas).
+    if (isWiping()) {
+        log.info("🧹 Reset limpio en curso: se omite el volcado de DBs a disco.");
+        return;
+    }
     log.info("💾 Guardando bases de datos a disco antes de cerrar...");
     try {
         if (cachedSettingsDB) fs.writeFileSync(SETTINGS_FILE_PATH, JSON.stringify(cachedSettingsDB, null, 2));

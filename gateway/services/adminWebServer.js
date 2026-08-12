@@ -11,7 +11,6 @@
 const http = require('http');
 const fs = require('fs');
 const path = require('path');
-const { execFile } = require('child_process');
 const QRCode = require('qrcode');
 const { handleAdminCommand } = require('../handlers/commandHandler');
 const { buildStatus } = require('./statusServer');
@@ -19,6 +18,7 @@ const { getContactsDB } = require('./db');
 const { findKeyByDigits } = require('./contactsRepository');
 const { setNumberState, setContactProfile } = require('./stateService');
 const { getAvailableProfiles, getProfileDetail, exportProfileFile, importProfileFile, deleteProfileFile, reloadProfiles } = require('./brainService');
+const { performFactoryReset, setWiping, restartGatewayProcess, restartBrainIfSystemd } = require('./factoryReset');
 const { cat, errMsg } = require('./logger');
 
 const log = cat('CORE');
@@ -571,25 +571,11 @@ function resetQrForTests() {
 
 /**
  * Reinicia el proceso del gateway (para regenerar QR/pairing o tras reset):
- * bajo systemd vía `systemctl restart` (exit como fallback → Restart=always);
- * en manual/dev solo exit(0) y el admin relanza (`npm start`). Da margen de
- * 500ms al cliente HTTP para recibir la respuesta.
- * (SDK_RESET_NO_EXIT=1: solo tests — el proceso del runner no muere)
+ * mismo comportamiento de factoryReset.restartGatewayProcess (systemd o
+ * exit); margen de 500ms para que el cliente HTTP reciba la respuesta.
  */
 function scheduleRestart() {
-    setTimeout(() => {
-        if (process.env.SDK_RESET_NO_EXIT === '1') return;
-        if (process.env.SYSTEMD_EXEC_PID) {
-            execFile('systemctl', ['restart', process.env.SDK_GATEWAY_SERVICE || 'sdk-bot-gateway'], (e) => {
-                if (e) {
-                    logError.error(`🖥️ [ADMIN-WEB] systemctl restart falló: ${errMsg(e)} — saliendo igualmente`);
-                    process.exit(0);
-                }
-            });
-        } else {
-            process.exit(0);
-        }
-    }, 500);
+    restartGatewayProcess();
 }
 
 /**
@@ -615,6 +601,42 @@ async function performReset() {
     scheduleRestart();
 
     return { success: true, message: `Sesión ${deleted ? 'eliminada' : 'ya borrada'}; reiniciando gateway… La página se reconectará sola.` };
+}
+
+/**
+ * F7: POST /api/reset con clean:true — RESET LIMPIO (factory reset): borra
+ * TODO el estado de runtime (sesión, agenda, settings, broadcasts, cola,
+ * memoria del brain, logs y locks) y reinicia. La app queda como recién
+ * clonada; los perfiles SOUL se conservan. El flag `wiping` evita que el
+ * cierre seguro vuelque la caché RAM a disco (resistiría el wipe).
+ */
+async function performCleanReset() {
+    if (resetInProgress) return { success: false, message: 'Reset ya en curso…' };
+    resetInProgress = true;
+    setWiping(true);
+
+    const report = performFactoryReset();
+    if (report.errors.length > 0) {
+        setWiping(false);
+        resetInProgress = false;
+        const reason = report.errors[0];
+        logError.error(`🖥️ [ADMIN-WEB] Reset limpio ABORTADO: no se pudo borrar ${reason}`);
+        return { success: false, message: `Reset limpio abortado: ${reason}` };
+    }
+
+    log.warn(`🖥️ [ADMIN-WEB] Reset limpio: ${report.deleted.length} elementos borrados (${report.missing.length} no existían); reiniciando…`);
+    // El brain corre en la misma máquina: si es un service de systemd se
+    // reinicia para que suelte el inodo de memory.db borrada (la recrea
+    // vacía); en modo manual se reinicia con el próximo arranque del brain.
+    const brainNote = restartBrainIfSystemd()
+        ? ' y brain'
+        : ' (reinicia el brain manualmente para limpiar su memoria en RAM)';
+    scheduleRestart();
+
+    return {
+        success: true,
+        message: `Reset limpio: ${report.deleted.length} elementos borrados; reiniciando gateway${brainNote}. La app queda como recién instalada.`
+    };
 }
 
 /**
@@ -688,7 +710,9 @@ function routeApi(req, res, pathname, params) {
                     sendJson(res, 400, { success: false, message: 'Se requiere confirm: true (el front pide confirmación antes de llamar)' });
                     return;
                 }
-                const result = await performReset();
+                const result = parsed.clean === true
+                    ? await performCleanReset()
+                    : await performReset();
                 sendJson(res, result.success ? 200 : 400, result);
             } catch (e) {
                 sendJson(res, 500, { success: false, message: `Error interno: ${errMsg(e)}` });

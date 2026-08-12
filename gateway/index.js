@@ -13,6 +13,7 @@ const { decideReconnect } = require('./services/pipeline');
 const messageQueue = require('./services/messageQueue');
 const broadcastService = require('./services/broadcastService');
 const { startStatusServer, runtime } = require('./services/statusServer');
+const { isWiping } = require('./services/factoryReset');
 const { cat } = require('./services/logger');
 
 const log = cat('CORE');
@@ -297,7 +298,8 @@ setInterval(() => { broadcastService.tick(); }, 10 * 1000).unref();
 // -------------------------------------------------------------
 function handleExit() {
     log.info('\n🛑 Señal de apagado recibida. Cerrando de forma segura...');
-    flushToDisk();
+    // 🧹 Reset limpio en curso (F7): el wipe ya borró las DBs; no volcarlas.
+    if (!isWiping()) flushToDisk();
     process.exit(0);
 }
 
