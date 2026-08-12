@@ -144,6 +144,9 @@
   .dot { width: 9px; height: 9px; border-radius: 50%; background: #4ade80; box-shadow: 0 0 6px #4ade80; }
   .dot.dead { background: #f87171; box-shadow: 0 0 6px #f87171; }
   .dot.warn { background: #facc15; box-shadow: 0 0 6px #facc15; }
+  .btn-toggle { margin-top: 8px; padding: 6px 12px; border-radius: 7px; border: 1px solid #2a3443; background: #1f2733; color: #e6edf6; font-size: 12px; cursor: pointer; font-weight: 600; }
+  .btn-toggle:hover { background: #2a3443; }
+  .btn-toggle:disabled { opacity: .5; cursor: default; }
 </style>
 </head>
 <body>
@@ -333,6 +336,7 @@ const $ = s => document.querySelector(s);
 const cards = $('#cards'), out = $('#out'), cmd = $('#cmd'), run = $('#run');
 const livedot = $('#livedot'), livetext = $('#livetext');
 let currentPage = 'dashboard';
+let lastStatus = null; // último status del gateway, para acciones interactivas
 
 // ─── Navegación por pestañas ───
 // Cada pestaña es una sección `#page-<name>`; las conexiones (SSE del QR,
@@ -365,6 +369,17 @@ const mem = n => Math.round(n / 1048576) + ' MB';
 
 const brainStateClass = st => st === 'Running' ? 'running' : (st === 'Stopped' ? 'stopped' : 'standby');
 
+// Trunca textos largos añadiendo elipsis (…) en vez de cortar en seco.
+const trunc = (s, n) => { s = String(s ?? ''); return s.length > n ? s.slice(0, n - 1).trimEnd() + '…' : s; };
+
+// Separa "Groq (modelo)" en proveedor y modelo para la ficha Brain.
+function splitProvider(s) {
+  if (!s || typeof s !== 'string') return { provider: '-', model: '-' };
+  const m = s.match(/^(.*?)\s*\(([^)]*)\)$/);
+  if (m) return { provider: m[1].trim() || '-', model: m[2].trim() || '-' };
+  return { provider: s.trim(), model: '-' };
+}
+
 // Estado del gateway/Baileys con el mismo semáforo Running/Stopped/Stand-by:
 // open → Running; reconnecting/starting/close → Stand-by (proceso vivo, Baileys
 // no conectado); si el fetch falla el catch ya marca Stopped.
@@ -394,18 +409,21 @@ async function refresh() {
       ]) +
       card('Brain', [
         ['estado', bh.state || 'desconocido', brainStateClass(bh.state)],
-        ['proveedor', (bh.health && bh.health.providers && bh.health.providers.primary) || '-'],
+        ...(() => { const p = splitProvider((bh.health && bh.health.providers && bh.health.providers.primary) || ''); return [['proveedor', p.provider || '-'], ['modelo', p.model || '-']]; })(),
         ['uptime', bh.health ? Math.round(bh.health.uptime_seconds / 60) + ' min' : '-'],
         ['llamadas IA', fmt(brain.aiCalls)],
-        ['último error', brain.lastErrorMsg ? (brain.lastErrorMsg).slice(0, 30) : (bh.lastError ? bh.lastError.slice(0, 30) : '—')]
+        ['último error', trunc(brain.lastErrorMsg || bh.lastError || '—', 32)]
       ]) +
       card('Bot', [
+        ['estado', paused ? 'Pausado' : 'Activo', paused ? 'warn' : 'ok'],
         ['número', d.bot && d.bot.number || '-'],
         ['perfil', d.bot && d.bot.profile || '-'],
-        ['modo', d.bot && d.bot.globalMode || '-'],
-        ['pausado', paused ? 'SÍ' : 'no', paused ? 'warn' : 'ok']
+        ['modo', d.bot && d.bot.globalMode || '-']
       ]) +
+      '<button class="btn-toggle" id="botToggle">' + (paused ? '▶ Reanudar' : '⏸ Pausar') + '</button>' +
       card('Contactos', [
+        ['estado', (d.database && d.database.globalMode === 'ignored_all') ? 'Ignore_All' : 'Access_All',
+          (d.database && d.database.globalMode === 'ignored_all') ? 'warn' : 'ok'],
         ['agenda', fmt(d.database && d.database.contacts)],
         ['modo global', d.database && d.database.globalMode || '-'],
         ['perfil global', d.database && d.database.currentProfile || '-']
@@ -425,6 +443,7 @@ async function refresh() {
     // 💓 Heartbeat del panel: conexión al gateway viva
     livedot.className = 'dot';
     livetext.textContent = 'en vivo · ' + new Date().toLocaleTimeString();
+    lastStatus = d;
   } catch (e) {
     cards.innerHTML = '<div class="card"><h2>Panel</h2><div class="row"><span>error</span><span class="bad">' + e.message + '</span></div></div>';
     livedot.className = 'dot dead';
@@ -436,6 +455,38 @@ function esc(s) {
   s = String(s ?? '');
   return s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
 }
+
+// Envía un comando admin al gateway vía POST /api/command y devuelve el JSON.
+async function sendCommand(text) {
+  const r = await fetch('/api/command', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ command: text })
+  });
+  return r.json();
+}
+
+// Acción del botón de la ficha Bot: invierte el estado (Pausar/Reanudar)
+// usando el último status conocido. Delegación de eventos en #cards para
+// sobrevivir al re-render de refresh() (el botón se recrea cada tick).
+async function toggleBot() {
+  if (!lastStatus) return;
+  const pausado = !!(lastStatus.bot && lastStatus.bot.paused);
+  const btn = document.getElementById('botToggle');
+  if (btn) btn.disabled = true;
+  try {
+    await sendCommand(pausado ? '/reanudar' : '/pausar');
+    await refresh();
+  } finally {
+    const b2 = document.getElementById('botToggle');
+    if (b2) b2.disabled = false;
+  }
+}
+
+// Un solo listener (no se pierde al re-renderizar la tarjeta).
+cards.addEventListener('click', e => {
+  if (e.target && e.target.id === 'botToggle') toggleBot();
+});
 
 async function runCmd() {
   const text = cmd.value.trim();
