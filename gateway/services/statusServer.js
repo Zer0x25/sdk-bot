@@ -85,8 +85,9 @@ function startStatusServer(opts = {}) {
     });
 
     server.on('error', (e) => logError.error('📊 [STATUS] Error en el servidor de métricas: ' + (e && e.message)));
-    server.listen(port, '127.0.0.1', () => {
-        log.info(`📊 [STATUS] Métricas en http://127.0.0.1:${port}/status (solo local)`);
+    const host = process.env.STATUS_HOST || '127.0.0.1';
+    server.listen(port, host, () => {
+        log.info(`📊 [STATUS] Métricas en http://${host}:${port}/status`);
     });
     return server;
 }

@@ -893,8 +893,9 @@ function startAdminWebServer(opts = {}) {
             logError.error('🖥️ [ADMIN-WEB] Error del servidor: ' + errMsg(err));
         }
     });
-    server.listen(port, '127.0.0.1', () => {
-        log.info(`🖥️ [ADMIN-WEB] Panel en http://127.0.0.1:${port}/ (solo local)`);
+    const host = process.env.ADMIN_WEB_HOST || '127.0.0.1';
+    server.listen(port, host, () => {
+        log.info(`🖥️ [ADMIN-WEB] Panel en http://${host}:${port}/`);
     });
     return server;
 }
