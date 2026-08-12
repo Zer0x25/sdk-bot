@@ -277,6 +277,9 @@ ensureSingleInstance().then(connectToWhatsApp);
 // 📊 F4-P3: servidor de métricas local (GET /status y /health en 127.0.0.1)
 startStatusServer();
 
+// 💓 Healthcheck activo del brain para el dashboard (Running/Stopped/Stand-by)
+require('./services/brainService').startBrainHealthWatch();
+
 // 🖥️ F6-P1: panel de administración web OPCIONAL — solo con SDK_ADMIN_WEB_ENABLED=1.
 // Módulo consumidor: no altera el motor (sin el env, el bot es idéntico).
 if (process.env.SDK_ADMIN_WEB_ENABLED === '1') {

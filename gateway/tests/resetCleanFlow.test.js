@@ -47,7 +47,6 @@ function populateState() {
 
 // Categorías derivadas del inventario para asserts post-wipe.
 const LOG_DIRS = new Set(getStatePaths().filter(e => /Logs/.test(e.label)).map(e => e.path));
-const DIRS = new Set(getStatePaths().filter(e => e.kind === 'dir').map(e => e.path));
 
 afterEach(() => resetForTests());
 

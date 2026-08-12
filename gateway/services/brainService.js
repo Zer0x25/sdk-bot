@@ -489,6 +489,77 @@ async function deleteProfileFile(profileKey) {
     }
 }
 
+/**
+ * 💓 Healthcheck activo del brain (F6-P3 dashboard): el gateway sondea
+ * GET /health cada BRAIN_HEALTH_INTERVAL_MS y guarda el estado real del
+ * proceso. Así el panel puede mostrar Running / Stopped / Stand-by en vez
+ * del heurístico "ok/caído/sin llamadas" que solo miraba la última respuesta.
+ * - Running: health 200 OK.
+ * - Stopped: no responde / timeout / conexión rechazada.
+ * - Stand-by: Running pero sin llamadas IA en los últimos BRAIN_STANDBY_MS.
+ */
+const BRAIN_HEALTH_INTERVAL_MS = Number(process.env.SDK_BRAIN_HEALTH_INTERVAL_MS || 10000);
+const BRAIN_HEALTH_TIMEOUT_MS = Number(process.env.SDK_BRAIN_HEALTH_TIMEOUT_MS || 4000);
+const BRAIN_STANDBY_MS = Number(process.env.SDK_BRAIN_STANDBY_MS || 5 * 60 * 1000);
+
+/** @type {{reachable: boolean, status: string|null, checkedAt: number, health: any, lastError: string|null}} */
+const brainHealth = {
+    reachable: false,
+    status: null,      // 'ok' del endpoint, o null si no respondió
+    checkedAt: 0,
+    health: null,      // payload completo de /health
+    lastError: null
+};
+
+async function checkBrainHealth() {
+    try {
+        const response = await fetch(`${BRAIN_API_BASE}/health`, {
+            method: 'GET',
+            headers: authHeaders(),
+            signal: AbortSignal.timeout(BRAIN_HEALTH_TIMEOUT_MS)
+        });
+        const data = /** @type {any} */ (await response.json());
+        brainHealth.reachable = true;
+        brainHealth.status = (data && data.status) || 'ok';
+        brainHealth.health = data;
+        brainHealth.lastError = null;
+        brainHealth.checkedAt = Date.now();
+    } catch (e) {
+        brainHealth.reachable = false;
+        brainHealth.status = null;
+        brainHealth.health = null;
+        brainHealth.lastError = errMsg(e);
+        brainHealth.checkedAt = Date.now();
+    }
+    return brainHealth;
+}
+
+/**
+ * Estado derivado para el panel: Running / Stopped / Stand-by.
+ * @returns {'Running'|'Stopped'|'Stand-by'}
+ */
+function getBrainState() {
+    if (!brainHealth.reachable) return 'Stopped';
+    const lastAi = brainStats.lastAiAt ? Date.parse(brainStats.lastAiAt) : null;
+    if (lastAi && (Date.now() - lastAi) < BRAIN_STANDBY_MS) return 'Running';
+    return 'Stand-by';
+}
+
+function getBrainHealth() {
+    return { ...brainHealth, state: getBrainState() };
+}
+
+/**
+ * Arranca el sondeo periódico. No mantiene el proceso vivo (unref).
+ * Llamar una vez al iniciar el gateway.
+ */
+function startBrainHealthWatch() {
+    // Sondeo inmediato para no arrancar el panel con estado desconocido.
+    checkBrainHealth().catch(() => {});
+    const t = setInterval(() => { checkBrainHealth().catch(() => {}); }, BRAIN_HEALTH_INTERVAL_MS);
+    if (t.unref) t.unref();
+}
+
 module.exports = {
     processAIChat,
     clearAIMemory,
@@ -501,5 +572,8 @@ module.exports = {
     splitIntoHumanBubbles,
     calculateReadDelay,
     calculateTypingDelay,
-    getBrainStats
+    getBrainStats,
+    getBrainHealth,
+    getBrainState,
+    startBrainHealthWatch
 };

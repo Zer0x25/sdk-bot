@@ -135,18 +135,28 @@
   #cleanread { font-size: 13px; color: #fbbf24; margin-top: 10px; }
   #cleanerr { color: #f87171; font-size: 12px; margin-top: 6px; }
   #cleanfinal { color: #4ade80; font-size: 13px; margin-top: 10px; }
+  /* 💓 Estado de servicios (Running/Stopped/Stand-by) + heartbeat del panel */
+  .badge-state { display: inline-block; padding: 2px 9px; border-radius: 999px; font-size: 12px; font-weight: 600; }
+  .badge-state.running { background: #14532d; color: #86efac; }
+  .badge-state.stopped { background: #7f1d1d; color: #fca5a5; }
+  .badge-state.standby { background: #78350f; color: #fdba74; }
+  .live { display: inline-flex; align-items: center; gap: 6px; font-size: 12px; color: #8b93a5; }
+  .dot { width: 9px; height: 9px; border-radius: 50%; background: #4ade80; box-shadow: 0 0 6px #4ade80; }
+  .dot.dead { background: #f87171; box-shadow: 0 0 6px #f87171; }
+  .dot.warn { background: #facc15; box-shadow: 0 0 6px #facc15; }
 </style>
 </head>
 <body>
 <header class="topbar">
   <h1>🖥️ SDK-Bot · Panel de administración</h1>
-  <nav class="nav">
+<nav class="nav">
     <button class="tab" data-page="dashboard">📊 Dashboard</button>
     <button class="tab" data-page="pairing">📲 Pairing</button>
     <button class="tab" data-page="contactos">📇 Contactos</button>
     <button class="tab" data-page="perfiles">🧠 Perfiles</button>
     <button class="tab" data-page="logs">📜 Logs</button>
   </nav>
+  <div class="live" id="live"><span class="dot" id="livedot"></span><span id="livetext">en vivo</span></div>
 </header>
 
 <section id="page-dashboard" class="page">
@@ -321,6 +331,7 @@
 <script>
 const $ = s => document.querySelector(s);
 const cards = $('#cards'), out = $('#out'), cmd = $('#cmd'), run = $('#run');
+const livedot = $('#livedot'), livetext = $('#livetext');
 let currentPage = 'dashboard';
 
 // ─── Navegación por pestañas ───
@@ -352,15 +363,20 @@ function card(title, lines) {
 const fmt = n => (n ?? 0).toLocaleString();
 const mem = n => Math.round(n / 1048576) + ' MB';
 
+const brainStateClass = st => st === 'Running' ? 'running' : (st === 'Stopped' ? 'stopped' : 'standby');
+
 async function refresh() {
   try {
     const r = await fetch('/api/status');
     const d = await r.json();
     const conn = d.runtime || {};
-    const paused = d.bot && d.bot.paused ? 'bad' : 'ok';
+    const brain = d.brain || {};
+    const bh = brain.health || {};
+    const paused = d.bot && d.bot.paused;
+    const connCls = conn.connection === 'open' ? 'ok' : 'warn';
     cards.innerHTML =
       card('Conexión', [
-        ['estado', conn.connection || '?', conn.connection === 'open' ? 'ok' : 'warn'],
+        ['estado', conn.connection || '?', connCls],
         ['reconexión', '#' + (conn.reconnectAttempt ?? 0)],
         ['último motivo', (conn.lastDisconnectReason || '-').slice(0, 24)],
         ['uptime', Math.round(d.uptime_seconds / 60) + ' min']
@@ -369,12 +385,24 @@ async function refresh() {
         ['número', d.bot && d.bot.number || '-'],
         ['perfil', d.bot && d.bot.profile || '-'],
         ['modo', d.bot && d.bot.globalMode || '-'],
-        ['pausado', d.bot && d.bot.paused ? 'SÍ' : 'no', paused]
+        ['pausado', paused ? 'SÍ' : 'no', paused ? 'warn' : 'ok']
       ]) +
       card('Contactos', [
         ['agenda', fmt(d.database && d.database.contacts)],
         ['modo global', d.database && d.database.globalMode || '-'],
         ['perfil global', d.database && d.database.currentProfile || '-']
+      ]) +
+      card('Brain', [
+        ['estado', bh.state || 'desconocido', brainStateClass(bh.state)],
+        ['proveedor', (bh.health && bh.health.providers && bh.health.providers.primary) || '-'],
+        ['uptime', bh.health ? Math.round(bh.health.uptime_seconds / 60) + ' min' : '-'],
+        ['llamadas IA', fmt(brain.aiCalls)],
+        ['último error', brain.lastErrorMsg ? (brain.lastErrorMsg).slice(0, 30) : (bh.lastError ? bh.lastError.slice(0, 30) : '—')]
+      ]) +
+      card('Servicios', [
+        ['Gateway', 'Running', 'running'],
+        ['Brain', bh.state || 'desconocido', brainStateClass(bh.state)],
+        ['verif.', bh.reachable ? 'hace ' + Math.round((Date.now() - bh.checkedAt) / 1000) + 's' : 'sin respuesta']
       ]) +
       card('Broadcast', [
         ['estado', d.broadcast && d.broadcast.enabled ? 'ACTIVADO' : 'desactivado', d.broadcast && d.broadcast.enabled ? 'ok' : 'warn'],
@@ -384,17 +412,17 @@ async function refresh() {
       card('Cola', [
         ['mensajes', fmt(d.queue && d.queue.pending)]
       ]) +
-      card('Brain', [
-        ['estado', (d.brain && d.brain.ok !== undefined && d.brain.ok !== null) ? (d.brain.ok ? 'ok' : 'caído') : 'sin llamadas',
-          d.brain && d.brain.ok ? 'ok' : 'warn'],
-        ['llamadas', fmt(d.brain && d.brain.aiCalls)]
-      ]) +
       card('Memoria', [
         ['RSS', mem(d.memory && d.memory.rss)],
         ['heap', mem(d.memory && d.memory.heapUsed) + ' / ' + mem(d.memory && d.memory.heapTotal)]
       ]);
+    // 💓 Heartbeat del panel: conexión al gateway viva
+    livedot.className = 'dot';
+    livetext.textContent = 'en vivo · ' + new Date().toLocaleTimeString();
   } catch (e) {
     cards.innerHTML = '<div class="card"><h2>Panel</h2><div class="row"><span>error</span><span class="bad">' + e.message + '</span></div></div>';
+    livedot.className = 'dot dead';
+    livetext.textContent = 'desconectado del gateway';
   }
 }
 

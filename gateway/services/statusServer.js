@@ -9,7 +9,7 @@
 const http = require('http');
 const { state, counters } = require('../config');
 const { getContactsDB, getSettingsDB } = require('./db');
-const { getBrainStats } = require('./brainService');
+const { getBrainStats, getBrainHealth } = require('./brainService');
 const { getRuntimeStats } = require('../handlers/messageHandler');
 const { getCommandStats } = require('../handlers/commandHandler');
 const { getQueueStats } = require('./messageQueue');
@@ -50,7 +50,10 @@ function buildStatus() {
             currentProfile: settings.currentProfile || null
         },
         counters,
-        brain: getBrainStats(),
+        brain: {
+            ...getBrainStats(),
+            health: getBrainHealth()
+        },
         commands: getCommandStats(),
         runtimeStats: getRuntimeStats(),
         queue: getQueueStats(),
