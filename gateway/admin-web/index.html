@@ -365,6 +365,16 @@ const mem = n => Math.round(n / 1048576) + ' MB';
 
 const brainStateClass = st => st === 'Running' ? 'running' : (st === 'Stopped' ? 'stopped' : 'standby');
 
+// Estado del gateway/Baileys con el mismo semáforo Running/Stopped/Stand-by:
+// open → Running; reconnecting/starting/close → Stand-by (proceso vivo, Baileys
+// no conectado); si el fetch falla el catch ya marca Stopped.
+function gatewayState(conn) {
+  const c = conn.connection || 'starting';
+  if (c === 'open') return { label: 'Running', cls: 'running' };
+  if (c === 'reconnecting') return { label: 'Stand-by', cls: 'standby' };
+  return { label: 'Stand-by', cls: 'standby' }; // starting / close (sin sesión)
+}
+
 async function refresh() {
   try {
     const r = await fetch('/api/status');
@@ -373,13 +383,21 @@ async function refresh() {
     const brain = d.brain || {};
     const bh = brain.health || {};
     const paused = d.bot && d.bot.paused;
-    const connCls = conn.connection === 'open' ? 'ok' : 'warn';
+    const gw = gatewayState(conn);
     cards.innerHTML =
-      card('Conexión', [
-        ['estado', conn.connection || '?', connCls],
+      card('Gateway (Baileys)', [
+        ['estado', gw.label, gw.cls],
+        ['WhatsApp', conn.connection || '?', conn.connection === 'open' ? 'ok' : 'warn'],
         ['reconexión', '#' + (conn.reconnectAttempt ?? 0)],
         ['último motivo', (conn.lastDisconnectReason || '-').slice(0, 24)],
         ['uptime', Math.round(d.uptime_seconds / 60) + ' min']
+      ]) +
+      card('Brain', [
+        ['estado', bh.state || 'desconocido', brainStateClass(bh.state)],
+        ['proveedor', (bh.health && bh.health.providers && bh.health.providers.primary) || '-'],
+        ['uptime', bh.health ? Math.round(bh.health.uptime_seconds / 60) + ' min' : '-'],
+        ['llamadas IA', fmt(brain.aiCalls)],
+        ['último error', brain.lastErrorMsg ? (brain.lastErrorMsg).slice(0, 30) : (bh.lastError ? bh.lastError.slice(0, 30) : '—')]
       ]) +
       card('Bot', [
         ['número', d.bot && d.bot.number || '-'],
@@ -391,18 +409,6 @@ async function refresh() {
         ['agenda', fmt(d.database && d.database.contacts)],
         ['modo global', d.database && d.database.globalMode || '-'],
         ['perfil global', d.database && d.database.currentProfile || '-']
-      ]) +
-      card('Brain', [
-        ['estado', bh.state || 'desconocido', brainStateClass(bh.state)],
-        ['proveedor', (bh.health && bh.health.providers && bh.health.providers.primary) || '-'],
-        ['uptime', bh.health ? Math.round(bh.health.uptime_seconds / 60) + ' min' : '-'],
-        ['llamadas IA', fmt(brain.aiCalls)],
-        ['último error', brain.lastErrorMsg ? (brain.lastErrorMsg).slice(0, 30) : (bh.lastError ? bh.lastError.slice(0, 30) : '—')]
-      ]) +
-      card('Servicios', [
-        ['Gateway', 'Running', 'running'],
-        ['Brain', bh.state || 'desconocido', brainStateClass(bh.state)],
-        ['verif.', bh.reachable ? 'hace ' + Math.round((Date.now() - bh.checkedAt) / 1000) + 's' : 'sin respuesta']
       ]) +
       card('Broadcast', [
         ['estado', d.broadcast && d.broadcast.enabled ? 'ACTIVADO' : 'desactivado', d.broadcast && d.broadcast.enabled ? 'ok' : 'warn'],
