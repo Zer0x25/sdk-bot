@@ -1,9 +1,9 @@
-# systemd unit del Brain (FastAPI, puerto 8000)
+# systemd USER-unit del Brain (FastAPI) — estándar homelab (systemd --user)
 # Instalación:
-#   sudo cp sdk-bot-brain.service /etc/systemd/system/
-#   sudo systemctl daemon-reload
-#   sudo systemctl enable --now sdk-bot-brain
-# Ajusta User/Group y WorkingDirectory/ExecStart a tu ruta real.
+#   cp sdk-bot-brain.service ~/.config/systemd/user/
+#   systemctl --user daemon-reload
+#   systemctl --user enable --now sdk-bot-brain
+# (Sin sudo: todo el homelab corre en systemd --user + linger del usuario zrx1)
 
 [Unit]
 Description=SDK-Bot Brain (FastAPI - cascadea Groq/OpenRouter/Gemini)
@@ -12,11 +12,9 @@ Wants=network-online.target
 
 [Service]
 Type=simple
-User=zrx1
-Group=zrx1
-WorkingDirectory=/home/zrx1/playground/SDK-bot/brain
+WorkingDirectory=/home/zrx1/playground/sdk-bot/brain
 # ⚠️ Ajusta la ruta del venv de Python a tu instalación
-ExecStart=/home/zrx1/playground/SDK-bot/brain/venv/bin/python main.py
+ExecStart=/home/zrx1/playground/sdk-bot/brain/venv/bin/python main.py
 Restart=always
 RestartSec=5
 # 2s más que el timeout de la cascada de proveedores (90s) + margen de finalización de envíos
@@ -25,6 +23,11 @@ KillSignal=SIGTERM
 # Cree el proceso por defecto con locales UTF-8
 Environment=LANG=C.UTF-8
 Environment=LC_ALL=C.UTF-8
+# Puerto DEV (rango playground): 5100 (backend 5100-5199). Ver playground/PORT_ALLOCATION.sdk-bot.md
+Environment=BRAIN_PORT=5100
+# DEV remoto: bind 0.0.0.0 para que el tailnet (Tailscale) alcance el brain desde
+# el PC de pruebas. La seguridad la da Tailscale (solo tu tailnet entra a la VM).
+Environment=BRAIN_HOST=0.0.0.0
 
 [Install]
-WantedBy=multi-user.target
+WantedBy=default.target

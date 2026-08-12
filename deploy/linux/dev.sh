@@ -1,22 +1,24 @@
 #!/usr/bin/env bash
-# Desarrollo local: alternar entre instancias manuales y systemd (producción)
+# Desarrollo local: alternar entre instancias manuales y systemd --user (estándar homelab)
 #
 # Uso:
-#   bash deploy/dev.sh manual <brain|gateway>   # apaga el service systemd y lanza el manual (foreground, Ctrl+C al terminar)
+#   bash deploy/dev.sh manual <brain|gateway>   # apaga el service --user y lanza el manual (foreground, Ctrl+C al terminar)
 #   bash deploy/dev.sh manual ambos             # apaga ambos services y muestra cómo lanzar en 2 terminales
-#   bash deploy/dev.sh reset  <brain|gateway>   # mata las instancias manuales y relanza el service systemd
+#   bash deploy/dev.sh reset  <brain|gateway>   # mata las instancias manuales y relanza el service --user
 #   bash deploy/dev.sh reset  ambos             # idem para los dos
 #   bash deploy/dev.sh status                   # estado de services y locks
 #
 # ⚠️  Nunca corras manual y systemd del mismo componente a la vez:
 #     el lock de instancia única bloquea al segundo que arranque.
+# ⚠️  Todo en systemd --user (sin sudo). El linger de zrx1 mantiene los units vivos
+#     aunque no haya sesión interactiva.
 set -uo pipefail
 
 REPO="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 
 status() {
-    echo "=== Services systemd ==="
-    systemctl is-active sdk-bot-brain sdk-bot-gateway
+    echo "=== Services systemd --user ==="
+    systemctl --user is-active sdk-bot-brain sdk-bot-gateway
     echo ""
     echo "=== Locks ==="
     echo -n "brain:   "; cat "$REPO/brain/.brain.lock" 2>/dev/null || echo "(sin lock)"
@@ -33,8 +35,8 @@ case "${1:-}" in
         esac
 
         for s in $LIST; do
-            echo "🛑 Deteniendo service systemd sdk-bot-$s..."
-            sudo systemctl stop "sdk-bot-$s"
+            echo "🛑 Deteniendo service --user sdk-bot-$s..."
+            systemctl --user stop "sdk-bot-$s"
         done
 
         if [ "$LIST" = "brain gateway" ]; then
@@ -74,8 +76,8 @@ case "${1:-}" in
             *) SERVICES="sdk-bot-brain sdk-bot-gateway" ;;
         esac
         for s in $SERVICES; do
-            echo "▶️  Levantando service systemd $s..."
-            sudo systemctl restart "$s"
+            echo "▶️  Levantando service --user $s..."
+            systemctl --user restart "$s"
         done
         echo "✅ Verifica: bash deploy/dev.sh status"
         ;;

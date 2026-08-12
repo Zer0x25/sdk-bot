@@ -109,11 +109,11 @@ El código del bot es **idéntico en las 3 plataformas**; solo cambia el supervi
 | 🤖 **Android (Termux)** | runit | `bash deploy/termux/setup-termux.sh` (o el manual en `deploy/termux/README.md`) |
 | 🪟 **Windows (PC)** | Programador de tareas | `deploy/windows/startBrain.bat` + `startGateway.bat` (ver `deploy/windows/README.md`) |
 
-**Linux — producción en segundo plano:**
+**Linux — producción en segundo plano (systemd --user, sin sudo):**
 ```bash
-cd ~/playground/SDK-bot
-sudo bash deploy/linux/install.sh            # instala, habilita y arranca sdk-bot-brain + sdk-bot-gateway
-systemctl status sdk-bot-brain sdk-bot-gateway   # ambos: active (running)
+cd ~/playground/sdk-bot
+bash deploy/linux/install.sh            # instala, habilita y arranca sdk-bot-brain + sdk-bot-gateway (en systemd --user)
+systemctl --user status sdk-bot-brain sdk-bot-gateway   # ambos: active (running)
 journalctl -u sdk-bot-gateway -f             # logs en vivo
 ```
 
@@ -136,8 +136,8 @@ deploy\windows\startGateway.bat  # terminal 2
 Nunca corras manual y systemd del mismo componente a la vez (el lock de instancia única bloquea al segundo que arranque).
 
 ```bash
-cd ~/playground/SDK-bot
-bash deploy/linux/dev.sh manual brain      # apaga systemd + lanza brain manual (Ctrl+C al terminar)
+cd ~/playground/sdk-bot
+bash deploy/linux/dev.sh manual brain      # apaga systemd --user + lanza brain manual (Ctrl+C al terminar)
 bash deploy/linux/dev.sh manual gateway    # idem para el gateway
 bash deploy/linux/dev.sh manual ambos      # imprime los comandos para 2 terminales
 bash deploy/linux/dev.sh reset             # mata lo manual + relanza todo en systemd
