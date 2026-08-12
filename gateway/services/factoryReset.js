@@ -95,6 +95,11 @@ function performFactoryReset() {
     const deleted = [];
     const missing = [];
     const errors = [];
+    // Directorios de logs que deben quedar EXISTIENDO (vacíos) tras el wipe:
+    // si el brain no se reinicia en manual/dev, su RotatingFileHandler sigue
+    // apuntando al inode borrado y deja de escribir; el panel deja de ver logs.
+    // Recrearlos vacíos evita ese estado muerto (F7 fix: brain sin logs).
+    const LOG_DIRS_TO_KEEP = [GATEWAY_LOG_DIR(), BRAIN_LOG_DIR()];
     for (const entry of getStatePaths()) {
         try {
             if (fs.existsSync(entry.path)) {
@@ -107,6 +112,10 @@ function performFactoryReset() {
             const msg = e instanceof Error ? e.message : String(e);
             errors.push(`${entry.label} (${entry.path}): ${msg}`);
         }
+    }
+    // Recrea los dirs de logs vacíos (los borramos arriba si existían).
+    for (const dir of LOG_DIRS_TO_KEEP) {
+        try { fs.mkdirSync(dir, { recursive: true }); } catch (e) { /* no fatal */ }
     }
     return { deleted, missing, errors };
 }

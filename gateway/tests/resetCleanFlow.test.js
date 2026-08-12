@@ -32,11 +32,22 @@ function makeSock() {
 }
 
 function populateState() {
+    // Limpiar tmp para que tests previos no dejen dirs/files que rompan este
+    fs.rmSync(tmp, { recursive: true, force: true });
+    fs.mkdirSync(tmp, { recursive: true });
     for (const entry of getStatePaths()) {
         fs.mkdirSync(path.dirname(entry.path), { recursive: true });
-        fs.writeFileSync(entry.path, 'x');
+        if (entry.kind === 'dir') {
+            fs.mkdirSync(entry.path, { recursive: true });
+        } else {
+            fs.writeFileSync(entry.path, 'x');
+        }
     }
 }
+
+// Categorías derivadas del inventario para asserts post-wipe.
+const LOG_DIRS = new Set(getStatePaths().filter(e => /Logs/.test(e.label)).map(e => e.path));
+const DIRS = new Set(getStatePaths().filter(e => e.kind === 'dir').map(e => e.path));
 
 afterEach(() => resetForTests());
 
@@ -86,9 +97,14 @@ test('palabra mágica tras el timer de lectura → ejecuta el reset limpio compl
     assert.match(reply, /Reset limpio ejecutado/);
     assert.ok(!hasPendingCleanReset(), 'pedido consumido');
 
-    // TODO el estado quedó borrado en disco
+    // TODO el estado quedó borrado en disco; los dirs de logs se recrean vacíos
+    // por el fix (F7 fix) y deben seguir existiendo.
     for (const entry of getStatePaths()) {
-        assert.ok(!fs.existsSync(entry.path), `borrado: ${entry.label}`);
+        if (LOG_DIRS.has(entry.path)) {
+            assert.ok(fs.existsSync(entry.path), `logs recreados: ${entry.label}`);
+        } else {
+            assert.ok(!fs.existsSync(entry.path), `borrado: ${entry.label}`);
+        }
     }
     // Perfiles SOUL intactos
     assert.ok(fs.existsSync(path.join(__dirname, '..', '..', 'brain', 'profiles', 'default.md')));
@@ -112,8 +128,15 @@ test('cancelar en cualquier momento cancela sin borrar nada', async () => {
     assert.strictEqual(consumed, true);
     assert.match(lastReply().text, /cancelado/);
     assert.ok(!hasPendingCleanReset(), 'pedido limpio');
-    // Nada fue borrado
-    for (const entry of getStatePaths()) assert.ok(fs.existsSync(entry.path), `sigue: ${entry.label}`);
+    // Nada fue borrado; los dirs de logs deben seguir existiendo incluso si
+    // cancelar no toca nada (el fix F7 los recrea vacíos tras un wipe real).
+    for (const entry of getStatePaths()) {
+        if (LOG_DIRS.has(entry.path)) {
+            assert.ok(fs.existsSync(entry.path), `logs recreados: ${entry.label}`);
+        } else {
+            assert.ok(fs.existsSync(entry.path), `sigue: ${entry.label}`);
+        }
+    }
 });
 
 test('expiración: el timer avisa y cancela el pedido solo', async () => {

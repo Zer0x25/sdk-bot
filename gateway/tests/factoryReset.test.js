@@ -26,6 +26,10 @@ const {
     isWiping
 } = require('../services/factoryReset');
 
+// Directorios de LOGS que el fix recrea vacíos (label incluye "Logs"):
+// gateway logs/ y brain logs/. Los demás dirs (auth_info_baileys) sí se borran.
+const LOG_DIRS = new Set(getStatePaths().filter(e => /Logs/.test(e.label)).map(e => e.path));
+
 after(() => {
     fs.rmSync(tmp, { recursive: true, force: true });
     for (const k of [
@@ -70,14 +74,23 @@ test('performFactoryReset borra TODO el estado y reporta lo que no existía', ()
     assert.ok(report.deleted.length >= 10, `todos borrados (${report.deleted.length})`);
     assert.strictEqual(report.missing.length, 0, 'nada faltante: todo existía');
 
-    for (const p of created) assert.ok(!fs.existsSync(p), `borrado: ${p}`);
+    // Los dirs de logs se recrean vacíos por el fix (F7 fix); no deben contar
+    // como "borrados ausentes". El resto (8) sí debe haber desaparecido.
+    for (const p of created) {
+        if (LOG_DIRS.has(p)) {
+            assert.ok(fs.existsSync(p), `dir de logs recreado: ${p}`);
+        } else {
+            assert.ok(!fs.existsSync(p), `borrado: ${p}`);
+        }
+    }
 });
 
-test('performFactoryReset reporta como missing lo que no existe y NO toca perfiles ni archivos ajenos', () => {
-    // Después del wipe anterior TODO es missing (y hay un archivo extranjero)
+test('performFactoryReset recrea los dirs de logs y reporta como missing el resto', () => {
+    // Tras el wipe anterior, los 2 dirs de logs se recrean vacíos (F7 fix);
+    // el resto del estado no existe → missing (8 = 10 entradas - 2 dirs de logs).
     const report = performFactoryReset();
-    assert.strictEqual(report.deleted.length, 0, 'nada que borrar la segunda vez');
-    assert.ok(report.missing.length >= 10, `missing reportado (${report.missing.length})`);
+    assert.strictEqual(report.deleted.length, 2, `solo los dirs de logs recreados (${report.deleted.length})`);
+    assert.ok(report.missing.length >= 8, `missing del resto (${report.missing.length})`);
     assert.strictEqual(report.errors.length, 0);
 
     const stranger = path.join(tmp, 'no-tocar.txt');
