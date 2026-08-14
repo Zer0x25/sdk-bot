@@ -144,7 +144,7 @@ async function notifyAdminError(sock, metadata, textMessage, errorDetails) {
                        `🔧 *Detalle técnico:* ${errorDetails}`;
     } else if (errStr.includes('fetch failed') || errStr.includes('econnrefused')) {
         errorSummary = `🚨 **CEREBRO APAGADO / DESCONECTADO (Brain Offline)**\n` +
-                       `📌 *Causa:* El servidor Python (\`brain/main.py\`) no está corriendo en http://127.0.0.1:8000/chat.\n` +
+                       `📌 *Causa:* El servidor Python (\`brain/main.py\`) no está corriendo en ${BRAIN_API_BASE}/chat.\n` +
                        `🔧 *Detalle técnico:* ${errorDetails}`;
     }
 

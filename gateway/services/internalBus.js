@@ -26,12 +26,12 @@
 const http = require('http');
 const fs = require('fs');
 const path = require('path');
+const { URL } = require('url');
 const { spawn } = require('child_process');
 const QRCode = require('qrcode');
-const { handleAdminCommand, makeVirtualSock } = require('../handlers/commandHandler');
+const { handleAdminCommand } = require('../handlers/commandHandler');
 const { buildStatus } = require('./statusServer');
 const { getBrainHealth } = require('./brainService');
-const { getContactsDB } = require('./db');
 const { num } = require('../tuning');
 const {
     performFactoryReset, setWiping, restartGatewayProcess, restartBrainIfSystemd
@@ -41,6 +41,33 @@ const { cat, errMsg } = require('./logger');
 const log = cat('CORE');
 const logError = cat('ERROR');
 
+const ADMIN_JID = 'admin-web@web';
+
+/**
+ * @param {Array<{type: string, text?: string, fileName?: string, caption?: string, base64?: string}>} replies
+ */
+function makeVirtualSock(replies) {
+    return {
+        /** @param {any} msg */
+        async sendMessage(_jid, msg) {
+            if (msg && typeof msg.text === 'string') {
+                replies.push({ type: 'text', text: msg.text });
+            } else if (msg && msg.document) {
+                const buf = Buffer.isBuffer(msg.document) ? msg.document : Buffer.from(msg.document);
+                replies.push({
+                    type: 'document',
+                    fileName: msg.fileName || 'archivo',
+                    caption: msg.caption || '',
+                    base64: buf.toString('base64')
+                });
+            } else {
+                replies.push({ type: 'other', text: JSON.stringify(msg).slice(0, 500) });
+            }
+            return null;
+        }
+    };
+}
+
 const LOG_DIRS = {
     gateway: path.join(__dirname, '..', 'logs'),
     brain: path.join(__dirname, '..', '..', 'brain', 'logs')
@@ -48,12 +75,19 @@ const LOG_DIRS = {
 
 // --- estado del QR (idéntico al de adminWebServer, ahora en el bus) ---
 const AUTH_DIR_RESOLVER = () => process.env.SDK_AUTH_DIR || path.join(__dirname, '..', 'auth_info_baileys');
+/** @type {any} */
 let activeSock = null;
+/** @type {string | null} */
 let lastQrDataUrl = null;
 const qrClients = new Set();
+/** @type {any} Callback que el gateway inyecta para forzar re-emisión de QR (refresh). */
+let qrRefreshCb = null;
+/** @type {any} Callback que el gateway inyecta para pedir código de pairing por número. */
+let pairingCodeRequester = null;
 const QR_TTL_MS = num('GATEWAY_QR_TTL_MS', 60000);
 let qrExpiresAt = 0;
 let qrTtlMs = QR_TTL_MS;
+/** @type {any} */
 let qrExpiryTimer = null;
 let qrWindowOpen = true;
 let resetInProgress = false;
@@ -129,7 +163,10 @@ async function handleConnectionUpdate(update) {
     }
     if (typeof update.qr !== 'string') return;
     if (update.connection === 'open') return;
-    if (!qrWindowOpen) openQrWindow();
+    // Siempre procesar un QR fresco: si la ventana había expirado, la
+    // reabrimos. Esto evita el bug "el panel se queda ciego y muestra un
+    // QR muerto" — cualquier update.qr nuevo del socket vivo repinta.
+    if (!qrWindowOpen || Date.now() >= qrExpiresAt) openQrWindow();
     try {
         lastQrDataUrl = await QRCode.toDataURL(update.qr, { margin: 1, width: 280 });
     } catch (e) {
@@ -152,6 +189,16 @@ function isGatewayServiceActive() {
 
 function scheduleRestart() {
     restartGatewayProcess();
+}
+
+/** El gateway inyecta un callback para forzar re-emisión de QR fresco. */
+function setQrRefresh(cb) {
+    if (typeof cb === 'function') qrRefreshCb = cb;
+}
+
+/** El gateway inyecta un callback para pedir código de pairing por número. */
+function setPairingCodeRequester(cb) {
+    if (typeof cb === 'function') pairingCodeRequester = cb;
 }
 
 /**
@@ -183,6 +230,23 @@ async function requestPairing(phone) {
     if (clean.length > 0 && clean.length < 9) {
         return { success: false, brainUp, message: 'Número inválido: se espera el número completo con código de país (ej: 56912345678)' };
     }
+    // 🔑 Pairing por NÚMERO: ir directo a pedir el código. El requester del
+    // gateway recrea el socket si está cerrado (tras agotar QR) y espera a
+    // que esté listo. NO pasar por la guarda de "socket cerrado" de abajo,
+    // que devolvería "el QR llegará" y nunca pediría el código.
+    if (clean.length >= 9) {
+        try {
+            if (typeof pairingCodeRequester === 'function') {
+                const code = await pairingCodeRequester(clean);
+                return { success: true, brainUp, code: String(code) };
+            }
+            if (!activeSock) return { success: false, brainUp, message: 'No hay socket activo para pedir el código.' };
+            const code = await activeSock.requestPairingCode(clean);
+            return { success: true, brainUp, code: String(code) };
+        } catch (e) {
+            return { success: false, brainUp, message: `No se pudo pedir el código de enlace: ${errMsg(e)}` };
+        }
+    }
     if (qrWindowOpen && Date.now() < qrExpiresAt) {
         const s = Math.ceil((qrExpiresAt - Date.now()) / 1000);
         return { success: false, brainUp, message: `QR vigente: escanéalo (${s}s restantes) o espera a que expire para pedir otro.` };
@@ -196,25 +260,20 @@ async function requestPairing(phone) {
         openQrWindow();
         return { success: true, brainUp, message: 'Gateway activo: el QR llegará por SSE en unos segundos.' };
     }
-    if (clean.length >= 9) {
-        try {
-            const code = await activeSock.requestPairingCode(clean);
-            return { success: true, brainUp, code: String(code) };
-        } catch (e) {
-            return { success: false, brainUp, message: `No se pudo pedir el código de enlace: ${errMsg(e)}` };
-        }
-    }
     openQrWindow();
     return { success: true, brainUp, message: 'QR generado — escanéalo antes de que expire (1 min).' };
 }
 
-async function runAdminCommand(command) {
+async function runAdminCommand(input) {
+    const text = String(input || '').trim();
+    if (!text) return { ok: false, replies: [{ type: 'text', text: '⚠️ Comando vacío.' }] };
+    const replies = [];
+    const commandLine = text.startsWith('/') ? text : `/${text}`;
     try {
-        const sock = makeVirtualSock(activeSock);
-        const result = await handleAdminCommand(sock, String(command || ''));
-        return { success: true, response: result };
+        await handleAdminCommand(commandLine, ADMIN_JID, makeVirtualSock(replies), /** @type {any} */ ({}));
+        return { ok: true, replies };
     } catch (e) {
-        return { success: false, message: `No se pudo ejecutar el comando: ${errMsg(e)}` };
+        return { ok: false, replies: [{ type: 'text', text: `⚠️ Error al ejecutar comando: ${errMsg(e)}` }] };
     }
 }
 
@@ -267,14 +326,16 @@ function streamLogs(req, res, params) {
         const init = fs.readFileSync(p, 'utf8').split('\n').filter(Boolean).slice(-100);
         init.forEach(send);
     }
+    /** @type {any} */
     let tail = null;
     try {
-        const { spawn } = require('child_process');
         tail = spawn('tail', ['-n', '+1', '-F', p], { stdio: ['ignore', 'pipe', 'ignore'] });
-        tail.stdout.on('data', (buf) => buf.toString().split('\n').filter(Boolean).forEach(send));
+        if (tail && tail.stdout) {
+            tail.stdout.on('data', (buf) => buf.toString().split('\n').filter(Boolean).forEach(send));
+        }
     } catch (e) { /* tail no disponible */ }
     const hb = setInterval(() => { if (!res.writableEnded) res.write(': ping\n\n'); }, 15000).unref();
-    req.on('close', () => { if (tail) tail.kill(); clearInterval(hb); });
+    req.on('close', () => { if (tail && typeof tail.kill === 'function') tail.kill(); clearInterval(hb); });
 }
 
 function sendJson(res, code, obj) {
@@ -316,6 +377,19 @@ function routeApi(req, res, pathname, params) {
         readBody(req).then((b) => requestPairing(b.phone).then((r) => sendJson(res, 200, r)));
         return;
     }
+    if (pathname === '/qr/refresh' && req.method === 'POST') {
+        // Fuerza una tanda de QR fresca: el gateway cierra el socket de
+        // pairing actual y Baileys (sin creds) re-emite update.qr. Esto
+        // arregla "el QR del panel expiró y no se actualiza": el botón
+        // Refrescar del panel llama aquí y obtiene uno vivo de inmediato.
+        if (typeof qrRefreshCb === 'function') {
+            try { qrRefreshCb(); sendJson(res, 200, { success: true, message: 'Regenerando QR…' }); }
+            catch (e) { sendJson(res, 500, { success: false, message: errMsg(e) }); }
+        } else {
+            sendJson(res, 200, { success: false, message: 'No hay socket activo para regenerar el QR.' });
+        }
+        return;
+    }
     if (pathname === '/brain/start' && req.method === 'POST') {
         sendJson(res, 200, startBrainProcess());
         return;
@@ -329,7 +403,7 @@ function routeApi(req, res, pathname, params) {
         return;
     }
     if (pathname === '/restart' && req.method === 'POST') {
-        readBody(req).then((b) => performRestart().then((r) => sendJson(res, 200, r)));
+        readBody(req).then(() => performRestart().then((r) => sendJson(res, 200, r)));
         return;
     }
     sendJson(res, 404, { error: 'not found' });
@@ -340,7 +414,7 @@ function startInternalBus(opts = {}) {
     const port = opts.port ?? Number(process.env.INTERNAL_BUS_PORT || 5400);
     const host = process.env.INTERNAL_BUS_HOST || '127.0.0.1';
     const server = http.createServer((req, res) => {
-        const u = new URL(req.url, `http://${host}:${port}`);
+        const u = new URL(req.url || '/', `http://${host}:${port}`);
         const params = u.searchParams;
         const pathname = u.pathname;
         try {
@@ -357,6 +431,6 @@ function startInternalBus(opts = {}) {
 }
 
 module.exports = {
-    startInternalBus, setSock, handleConnectionUpdate,
-    requestPairing, runAdminCommand, performReset, performRestart
+    startInternalBus, setSock, handleConnectionUpdate, setQrRefresh, setPairingCodeRequester,
+    requestPairing, runAdminCommand, performReset, performRestart, wsReadyState
 };

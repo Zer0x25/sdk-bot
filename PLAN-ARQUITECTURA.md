@@ -14,30 +14,51 @@ Crear una plataforma escalable donde podamos levantar `N` cantidad de bots de Wh
 ```
 SDK-Bot/
 ├── gateway/                      # Capa de Mensajería (Node.js + Baileys)
-│   ├── index.js                  # Punto de entrada ultraligero con syncFullHistory y presenceSubscribe
+│   ├── index.js                  # Punto de entrada ultraligero (syncFullHistory, presenceSubscribe, bus :5400)
 │   ├── reset-session.js          # Script de re-sincronización de libreta (npm run reset / Fresh QR)
+│   ├── reset-clean.js            # Reset limpio de fábrica F7 (npm run clean)
 │   ├── config.js                 # Estado global, URLs y registro anti-bucle
+│   ├── tuning.js                 # Variables de afinación y rendimiento
+│   ├── panel/                    # Panel Web — 3er proceso independiente (puerto 5201)
+│   │   └── index.js              # Servidor HTTP proxy hacia el bus interno (:5400) y estáticos
+│   ├── admin-web/                # Frontend web estático (dashboard, pairing, contactos, perfiles, logs)
+│   ├── store/
+│   │   └── chatStore.js          # Store RAM de mensajes de Baileys (precarga web-like)
 │   ├── services/
-│   │   ├── storageService.js     # Gestor I/O atómico (contacts_db, settings_db, setNumberState, bulkUpsert)
+│   │   ├── internalBus.js        # Bus interno HTTP (:5400) para desacoplar el gateway del panel
+│   │   ├── db.js                 # Persistencia atómica (contacts_db, settings_db)
+│   │   ├── contactsRepository.js # Lógica de contactos, índices RAM O(1) y saneamiento
+│   │   ├── contactSyncQueue.js   # Cola de sincronización de contactos por lotes (100/tick)
+│   │   ├── messageSyncQueue.js   # Cola de sincronización de mensajes de historial (100/tick)
+│   │   ├── messageQueue.js       # Cola persistente en disco (JSONL) para caídas del brain
+│   │   ├── broadcastService.js   # Difusión masiva y mensajes programados
+│   │   ├── stateService.js       # Estados de contacto y modos globales
 │   │   ├── metadataService.js    # Smart Delta Sync (TTL 24h), Phone/LID dual, Foto HD, Bio y Países
+│   │   ├── statusServer.js       # Métricas locales en HTTP (:5300)
+│   │   ├── factoryReset.js       # Motor unificado de reset limpio F7
 │   │   └── brainService.js       # Cliente HTTP REST + Simulación Humana (Typing Delay & Multi-Bubble)
 │   ├── handlers/
-│   │   ├── commandHandler.js     # Procesador modular de comandos admin con extracción de citas
+│   │   ├── commandHandler.js     # Dispatcher modular de comandos admin con extracción de citas
+│   │   ├── commandHelpers.js     # Sanitización, help de comandos y utilidades
+│   │   ├── commands/             # Comandos por categoría (/ia, /humano, /perfil, /broadcast, /estado, etc.)
 │   │   └── messageHandler.js     # Pipeline de mensajes, De-bounce estocástico, Handoff y Presencia RAM
 │   ├── contacts_db.json          # Base de datos centralizada de contactos y estados (gitignored)
 │   ├── settings_db.json          # Configuración global del bot (globalMode: allowed_all / ignored_all)
 │   ├── settings_db.json.example  # Plantilla de configuración global
 │   ├── *.json.example            # Plantillas de ejemplo para despliegues limpios
 │   └── auth_info_baileys/        # Sesión y estado de WhatsApp (gitignored)
-└── brain/                        # Capa de Inteligencia (Python + FastAPI)
-    ├── main.py                   # Aplicación FastAPI modularizada (/chat, /reset-memory, /profiles)
-    ├── config.py                 # API Keys y modelos (Groq, OpenRouter, Gemini)
-    ├── memory.py                 # Gestor de memoria en RAM por user_id (máx 15 mensajes)
-    ├── providers.py              # Router multi-proveedor (Groq 25s → OpenRouter 25s → Gemini 40s)
-    ├── profiles/                 # Perfiles SOUL editables en Markdown (default, lucia, mateo, ventas, cobranzas, recepcion)
-    ├── .env                      # API Keys (gitignored)
-    ├── requirements.txt          # Dependencias Python
-    └── venv/                     # Entorno virtual
+├── brain/                        # Capa de Inteligencia (Python + FastAPI)
+│   ├── main.py                   # Aplicación FastAPI modularizada (/chat, /reset-memory, /profiles, :5100)
+│   ├── config.py                 # API Keys y modelos (Groq, OpenRouter, Gemini)
+│   ├── memory.py                 # Gestor de memoria persistente SQLite (brain/memory.db)
+│   ├── providers.py              # Router multi-proveedor (Groq 25s → OpenRouter 25s → Gemini 40s)
+│   ├── profiles.py               # Motor de perfiles SOUL en caliente
+│   ├── profiles/                 # Perfiles SOUL editables en Markdown (default, lucia, mateo, cobranzas, recepcion)
+│   ├── .env                      # API Keys (gitignored)
+│   └── requirements.txt          # Dependencias Python
+├── deploy/                       # Despliegue por plataforma (Linux systemd, Termux runit, Windows batch)
+├── PLAN-ARQUITECTURA.md          # Documentación técnica completa
+└── ROADMAP.md                    # Hoja de ruta de fases (guía de sesiones)
 ```
 
 ---
@@ -77,8 +98,13 @@ SDK-Bot/
 - **TTL de 24 Horas:** Evita consultas redundantes de foto/bio a WhatsApp si el contacto fue enriquecido en las últimas 24h.
 - **`bulkUpsertContactsMetadata`:** Inserciones en lote ultra-rápidas para no bloquear el Event Loop de Node.js.
 
-### 6. 🚀 Re-Sincronización Automatizada para Usuarios Finales (`npm run reset`)
+### 6. 🚀 Re-Sincronización Automatizada para Usuarios Finales (`npm run reset` y `npm run clean`)
 - Script `reset-session.js` para limpiar `auth_info_baileys` y generar un código QR nuevo que descargue la libreta completa de contactos de la cuenta.
+- Script `reset-clean.js` (F7) para un restablecimiento de fábrica total con borrado de memoria, agenda, colas, logs y settings.
+
+### 7. 🖥️ Panel Web Desacoplado & Bus Interno (Arquitectura de 3 Procesos)
+- **Panel Web (`gateway/panel/index.js`):** Proceso HTTP independiente en puerto `5201` (bind `0.0.0.0`) que sirve el frontend administrativo y actúa como proxy inverso.
+- **Bus Interno HTTP (`gateway/services/internalBus.js` en puerto `5400`):** Expuesto por el gateway en loopback (`127.0.0.1:5400`). Permite consultar estado, transmitir el QR y logs por SSE, regenerar QR bajo demanda (`/qr/refresh`), vincular por número (`/pairing`), ejecutar comandos admin y arrancar el brain (`/brain/start`). Si el gateway cae, el panel sigue vivo y el frontend se reconecta solo al volver el servicio.
 
 ---
 

@@ -69,10 +69,17 @@ after(async () => {
 // Lee el stream SSE acumulando eventos hasta que alguno cumple `predicate`.
 // Devuelve { events, hit, reader } para inspección/limpieza.
 function parseSseEvents(acc) {
-    return acc.split('data: ')
-        .map(s => s.trim())
-        .filter(s => s.startsWith('{'))
-        .map(s => JSON.parse(s));
+    const events = [];
+    const lines = acc.split('\n');
+    for (const line of lines) {
+        if (line.startsWith('data: ')) {
+            const jsonStr = line.slice(6).trim();
+            if (jsonStr.startsWith('{')) {
+                try { events.push(JSON.parse(jsonStr)); } catch (e) {}
+            }
+        }
+    }
+    return events;
 }
 
 async function readSse(res, predicate, timeoutMs = 3000) {

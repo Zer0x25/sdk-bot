@@ -1,5 +1,5 @@
 @echo off
-REM SDK-Bot — Brain (FastAPI :8000) en Windows
+REM SDK-Bot — Brain (FastAPI :5100) en Windows
 REM Requisitos: Python 3.12+ instalado (con "Add to PATH")
 cd /d %~dp0..\..\brain
 if not exist venv\Scripts\python.exe (

@@ -245,7 +245,7 @@ def _is_rate_limited(user_id: str) -> bool:
 # -------------------------------------------------------------
 log_instancia = make_logger("brain.instancia")
 
-BRAIN_PORT = int(os.getenv("BRAIN_PORT", "8000"))
+BRAIN_PORT = int(os.getenv("BRAIN_PORT", "5100"))
 BRAIN_LOCK_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)), ".brain.lock")
 
 

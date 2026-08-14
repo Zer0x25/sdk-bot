@@ -462,7 +462,7 @@ async function handleConnectionUpdate(update) {
     if (typeof update.qr !== 'string') return;
     // Capturar el QR SIEMPRE que Baileys lo emita y no haya sesión abierta.
     if (update.connection === 'open') return;
-    if (!qrWindowOpen) openQrWindow();
+    if (!qrWindowOpen || Date.now() >= qrExpiresAt) openQrWindow();
     try {
         lastQrDataUrl = await QRCode.toDataURL(update.qr, { margin: 1, width: 280 });
         log.info(`[ADMIN-WEB-DEBUG] QR capturado len=${lastQrDataUrl ? lastQrDataUrl.length : 'NULL'}`);

@@ -111,6 +111,7 @@ let reconnectTimer = null;         // Timer de backoff pendiente
 // El motor NO depende de él: solo usa `?.` para avisarle del socket y del QR.
 let adminWeb = null;
 const internalBus = require('./services/internalBus'); // 🔌 bus interno (panel = 3er proceso)
+const { wsReadyState } = internalBus;
 
 // ⚠️ Backoff exponencial: 2s → 5s → 15s → 60s (tope) para no martillear a WhatsApp
 const RECONNECT_BACKOFF_MS = [2000, 5000, 15000, 60000];
@@ -161,6 +162,36 @@ async function connectToWhatsApp () {
     broadcastService.setSock(sock);
     adminWeb?.setSock(sock); // compat tests
     internalBus.setSock(sock); // 🔌 bus interno: el panel (proceso aparte) se entera del socket
+    // 🔌 F6-P4: callback de "refrescar QR" desde el panel web. Cierra el
+    // socket de pairing actual y Baileys (sin creds.json) re-emite update.qr
+    // en una tanda fresca. Arregla "el QR del panel expiró y no se actualiza".
+    internalBus.setQrRefresh(() => {
+        log.info('🔌 [BUS] Refresco de QR pedido desde el panel: recreando socket de pairing…');
+        connectToWhatsApp();
+    });
+    // 🔌 F6-P4: pairing por código de 8 dígitos desde el panel web. Si el
+    // socket actual está cerrado (tras agotar intentos de QR), lo recrea y
+    // espera a que esté listo para pedir el código a WhatsApp. Así el método
+    // "Pair con número" funciona aunque no haya QR vigente.
+    internalBus.setPairingCodeRequester(async (number) => {
+        if (!currentSocket || wsReadyState(currentSocket) === 3) {
+            log.info('🔌 [BUS] Socket cerrado: recreando para pedir código de pairing…');
+            connectToWhatsApp();
+        }
+        // Esperar a que el socket esté abierto (ws.readyState === 1) para
+        // poder llamar requestPairingCode sin error.
+        const waitReady = (tries = 40) => new Promise((resolve, reject) => {
+            const tick = (n) => {
+                const s = currentSocket;
+                if (s && wsReadyState(s) === 1) return resolve(s);
+                if (n <= 0) return reject(new Error('timeout esperando socket listo para pairing'));
+                setTimeout(() => tick(n - 1), 250);
+            };
+            tick(tries);
+        });
+        const sock = await waitReady();
+        return await sock.requestPairingCode(number);
+    });
 
     // Capturar eventos de sincronización de contactos de WhatsApp (Agenda del Teléfono).
     // La sync completa ocurre SOLO al vincular el dispositivo por primera vez

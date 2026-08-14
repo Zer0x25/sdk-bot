@@ -3,10 +3,9 @@ const path = require('path');
 const fs = require('fs');
 
 // URL de la API del Cerebro (FastAPI).
-// Antes hardcodeada a :8000 (deuda R7). Ahora lee BRAIN_API_BASE por env,
-// con fallback a :8000 para no romper despliegues legacy que no setean nada.
+// Lee BRAIN_API_BASE por env; fallback a :5100 (estándar dev playground).
 // Dev (playground): se setea BRAIN_API_BASE=http://127.0.0.1:5100 (rango dev).
-const BRAIN_API_BASE = process.env.BRAIN_API_BASE || 'http://127.0.0.1:8000';
+const BRAIN_API_BASE = process.env.BRAIN_API_BASE || 'http://127.0.0.1:5100';
 const BRAIN_API_URL = `${BRAIN_API_BASE}/chat`;
 
 // 🔐 S1 — API key del brain. El gateway la toma de process.env o, por defecto,

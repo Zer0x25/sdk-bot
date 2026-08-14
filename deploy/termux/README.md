@@ -59,17 +59,17 @@ vuelves a pegar nada ni a escanear el QR.
 │  Android + Termux                                          │
 │                                                           │
 │  runit (runsvdir)  ← supervive como hijo de init          │
-│   ├── sdk-brain      → python main.py  (FastAPI :8000)     │
+│   ├── sdk-brain      → python main.py  (FastAPI :5100)     │
 │   ├── sdk-gateway    → node index.js  (WhatsApp/Baileys)   │
 │   ├── sshd                                                │
 │   └── ssh-agent                                           │
 │                                                           │
-│  brain/  (FastAPI "cerebro" IA)  ← escucha 127.0.0.1:8000  │
+│  brain/  (FastAPI "cerebro" IA)  ← escucha 127.0.0.1:5100  │
 │  gateway/ (Baileys WhatsApp)      ← llama a BRAIN_API_URL  │
 └─────────────────────────────────────────────────────────┘
 ```
 
-El gateway se conecta al brain por HTTP local (`http://127.0.0.1:8000/chat`).
+El gateway se conecta al brain por HTTP local (`http://127.0.0.1:5100/chat`).
 El brain enruta la respuesta entre varios proveedores de IA con fallbacks.
 
 ---

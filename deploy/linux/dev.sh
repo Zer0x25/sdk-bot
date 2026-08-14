@@ -43,21 +43,21 @@ case "${1:-}" in
         if [ "$LIST" = "brain gateway" ]; then
             echo ""
             echo "▶️  Abre 2 terminales y lanza:"
-            echo "    1) BRAIN:   cd $REPO/brain && venv/bin/python main.py"
+            echo "    1) BRAIN:   cd $REPO/brain && export BRAIN_PORT=5100 BRAIN_HOST=0.0.0.0 && venv/bin/python main.py"
             echo "    2) GATEWAY: cd $REPO/gateway && npm start"
             echo ""
             echo "Para volver a producción: bash deploy/dev.sh reset"
         elif [ "$LIST" = "brain gateway panel" ]; then
             echo ""
             echo "▶️  Abre 3 terminales y lanza:"
-            echo "    1) BRAIN:   cd $REPO/brain && venv/bin/python main.py"
+            echo "    1) BRAIN:   cd $REPO/brain && export BRAIN_PORT=5100 BRAIN_HOST=0.0.0.0 && venv/bin/python main.py"
             echo "    2) GATEWAY: cd $REPO/gateway && npm start"
             echo "    3) PANEL:   cd $REPO/gateway/panel && node index.js"
             echo ""
             echo "Para volver a producción: bash deploy/dev.sh reset"
         elif [ "$TARGET" = "brain" ]; then
             echo "▶️  Lanzando BRAIN manual en esta terminal (Ctrl+C para salir)..."
-            cd "$REPO/brain" && exec venv/bin/python main.py
+            cd "$REPO/brain" && exec env BRAIN_PORT=5100 BRAIN_HOST=0.0.0.0 venv/bin/python main.py
         elif [ "$TARGET" = "panel" ]; then
             echo "▶️  Lanzando PANEL manual en esta terminal (Ctrl+C para salir)..."
             export ADMIN_WEB_PORT=5201 ADMIN_WEB_HOST=0.0.0.0 GATEWAY_INTERNAL_URL=http://127.0.0.1:5400

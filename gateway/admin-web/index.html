@@ -607,6 +607,7 @@ let qrExpiresAt = 0;
 let qrCountdownTimer = null;
 let pairingInProgress = false;
 let qrFeedStarted = false;
+let qrEs = null; // EventSource del feed QR (para reabrirlo si se cierra)
 let sessionNumber = '';
 
 // Muestra la vista correcta según haya o no sesión de WhatsApp activa.
@@ -635,9 +636,15 @@ function showPairMode(mode) {
   methodBack.hidden = false;
   pairmodeQr.hidden = mode !== 'qr';
   pairmodeNum.hidden = mode !== 'num';
-  if (mode === 'qr' && !qrFeedStarted) {
-    qrFeedStarted = true;
-    startQrFeed();
+  if (mode === 'qr') {
+    // Siempre (re)abrir el feed QR al entrar: así no depende del timing
+    // del gateway ni de si ya entramos antes. Si no hay QR vigente, pedir
+    // uno fresco para que se vea de inmediato (sin cambiar de pestaña).
+    if (!qrFeedStarted) { qrFeedStarted = true; startQrFeed(); }
+    else if (qrEs && qrEs.readyState === EventSource.CLOSED) { startQrFeed(); }
+    if (!(qrExpiresAt > Date.now())) {
+      refreshQrFromServer();
+    }
   }
   refreshSession();
 }
@@ -657,6 +664,7 @@ function stopQrCountdown() {
 
 function renderQrState(d) {
   if (d && d.qr) {
+    pairingInProgress = false;
     stopQrCountdown();
     qrExpiresAt = d.expiresAt || 0;
     qrbox.innerHTML = '<img src="' + d.qr + '" alt="Código QR de WhatsApp">';
@@ -666,11 +674,19 @@ function renderQrState(d) {
   } else {
     stopQrCountdown();
     const exp = !!(d && d.expired);
-    qrbox.innerHTML = '<div class="empty">' + QR_BADGE + '<span>' + (exp ? 'QR expirado' : 'QR no disponible') + '</span></div>';
-    qrst.className = exp ? 'warn' : '';
-    qrst.textContent = exp ? 'El QR expiró (1 min sin escanear). Puedes generar otro.' : 'Genera un QR para vincular (válido 1 min).';
-    genqrbtn.disabled = pairingInProgress;
-    genqrbtn.textContent = '🔄 Generar QR';
+    if (pairingInProgress) {
+      qrbox.innerHTML = '<div class="empty">⏳ <span>Generando código QR…</span></div>';
+      qrst.className = '';
+      qrst.textContent = 'Conectando con WhatsApp para obtener un QR fresco…';
+      genqrbtn.disabled = true;
+      genqrbtn.textContent = '⏳ Generando…';
+    } else {
+      qrbox.innerHTML = '<div class="empty">' + QR_BADGE + '<span>' + (exp ? 'QR expirado' : 'QR no disponible') + '</span></div>';
+      qrst.className = exp ? 'warn' : '';
+      qrst.textContent = exp ? 'El QR expiró (1 min sin escanear). Puedes generar otro.' : 'Genera un QR para vincular (válido 1 min).';
+      genqrbtn.disabled = false;
+      genqrbtn.textContent = '🔄 Generar QR';
+    }
   }
 }
 
@@ -689,41 +705,22 @@ function startQrCountdown() {
   }, 500);
 }
 
-// El SSE trae el QR renderizado y el estado de sesión en vivo (cuando el
-// pairing completa, la vista cambia sola a "Conectado").
-function startQrFeed() {
-  const es = new EventSource('/api/qr');
-  es.onmessage = e => {
-    try {
-      const d = JSON.parse(e.data);
-      if (d.session !== undefined) setSession(!!d.session, '');
-      renderQrState(d);
-    } catch (err) { /* evento inválido */ }
-  };
-  es.onopen = () => { pairingInProgress = false; }; // reconexión = proceso nuevo
-  es.onerror = () => { /* el EventSource reintenta solo */ };
-}
-
-// "Generar QR": pide un QR nuevo al gateway (abre la ventana de 1 min o,
-// si el gateway está apagado, lo lanza y el QR llega por SSE al volver).
-genqrbtn.addEventListener('click', async () => {
+// Pide un QR fresco al gateway (recrea el socket de pairing). Usado al
+// entrar a Pair con QR sin QR vigente, y por el botón "Generar QR".
+async function refreshQrFromServer() {
   if (pairingInProgress) return;
   pairingInProgress = true;
   genqrbtn.disabled = true;
   genqrbtn.textContent = '⏳ Generando…';
-  pairmsg.className = '';
-  pairmsg.textContent = 'Pidiendo QR…';
+  qrbox.innerHTML = '<div class="empty">⏳ <span>Generando código QR…</span></div>';
+  qrst.className = '';
+  qrst.textContent = 'Conectando con WhatsApp para obtener un QR fresco…';
   try {
-    const r = await fetch('/api/pairing', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ phone: '' }) });
+    const r = await fetch('/api/qr/refresh', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{}' });
     const d = await r.json();
     if (d.success) {
       pairmsg.className = 'ok';
-      pairmsg.textContent = '✅ ' + (d.message || 'QR generado — escanéalo antes de que expire.');
-    } else if (d.needsRestart) {
-      // El proceso se reinicia: pairingInProgress se mantiene hasta que el
-      // SSE reconecte (onopen lo libera); el QR llega con su countdown.
-      pairmsg.className = 'ok';
-      pairmsg.textContent = '🚀 ' + (d.message || 'Lanzando gateway… el QR aparecerá aquí en unos segundos.');
+      pairmsg.textContent = '✅ ' + (d.message || 'QR regenerado — escanea el que aparezca.');
     } else {
       pairmsg.className = 'err';
       pairmsg.textContent = '⚠️ ' + (d.message || 'No se pudo generar el QR');
@@ -737,10 +734,40 @@ genqrbtn.addEventListener('click', async () => {
     pairmsg.className = 'err';
     pairmsg.textContent = '⚠️ Error: ' + e.message;
     pairingInProgress = false;
-    genqrbtn.disabled = false;
-    genqrbtn.textContent = '🔄 Generar QR';
+    if (!(qrExpiresAt > Date.now())) {
+      genqrbtn.disabled = false;
+      genqrbtn.textContent = '🔄 Generar QR';
+    }
   }
-});
+  setTimeout(() => {
+    if (pairingInProgress && !(qrExpiresAt > Date.now())) {
+      pairingInProgress = false;
+      genqrbtn.disabled = false;
+      genqrbtn.textContent = '🔄 Generar QR';
+      renderQrState({ qr: null, expired: false });
+    }
+  }, 8000);
+}
+
+// El SSE trae el QR renderizado y el estado de sesión en vivo (cuando el
+// pairing completa, la vista cambia sola a "Conectado").
+function startQrFeed() {
+  if (qrEs) { try { qrEs.close(); } catch (e) {} }
+  qrEs = new EventSource('/api/qr');
+  qrEs.onmessage = e => {
+    try {
+      const d = JSON.parse(e.data);
+      if (d.session !== undefined) setSession(!!d.session, '');
+      renderQrState(d);
+    } catch (err) { /* evento inválido */ }
+  };
+  qrEs.onopen = () => { pairingInProgress = false; }; // reconexión = proceso nuevo
+  qrEs.onerror = () => { /* el EventSource reintenta solo */ };
+}
+
+// "Generar QR": pide un QR nuevo al gateway (recrea el socket de pairing).
+// Reusa refreshQrFromServer() para no duplicar lógica.
+genqrbtn.addEventListener('click', () => { refreshQrFromServer(); });
 
 // "Pair con número": pide el código de enlace de 8 dígitos a WhatsApp.
 pairbtn.addEventListener('click', async () => {

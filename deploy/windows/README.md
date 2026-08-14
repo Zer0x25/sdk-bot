@@ -20,15 +20,20 @@ npm install
 
 ## Arranque
 
-Abre **dos terminales** (PowerShell o CMD):
+Abre **las terminales necesarias** (PowerShell o CMD):
 
 ```powershell
-# Terminal 1 — Brain (primero siempre)
+# Terminal 1 — Brain (primero siempre, puerto :5100)
 cd C:\ruta\a\SDK-Bot
 deploy\windows\startBrain.bat
 
-# Terminal 2 — Gateway (después del brain)
+# Terminal 2 — Gateway (después del brain, bus interno :5400)
 deploy\windows\startGateway.bat
+
+# Terminal 3 — Panel Web (opcional, puerto :5201)
+cd C:\ruta\a\SDK-Bot\gateway\panel
+node index.js
+# Acceso en el navegador: http://localhost:5201
 ```
 
 - **Ctrl+C** detiene cada proceso (libera el lock de instancia única).

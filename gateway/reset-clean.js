@@ -62,9 +62,12 @@ async function stopProcess(pid, name) {
 function spawnBrain() {
     const venvPy = path.join(BRAIN_DIR, 'venv', 'bin', 'python');
     const py = fs.existsSync(venvPy) ? venvPy : 'python3';
-    const child = spawn(py, ['main.py'], { cwd: BRAIN_DIR, detached: true, stdio: 'ignore' });
+    // Mismo estándar que los .service y el internalBus: BRAIN_PORT=5100 (fallback 5100).
+    // Sin esto el brain hijo caía en el default 8000 y se desalineaba del gateway.
+    const env = { ...process.env, BRAIN_PORT: process.env.BRAIN_PORT || 5100, BRAIN_HOST: process.env.BRAIN_HOST || '0.0.0.0' };
+    const child = spawn(py, ['main.py'], { cwd: BRAIN_DIR, env, detached: true, stdio: 'ignore' });
     child.unref();
-    console.log(`🧠 Brain relanzado (${py} main.py) — espera unos segundos antes de preguntarle al gateway.`);
+    console.log(`🧠 Brain relanzado (${py} main.py) en :${env.BRAIN_PORT} — espera unos segundos antes de preguntarle al gateway.`);
 }
 
 function askConfirmation(question) {

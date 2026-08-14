@@ -4,7 +4,7 @@
  * HTTP mínimo en 127.0.0.1 (nunca expuesto a la red):
  *   GET /status  → JSON completo con estado, contadores y métricas de runtime
  *   GET /health  → {"status":"ok", uptime} para healthchecks simples
- * Puerto: env STATUS_PORT (default 3100). Para la futura dashboard.
+ * Puerto: env STATUS_PORT (default 5300, rango dev misc 5300-5399). Para la futura dashboard.
  */
 const http = require('http');
 const { state, counters } = require('../config');
@@ -72,7 +72,7 @@ function buildStatus() {
  * @returns {http.Server}
  */
 function startStatusServer(opts = {}) {
-    const port = opts.port ?? Number(process.env.STATUS_PORT || 3100);
+    const port = opts.port ?? Number(process.env.STATUS_PORT || 5300);
     const server = http.createServer((req, res) => {
         res.setHeader('Content-Type', 'application/json; charset=utf-8');
         if (req.url === '/health') {

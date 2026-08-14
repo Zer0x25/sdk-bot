@@ -37,15 +37,33 @@
 ```
 SDK-Bot/
 ├── gateway/                      # Capa de Mensajería (Node.js + Baileys)
-│   ├── index.js                  # Punto de entrada con syncFullHistory y presenceSubscribe
+│   ├── index.js                  # Entrada Baileys (presenceSubscribe, syncFullHistory, bus interno :5400)
 │   ├── reset-session.js          # Script de re-sincronización de libreta (npm run reset)
+│   ├── reset-clean.js            # Reset limpio de fábrica F7 (npm run clean)
 │   ├── config.js                 # Estado global, URLs y registro anti-bucle
+│   ├── tuning.js                 # Variables de afinación y rendimiento
+│   ├── panel/                    # Panel Web — 3er proceso independiente (puerto 5201)
+│   │   └── index.js              # Servidor HTTP proxy hacia el bus interno (:5400) y estáticos
+│   ├── admin-web/                # Frontend web estático (HTML/CSS/JS puro, dashboard, pairing, etc.)
+│   ├── store/
+│   │   └── chatStore.js          # Store RAM de mensajes de Baileys (precarga web-like)
 │   ├── services/
-│   │   ├── storageService.js     # Gestor I/O atómico (contacts_db, settings_db, setNumberState, bulkUpsert)
+│   │   ├── internalBus.js        # Bus interno HTTP (:5400) para desacoplar el gateway del panel
+│   │   ├── db.js                 # Persistencia atómica de contacts_db y settings_db
+│   │   ├── contactsRepository.js # Gestión de agenda, búsqueda O(1) e índices RAM
+│   │   ├── contactSyncQueue.js   # Cola de sincronización de contactos por chunks
+│   │   ├── messageSyncQueue.js   # Cola de sincronización de mensajes de historial por chunks
+│   │   ├── messageQueue.js       # Cola persistente en disco para caídas del brain
+│   │   ├── broadcastService.js   # Mensajes programados y difusión masiva segura
+│   │   ├── stateService.js       # Gestión de estados (permitido/ignorado/handoff/neutro)
 │   │   ├── metadataService.js    # Smart Delta Sync (TTL 24h), Phone/LID dual, Foto HD, Bio y Países
+│   │   ├── statusServer.js       # Métricas locales en HTTP (:5300)
+│   │   ├── factoryReset.js       # Motor único de reset de fábrica F7
 │   │   └── brainService.js       # Cliente HTTP REST + Simulación Humana (Typing Delay & Multi-Bubble)
 │   ├── handlers/
-│   │   ├── commandHandler.js     # Procesador modular de comandos admin con extracción de citas
+│   │   ├── commandHandler.js     # Dispatcher modular de comandos admin con extracción de citas
+│   │   ├── commandHelpers.js     # Sanitización, help de comandos y utilidades
+│   │   ├── commands/             # Comandos modulares (/ia, /humano, /perfil, /broadcast, /estado, etc.)
 │   │   └── messageHandler.js     # Pipeline de mensajes, De-bounce estocástico, Handoff y Presencia RAM
 │   ├── contacts_db.json          # Base de datos centralizada de contactos y estados (gitignored)
 │   ├── settings_db.json          # Configuración global del bot (gitignored)
@@ -53,14 +71,19 @@ SDK-Bot/
 │   ├── *.json.example            # Plantillas de ejemplo para despliegues limpios
 │   └── auth_info_baileys/        # Sesión y estado de WhatsApp (gitignored)
 ├── brain/                        # Capa de Inteligencia (Python + FastAPI)
-│   ├── main.py                   # Aplicación FastAPI modularizada (/chat, /reset-memory, /profiles)
+│   ├── main.py                   # Aplicación FastAPI modularizada (/chat, /reset-memory, /profiles, :5100)
 │   ├── config.py                 # API Keys y modelos (Groq, OpenRouter, Gemini)
-│   ├── memory.py                 # Gestor de memoria en RAM por user_id (máx 15 mensajes)
+│   ├── memory.py                 # Gestor de memoria persistente SQLite (brain/memory.db)
 │   ├── providers.py              # Router multi-proveedor (Groq 25s → OpenRouter 25s → Gemini 40s)
+│   ├── profiles.py               # Motor de perfiles SOUL en caliente
 │   ├── profiles/                 # Perfiles SOUL editables en Markdown (default, lucia, mateo, cobranzas, recepcion)
 │   ├── .env                      # API Keys (gitignored)
 │   └── requirements.txt          # Dependencias Python
-└── PLAN-ARQUITECTURA.md          # Documentación técnica completa
+├── deploy/                       # Scripts y configuraciones de despliegue por plataforma
+│   ├── linux/                    # Servicios systemd --user e instalador Linux (dev.sh, install.sh)
+│   ├── termux/                   # Scripts y servicios runit para Android (Termux)
+│   └── windows/                  # Scripts batch para Windows (startBrain.bat, startGateway.bat)
+├── PLAN-ARQUITECTURA.md          # Documentación técnica completa
 └── ROADMAP.md                    # Hoja de ruta de fases (guía de sesiones)
 ```
 
@@ -84,7 +107,8 @@ python -m venv venv && venv\Scripts\pip install -r requirements.txt
 ### 1. Iniciar Cerebro IA (Python FastAPI):
 ```bash
 cd brain
-# Linux / macOS
+# Linux / macOS (estándar dev: puerto 5100, bind 0.0.0.0)
+export BRAIN_PORT=5100 BRAIN_HOST=0.0.0.0
 venv/bin/python main.py
 # Windows
 venv\Scripts\python.exe main.py
@@ -100,22 +124,29 @@ npm start
 ```
 > 🔒 **Instancia única:** abrir una segunda instancia del brain o del gateway se bloquea automáticamente (mensaje claro + salida). Esto protege la sesión de WhatsApp de corrupción por doble conexión.
 
-### 3. Producción — despliegue por plataforma
+### 3. Iniciar Panel Web (Opcional, proceso independiente):
+```bash
+cd gateway/panel
+node index.js
+# Acceso en el navegador: http://localhost:5201 (o tu IP / Tailscale en el puerto 5201)
+```
+
+### 4. Producción — despliegue por plataforma
 
 El código del bot es **idéntico en las 3 plataformas**; solo cambia el supervisor que lo mantiene vivo. Todos los despliegues viven en `deploy/`:
 
 | Plataforma | Supervisor | Cómo se despliega |
 |---|---|---|
-| 🐧 **Linux (servidor)** | systemd | `sudo bash deploy/linux/install.sh` → `systemctl status sdk-bot-{brain,gateway}` |
+| 🐧 **Linux (servidor)** | systemd | `bash deploy/linux/install.sh` → `systemctl --user status sdk-bot-{brain,gateway,panel}` |
 | 🤖 **Android (Termux)** | runit | `bash deploy/termux/setup-termux.sh` (o el manual en `deploy/termux/README.md`) |
 | 🪟 **Windows (PC)** | Programador de tareas | `deploy/windows/startBrain.bat` + `startGateway.bat` (ver `deploy/windows/README.md`) |
 
 **Linux — producción en segundo plano (systemd --user, sin sudo):**
 ```bash
 cd ~/playground/sdk-bot
-bash deploy/linux/install.sh            # instala, habilita y arranca sdk-bot-brain + sdk-bot-gateway (en systemd --user)
-systemctl --user status sdk-bot-brain sdk-bot-gateway   # ambos: active (running)
-journalctl -u sdk-bot-gateway -f             # logs en vivo
+bash deploy/linux/install.sh            # instala, habilita y arranca sdk-bot-brain + sdk-bot-gateway + sdk-bot-panel
+systemctl --user status sdk-bot-brain sdk-bot-gateway sdk-bot-panel   # todos: active (running)
+journalctl --user -u sdk-bot-gateway -f             # logs en vivo
 ```
 
 **Termux — todo en un comando:**
@@ -126,13 +157,15 @@ bash deploy/termux/setup-termux.sh           # dependencias + runit + boot autom
 # (luego edita brain/.env con tus API keys)
 ```
 
-**Windows — dos terminales:**
+**Windows — terminales:**
 ```powershell
 deploy\windows\startBrain.bat    # terminal 1 (siempre primero)
 deploy\windows\startGateway.bat  # terminal 2
+# Para el panel web (opcional):
+cd gateway\panel && node index.js # terminal 3
 ```
 
-### 4. Desarrollo en Linux — alternar entre manual y systemd:
+### 5. Desarrollo en Linux — alternar entre manual y systemd:
 
 Nunca corras manual y systemd del mismo componente a la vez (el lock de instancia única bloquea al segundo que arranque).
 
@@ -140,7 +173,8 @@ Nunca corras manual y systemd del mismo componente a la vez (el lock de instanci
 cd ~/playground/sdk-bot
 bash deploy/linux/dev.sh manual brain      # apaga systemd --user + lanza brain manual (Ctrl+C al terminar)
 bash deploy/linux/dev.sh manual gateway    # idem para el gateway
-bash deploy/linux/dev.sh manual ambos      # imprime los comandos para 2 terminales
+bash deploy/linux/dev.sh manual panel      # idem para el panel web
+bash deploy/linux/dev.sh manual ambos      # imprime los comandos para las terminales
 bash deploy/linux/dev.sh reset             # mata lo manual + relanza todo en systemd
 bash deploy/linux/dev.sh reset brain       # solo el brain
 bash deploy/linux/dev.sh status            # estado de services y locks
@@ -148,11 +182,12 @@ bash deploy/linux/dev.sh status            # estado de services y locks
 
 > 📋 **Logs:** rotación automática (5MB × 3) en `gateway/logs/gateway.log` y `brain/logs/brain.log` (en Termux: `~/logs/sdk-gateway.log`).
 
-### 5. Re-sincronizar Libreta Completa de Contactos (Fresh QR):
+### 6. Re-sincronizar Libreta Completa de Contactos (Fresh QR):
 ```bash
 cd gateway
 npm run reset
 ```
+*(O usa `npm run clean` para un reset limpio de fábrica F7)*
 
 ---
 

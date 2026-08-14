@@ -67,6 +67,8 @@ cat > "$SVDIR/sdk-brain/run" <<EOF
 exec 2>&1
 cd "$REPO/brain"
 export PYTHONPATH="$REPO/brain:\$PYTHONPATH"
+export BRAIN_PORT=${BRAIN_PORT:-5100}
+export BRAIN_HOST=${BRAIN_HOST:-0.0.0.0}
 exec /data/data/com.termux/files/usr/bin/python main.py
 EOF
 
@@ -76,6 +78,9 @@ LOG="$HOME/logs/sdk-gateway.log"
 mkdir -p "$HOME/logs"
 cd "$REPO/gateway"
 export NODE_PATH="$REPO/gateway/node_modules:\$NODE_PATH"
+export STATUS_PORT=${STATUS_PORT:-5300}
+export BRAIN_API_BASE=${BRAIN_API_BASE:-http://127.0.0.1:5100}
+export INTERNAL_BUS_PORT=${INTERNAL_BUS_PORT:-5400}
 exec node index.js 2>&1 | awk '{ print strftime("%Y-%m-%d %H:%M:%S"), \$0; fflush() }' >> "\$LOG"
 EOF
 
