@@ -56,8 +56,8 @@ SDK-Bot/
   - **Adaptativo Normal (~83%):** 5s a 7s para mensajes únicos/cortos (<20 chars); 7.5s a 12s para múltiples mensajes o textos largos.
   - **Capa Ocupado / Distraído (~12%):** Posponimiento de 1 a 2 minutos (60s - 120s) imitando un retraso humano ocasional.
   - **Capa AFK / Muy Ocupado (~5%):** Posponimiento de 3 a 4 minutos (180s - 240s) imitando distracciones más prolongadas.
-- **Renovación Dinámica (`presence.update`):** Si el cliente está escribiendo (`composing` / `recording`), los temporizadores se renuevan continuamente sin cortar la idea del usuario.
-  - *Soporte Multi-Device (Dual JID):* El estado de presencia entra a nivel de "Teléfono" (`@s.whatsapp.net`), pero los mensajes pueden operar bajo el "LID" (`@lid`). Nuestro motor en memoria RAM (`activePresences`) resuelve ambos IDs simultáneamente apoyándose en `contacts_db.json`.
+- **Renovación Dinámica (`presence.update`):** Si el cliente está escribiendo (`composing` / `recording`), los temporizadores se renuevan continuamente sin cortar la idea del usuario. Además, el composing dispara la precarga de contexto (Opción A, 2 etapas web-like): el gateway hace GET /history del cerebro y guarda en RAM la ventana reciente de ESE chat (etapa 1, señal de intervención: el bot ya sabe de qué va al abrir el chat), con límites acotados (GATEWAY_PRELOAD_MAX_MESSAGES=25, sin tope de tokens). Cuando el mensaje llega, la respuesta usa el contexto COMPLETO del cerebro (7d / 5000 tok, etapa 2); la precarga NO se inyecta en la respuesta. El dedup por TTL evita martillear al cerebro en cada evento de presencia.
+  - *Soporte Multi-Device (Dual JID):* El estado de presencia entra a nivel de Teléfono (@s.whatsapp.net), pero los mensajes pueden operar bajo el LID (@lid). Nuestro motor en memoria RAM (activePresences) resuelve ambos IDs simultáneamente apoyándose en contacts_db.json.
 - **Expiración de Escritura (5.0s):** Si el usuario deja de escribir sin enviar evento `paused`, el estado de escritura expira a los 5.0s (`TYPING_TTL_MS`) e inicia el temporizador de silencio adaptativo.
 
 ### 3. 🛡️ Simulación Humana & Anti-Ban Rate Limiter
