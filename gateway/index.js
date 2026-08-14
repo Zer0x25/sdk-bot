@@ -110,6 +110,7 @@ let reconnectTimer = null;         // Timer de backoff pendiente
 // 🖥️ F6-P4: referencia al panel web opcional (null si no está montado).
 // El motor NO depende de él: solo usa `?.` para avisarle del socket y del QR.
 let adminWeb = null;
+const internalBus = require('./services/internalBus'); // 🔌 bus interno (panel = 3er proceso)
 
 // ⚠️ Backoff exponencial: 2s → 5s → 15s → 60s (tope) para no martillear a WhatsApp
 const RECONNECT_BACKOFF_MS = [2000, 5000, 15000, 60000];
@@ -158,7 +159,8 @@ async function connectToWhatsApp () {
     currentSocket = sock;
     messageQueue.setSock(sock);
     broadcastService.setSock(sock);
-    adminWeb?.setSock(sock); // F6-P4: el panel se entera del socket nuevo (QR fresco)
+    adminWeb?.setSock(sock); // compat tests
+    internalBus.setSock(sock); // 🔌 bus interno: el panel (proceso aparte) se entera del socket
 
     // Capturar eventos de sincronización de contactos de WhatsApp (Agenda del Teléfono).
     // La sync completa ocurre SOLO al vincular el dispositivo por primera vez
@@ -240,7 +242,8 @@ async function connectToWhatsApp () {
         // Ignorar eventos de sockets reemplazados o cerrados por una reconexión nueva
         if (currentSocket !== sock) return;
 
-        adminWeb?.handleConnectionUpdate(update); // F6-P4: el panel captura el QR (si lo hay)
+        adminWeb?.handleConnectionUpdate(update); // compat tests
+        internalBus.handleConnectionUpdate(update); // 🔌 bus interno: el panel (3er proceso) captura el QR
 
         const { connection, lastDisconnect, qr } = update;
         
@@ -301,12 +304,14 @@ startStatusServer();
 // 💓 Healthcheck activo del brain para el dashboard (Running/Stopped/Stand-by)
 require('./services/brainService').startBrainHealthWatch();
 
-// 🖥️ F6-P1: panel de administración web OPCIONAL — solo con SDK_ADMIN_WEB_ENABLED=1.
-// Módulo consumidor: no altera el motor (sin el env, el bot es idéntico).
-if (process.env.SDK_ADMIN_WEB_ENABLED === '1') {
-    adminWeb = require('./services/adminWebServer');
-    adminWeb.startAdminWebServer();
-}
+// 🔌 Bus interno SIEMPRE arriba: el panel web (3er proceso, gateway/panel/)
+// lo consume por HTTP local (127.0.0.1:5400) para QR/logs/estado/comandos.
+// Desacopla el panel del bot: al detener el gateway el panel sigue vivo
+// (ap untado a su propio proceso) y se reconecta cuando el gateway vuelve.
+internalBus.startInternalBus();
+
+// 🖥️ Panel web: YA NO se arranca aquí. Es un proceso independiente
+// (gateway/panel/index.js) que se comunica con el bus interno por HTTP.
 
 // 📥 F4-P4: red de seguridad — si el brain vuelve sin una llamada IA exitosa que
 // dispare el flush, intentar vaciar la cola cada 30s (no mantiene el proceso vivo).

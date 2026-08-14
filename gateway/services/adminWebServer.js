@@ -393,9 +393,12 @@ function hasActiveSession() {
 
 /** Payload actual del QR (null si no hay ventana/QR vigente) + estado de sesión. */
 function qrPayload() {
-    const active = qrWindowOpen && lastQrDataUrl && Date.now() < qrExpiresAt;
+    // Mostrar el QR si está capturado y la ventana abierta, sin depender de
+    // qrExpiresAt (setSock lo resetea a 0 y lo invalidaba aunque el QR estuviera
+    // vigente). El frontend maneja la expiración visual con su propio countdown.
+    const active = qrWindowOpen && !!lastQrDataUrl;
     return active
-        ? { qr: lastQrDataUrl, expiresAt: qrExpiresAt, expired: false, session: hasActiveSession() }
+        ? { qr: lastQrDataUrl, expiresAt: qrExpiresAt || Date.now() + qrTtlMs, expired: false, session: hasActiveSession() }
         : { qr: null, expiresAt: null, expired: !qrWindowOpen, session: hasActiveSession() };
 }
 
@@ -449,6 +452,7 @@ function setSock(sock) {
  */
 async function handleConnectionUpdate(update) {
     if (!update) return;
+    log.info(`[ADMIN-WEB-DEBUG] conn.update qr=${typeof update.qr === 'string' ? 'YES' : 'no'} conn=${update.connection || 'n/a'} qrWindowOpen=${qrWindowOpen}`);
     // Sesión abierta/cerrada: re-difunde el estado (el front decide qué
     // mostrar: pairing cuando no hay sesión, reset cuando la hay).
     if (update.connection === 'open' || update.connection === 'close') {
@@ -456,10 +460,12 @@ async function handleConnectionUpdate(update) {
         return;
     }
     if (typeof update.qr !== 'string') return;
-    if (!qrWindowOpen) return;
-    if (Date.now() >= qrExpiresAt) openQrWindow(); // primer QR de la ventana
+    // Capturar el QR SIEMPRE que Baileys lo emita y no haya sesión abierta.
+    if (update.connection === 'open') return;
+    if (!qrWindowOpen) openQrWindow();
     try {
         lastQrDataUrl = await QRCode.toDataURL(update.qr, { margin: 1, width: 280 });
+        log.info(`[ADMIN-WEB-DEBUG] QR capturado len=${lastQrDataUrl ? lastQrDataUrl.length : 'NULL'}`);
     } catch (e) {
         logError.error(`🖥️ [ADMIN-WEB] Error renderizando QR: ${errMsg(e)}`);
         lastQrDataUrl = null;

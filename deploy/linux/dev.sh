@@ -27,11 +27,12 @@ status() {
 
 case "${1:-}" in
     manual)
-        TARGET="${2:-ambos}"
+        TARGET="${2:-todos}"
         case "$TARGET" in
-            brain|gateway) LIST="$TARGET" ;;
+            brain|gateway|panel) LIST="$TARGET" ;;
             ambos) LIST="brain gateway" ;;
-            *) echo "❌ Objetivo inválido: $TARGET (usa brain, gateway o ambos)"; exit 1 ;;
+            todos) LIST="brain gateway panel" ;;
+            *) echo "❌ Objetivo inválido: $TARGET (usa brain, gateway, panel, ambos o todos)"; exit 1 ;;
         esac
 
         for s in $LIST; do
@@ -46,22 +47,42 @@ case "${1:-}" in
             echo "    2) GATEWAY: cd $REPO/gateway && npm start"
             echo ""
             echo "Para volver a producción: bash deploy/dev.sh reset"
+        elif [ "$LIST" = "brain gateway panel" ]; then
+            echo ""
+            echo "▶️  Abre 3 terminales y lanza:"
+            echo "    1) BRAIN:   cd $REPO/brain && venv/bin/python main.py"
+            echo "    2) GATEWAY: cd $REPO/gateway && npm start"
+            echo "    3) PANEL:   cd $REPO/gateway/panel && node index.js"
+            echo ""
+            echo "Para volver a producción: bash deploy/dev.sh reset"
         elif [ "$TARGET" = "brain" ]; then
             echo "▶️  Lanzando BRAIN manual en esta terminal (Ctrl+C para salir)..."
             cd "$REPO/brain" && exec venv/bin/python main.py
+        elif [ "$TARGET" = "panel" ]; then
+            echo "▶️  Lanzando PANEL manual en esta terminal (Ctrl+C para salir)..."
+            export ADMIN_WEB_PORT=5201 ADMIN_WEB_HOST=0.0.0.0 GATEWAY_INTERNAL_URL=http://127.0.0.1:5400
+            cd "$REPO/gateway/panel" && exec node index.js
         else
             echo "▶️  Lanzando GATEWAY manual en esta terminal (Ctrl+C para salir)..."
+            # Replicar las env del systemd --user para que el panel web y los
+            # puertos se comporten igual que en producción (el bot solo monta
+            # el panel si SDK_ADMIN_WEB_ENABLED=1; sin esto el manual no lo sube).
+            export LANG=C.UTF-8 LC_ALL=C.UTF-8 TZ=America/Santiago
+            export SDK_ADMIN_WEB_ENABLED=1 ADMIN_WEB_PORT=5201 STATUS_PORT=5300
+            export BRAIN_API_BASE=http://127.0.0.1:5100 ADMIN_WEB_HOST=0.0.0.0 STATUS_HOST=0.0.0.0
             cd "$REPO/gateway" && exec npm start
         fi
         ;;
 
     reset)
-        TARGET="${2:-ambos}"
+        TARGET="${2:-todos}"
         case "$TARGET" in
             brain) PATTERNS=("venv/bin/python main.py") ;;
             gateway) PATTERNS=("node index.js") ;;
+            panel) PATTERNS=("gateway/panel/index.js" "panel/index.js") ;;
             ambos) PATTERNS=("venv/bin/python main.py" "node index.js") ;;
-            *) echo "❌ Objetivo inválido: $TARGET (usa brain, gateway o ambos)"; exit 1 ;;
+            todos) PATTERNS=("venv/bin/python main.py" "node index.js" "gateway/panel/index.js" "panel/index.js") ;;
+            *) echo "❌ Objetivo inválido: $TARGET (usa brain, gateway, panel, ambos o todos)"; exit 1 ;;
         esac
 
         echo "🔫 Matando instancias manuales (y las de systemd si quedaron)..."
@@ -73,7 +94,8 @@ case "${1:-}" in
         case "$TARGET" in
             brain) SERVICES="sdk-bot-brain" ;;
             gateway) SERVICES="sdk-bot-gateway" ;;
-            *) SERVICES="sdk-bot-brain sdk-bot-gateway" ;;
+            panel) SERVICES="sdk-bot-panel" ;;
+            *) SERVICES="sdk-bot-brain sdk-bot-gateway sdk-bot-panel" ;;
         esac
         for s in $SERVICES; do
             echo "▶️  Levantando service --user $s..."
