@@ -13,8 +13,16 @@ const { decideReconnect } = require('./services/pipeline');
 const messageQueue = require('./services/messageQueue');
 const broadcastService = require('./services/broadcastService');
 const { startStatusServer, runtime } = require('./services/statusServer');
+const chatStore = require('./store/chatStore'); // Opción C: store RAM de mensajes de Baileys (precarga web-like)
 const { isWiping } = require('./services/factoryReset');
 const { cat } = require('./services/logger');
+
+// Opción C: store RAM de mensajes de Baileys (precarga web-like desde el hilo real).
+chatStore.configure({
+    maxPerChat: Number(process.env.GATEWAY_PRELOAD_MAX_PER_CHAT) || 200,
+    chatTtlMs: Number(process.env.GATEWAY_PRELOAD_CHAT_TTL_MS) || 30 * 60 * 1000,
+});
+chatStore.startCleanup(Number(process.env.GATEWAY_PRELOAD_CLEANUP_MS) || 10 * 60 * 1000);
 
 const log = cat('CORE');
 const logInstancia = cat('INSTANCIA');
@@ -203,6 +211,9 @@ async function connectToWhatsApp () {
     // Capturar sincronización de historial completo inicial de WhatsApp Web
     sock.ev.on('messaging-history.set', ({ contacts, chats, messages, progress, syncType }) => {
         if (contacts) handleContactSync(contacts, 'history');
+        // Opción C: sembrar el store RAM con el historial real de los chats
+        // (lo que el web de WhatsApp muestra al abrir un chat). Antes se descartaba.
+        if (messages && messages.length) chatStore.seedMessages(messages);
         log.info(`📜 History sync: type=${syncType} progreso=${progress}% chats=${chats?.length ?? 0} contactos=${contacts?.length ?? 0} msgs=${messages?.length ?? 0}`);
     });
 
@@ -265,6 +276,8 @@ async function connectToWhatsApp () {
     });
 
     sock.ev.on('messages.upsert', async m => {
+        // Opción C: también alimentar el store RAM con mensajes en vivo.
+        if (m?.messages) chatStore.upsertMessage(m.messages[0]);
         await handleIncomingMessage(m, sock);
     });
     

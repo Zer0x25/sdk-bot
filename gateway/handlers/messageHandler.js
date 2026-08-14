@@ -10,6 +10,7 @@ const { handleAdminCommand } = require('./commandHandler');
 const { tryConfirm } = require('../services/broadcastService');
 const { tryCleanConfirm } = require('../services/resetCleanFlow');
 const { cat } = require('../services/logger');
+const chatStore = require('../store/chatStore'); // Opción C: store RAM de mensajes de Baileys (precarga web-like)
 const { num } = require('../tuning');
 const { getChatHistory } = require('../services/brainService');
 
@@ -26,19 +27,28 @@ const activePresences = new Map();   // Mapa global en memoria RAM del estado de
 const chatInFlight = new Set();      // JIDs con una llamada de IA en curso (serialización por chat)
 const TYPING_TTL_MS = num('GATEWAY_TYPING_TTL_MS', 5000);           // 5.0 segundos: el estado de tecleo expira si el teclado queda inactivo (tunable vía .env.tuning)
 
-// 🧠 PRECARGA DE HISTORIAL EN PRESENCIA (Opción A, "señal de intervención web-like")
+// 🧠 PRECARGA DE HISTORIAL EN PRESENCIA (Opción C, "señal de intervención web-like")
 // Al detectar que el cliente está escribiendo (composing), precargamos el
-// historial de ese chat (GET /history del brain) en RAM. Así, cuando el mensaje
-// llega, ya está en cache y se pasa al brain sin esperar la consulta interna.
-// El dedup por TTL evita martillear al brain en cada evento de presencia.
+// historial de ese chat. La fuente se elige con GATEWAY_PRELOAD_SOURCE:
+//   - 'baileys' (default): lee el hilo REAL desde el store RAM de Baileys
+//     (lo que el web muestra al abrir el chat: tuyo + cliente + bot). On-demand
+//     por chat, NO masivo (no se extrae la historia de los 1000 contactos).
+//   - 'brain': legacy, va al brain SQLite (solo lo que el bot respondió).
+// La precarga es SOLO señal: NO se inyecta en /chat (etapa 2 usa el contexto
+// COMPLETO del brain). El dedup por TTL evita recargas innecesarias.
 const PRELOAD_ENABLED = num('GATEWAY_PRELOAD_ENABLED', 0) === 1;
 const PRELOAD_TTL_MS = num('GATEWAY_PRELOAD_TTL_MS', 180000);       // 3 min: el precargo caliente dura esto antes de refrescar (tunable vía .env.tuning)
 const PRELOAD_ONLY_DIRECT = num('GATEWAY_PRELOAD_ONLY_DIRECT', 1) === 1; // solo chats 1-a-1 (no grupos) por defecto
+const PRELOAD_SOURCE = (num('GATEWAY_PRELOAD_SOURCE', 'baileys') || 'baileys').toString().toLowerCase(); // 'baileys' | 'brain'
 // Límites de la "primera página" de la precarga (etapa 1, web-like). Son MENORES
-// que los de respuesta: la precarga es solo señal de intervención, no el contexto
-// completo que usa /chat (7d / 5000 tok). 0 = sin tope de cantidad.
-const PRELOAD_MAX_MESSAGES = num('GATEWAY_PRELOAD_MAX_MESSAGES', 20);
-const PRELOAD_MAX_TOKENS = num('GATEWAY_PRELOAD_MAX_TOKENS', 1500);
+// que los de respuesta: la precarga es solo señal de intervención
+// (el bot "ya sabe de qué va" al abrir el chat) y NO se usa para contestar.
+// /chat sigue usando el contexto COMPLETO (BRAIN_MEMORY_* = 7d / 5000 tok).
+// Precarga por CANTIDAD de mensajes (igual que el web, que pagina por mensajes
+// visibles, no por tokens). El tope de tokens se deja en 0: en la respuesta
+// (etapa 2) ya lo gobierna BRAIN_MEMORY_MAX_TOKENS.
+const PRELOAD_MAX_MESSAGES = num('GATEWAY_PRELOAD_MAX_MESSAGES', 25);
+const PRELOAD_MAX_TOKENS = num('GATEWAY_PRELOAD_MAX_TOKENS', 0);
 /** @type {Map<string, { history: Array<any>, cachedAt: number }>} */
 const preloadCache = new Map();
 
@@ -48,22 +58,37 @@ function isDirectJid(jid) {
 }
 
 /**
- /** Dispara la precarga del historial de un chat (solo si está habilitada y el
-  * cache está frío). No bloquea: corre en background. La precarga usa límites
-  * acotados (primera página web-like) y es SOLO señal: NO se inyecta en /chat.
-  * @param {string} remoteJid
-  */
- function preloadHistory(remoteJid) {
-     if (!PRELOAD_ENABLED) return;
-     if (PRELOAD_ONLY_DIRECT && !isDirectJid(remoteJid)) return;
-     const cached = preloadCache.get(remoteJid);
-     if (cached && (Date.now() - cached.cachedAt) < PRELOAD_TTL_MS) return; // ya caliente
-     // Marcar inmediatamente para evitar descargas paralelas del mismo chat
-     preloadCache.set(remoteJid, { history: cached ? cached.history : [], cachedAt: Date.now() });
-     getChatHistory(remoteJid, { maxMessages: PRELOAD_MAX_MESSAGES, maxTokens: PRELOAD_MAX_TOKENS })
-         .then(history => { preloadCache.set(remoteJid, { history, cachedAt: Date.now() }); })
-         .catch(() => { /* el cache queda con [] y se reintenta tras TTL */ });
- }
+ * Dispara la precarga del historial de un chat (solo si está habilitada y el
+ * cache está frío). No bloquea. La precarga es SOLO señal de intervención
+ * (etapa 1, web-like): al abrir/señalar el chat ya sabemos de qué va.
+ * NO se inyecta en /chat (etapa 2 usa el contexto completo del brain).
+ *
+ * Fuente de la precarga (GATEWAY_PRELOAD_SOURCE):
+ *   - 'baileys' (default, Opción C): lee el hilo REAL desde el store RAM de
+ *     Baileys (lo que el web muestra al abrir el chat: tuyo + cliente + bot).
+ *     On-demand por chat, no masivo.
+ *   - 'brain': legacy, va al brain SQLite (solo lo que el bot respondió).
+ * @param {string} remoteJid
+ */
+function preloadHistory(remoteJid) {
+    if (!PRELOAD_ENABLED) return;
+    if (PRELOAD_ONLY_DIRECT && !isDirectJid(remoteJid)) return;
+    const cached = preloadCache.get(remoteJid);
+    if (cached && (Date.now() - cached.cachedAt) < PRELOAD_TTL_MS) return; // ya caliente
+    // Marcar inmediatamente para evitar descargas paralelas del mismo chat
+    preloadCache.set(remoteJid, { history: cached ? cached.history : [], cachedAt: Date.now() });
+
+    if (PRELOAD_SOURCE === 'baileys') {
+        // Opción C: hilo real desde el store RAM de Baileys (on-demand, web-like).
+        const history = chatStore.getRecent(remoteJid, PRELOAD_MAX_MESSAGES);
+        preloadCache.set(remoteJid, { history, cachedAt: Date.now(), source: 'baileys' });
+        return;
+    }
+    // Legacy: ir al brain por el historial de lo que el bot respondió.
+    getChatHistory(remoteJid, { maxMessages: PRELOAD_MAX_MESSAGES, maxTokens: PRELOAD_MAX_TOKENS })
+        .then(history => { preloadCache.set(remoteJid, { history, cachedAt: Date.now(), source: 'brain' }); })
+        .catch(() => { /* el cache queda con [] y se reintenta tras TTL */ });
+}
 
 // 📊 Contadores y métricas para GET /status (F4-P3)
 const runtimeStats = { receivedMessages: 0, aiMessages: 0, adminCommands: 0 };
