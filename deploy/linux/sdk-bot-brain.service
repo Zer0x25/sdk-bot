@@ -23,6 +23,11 @@ KillSignal=SIGTERM
 # Cree el proceso por defecto con locales UTF-8
 Environment=LANG=C.UTF-8
 Environment=LC_ALL=C.UTF-8
+# Zona horaria fija del bot: America/Santiago (Chile). El sistema tiene
+# /etc/localtime apuntando a Santiago pero /etc/timezone en UTC, lo que hace
+# que Python/Node resuelvan UTC. Fijamos TZ para que los logs y la hora que
+# usa el bot sean siempre Chile, independiente del server.
+Environment=TZ=America/Santiago
 # Puerto DEV (rango playground): 5100 (backend 5100-5199). Ver playground/PORT_ALLOCATION.sdk-bot.md
 Environment=BRAIN_PORT=5100
 # DEV remoto: bind 0.0.0.0 para que el tailnet (Tailscale) alcance el brain desde
