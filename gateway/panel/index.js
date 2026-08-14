@@ -31,19 +31,18 @@ const MIME = {
 };
 
 /** Proxy de un request al bus interno, transmitiendo la respuesta tal cual. */
-function proxy(req, res, busPathname, busParams) {
-    const url = new URL(INTERNAL);
-    url.pathname = busPathname;
-    if (busParams) url.search = busParams;
-    const preq = http.request(url, { method: req.method }, (pres) => {
-        res.writeHead(pres.statusCode, pres.headers);
+function proxy(req, res, targetPath) {
+    const targetUrl = new URL(targetPath, INTERNAL);
+    const headers = { ...req.headers, host: targetUrl.host };
+    const preq = http.request(targetUrl, { method: req.method, headers }, (pres) => {
+        res.writeHead(pres.statusCode || 500, pres.headers);
         pres.pipe(res);
     });
     preq.on('error', (e) => {
         if (!res.headersSent) res.writeHead(502, { 'Content-Type': 'application/json' });
         res.end(JSON.stringify({ error: 'bus interno caído: ' + e.message }));
     });
-    if (req.method === 'POST' || req.method === 'DELETE') {
+    if (req.method === 'POST' || req.method === 'DELETE' || req.method === 'PUT' || req.method === 'PATCH') {
         req.pipe(preq);
     } else {
         preq.end();
@@ -62,12 +61,13 @@ function serveStatic(req, res, pathname) {
 }
 
 const server = http.createServer((req, res) => {
-    const u = new URL(req.url || '/', `http://${HOST}:${PORT}`);
-    const { pathname, search } = u;
+    const rawUrl = req.url || '/';
+    const u = new URL(rawUrl, `http://${HOST}:${PORT}`);
+    const { pathname } = u;
 
-    // Proxy inverso de todas las rutas de API (/api/*) al bus interno (quitando el prefijo /api)
+    // Proxy inverso de todas las rutas de API (/api/*) al bus interno
     if (pathname.startsWith('/api/')) {
-        const busPath = pathname.slice(4) + (search || '');
+        const busPath = rawUrl.replace(/^\/api/, '') || '/';
         proxy(req, res, busPath);
         return;
     }
