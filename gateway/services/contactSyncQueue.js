@@ -10,8 +10,9 @@ const { cat, errMsg } = require('./logger');
 
 const logError = cat('ERROR');
 
-const CHUNK_SIZE = 300; // contactos por tick (setImmediate)
-
+const CHUNK_SIZE = 100; // contactos por tick (bajado de 300: la sync inicial
+                        // puede entregar miles; 100 mantiene el event loop libre
+                        // para que Baileys responda los pings y no corte la sync).
 /** @type {any[][]} cola FIFO de lotes pendientes */
 let queue = [];
 let running = false;
@@ -62,4 +63,4 @@ function resetForTests() {
     running = false;
 }
 
-module.exports = { setProcessor, push, pendingCount, resetForTests };
+module.exports = { setProcessor, push, pendingCount, resetForTests, CHUNK_SIZE };

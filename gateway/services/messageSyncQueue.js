@@ -13,7 +13,10 @@ const { cat, errMsg } = require('./logger');
 
 const logError = cat('ERROR');
 
-const CHUNK_SIZE = 300; // mensajes por tick (igual que la agenda)
+const CHUNK_SIZE = 100; // mensajes por tick (más conservador que la agenda:
+                        // seedMessages hace Map.set + _enforceCaps por cada lote,
+                        // y la sync inicial puede traer miles; 100 mantiene el
+                        // event loop libre para responder los pings de Baileys).
 
 /** @type {any[][]} cola FIFO de lotes pendientes */
 let queue = [];

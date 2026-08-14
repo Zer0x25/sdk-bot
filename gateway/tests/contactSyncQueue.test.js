@@ -1,6 +1,6 @@
 const { test, afterEach } = require('node:test');
 const assert = require('node:assert');
-const { setProcessor, push, pendingCount, resetForTests } = require('../services/contactSyncQueue');
+const { setProcessor, push, pendingCount, resetForTests, CHUNK_SIZE } = require('../services/contactSyncQueue');
 
 afterEach(() => resetForTests());
 
@@ -24,7 +24,7 @@ test('push procesa todos los contactos en chunks de máx 300 y preserva el orden
     const processed = chunks.flat();
     assert.strictEqual(processed.length, total, 'todos los contactos procesados');
     assert.deepStrictEqual(processed, Array.from({ length: total }, (_, i) => i), 'orden FIFO');
-    assert.ok(chunks.every(c => c.length <= 300), 'ningún chunk supera 300');
+    assert.ok(chunks.every(c => c.length <= CHUNK_SIZE), `ningún chunk supera ${CHUNK_SIZE}`);
     assert.ok(chunks.length >= 4, `varios chunks (${chunks.length})`);
     assert.strictEqual(pendingCount(), 0, 'cola vacía al terminar');
 });
@@ -70,7 +70,7 @@ test('un error del procesador no detiene la cola', async () => {
         fail = false;
     });
 
-    push(Array.from({ length: 301 }, (_, i) => i)); // 2 chunks: el 1º falla, el 2º no
+    push(Array.from({ length: CHUNK_SIZE + 1 }, (_, i) => i)); // 2 chunks: el 1º falla, el 2º no
     await drainQueue();
 
     assert.strictEqual(chunks.length, 2, 'ambos chunks se procesaron pese al error');
