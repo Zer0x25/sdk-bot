@@ -674,6 +674,26 @@ function routeApi(req, res, pathname, params) {
         return;
     }
 
+    if (pathname === '/api/logs' && req.method === 'DELETE') {
+        const component = params.get('component') === 'brain' ? 'brain' : 'gateway';
+        const dir = LOG_DIRS[component];
+        const base = component === 'brain' ? 'brain.log' : 'gateway.log';
+        const p = path.join(dir, base);
+        try {
+            fs.truncateSync(p, 0);
+            // Marca de confirmación: el SSE la entrega al instante, así la
+            // ventana no queda vacía y se ve que el flujo sigue vivo.
+            const ts = new Date().toISOString().slice(0, 19).replace('T', ' ');
+            const cat = component === 'brain' ? '[brain.admin]' : '[CORE]';
+            const stamp = ts + ' INFO ' + cat + ' Logs borrados correctamente desde el panel web.\n';
+            fs.appendFileSync(p, stamp, 'utf8');
+            sendJson(res, 200, { success: true, component, file: base });
+        } catch (e) {
+            sendJson(res, 500, { success: false, message: `No se pudo truncar ${base}: ${errMsg(e)}` });
+        }
+        return;
+    }
+
     if (pathname === '/api/qr' && req.method === 'GET') {
         streamQr(req, res);
         return;

@@ -1275,7 +1275,17 @@ lplay.addEventListener('click', () => {
   lplay.textContent = paused ? '▶️ Reanudar' : '⏸️ Pausar';
   if (!paused) startLogs();
 });
-lclear.addEventListener('click', () => { logbox.innerHTML = ''; logLines = 0; });
+lclear.addEventListener('click', async () => {
+  if (!confirm('¿Limpiar el historial de logs de ' + (logComp === 'brain' ? 'Brain' : 'Gateway') + '? (solo el archivo activo, no los rotados)')) return;
+  try {
+    const r = await fetch('/api/logs?component=' + logComp, { method: 'DELETE' });
+    const j = await r.json().catch(() => ({}));
+    if (!j.success) { lstatus.textContent = 'Error: ' + (j.message || 'sin detalle'); return; }
+    logbox.innerHTML = ''; logLines = 0;
+    if (!paused) startLogs(); // recarga el SSE (historial ahora vacío)
+    lstatus.textContent = 'Historial limpiado';
+  } catch (e) { lstatus.textContent = 'Error: ' + e.message; }
+});
 
 refresh();
 setInterval(refresh, 10000);
