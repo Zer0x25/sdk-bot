@@ -120,6 +120,9 @@ function setContactEstado(key, estado) {
 
 /** @param {string} key @param {string} perfil */
 function setContactPerfil(key, perfil) {
+    if (perfil === '' || perfil === 'default' || perfil === 'none' || perfil === null) {
+        return setContactProfile(key, 'default');
+    }
     if (!perfil || !/^[a-z0-9_-]{1,32}$/i.test(perfil)) {
         return { success: false, message: 'Perfil no válido' };
     }
@@ -571,7 +574,7 @@ function routeApi(req, res, pathname, params) {
     }
 
     // Agenda: /contacts, /contacts/<key>, /contacts/<key>/estado|perfil
-    const cm = /^(?:\/api)?\/contacts(?:\/(\d+))?(?:\/(estado|perfil))?$/.exec(pathname);
+    const cm = /^(?:\/api)?\/contacts(?:\/([^/]+))?(?:\/(estado|perfil))?$/.exec(pathname);
     if (cm) {
         if (req.method === 'GET' && !cm[1]) {
             sendJson(res, 200, listContacts(params));

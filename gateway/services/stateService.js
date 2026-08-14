@@ -83,23 +83,25 @@ function setContactProfile(targetId, profileKey) {
     const db = getContactsDB();
     const existingKey = findKeyByDigits(cleanTarget);
 
+    const cleanProfile = (profileKey === 'default' || profileKey === 'none' || !profileKey) ? null : profileKey;
+
     if (existingKey) {
-        db[existingKey].perfil = profileKey;
+        db[existingKey].perfil = cleanProfile;
         saveContactsDB(db);
-        return { success: true, target: db[existingKey].phone || existingKey, profile: profileKey };
+        return { success: true, target: db[existingKey].phone || existingKey, profile: cleanProfile };
     }
 
     // Si el contacto no existe, creamos uno básico con el perfil asignado
     db[cleanTarget] = {
         phone: cleanTarget,
         lid: null,
-        perfil: profileKey,
+        perfil: cleanProfile,
         isContact: false,
         firstSeen: new Date().toISOString(),
         lastSeen: new Date().toISOString()
     };
     saveContactsDB(db);
-    return { success: true, target: cleanTarget, profile: profileKey };
+    return { success: true, target: cleanTarget, profile: cleanProfile };
 }
 
 /**

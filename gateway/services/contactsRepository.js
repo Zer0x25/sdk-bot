@@ -22,7 +22,7 @@ const { getContactsDB, saveContactsDB, onContactsCacheUpdate } = require('./db')
  * @property {string} [lastSeen]
  * @property {number} [totalMessages]
  * @property {boolean} [handoff]
- * @property {string} [perfil]
+ * @property {string|null} [perfil]
  */
 
 // Almacén en memoria de contactos de la sesión (RAM de Baileys)
