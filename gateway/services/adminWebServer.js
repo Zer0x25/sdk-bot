@@ -301,10 +301,9 @@ function streamLogs(req, res, params) {
             const prev = positions.get(p);
             if (!prev) { positions.set(p, { size: st.size, mtimeMs: st.mtimeMs }); continue; }
             let start;
-            if (st.size < prev.size) start = 0;                      // truncación
-            else if (st.size > prev.size) start = prev.size;         // crecimiento normal
-            else if (st.mtimeMs !== prev.mtimeMs) start = 0;         // reescritura a igual tamaño
-            else continue;                                          // sin cambios
+            if (st.size < prev.size) start = 0;                      // truncación real (clear-logs) -> recarga todo
+            else if (st.size > prev.size) start = prev.size;         // crecimiento normal -> solo lo nuevo
+            else continue;                                           // igual tamaño: ignora (evita recarga por flush/reescritura de pino al pausar/reanudar)
             const fd = fs.openSync(p, 'r');
             const buf = Buffer.alloc(st.size - start);
             try { fs.readSync(fd, buf, 0, buf.length, start); } finally { fs.closeSync(fd); }
@@ -683,7 +682,10 @@ function routeApi(req, res, pathname, params) {
             fs.truncateSync(p, 0);
             // Marca de confirmación: el SSE la entrega al instante, así la
             // ventana no queda vacía y se ve que el flujo sigue vivo.
-            const ts = new Date().toISOString().slice(0, 19).replace('T', ' ');
+            // Hora local de Santiago (no UTC): toISOString() da UTC siempre,
+            // por eso el mensaje de borrado se veia en UTC aunque el process
+            // tenga TZ=America/Santiago. Usamos Intl con la zona explicita.
+            const ts = new Intl.DateTimeFormat('sv-SE', { timeZone: 'America/Santiago', year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit', second: '2-digit' }).format(new Date()).replace('T', ' ');
             const cat = component === 'brain' ? '[brain.admin]' : '[CORE]';
             const stamp = ts + ' INFO ' + cat + ' Logs borrados correctamente desde el panel web.\n';
             fs.appendFileSync(p, stamp, 'utf8');
