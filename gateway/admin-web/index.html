@@ -65,6 +65,14 @@
   .toolbar button { background: #2563eb; border: none; color: #fff; border-radius: 8px; padding: 0 14px;
     font-weight: 600; cursor: pointer; }
   .hint { align-self: center; color: #8b93a5; }
+  /* Botones de acción estándar (usados en Logs): primario azul, secundario ghost */
+  .btn { border: none; border-radius: 8px; padding: 0 14px; height: 34px; font-weight: 600;
+    font-size: 13px; cursor: pointer; display: inline-flex; align-items: center; gap: 6px; }
+  .btn.primary { background: #2563eb; color: #fff; }
+  .btn.primary:hover { background: #3b82f6; }
+  .btn.ghost { background: #262b36; color: #e6e6e6; }
+  .btn.ghost:hover { background: #333b4a; }
+  .btn:disabled { opacity: .5; cursor: default; }
   table { width: 100%; border-collapse: collapse; background: #171a21;
     border: 1px solid #262b36; border-radius: 8px; font-size: 13px; }
   th, td { padding: 6px 10px; text-align: left; border-bottom: 1px solid #1c212b; }
@@ -100,11 +108,15 @@
   .pag { display: flex; gap: 10px; align-items: center; margin-top: 8px; }
   .pag button { background: #262b36; border: none; color: #e6e6e6; border-radius: 8px; padding: 6px 12px; cursor: pointer; }
   .pag button:disabled { opacity: .4; cursor: default; }
-  .tabs { display: flex; gap: 0; }
-  .tab { background: #171a21; border: 1px solid #262b36; color: #aab3c5; padding: 8px 14px; cursor: pointer; }
-  .tabs .tab:first-child { border-radius: 8px 0 0 8px; }
-  .tabs .tab:last-child { border-radius: 0 8px 8px 0; border-left: none; }
-  .tabs .tab.on { background: #2563eb; color: #fff; border-color: #2563eb; }
+  .tabs { display: flex; gap: 0; background: #171a21; border: 1px solid #262b36; border-radius: 8px; padding: 3px; }
+  .tab { background: transparent; border: none; color: #aab3c5; padding: 7px 16px; cursor: pointer; font-size: 13px; }
+  .tabs .tab:first-child { border-radius: 6px 0 0 6px; }
+  .tabs .tab:last-child { border-radius: 0 6px 6px 0; }
+  /* Tab de logs (Gateway/Brain): inactivo apagado, activo muy evidente */
+  .tabs .tab { transition: background .15s, color .15s, box-shadow .15s; border-bottom: 2px solid transparent; }
+  .tabs .tab:hover { color: #e6e6e6; background: #262b36; }
+  .tabs .tab.on { background: #f59e0b; color: #1a1206; font-weight: 600;
+    border-bottom-color: #fde68a; box-shadow: 0 0 8px rgba(245,158,11,.6); }
   #logbox { background: #0a0c10; border: 1px solid #1c212b; border-radius: 8px; padding: 8px 10px;
     font: 12px/1.5 ui-monospace, monospace; height: 420px; overflow: auto; white-space: pre-wrap; word-break: break-all; }
   .log-line { display: flex; gap: 8px; padding: 1px 0; }
@@ -152,9 +164,14 @@
   .badge-state.stopped { background: #7f1d1d; color: #fca5a5; }
   .badge-state.standby { background: #78350f; color: #fdba74; }
   .live { display: inline-flex; align-items: center; gap: 6px; font-size: 12px; color: #8b93a5; }
-  .dot { width: 9px; height: 9px; border-radius: 50%; background: #4ade80; box-shadow: 0 0 6px #4ade80; }
-  .dot.dead { background: #f87171; box-shadow: 0 0 6px #f87171; }
-  .dot.warn { background: #facc15; box-shadow: 0 0 6px #facc15; }
+  .dot { width: 9px; height: 9px; border-radius: 50%; background: #4ade80; box-shadow: 0 0 6px #4ade80;
+    animation: livePulse 1.4s ease-in-out infinite; }
+  .dot.dead { background: #f87171; box-shadow: 0 0 6px #f87171; animation: none; }
+  .dot.warn { background: #facc15; box-shadow: 0 0 6px #facc15; animation: none; }
+  @keyframes livePulse {
+    0%, 100% { opacity: 1; transform: scale(1); box-shadow: 0 0 6px #4ade80; }
+    50% { opacity: .35; transform: scale(.82); box-shadow: 0 0 2px #4ade80; }
+  }
   .btn-toggle { margin-top: 8px; padding: 6px 12px; border-radius: 7px; border: 1px solid #2a3443; background: #1f2733; color: #e6edf6; font-size: 12px; cursor: pointer; font-weight: 600; }
   .btn-toggle:hover { background: #2a3443; }
   .btn-toggle:disabled { opacity: .5; cursor: default; }
@@ -337,8 +354,8 @@
       <option value="warn">Warn+</option>
       <option value="error">Solo errores</option>
     </select>
-    <button id="lplay">⏸️ Pausar</button>
-    <button id="lclear">🗑️ Limpiar</button>
+    <button id="lplay" class="btn ghost">⏸️ Pausar</button>
+    <button id="lclear" class="btn ghost">🗑️ Limpiar</button>
     <span id="lstatus" class="hint"></span>
   </div>
   <div id="logbox"></div>
