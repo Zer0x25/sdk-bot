@@ -34,6 +34,11 @@ const TYPING_TTL_MS = num('GATEWAY_TYPING_TTL_MS', 5000);           // 5.0 segun
 const PRELOAD_ENABLED = num('GATEWAY_PRELOAD_ENABLED', 0) === 1;
 const PRELOAD_TTL_MS = num('GATEWAY_PRELOAD_TTL_MS', 180000);       // 3 min: el precargo caliente dura esto antes de refrescar (tunable vía .env.tuning)
 const PRELOAD_ONLY_DIRECT = num('GATEWAY_PRELOAD_ONLY_DIRECT', 1) === 1; // solo chats 1-a-1 (no grupos) por defecto
+// Límites de la "primera página" de la precarga (etapa 1, web-like). Son MENORES
+// que los de respuesta: la precarga es solo señal de intervención, no el contexto
+// completo que usa /chat (7d / 5000 tok). 0 = sin tope de cantidad.
+const PRELOAD_MAX_MESSAGES = num('GATEWAY_PRELOAD_MAX_MESSAGES', 20);
+const PRELOAD_MAX_TOKENS = num('GATEWAY_PRELOAD_MAX_TOKENS', 1500);
 /** @type {Map<string, { history: Array<any>, cachedAt: number }>} */
 const preloadCache = new Map();
 
@@ -43,25 +48,26 @@ function isDirectJid(jid) {
 }
 
 /**
- * Dispara la precarga del historial de un chat (solo si está habilitada y el
- * cache está frío). No bloquea: corre en background.
- * @param {string} remoteJid
- */
-function preloadHistory(remoteJid) {
-    if (!PRELOAD_ENABLED) return;
-    if (PRELOAD_ONLY_DIRECT && !isDirectJid(remoteJid)) return;
-    const cached = preloadCache.get(remoteJid);
-    if (cached && (Date.now() - cached.cachedAt) < PRELOAD_TTL_MS) return; // ya caliente
-    // Marcar inmediatamente para evitar descargas paralelas del mismo chat
-    preloadCache.set(remoteJid, { history: cached ? cached.history : [], cachedAt: Date.now() });
-    getChatHistory(remoteJid)
-        .then(history => { preloadCache.set(remoteJid, { history, cachedAt: Date.now() }); })
-        .catch(() => { /* el cache queda con [] y se reintenta tras TTL */ });
-}
+ /** Dispara la precarga del historial de un chat (solo si está habilitada y el
+  * cache está frío). No bloquea: corre en background. La precarga usa límites
+  * acotados (primera página web-like) y es SOLO señal: NO se inyecta en /chat.
+  * @param {string} remoteJid
+  */
+ function preloadHistory(remoteJid) {
+     if (!PRELOAD_ENABLED) return;
+     if (PRELOAD_ONLY_DIRECT && !isDirectJid(remoteJid)) return;
+     const cached = preloadCache.get(remoteJid);
+     if (cached && (Date.now() - cached.cachedAt) < PRELOAD_TTL_MS) return; // ya caliente
+     // Marcar inmediatamente para evitar descargas paralelas del mismo chat
+     preloadCache.set(remoteJid, { history: cached ? cached.history : [], cachedAt: Date.now() });
+     getChatHistory(remoteJid, { maxMessages: PRELOAD_MAX_MESSAGES, maxTokens: PRELOAD_MAX_TOKENS })
+         .then(history => { preloadCache.set(remoteJid, { history, cachedAt: Date.now() }); })
+         .catch(() => { /* el cache queda con [] y se reintenta tras TTL */ });
+ }
 
 /**
- * Devuelve el historial precargado si está fresco, o undefined para que el
- * brain caiga a get_history() normal.
+ * Devuelve el historial precargado si está fresco (solo para inspección/debug
+ * del gateway). La precarga NO se inyecta en /chat: es señal de intervención.
  * @param {string} remoteJid
  * @returns {Array<any>|undefined}
  */
@@ -231,7 +237,7 @@ async function handleIncomingMessage(m, sock) {
             // se consume aquí igual que la de broadcast (no va a la IA).
             if (await tryCleanConfirm(textMessage, sock, remoteJid)) return;
             logAI.info(`\n🤖 [ASISTENTE PERSONAL EN SELF-CHAT]: "${decision.text}"`);
-            await enqueueAI(() => processAIChat(decision.text, remoteJid, metadata, sock, { preloadedHistory: getPreloadedHistory(remoteJid) }));
+            await enqueueAI(() => processAIChat(decision.text, remoteJid, metadata, sock));
             return;
         }
 
@@ -390,7 +396,7 @@ function createBufferTimeout(remoteJid, metadata, sock) {
             // 🎯 La cola FIFO global limita las llamadas simultáneas a la IA
             const { active, queued } = poolStats();
             logAI.info(`🎯 [POOL AI] Esperando turno en cola global (activas: ${active}, en cola: ${queued})...`);
-            await enqueueAI(() => processAIChat(fullBufferedText, remoteJid, metadata, sock, { preloadedHistory: getPreloadedHistory(remoteJid) }));
+            await enqueueAI(() => processAIChat(fullBufferedText, remoteJid, metadata, sock));
         } finally {
             chatInFlight.delete(remoteJid);
 
@@ -451,7 +457,7 @@ async function flushQueuedMessages() {
 
         chatInFlight.add(item.jid);
         try {
-            await enqueueAI(() => processAIChat(item.text, item.jid, item.metadata, sock, { fromQueue: true, preloadedHistory: getPreloadedHistory(item.jid) }));
+            await enqueueAI(() => processAIChat(item.text, item.jid, item.metadata, sock, { fromQueue: true }));
             messageQueue.removeHead();
             // ⏱️ Pausa humana entre mensajes encolados (2-5s)
             await new Promise(r => setTimeout(r, 2000 + Math.random() * 3000));

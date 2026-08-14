@@ -202,8 +202,8 @@ async function requestBrain(payload) {
 async function processAIChat(textMessage, remoteJid, metadata, sock, opts = {}) {
     // opts.fromQueue = true cuando el mensaje viene de la cola persistente (F4-P4):
     // no re-encolar y no repetir la alerta al admin (el flush lo gestiona).
-    // opts.preloadedHistory = historial precargado en presencia (Opción A) para
-    // saltarse la consulta interna de get_history() en el brain (ahorro de latencia).
+    // Nota: la precarga en presencia (Opción A) es SOLO señal de intervención;
+    // NO se inyecta aquí. /chat siempre usa get_history() completo (7d/5000tok).
     brainStats.aiCalls += 1;
     brainStats.lastAiAt = new Date().toISOString();
     const displayName = metadata.savedName || metadata.pushName || 'Usuario';
@@ -225,9 +225,6 @@ async function processAIChat(textMessage, remoteJid, metadata, sock, opts = {}) 
         bio: metadata.bio,
         is_business: metadata.isBusiness
     };
-    // Si el gateway precargó el historial en presencia, pasarlo para omitir el
-    // get_history() interno del brain (de lo contrario el brain cae a get_history()).
-    if (opts.preloadedHistory !== undefined) payload.history = opts.preloadedHistory;
 
     try {
         let data;
@@ -562,9 +559,15 @@ function getBrainHealth() {
  * @param {string} userJid
  * @returns {Promise<Array<{role:string, content:string}>>}
  */
-async function getChatHistory(userJid) {
+async function getChatHistory(userJid, opts = {}) {
     try {
-        const url = `${BRAIN_API_BASE}/history?user_id=${encodeURIComponent(userJid)}&bot_id=${encodeURIComponent(state.ADMIN_PHONE || state.ADMIN_LID || 'single')}`;
+        const url = new URL(`${BRAIN_API_BASE}/history`);
+        url.searchParams.set('user_id', userJid);
+        url.searchParams.set('bot_id', state.ADMIN_PHONE || state.ADMIN_LID || 'single');
+        // Límites de la precarga (etapa 1, "primera página" web-like). Si no vienen,
+        // el brain usa sus límites globales. Estos NO se inyectan en /chat.
+        if (opts.maxMessages) url.searchParams.set('max_messages', String(opts.maxMessages));
+        if (opts.maxTokens) url.searchParams.set('max_tokens', String(opts.maxTokens));
         const response = await fetch(url, {
             method: 'GET',
             headers: authHeaders(),

@@ -75,8 +75,14 @@ def _sweep_global(conn):
     conn.execute("DELETE FROM messages WHERE created_at < ?", (cutoff,))
 
 
-def get_history(bot_id: str, user_id: str):
-    """Contexto del chat: mensajes de las últimas 24h, más recientes al final."""
+def get_history(bot_id: str, user_id: str, max_messages: int = 0, max_tokens: int = 0):
+    """Contexto del chat: mensajes de la ventana temporal, más recientes al final.
+
+    max_messages / max_tokens (opcionales) acotan el resultado para la PRECARGA
+    en presencia (comportamiento "primera página" web-like). Si valen 0 se usan
+    los límites globales (BRAIN_MEMORY_MAX_MESSAGES / BRAIN_MEMORY_MAX_TOKENS),
+    que es lo que usa /chat al generar la respuesta.
+    """
     conn = _connect()
     cutoff = time.time() - WINDOW_SECONDS
     rows = conn.execute(
@@ -86,13 +92,14 @@ def get_history(bot_id: str, user_id: str):
     ).fetchall()
     msgs = [{"role": r["role"], "content": r["content"]} for r in rows]
 
-    # 1) Truncado por cantidad de mensajes
-    # MAX_HISTORY_MESSAGES <= 0 => sin límite de cantidad (solo tope de tokens)
-    if MAX_HISTORY_MESSAGES > 0 and len(msgs) > MAX_HISTORY_MESSAGES:
-        msgs = msgs[-MAX_HISTORY_MESSAGES:]
+    # 1) Truncado por cantidad de mensajes (0 = sin límite)
+    cap_messages = max_messages if max_messages and max_messages > 0 else MAX_HISTORY_MESSAGES
+    if cap_messages > 0 and len(msgs) > cap_messages:
+        msgs = msgs[-cap_messages:]
 
     # 2) Truncado por tokens aproximados (chars/4), conservando el último intercambio
-    max_chars = MAX_HISTORY_TOKENS * CHARS_PER_TOKEN
+    cap_tokens = max_tokens if max_tokens and max_tokens > 0 else MAX_HISTORY_TOKENS
+    max_chars = cap_tokens * CHARS_PER_TOKEN
     total_chars = sum(len(m["content"]) for m in msgs)
     while total_chars > max_chars and len(msgs) > 2:
         total_chars -= len(msgs.pop(0)["content"])

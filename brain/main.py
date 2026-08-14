@@ -53,13 +53,6 @@ class ChatRequest(BaseModel):
     bio: str | None = None
     is_business: bool | None = None
     bot_id: str | None = None  # F4-P2: aislamiento de memoria por bot (default 'single')
-    # Historial precomputado por el gateway (precarga en presencia). Si viene,
-    # se usa directamente y se omite get_history() interno (ahorro de latencia).
-    history: list[dict] | None = None
-
-class HistoryRequest(BaseModel):
-    user_id: str
-    bot_id: str | None = None  # F4-P2: aislamiento de memoria por bot (default 'single')
 
 class ResetMemoryRequest(BaseModel):
     user_id: str
@@ -161,9 +154,10 @@ async def chat_endpoint(request: ChatRequest):
         system_instruction = base_instruction
 
     bot_id = request.bot_id or "single"
-    # Si el gateway precargó el historial (presencia composing), usarlo directo.
-    # Si no, caer a get_history() como antes (compatibilidad total).
-    history = request.history if request.history is not None else get_history(bot_id, request.user_id)
+    # /chat SIEMPRE usa el contexto completo (ventana global 7d / 5000 tok) para
+    # generar la respuesta. La precarga en presencia es SOLO señal de intervención
+    # (etapa 1) y NO se inyecta aquí (etapa 2 = respuesta con contexto total).
+    history = get_history(bot_id, request.user_id)
     display_log_name = request.saved_name or request.push_name or request.user_name or 'Desconocido'
     safe_log(f"\n📩 [CEREBRO RECIBE] De: {display_log_name} ({request.user_id}) | Tel: {request.phone_number or 'N/A'} | LID: {request.lid or 'N/A'} | Bio: {request.bio or 'N/A'}")
 
@@ -182,11 +176,14 @@ async def chat_endpoint(request: ChatRequest):
         return {"error": str(err)}
 
 @app.get("/history")
-def history_endpoint(user_id: str, bot_id: str | None = None):
-    """Devuelve solo el contexto de memoria de un chat (sin generar respuesta).
-    Usado por la precarga del gateway en eventos de presencia (F-preload)."""
+def history_endpoint(user_id: str, bot_id: str | None = None,
+                     max_messages: int = 0, max_tokens: int = 0):
+    """Devuelve el contexto de memoria de un chat (sin generar respuesta).
+    Usado por la precarga del gateway en eventos de presencia (F-preload, etapa 1).
+    max_messages / max_tokens acotan el resultado a una "primera página" web-like;
+    si valen 0 se usan los límites globales."""
     bid = bot_id or "single"
-    return {"user_id": user_id, "bot_id": bid, "history": get_history(bid, user_id)}
+    return {"user_id": user_id, "bot_id": bid, "history": get_history(bid, user_id, max_messages, max_tokens)}
 
 
 @app.get("/")
