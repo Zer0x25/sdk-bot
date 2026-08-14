@@ -14,6 +14,7 @@ const messageQueue = require('./services/messageQueue');
 const broadcastService = require('./services/broadcastService');
 const { startStatusServer, runtime } = require('./services/statusServer');
 const chatStore = require('./store/chatStore'); // Opción C: store RAM de mensajes de Baileys (precarga web-like)
+const messageSyncQueue = require('./services/messageSyncQueue'); // sync de historial por chunks (evita congelar el event loop)
 const { isWiping } = require('./services/factoryReset');
 const { cat } = require('./services/logger');
 
@@ -199,6 +200,13 @@ async function connectToWhatsApp () {
         }
     });
 
+    // Opción C: procesar el historial de mensajes de messaging-history.set por
+    // chunks (igual que la agenda) para NO saturar el event loop. Si se procesara
+    // de golpe, el socket no responde pings y WhatsApp corta la sync a mitad.
+    messageSyncQueue.setProcessor(chunk => {
+        if (chunk && chunk.length) chatStore.seedMessages(chunk);
+    });
+
     const handleContactSync = (contacts, source) => {
         if (!Array.isArray(contacts) || contacts.length === 0) return;
         log.info(`📇 [${source}] ${contacts.length} contactos encolados`);
@@ -213,7 +221,7 @@ async function connectToWhatsApp () {
         if (contacts) handleContactSync(contacts, 'history');
         // Opción C: sembrar el store RAM con el historial real de los chats
         // (lo que el web de WhatsApp muestra al abrir un chat). Antes se descartaba.
-        if (messages && messages.length) chatStore.seedMessages(messages);
+        if (messages && messages.length) messageSyncQueue.push(messages); // Opción C: sembrar el store RAM por chunks (no satura el event loop)
         log.info(`📜 History sync: type=${syncType} progreso=${progress}% chats=${chats?.length ?? 0} contactos=${contacts?.length ?? 0} msgs=${messages?.length ?? 0}`);
     });
 

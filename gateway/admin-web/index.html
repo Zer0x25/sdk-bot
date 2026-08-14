@@ -902,6 +902,7 @@ cleanok.addEventListener('click', async () => {
     if (d.success) {
       cleanread.hidden = true;
       cleanwrite.hidden = true;
+      cleanModal.hidden = true; // F7: cerrar el modal completo tras reset exitoso
       resetbtn.disabled = true;
       // El proceso se reinicia: la página se reconectará sola
     }
