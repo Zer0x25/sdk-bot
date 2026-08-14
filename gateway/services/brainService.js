@@ -561,13 +561,11 @@ function getBrainHealth() {
  */
 async function getChatHistory(userJid, opts = {}) {
     try {
-        const url = new URL(`${BRAIN_API_BASE}/history`);
-        url.searchParams.set('user_id', userJid);
-        url.searchParams.set('bot_id', state.ADMIN_PHONE || state.ADMIN_LID || 'single');
+        let url = `${BRAIN_API_BASE}/history?user_id=${encodeURIComponent(userJid)}&bot_id=${encodeURIComponent(state.ADMIN_PHONE || state.ADMIN_LID || 'single')}`;
         // Límites de la precarga (etapa 1, "primera página" web-like). Si no vienen,
         // el brain usa sus límites globales. Estos NO se inyectan en /chat.
-        if (opts.maxMessages) url.searchParams.set('max_messages', String(opts.maxMessages));
-        if (opts.maxTokens) url.searchParams.set('max_tokens', String(opts.maxTokens));
+        if (opts.maxMessages) url += `&max_messages=${encodeURIComponent(String(opts.maxMessages))}`;
+        if (opts.maxTokens) url += `&max_tokens=${encodeURIComponent(String(opts.maxTokens))}`;
         const response = await fetch(url, {
             method: 'GET',
             headers: authHeaders(),

@@ -65,18 +65,6 @@ function isDirectJid(jid) {
          .catch(() => { /* el cache queda con [] y se reintenta tras TTL */ });
  }
 
-/**
- * Devuelve el historial precargado si está fresco (solo para inspección/debug
- * del gateway). La precarga NO se inyecta en /chat: es señal de intervención.
- * @param {string} remoteJid
- * @returns {Array<any>|undefined}
- */
-function getPreloadedHistory(remoteJid) {
-    const cached = preloadCache.get(remoteJid);
-    if (cached && (Date.now() - cached.cachedAt) < PRELOAD_TTL_MS) return cached.history;
-    return undefined;
-}
-
 // 📊 Contadores y métricas para GET /status (F4-P3)
 const runtimeStats = { receivedMessages: 0, aiMessages: 0, adminCommands: 0 };
 
