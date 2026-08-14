@@ -97,7 +97,6 @@
   #pmsg.err { color: #f87171; }
   #ppromptview { background: #0a0c10; border: 1px solid #1c212b; border-radius: 8px; padding: 10px;
     font: 12px/1.5 ui-monospace, monospace; white-space: pre-wrap; max-height: 320px; overflow: auto; margin-top: 10px; }
-  .toolbar .toolbtn { background: #262b36; color: #e6e6e6; }
   .badge { display: inline-block; padding: 2px 8px; border-radius: 999px; font-size: 11px; }
   .b-neutro { background: #262b36; color: #aab3c5; }
   .b-permitido { background: #14532d; color: #86efac; }
@@ -315,10 +314,10 @@
     <select id="pselect">
       <option value="">— Seleccionar perfil —</option>
     </select>
-    <button class="toolbtn" id="pnew">➕ Nuevo</button>
+    <button class="btn primary" id="pnew">➕ Nuevo</button>
     <span class="toolgroup">
-      <button class="toolbtn" id="preload">🔄 Recargar</button>
-      <button class="toolbtn" id="pimport">📥 Importar .md</button>
+      <button class="btn ghost" id="preload">🔄 Recargar</button>
+      <button class="btn ghost" id="pimport">📥 Importar .md</button>
     </span>
     <input type="file" id="pfile" accept=".md,.txt" hidden>
     <span id="pstate" class="hint"></span>
@@ -331,7 +330,7 @@
     </div>
     <textarea id="pcontent" spellcheck="false" placeholder="Contenido del perfil en Markdown:&#10;# nombre&#10;descripción&#10;## Personalidad&#10;## Reglas&#10;## Formato&#10;## Ejemplos&#10;**Cliente:** …&#10;**Asistente:** …"></textarea>
     <div class="row">
-      <button class="btn" id="psave">💾 Guardar</button>
+      <button class="btn primary" id="psave">💾 Guardar</button>
       <button class="btn ghost" id="pexport">⬇️ Exportar .md</button>
       <button class="btn ghost" id="pprompt">📄 Ver prompt compilado</button>
       <button class="btn danger" id="pdel">🗑️ Eliminar</button>
