@@ -14,10 +14,20 @@
   h1 { font-size: 18px; margin: 0 0 12px; }
   .topbar { display: flex; align-items: center; justify-content: space-between; gap: 12px; flex-wrap: wrap; margin-bottom: 14px; }
   .topbar h1 { margin: 0; }
-  .nav { display: flex; gap: 4px; background: #171a21; border: 1px solid #262b36; border-radius: 8px; padding: 4px; }
-  .nav .tab { background: transparent; border: none; color: #aab3c5; padding: 7px 14px; border-radius: 6px; cursor: pointer; font-size: 13px; }
+  .nav { display: flex; gap: 4px; background: #171a21; border: 1px solid #262b36; border-radius: 8px; padding: 4px;
+    min-width: 0; max-width: 100%; overflow-x: auto; -webkit-overflow-scrolling: touch; scrollbar-width: thin; }
+  .nav .tab { background: transparent; border: none; color: #aab3c5; padding: 7px 14px; border-radius: 6px; cursor: pointer; font-size: 13px;
+    white-space: nowrap; flex: 0 0 auto; }
   .nav .tab:hover { background: #262b36; color: #e6e6e6; }
   .nav .tab.on { background: #2563eb; color: #fff; }
+  /* Móvil: título arriba, barra de pestañas a ancho completo con scroll horizontal */
+  @media (max-width: 640px) {
+    .topbar { gap: 8px; }
+    .topbar h1 { flex: 1 1 100%; }
+    .nav { order: 3; width: 100%; }
+    .live { order: 2; }
+    .toolgroup { display: flex; flex-wrap: wrap; gap: 8px; flex: 1 1 100%; }
+  }
   /* [hidden] global con !important: las reglas display del autor (p.ej.
      .con{display:flex}) anulan el display:none del user agent si no se fuerza */
   [hidden] { display: none !important; }
@@ -42,7 +52,8 @@
   .out-cmd { color: #facc15; }
   a { color: #4a9eff; }
   section h2 { font-size: 15px; margin: 0 0 8px; }
-  .toolbar { display: flex; gap: 8px; margin-bottom: 8px; }
+  .toolbar { display: flex; gap: 8px; margin-bottom: 8px; flex-wrap: wrap; }
+  .toolgroup { display: contents; }
   .toolbar input, .toolbar select { background: #171a21; border: 1px solid #262b36; color: #e6e6e6;
     border-radius: 8px; padding: 8px; }
   .toolbar input { flex: 1; }
@@ -288,8 +299,10 @@
       <option value="">— Seleccionar perfil —</option>
     </select>
     <button class="toolbtn" id="pnew">➕ Nuevo</button>
-    <button class="toolbtn" id="preload">🔄 Recargar</button>
-    <button class="toolbtn" id="pimport">📥 Importar .md</button>
+    <span class="toolgroup">
+      <button class="toolbtn" id="preload">🔄 Recargar</button>
+      <button class="toolbtn" id="pimport">📥 Importar .md</button>
+    </span>
     <input type="file" id="pfile" accept=".md,.txt" hidden>
     <span id="pstate" class="hint"></span>
   </div>
