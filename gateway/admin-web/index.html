@@ -122,12 +122,13 @@
     border-bottom-color: #fde68a; box-shadow: 0 0 8px rgba(245,158,11,.6); }
   #logbox { background: #0a0c10; border: 1px solid #1c212b; border-radius: 8px; padding: 8px 10px;
     font: 12px/1.5 ui-monospace, monospace; height: 420px; overflow: auto; white-space: pre-wrap; word-break: break-all; }
-  .log-line { display: flex; gap: 8px; padding: 1px 0; }
+  .log-line { display: flex; flex-direction: column; gap: 1px; padding: 3px 0; border-bottom: 1px solid #141821; }
+  .log-head { display: flex; gap: 8px; align-items: baseline; }
   .log-time { color: #5b6472; flex: none; }
   .log-cat { color: #7c86ff; flex: none; }
   .lv-info { color: #86efac; } .lv-warn { color: #facc15; } .lv-error { color: #f87171; }
   .lv-debug { color: #94a3b8; }
-  .log-msg { color: #d5dbe6; }
+  .log-msg { color: #d5dbe6; padding-left: 14px; }
   .con {
     display: flex; gap: 16px; align-items: flex-start; flex-wrap: wrap;
     background: #171a21; border: 1px solid #262b36; border-radius: 8px; padding: 16px;
@@ -1231,17 +1232,21 @@ function appendLine(d) {
       msg = j.msg || '';
     } catch (e) { /* línea no JSON: se muestra cruda */ }
   } else {
-    const m = /^(\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}(?:,\d+)?)\s+(\w+)\s+(.*)$/.exec(msg);
-    if (m) { time = m[1].slice(11); lv = pythonLevel(m[2]); msg = m[3]; }
+    // Formato texto (brain / logs no-JSON): TIMESTAMP NIVEL [cat opcional] MENSAJE
+    const m = /^(\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}(?:,\d+)?)\s+(\w+)\s+(?:\[([^\]]+)\]\s+)?(.*)$/.exec(msg);
+    if (m) { time = m[1].slice(11); lv = pythonLevel(m[2]); cat = m[3] || ''; msg = m[4]; }
   }
   if (!acceptsLevel(lv)) return;
+  const head = document.createElement('div');
+  head.className = 'log-head';
   const tm = document.createElement('span');
   tm.className = 'log-time'; tm.textContent = time || new Date().toLocaleTimeString('es-CL', { hour12: false });
   const ca = document.createElement('span');
-  ca.className = 'log-cat'; ca.textContent = (logComp === 'gateway' && cat) ? '[' + cat + ']' : '';
-  const mg = document.createElement('span');
+  ca.className = 'log-cat'; ca.textContent = cat ? '[' + cat + ']' : '';
+  head.append(tm, ca);
+  const mg = document.createElement('div');
   mg.className = 'log-msg lv-' + lv; mg.textContent = msg;
-  row.append(tm, ca, mg);
+  row.append(head, mg);
   const stick = logbox.scrollTop + logbox.clientHeight >= logbox.scrollHeight - 40;
   logbox.appendChild(row);
   logLines++;
