@@ -4,6 +4,7 @@ const fsPromises = require('fs/promises');
 const { SETTINGS_FILE_PATH, CONTACTS_FILE_PATH, state } = require('../config');
 const { isWiping } = require('./factoryReset');
 const { cat, errMsg } = require("./logger");
+const { num } = require('../tuning');
 const log = cat("STORAGE");
 const logError = cat("ERROR");
 
@@ -31,7 +32,7 @@ let saveContactsTimer = null;
 /** @type {NodeJS.Timeout|null} */
 let saveSettingsTimer = null;
 
-const SAVE_DELAY_MS = 2000; // 2 segundos de debounce
+const SAVE_DELAY_MS = num('GATEWAY_SAVE_DELAY_MS', 2000); // 2 segundos de debounce (tunable vía .env.tuning)
 
 // Suscriptores del cambio de caché de contactos (los índices RAM del
 // contactsRepository se reconstruyen cuando la caché se reemplaza)

@@ -1,6 +1,7 @@
 // @ts-check
 const { BRAIN_API_BASE, BRAIN_API_URL, BRAIN_API_KEY, state, registerSentMessage } = require('../config');
 const { cat, errMsg } = require("../services/logger");
+const { num } = require('../tuning');
 const { enqueue, scheduleFlush } = require("./messageQueue");
 const log = cat("AI");
 const logError = cat("ERROR");
@@ -14,7 +15,7 @@ function authHeaders(extra = {}) {
 // Caché en memoria de perfiles SOUL disponibles en el brain
 let cachedProfiles = null;
 let cachedProfilesAt = 0;
-const PROFILES_CACHE_TTL_MS = 60 * 1000; // 1 minuto: refresco para ver perfiles nuevos sin reiniciar
+const PROFILES_CACHE_TTL_MS = num('GATEWAY_PROFILES_CACHE_TTL_MS', 60 * 1000); // 1 minuto: refresco para ver perfiles nuevos sin reiniciar (tunable vía .env.tuning)
 
 // 📊 Métricas de llamadas a la IA para GET /status (F4-P3)
 /** @type {{aiCalls: number, retries: number, lastAiAt: string|null, lastOkAt: string|null, lastErrorAt: string|null, lastErrorMsg: string|null}} */
@@ -298,7 +299,7 @@ async function processAIChat(textMessage, remoteJid, metadata, sock, opts = {}) 
 
 // ⏱️ Alerta al admin como máximo cada 15 minutos (F4-P4: evita spam de mensajes
 // "cerebro apagado" si el brain está caído mucho tiempo y llegan muchos clientes).
-const BRAIN_ALERT_THROTTLE_MS = 15 * 60 * 1000;
+const BRAIN_ALERT_THROTTLE_MS = num('GATEWAY_BRAIN_ALERT_THROTTLE_MS', 15 * 60 * 1000);
 let lastBrainAlertAt = 0;
 
 /**

@@ -11,15 +11,24 @@ import sqlite3
 import threading
 import time
 
+from config import (
+    BRAIN_MEMORY_GLOBAL_SWEEP_EVERY,
+    BRAIN_MEMORY_MAX_MESSAGES,
+    BRAIN_MEMORY_MAX_TOKENS,
+    BRAIN_MEMORY_WINDOW_SECONDS,
+)
+
 DB_PATH = os.environ.get("BRAIN_MEMORY_DB") or os.path.join(
     os.path.dirname(os.path.abspath(__file__)), "memory.db"
 )
 
-MAX_HISTORY_MESSAGES = 15       # máx. mensajes de contexto por turno
-MAX_HISTORY_TOKENS = 2000       # techo de contexto ~2000 tokens
+# Constantes de memoria ahora TUNEABLES vía .env.tuning (ver brain/config.py).
+# Valores activos por defecto: ventana 24h, 15 mensajes, 2000 tokens, sweep 50.
+MAX_HISTORY_MESSAGES = BRAIN_MEMORY_MAX_MESSAGES
+MAX_HISTORY_TOKENS = BRAIN_MEMORY_MAX_TOKENS
 CHARS_PER_TOKEN = 4             # aproximación chars -> tokens
-WINDOW_SECONDS = 24 * 60 * 60   # ventana temporal: últimas 24h
-_GLOBAL_SWEEP_EVERY = 50        # barrido global de DB cada N escrituras
+WINDOW_SECONDS = BRAIN_MEMORY_WINDOW_SECONDS
+_GLOBAL_SWEEP_EVERY = BRAIN_MEMORY_GLOBAL_SWEEP_EVERY
 
 _conn = None
 _lock = threading.Lock()
@@ -78,7 +87,8 @@ def get_history(bot_id: str, user_id: str):
     msgs = [{"role": r["role"], "content": r["content"]} for r in rows]
 
     # 1) Truncado por cantidad de mensajes
-    if len(msgs) > MAX_HISTORY_MESSAGES:
+    # MAX_HISTORY_MESSAGES <= 0 => sin límite de cantidad (solo tope de tokens)
+    if MAX_HISTORY_MESSAGES > 0 and len(msgs) > MAX_HISTORY_MESSAGES:
         msgs = msgs[-MAX_HISTORY_MESSAGES:]
 
     # 2) Truncado por tokens aproximados (chars/4), conservando el último intercambio

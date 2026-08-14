@@ -1,5 +1,6 @@
 // @ts-check
 const { cat } = require('./logger');
+const { num } = require('../tuning');
 
 const log = cat('AI');
 
@@ -7,9 +8,10 @@ const log = cat('AI');
  * 🎯 Pool de concurrencia global (B6/R7).
  * Máximo MAX_CONCURRENCY llamadas a la IA a la vez; el resto espera en cola FIFO.
  * Evita saturar a los proveedores (Groq/OpenRouter/Gemini) con clientes simultáneos.
+ * Tunable vía GATEWAY_AI_MAX_CONCURRENCY en .env.tuning.
  */
 
-const MAX_CONCURRENCY = 3;
+const MAX_CONCURRENCY = num('GATEWAY_AI_MAX_CONCURRENCY', 3);
 let active = 0;
 const queue = [];
 

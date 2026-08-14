@@ -2,6 +2,7 @@
 const { state } = require('../config');
 const { getContactsDB } = require('./db');
 const { upsertContactMetadata, findExistingKey } = require('./contactsRepository');
+const { num } = require('../tuning');
 
 /**
  * 🧾 Metadata normalizada de un usuario (salida de extractUserMetadata)
@@ -23,7 +24,7 @@ const { upsertContactMetadata, findExistingKey } = require('./contactsRepository
  * @property {string[]} candidateIds
  */
 
-const TTL_ENRICHMENT_MS = 24 * 60 * 60 * 1000; // 24 Horas de TTL para refresco de foto/bio
+const TTL_ENRICHMENT_MS = num('GATEWAY_TTL_ENRICHMENT_MS', 24 * 60 * 60 * 1000); // 24 Horas de TTL para refresco de foto/bio (tunable vía .env.tuning)
 
 const COUNTRY_CODES = [
     // --- América del Sur ---

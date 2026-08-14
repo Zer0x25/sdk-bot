@@ -10,6 +10,7 @@ const { handleAdminCommand } = require('./commandHandler');
 const { tryConfirm } = require('../services/broadcastService');
 const { tryCleanConfirm } = require('../services/resetCleanFlow');
 const { cat } = require('../services/logger');
+const { num } = require('../tuning');
 
 // 📢 Logging por categoría ([AI], [DEBOUNCE], [PRESENCIA], [COMANDO], [ERROR])
 const log = cat('DEBOUNCE');
@@ -22,15 +23,15 @@ const logError = cat('ERROR');
 const messageBuffers = new Map();
 const activePresences = new Map();   // Mapa global en memoria RAM del estado de presencia
 const chatInFlight = new Set();      // JIDs con una llamada de IA en curso (serialización por chat)
-const TYPING_TTL_MS = 5000;           // 5.0 segundos: el estado de tecleo expira si el teclado queda inactivo
+const TYPING_TTL_MS = num('GATEWAY_TYPING_TTL_MS', 5000);           // 5.0 segundos: el estado de tecleo expira si el teclado queda inactivo (tunable vía .env.tuning)
 
 // 📊 Contadores y métricas para GET /status (F4-P3)
 const runtimeStats = { receivedMessages: 0, aiMessages: 0, adminCommands: 0 };
 
 // 🧹 Limpieza automática de RAM para evitar memory leaks en activePresences y messageBuffers
-const PRESENCE_CLEANUP_INTERVAL_MS = 10 * 60 * 1000; // 10 minutos
-const PRESENCE_MAX_AGE_MS = 15 * 60 * 1000; // 15 minutos
-const BUFFER_MAX_AGE_MS = 15 * 60 * 1000; // 15 minutos: buffer huérfano se descarta
+const PRESENCE_CLEANUP_INTERVAL_MS = num('GATEWAY_PRESENCE_CLEANUP_INTERVAL_MS', 10 * 60 * 1000); // 10 minutos (tunable vía .env.tuning)
+const PRESENCE_MAX_AGE_MS = num('GATEWAY_PRESENCE_MAX_AGE_MS', 15 * 60 * 1000); // 15 minutos (tunable vía .env.tuning)
+const BUFFER_MAX_AGE_MS = num('GATEWAY_BUFFER_MAX_AGE_MS', 15 * 60 * 1000); // 15 minutos: buffer huérfano se descarta (tunable vía .env.tuning)
 
 setInterval(() => {
     const now = Date.now();

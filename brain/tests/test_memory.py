@@ -59,7 +59,10 @@ def test_clear_history(tmp_path):
     assert M.clear_history("bot1", "user1") is False
 
 
-def test_truncado_por_cantidad(tmp_path):
+def test_truncado_por_cantidad(tmp_path, monkeypatch):
+    # Fija el límite de cantidad para validar el recorte, independiente del
+    # default activo en .env.tuning (que puede ser 0 = sin límite).
+    monkeypatch.setattr(M, "MAX_HISTORY_MESSAGES", 15)
     _nueva_db(tmp_path)
     for i in range(40):  # 20 intercambios > MAX_HISTORY_MESSAGES (15)
         M.append_exchange("bot1", "user1", f"u{i}", f"a{i}")
@@ -69,7 +72,10 @@ def test_truncado_por_cantidad(tmp_path):
     assert history[-1] == {"role": "assistant", "content": "a39"}
 
 
-def test_truncado_por_tokens(tmp_path):
+def test_truncado_por_tokens(tmp_path, monkeypatch):
+    # Fija el tope de tokens para validar el recorte, independiente del default.
+    monkeypatch.setattr(M, "MAX_HISTORY_TOKENS", 2000)
+    monkeypatch.setattr(M, "MAX_HISTORY_MESSAGES", 15)
     _nueva_db(tmp_path)
     for _i in range(6):
         M.append_exchange("bot1", "user1", "x" * 400, "y" * 400)  # 800 chars por intercambio
@@ -83,6 +89,9 @@ def test_truncado_por_tokens(tmp_path):
 
 
 def test_ventana_temporal_24h(tmp_path, monkeypatch):
+    # Fija la ventana a 24h para validar el sweep, independiente del default
+    # activo en .env.tuning (que puede ser 7 días).
+    monkeypatch.setattr(M, "WINDOW_SECONDS", 24 * 60 * 60)
     _nueva_db(tmp_path)
     M.append_exchange("bot1", "user1", "viejo", "mensaje viejo")
     # Envejecer artificialmente los mensajes 25 horas

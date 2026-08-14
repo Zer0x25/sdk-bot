@@ -6,6 +6,7 @@ const logError = cat("ERROR");
 const { createRateLimiter } = require('../services/rateLimit');
 const { extractPhoneFromQuoted, chunkAdminText } = require('./commandHelpers');
 const { errMsg } = require("../services/logger");
+const { num } = require('../tuning');
 
 /**
  * 🧩 Definición de un comando admin en la tabla de registro
@@ -46,8 +47,9 @@ for (const def of COMMANDS) {
     }
 }
 
-// ⏱️ S2 — Límite de comandos admin: máx 20/min por admin (ventana deslizante)
-const ADMIN_CMD_MAX_PER_MIN = 20;
+// ⏱️ S2 — Límite de comandos admin: máx N/min por admin (ventana deslizante).
+// Tunable vía GATEWAY_ADMIN_CMD_MAX_PER_MIN en .env.tuning (default 20).
+const ADMIN_CMD_MAX_PER_MIN = num('GATEWAY_ADMIN_CMD_MAX_PER_MIN', 20);
 const adminCommandLimiter = createRateLimiter(ADMIN_CMD_MAX_PER_MIN, 60 * 1000);
 
 // 📊 Métricas para GET /status (F4-P3)

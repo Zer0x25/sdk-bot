@@ -20,6 +20,7 @@ const { setNumberState, setContactProfile } = require('./stateService');
 const { getAvailableProfiles, getProfileDetail, exportProfileFile, importProfileFile, deleteProfileFile, reloadProfiles } = require('./brainService');
 const { performFactoryReset, setWiping, restartGatewayProcess, restartBrainIfSystemd } = require('./factoryReset');
 const { cat, errMsg } = require('./logger');
+const { num } = require('../tuning');
 
 const log = cat('CORE');
 const logError = cat('ERROR');
@@ -344,7 +345,7 @@ const qrClients = new Set();
 // 1 min. Mientras la ventana está abierta el panel muestra el QR y el
 // botón de pairing queda bloqueado; al expirar, se vuelve a "no
 // disponible" y solo un pairing nuevo (SIEMPRE manual) la reabre.
-const QR_TTL_MS = 60000;
+const QR_TTL_MS = num('GATEWAY_QR_TTL_MS', 60000);
 let qrExpiresAt = 0;
 let qrTtlMs = QR_TTL_MS;
 /** @type {NodeJS.Timeout|null} */
