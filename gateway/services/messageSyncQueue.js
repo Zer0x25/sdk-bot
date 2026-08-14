@@ -69,4 +69,4 @@ function resetForTests() {
     processor = null;
 }
 
-module.exports = { setProcessor, push, pendingCount, resetForTests };
+module.exports = { setProcessor, push, pendingCount, resetForTests, CHUNK_SIZE };
