@@ -31,7 +31,13 @@ const { spawn } = require('child_process');
 const QRCode = require('qrcode');
 const { handleAdminCommand } = require('../handlers/commandHandler');
 const { buildStatus } = require('./statusServer');
-const { getBrainHealth } = require('./brainService');
+const {
+    getBrainHealth, getAvailableProfiles, getProfileDetail, exportProfileFile,
+    importProfileFile, deleteProfileFile, reloadProfiles
+} = require('./brainService');
+const { getContactsDB } = require('./db');
+const { findKeyByDigits } = require('./contactsRepository');
+const { setNumberState, setContactProfile } = require('./stateService');
 const { num } = require('../tuning');
 const {
     performFactoryReset, setWiping, restartGatewayProcess, restartBrainIfSystemd
@@ -42,6 +48,83 @@ const log = cat('CORE');
 const logError = cat('ERROR');
 
 const ADMIN_JID = 'admin-web@web';
+
+/** Mapea el valor de estado de ContactRecord al stateType de setNumberState */
+const ESTADO_TO_TYPE = {
+    neutro: 'neutral',
+    permitido: 'allowed',
+    ignorado: 'ignored',
+    handoff: 'handoff'
+};
+
+/** @param {string} key @param {import('./contactsRepository.js').ContactRecord} c */
+function publicContact(key, c) {
+    return {
+        key,
+        phone: c.phone || null,
+        lid: c.lid || null,
+        savedName: c.savedName || null,
+        estado: c.estado || 'neutro',
+        perfil: c.perfil || null,
+        isContact: !!c.isContact,
+        firstSeen: c.firstSeen || null,
+        lastSeen: c.lastSeen || null
+    };
+}
+
+/** @param {import('./contactsRepository.js').ContactRecord} c @param {string} q */
+function contactMatches(c, q) {
+    if (!q) return true;
+    const hay = [c.savedName, c.phone, c.lid].filter(Boolean).join(' ').toLowerCase();
+    return hay.includes(q.toLowerCase());
+}
+
+/**
+ * GET /contacts?q=&estado=&page=&limit=
+ * @param {URLSearchParams} params
+ */
+function listContacts(params) {
+    const q = (params.get('q') || '').trim();
+    const estado = (params.get('estado') || '').trim();
+    const limit = Math.min(Math.max(Number(params.get('limit')) || 50, 1), 200);
+    const page = Math.max(Number(params.get('page')) || 1, 1);
+
+    let items = [];
+    for (const [key, c] of Object.entries(getContactsDB())) {
+        if (c && contactMatches(c, q) && (!estado || (c.estado || 'neutro') === estado)) {
+            items.push(publicContact(key, c));
+        }
+    }
+    items.sort((a, b) => (a.savedName || '').localeCompare(b.savedName || '') || a.key.localeCompare(b.key));
+
+    const total = items.length;
+    const slice = items.slice((page - 1) * limit, page * limit);
+    return { total, page, limit, contacts: slice };
+}
+
+/** @param {string} key */
+function getContactDetail(key) {
+    const clean = String(key).replace(/[^0-9]/g, '');
+    if (!clean) return null;
+    const found = findKeyByDigits(clean);
+    if (!found) return null;
+    return publicContact(found, getContactsDB()[found]);
+}
+
+/** @param {string} key @param {string} estado */
+function setContactEstado(key, estado) {
+    const stateType = ESTADO_TO_TYPE[estado];
+    if (!stateType) return { success: false, message: `Estado inválido: ${estado}` };
+    return setNumberState(key, stateType);
+}
+
+/** @param {string} key @param {string} perfil */
+function setContactPerfil(key, perfil) {
+    if (!perfil || !/^[a-z0-9_-]{1,32}$/i.test(perfil)) {
+        return { success: false, message: 'Perfil no válido' };
+    }
+    return setContactProfile(key, perfil);
+}
 
 /**
  * @param {Array<{type: string, text?: string, fileName?: string, caption?: string, base64?: string}>} replies
@@ -68,10 +151,13 @@ function makeVirtualSock(replies) {
     };
 }
 
+// Rutas de logs con override por env (tests con archivos fake, nunca tocar los reales)
 const LOG_DIRS = {
-    gateway: path.join(__dirname, '..', 'logs'),
-    brain: path.join(__dirname, '..', '..', 'brain', 'logs')
+    gateway: process.env.SDK_ADMIN_WEB_LOG_GATEWAY || path.join(__dirname, '..', 'logs'),
+    brain: process.env.SDK_ADMIN_WEB_LOG_BRAIN || path.join(__dirname, '..', '..', 'brain', 'logs')
 };
+const LOG_PATTERNS = { gateway: /^gateway(\.\d+)?\.log(\.\d+)?$/, brain: /^brain(\.\d+)?\.log(\.\d+)?$/ };
+const LINE_CAP = 8192;
 
 // --- estado del QR (idéntico al de adminWebServer, ahora en el bus) ---
 const AUTH_DIR_RESOLVER = () => process.env.SDK_AUTH_DIR || path.join(__dirname, '..', 'auth_info_baileys');
@@ -311,31 +397,108 @@ async function performRestart() {
     return { success: true, message: 'Lanzando gateway…' };
 }
 
-// --- SSE de logs (lee el archivo de log en vivo) ---
+// --- SSE de logs (lee el archivo de log en vivo y difunde JSON { component, line }) ---
+/**
+ * @param {http.IncomingMessage} req
+ * @param {http.ServerResponse} res
+ * @param {URLSearchParams} params
+ */
 function streamLogs(req, res, params) {
     const component = params.get('component') === 'brain' ? 'brain' : 'gateway';
-    const base = component === 'brain' ? 'brain.log' : 'gateway.log';
-    const p = path.join(LOG_DIRS[component], base);
+    const rawHist = params.get('history');
+    const history = rawHist == null ? 100 : Math.min(Math.max(Number(rawHist) || 0, 0), 500);
+    const dir = LOG_DIRS[component];
+    const pattern = LOG_PATTERNS[component];
+
     res.writeHead(200, {
         'Content-Type': 'text/event-stream; charset=utf-8',
-        'Cache-Control': 'no-cache', Connection: 'keep-alive', 'X-Accel-Buffering': 'no'
+        'Cache-Control': 'no-cache',
+        Connection: 'keep-alive',
+        'X-Accel-Buffering': 'no'
     });
     res.write('retry: 3000\n\n');
-    const send = (line) => { try { res.write(`data: ${line}\n\n`); } catch (e) {} };
-    if (fs.existsSync(p)) {
-        const init = fs.readFileSync(p, 'utf8').split('\n').filter(Boolean).slice(-100);
-        init.forEach(send);
-    }
-    /** @type {any} */
-    let tail = null;
-    try {
-        tail = spawn('tail', ['-n', '+1', '-F', p], { stdio: ['ignore', 'pipe', 'ignore'] });
-        if (tail && tail.stdout) {
-            tail.stdout.on('data', (buf) => buf.toString().split('\n').filter(Boolean).forEach(send));
+
+    let closed = false;
+    /** @type {Map<string, {size: number, mtimeMs: number}>} posición por archivo */
+    const positions = new Map();
+
+    const send = (line) => {
+        if (closed) return;
+        const text = line.length > LINE_CAP ? line.slice(0, LINE_CAP) + '…' : line;
+        res.write(`data: ${JSON.stringify({ component, line: text })}\n\n`);
+    };
+
+    // Heartbeat: mantiene la conexión viva a través de proxies
+    const hb = setInterval(() => { if (!closed) res.write(': ping\n\n'); }, 15000).unref();
+
+    /**
+     * Lee las últimas N líneas del archivo más reciente como historial.
+     */
+    function sendHistory() {
+        /** @type {string|null} */
+        let best = null;
+        let bestMtime = 0;
+        let files;
+        try { files = fs.readdirSync(dir); } catch { return; }
+        for (const f of files) {
+            if (!pattern.test(f)) continue;
+            const p = path.join(dir, f);
+            let st;
+            try { st = fs.statSync(p); } catch (e) { continue; }
+            if (st.mtimeMs > bestMtime) { bestMtime = st.mtimeMs; best = p; }
         }
-    } catch (e) { /* tail no disponible */ }
-    const hb = setInterval(() => { if (!res.writableEnded) res.write(': ping\n\n'); }, 15000).unref();
-    req.on('close', () => { if (tail && typeof tail.kill === 'function') tail.kill(); clearInterval(hb); });
+        if (!best) return;
+        const st = fs.statSync(best);
+        const chunk = Math.max(0, st.size - 64 * 1024);
+        const fd = fs.openSync(best, 'r');
+        const buf = Buffer.alloc(st.size - chunk);
+        try { fs.readSync(fd, buf, 0, buf.length, chunk); } finally { fs.closeSync(fd); }
+        const lines = buf.toString('utf8').split('\n').filter(Boolean);
+        const hist = history > 0 ? lines.slice(-history) : [];
+        for (const l of hist) send(l);
+        positions.set(best, { size: st.size, mtimeMs: st.mtimeMs });
+    }
+
+    /**
+     * Lee las líneas nuevas de todos los archivos que crecieron, se truncaron
+     * o se reescribieron (mismo tamaño pero mtime distinto).
+     */
+    function tick() {
+        if (closed) return;
+        let files;
+        try { files = fs.readdirSync(dir); } catch { return; }
+        const seen = new Set();
+        for (const f of files) {
+            if (!pattern.test(f)) continue;
+            const p = path.join(dir, f);
+            seen.add(p);
+            let st;
+            try { st = fs.statSync(p); } catch { positions.delete(p); continue; }
+            const prev = positions.get(p);
+            if (!prev) { positions.set(p, { size: st.size, mtimeMs: st.mtimeMs }); continue; }
+            let start;
+            if (st.size < prev.size) start = 0;                      // truncación real (clear-logs) -> recarga todo
+            else if (st.size > prev.size) start = prev.size;         // crecimiento normal -> solo lo nuevo
+            else if (st.mtimeMs !== prev.mtimeMs) start = 0;         // igual tamaño pero mtime distinto = re-escritura -> recarga todo
+            else continue;                                           // igual tamaño y mtime: sin cambios
+            const fd = fs.openSync(p, 'r');
+            const buf = Buffer.alloc(st.size - start);
+            try { fs.readSync(fd, buf, 0, buf.length, start); } finally { fs.closeSync(fd); }
+            const lines = buf.toString('utf8').split('\n');
+            for (const l of lines) if (l) send(l);
+            positions.set(p, { size: st.size, mtimeMs: st.mtimeMs });
+        }
+        for (const p of positions.keys()) if (!seen.has(p)) positions.delete(p);
+    }
+
+    const iv = setInterval(tick, 1000).unref();
+    req.on('close', () => {
+        closed = true;
+        clearInterval(iv);
+        clearInterval(hb);
+    });
+    sendHistory();
+    tick();
 }
 
 function sendJson(res, code, obj) {
@@ -406,6 +569,98 @@ function routeApi(req, res, pathname, params) {
         readBody(req).then(() => performRestart().then((r) => sendJson(res, 200, r)));
         return;
     }
+
+    // Agenda: /contacts, /contacts/<key>, /contacts/<key>/estado|perfil
+    const cm = /^(?:\/api)?\/contacts(?:\/(\d+))?(?:\/(estado|perfil))?$/.exec(pathname);
+    if (cm) {
+        if (req.method === 'GET' && !cm[1]) {
+            sendJson(res, 200, listContacts(params));
+            return;
+        }
+        if (req.method === 'GET' && cm[1] && !cm[2]) {
+            const detail = getContactDetail(cm[1]);
+            if (!detail) return sendJson(res, 404, { error: 'contacto no encontrado' });
+            sendJson(res, 200, detail);
+            return;
+        }
+        if (req.method === 'POST' && cm[1] && cm[2]) {
+            readBody(req).then((parsed) => {
+                const result = cm[2] === 'estado'
+                    ? setContactEstado(cm[1], String(parsed.estado || ''))
+                    : setContactPerfil(cm[1], String(parsed.perfil || ''));
+                sendJson(res, result.success ? 200 : 400, result);
+            }).catch((e) => sendJson(res, 500, { ok: false, error: errMsg(e) }));
+            return;
+        }
+    }
+
+    // Perfiles SOUL: /profiles, /profiles/reload, /profiles/import, /profiles/<key>, /profiles/<key>/file
+    if ((pathname === '/profiles' || pathname === '/api/profiles') && req.method === 'GET') {
+        getAvailableProfiles()
+            .then(list => sendJson(res, 200, { profiles: list }))
+            .catch(e => sendJson(res, 500, { error: errMsg(e) }));
+        return;
+    }
+    if ((pathname === '/profiles/reload' || pathname === '/api/profiles/reload') && req.method === 'POST') {
+        reloadProfiles()
+            .then(r => sendJson(res, 200, r || { success: false, message: 'Brain sin respuesta' }))
+            .catch(e => sendJson(res, 500, { error: errMsg(e) }));
+        return;
+    }
+    if ((pathname === '/profiles/import' || pathname === '/api/profiles/import') && req.method === 'POST') {
+        readBody(req).then((parsed) => {
+            const key = String(parsed.key || '').trim();
+            const content = String(parsed.content || '');
+            if (!key || !content) {
+                sendJson(res, 400, { success: false, message: 'Se requiere key y content' });
+                return;
+            }
+            importProfileFile(key, content).then(result => {
+                if (!result) return sendJson(res, 502, { success: false, message: 'Brain sin respuesta' });
+                if (result.success !== true) {
+                    return sendJson(res, 400, { success: false, message: result.detail || result.message || 'El brain rechazó el perfil' });
+                }
+                sendJson(res, 200, result);
+            }).catch(e => sendJson(res, 500, { error: errMsg(e) }));
+        }).catch(e => sendJson(res, 500, { success: false, message: errMsg(e) }));
+        return;
+    }
+
+    const pm = /^(?:\/api)?\/profiles\/([\w.-]+)(?:\/file)?$/.exec(pathname);
+    if (pm) {
+        const key = decodeURIComponent(pm[1]);
+        if (req.method === 'GET' && pathname.endsWith('/file')) {
+            exportProfileFile(key)
+                .then(f => {
+                    if (!f) return sendJson(res, 404, { error: `Perfil '${key}' no encontrado` });
+                    sendJson(res, 200, f);
+                })
+                .catch(e => sendJson(res, 500, { error: errMsg(e) }));
+            return;
+        }
+        if (req.method === 'GET') {
+            getProfileDetail(key)
+                .then(detail => {
+                    if (!detail) return sendJson(res, 404, { error: `Perfil '${key}' no encontrado` });
+                    sendJson(res, 200, detail);
+                })
+                .catch(e => sendJson(res, 500, { error: errMsg(e) }));
+            return;
+        }
+        if (req.method === 'DELETE') {
+            deleteProfileFile(key)
+                .then(result => {
+                    if (!result) return sendJson(res, 502, { success: false, message: 'Brain sin respuesta' });
+                    if (result.success !== true) {
+                        return sendJson(res, 400, { success: false, message: result.detail || result.message || 'Perfil no eliminado' });
+                    }
+                    sendJson(res, 200, result);
+                })
+                .catch(e => sendJson(res, 500, { error: errMsg(e) }));
+            return;
+        }
+    }
+
     sendJson(res, 404, { error: 'not found' });
 }
 

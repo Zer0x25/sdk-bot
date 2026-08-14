@@ -65,17 +65,12 @@ const server = http.createServer((req, res) => {
     const u = new URL(req.url || '/', `http://${HOST}:${PORT}`);
     const { pathname, search } = u;
 
-    // SSE: el front los consume como /api/qr y /api/logs; los proxy al bus.
-    if (pathname === '/api/qr' && req.method === 'GET') { proxy(req, res, '/qr'); return; }
-    if (pathname === '/api/logs' && req.method === 'GET') { proxy(req, res, '/logs' + search); return; }
-    if (pathname === '/api/logs' && req.method === 'DELETE') { proxy(req, res, '/logs' + search); return; }
-    if (pathname === '/api/status' && req.method === 'GET') { proxy(req, res, '/status'); return; }
-    if (pathname === '/api/qr/refresh' && req.method === 'POST') { proxy(req, res, '/qr/refresh'); return; }
-    if (pathname === '/api/pairing' && req.method === 'POST') { proxy(req, res, '/pairing'); return; }
-    if (pathname === '/api/command' && req.method === 'POST') { proxy(req, res, '/command'); return; }
-    if (pathname === '/api/reset' && req.method === 'POST') { proxy(req, res, '/reset'); return; }
-    if (pathname === '/api/restart' && req.method === 'POST') { proxy(req, res, '/restart'); return; }
-    if (pathname === '/api/brain/start' && req.method === 'POST') { proxy(req, res, '/brain/start'); return; }
+    // Proxy inverso de todas las rutas de API (/api/*) al bus interno (quitando el prefijo /api)
+    if (pathname.startsWith('/api/')) {
+        const busPath = pathname.slice(4) + (search || '');
+        proxy(req, res, busPath);
+        return;
+    }
 
     // Estáticos del front.
     serveStatic(req, res, pathname);
