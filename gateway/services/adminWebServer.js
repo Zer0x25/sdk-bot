@@ -517,12 +517,24 @@ async function requestPairing(phone) {
     // cuenta como "sin socket": el QR no va a llegar solo, hay que relanzar.
     const sockClosed = wsReadyState(activeSock) === 3;
     if (!activeSock || sockClosed) {
-        log.warn('🖥️ [ADMIN-WEB] Pairing sin socket activo: lanzando gateway para regenerar QR/pairing…');
-        scheduleRestart();
+        // Solo relanzar el gateway si el SERVICIO está MUERTO. Si systemd lo
+        // tiene activo, el proceso está vivo y Baileys emitirá el QR por SSE
+        // cuando conecte: relanzar aquí mata el proceso y pierde el QR (bug
+        // "se me muere el QR"). En manual (sin systemd) el proceso vivo = activo.
+        if (!isGatewayServiceActive()) {
+            log.warn('🖥️ [ADMIN-WEB] Pairing sin socket activo y servicio caído: lanzando gateway…');
+            scheduleRestart();
+            return {
+                success: false,
+                needsRestart: true,
+                message: 'El gateway no está corriendo. Lanzando gateway… el QR aparecerá aquí en unos segundos.'
+            };
+        }
+        // Servicio vivo: abrir la ventana y esperar el QR por SSE (no relanzar).
+        openQrWindow();
         return {
-            success: false,
-            needsRestart: true,
-            message: 'El gateway no está conectado (primera vez o sesión nueva). Lanzando gateway… el QR aparecerá aquí en unos segundos.'
+            success: true,
+            message: 'Gateway activo: el QR llegará aquí por SSE en unos segundos (no reinicies). Si no aparece en ~20s, usa "Lanzar gateway".'
         };
     }
     if (clean.length >= 9) {
@@ -577,6 +589,26 @@ function resetQrForTests() {
  */
 function scheduleRestart() {
     restartGatewayProcess();
+}
+
+/**
+ * Indica si el servicio del gateway está VIVO (no hay que relanzarlo).
+ * Bajo systemd consulta `systemctl is-active`; en manual/dev el proceso
+ * actual está vivo por definición (si murió, systemd lo habría relanzado
+ * con Restart=always, o el runner lo detecta).
+ * @returns {boolean}
+ */
+function isGatewayServiceActive() {
+    if (!process.env.SYSTEMD_EXEC_PID) return true; // manual/dev: proceso vivo = activo
+    try {
+        const { execFileSync } = require('child_process');
+        const out = execFileSync('systemctl', ['is-active', process.env.SDK_GATEWAY_SERVICE || 'sdk-bot-gateway'], { stdio: ['ignore', 'pipe', 'ignore'] }).toString().trim();
+        return out === 'active';
+    } catch (e) {
+        // systemctl is-active devuelve exit!=0 si no está active; en duda,
+        // asumimos vivo para NO relanzar y matar el QR (comportamiento seguro).
+        return true;
+    }
 }
 
 /**

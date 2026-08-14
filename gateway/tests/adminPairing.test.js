@@ -184,21 +184,22 @@ test('POST /api/pairing valida el número y lanza el gateway sin socket', async 
     })).json();
     assert.strictEqual(short.success, false);
 
-    // Sin socket activo: primera vez / anti-loop → pide relanzar el gateway
+    // Sin socket activo PERO servicio vivo: no relanza (eso mataba el QR),
+    // abre la ventana y espera el QR por SSE.
     setSock(null);
     const noSock = await (await fetch(`http://127.0.0.1:${port}/api/pairing`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ phone: '56912345678' })
     })).json();
-    assert.strictEqual(noSock.success, false);
-    assert.strictEqual(noSock.needsRestart, true);
+    assert.strictEqual(noSock.success, true, 'con servicio activo no relanza: abre ventana QR');
+    assert.notStrictEqual(noSock.needsRestart, true, 'no pide reinicio si el servicio vive');
 });
 
-test('POST /api/pairing con socket cerrado (anti-loop) también relanza el gateway', async () => {
+test('POST /api/pairing con socket cerrado y servicio activo NO relanza (evita matar el QR)', async () => {
     resetQrForTests();
-    // Socket que Baileys cerró sin sesión: ws.readyState CLOSED=3 → el QR
-    // no va a llegar solo, hay que relanzar como si no hubiera socket.
+    // Socket que Baileys cerró sin sesión: ws.readyState CLOSED=3. Con el
+    // servicio vivo, el QR llegará por SSE; NO debe relanzar (eso mataba el QR).
     const deadSock = { ws: { readyState: 3 }, async requestPairingCode() { throw new Error('noop'); } };
     setSock(deadSock);
     const d = await (await fetch(`http://127.0.0.1:${port}/api/pairing`, {
@@ -206,8 +207,8 @@ test('POST /api/pairing con socket cerrado (anti-loop) también relanza el gatew
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ phone: '' })
     })).json();
-    assert.strictEqual(d.success, false);
-    assert.strictEqual(d.needsRestart, true);
+    assert.strictEqual(d.success, true, 'con servicio activo no relanza: abre ventana QR');
+    assert.notStrictEqual(d.needsRestart, true, 'no debe pedir reinicio si el servicio vive');
     resetQrForTests();
 });
 
