@@ -304,7 +304,8 @@ function streamLogs(req, res, params) {
             let start;
             if (st.size < prev.size) start = 0;                      // truncación real (clear-logs) -> recarga todo
             else if (st.size > prev.size) start = prev.size;         // crecimiento normal -> solo lo nuevo
-            else continue;                                           // igual tamaño: ignora (evita recarga por flush/reescritura de pino al pausar/reanudar)
+            else if (st.mtimeMs !== prev.mtimeMs) start = 0;         // igual tamaño pero mtime distinto = re-escritura -> recarga todo
+            else continue;                                           // igual tamaño y mtime: sin cambios (evita recarga por flush/reescritura de pino al pausar/reanudar)
             const fd = fs.openSync(p, 'r');
             const buf = Buffer.alloc(st.size - start);
             try { fs.readSync(fd, buf, 0, buf.length, start); } finally { fs.closeSync(fd); }
