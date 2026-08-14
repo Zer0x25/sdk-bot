@@ -26,9 +26,11 @@
 const http = require('http');
 const fs = require('fs');
 const path = require('path');
+const { spawn } = require('child_process');
 const QRCode = require('qrcode');
 const { handleAdminCommand, makeVirtualSock } = require('../handlers/commandHandler');
 const { buildStatus } = require('./statusServer');
+const { getBrainHealth } = require('./brainService');
 const { getContactsDB } = require('./db');
 const { num } = require('../tuning');
 const {
@@ -152,14 +154,38 @@ function scheduleRestart() {
     restartGatewayProcess();
 }
 
+/**
+ * Enciende el brain (proceso Python) si está caído. No bloquea: el spawn
+ * corre desacoplado y el healthcheck del gateway lo detectará en ~10s.
+ * Usa las mismas env que el systemd (BRAIN_PORT=5100, bind 0.0.0.0).
+ * @returns {{success: boolean, message: string}}
+ */
+function startBrainProcess() {
+    const brainDir = path.join(__dirname, '..', '..', 'brain');
+    const env = Object.assign({}, process.env, {
+        BRAIN_PORT: process.env.BRAIN_PORT || 5100,
+        BRAIN_HOST: process.env.BRAIN_HOST || '0.0.0.0',
+        LANG: 'C.UTF-8', LC_ALL: 'C.UTF-8', TZ: 'America/Santiago'
+    });
+    try {
+        const child = spawn(path.join(brainDir, 'venv', 'bin', 'python'), ['main.py'], { cwd: brainDir, env, detached: true, stdio: 'ignore' });
+        child.unref();
+        log.info('🔌 [BUS] Brain encendido bajo demanda (spawn python3 main.py)');
+        return { success: true, message: 'Brain encendiéndose… estará listo en ~10s (el dashboard lo reflejará).' };
+    } catch (e) {
+        return { success: false, message: `No se pudo encender el brain: ${errMsg(e)}` };
+    }
+}
+
 async function requestPairing(phone) {
     const clean = String(phone || '').replace(/[^0-9]/g, '');
+    const brainUp = !!(getBrainHealth() && getBrainHealth().status === 'ok');
     if (clean.length > 0 && clean.length < 9) {
-        return { success: false, message: 'Número inválido: se espera el número completo con código de país (ej: 56912345678)' };
+        return { success: false, brainUp, message: 'Número inválido: se espera el número completo con código de país (ej: 56912345678)' };
     }
     if (qrWindowOpen && Date.now() < qrExpiresAt) {
         const s = Math.ceil((qrExpiresAt - Date.now()) / 1000);
-        return { success: false, message: `QR vigente: escanéalo (${s}s restantes) o espera a que expire para pedir otro.` };
+        return { success: false, brainUp, message: `QR vigente: escanéalo (${s}s restantes) o espera a que expire para pedir otro.` };
     }
     const sockClosed = wsReadyState(activeSock) === 3;
     if (!activeSock || sockClosed) {
@@ -168,18 +194,18 @@ async function requestPairing(phone) {
             return { success: false, needsRestart: true, message: 'El gateway no está corriendo. Lanzando gateway…' };
         }
         openQrWindow();
-        return { success: true, message: 'Gateway activo: el QR llegará por SSE en unos segundos.' };
+        return { success: true, brainUp, message: 'Gateway activo: el QR llegará por SSE en unos segundos.' };
     }
     if (clean.length >= 9) {
         try {
             const code = await activeSock.requestPairingCode(clean);
-            return { success: true, code: String(code) };
+            return { success: true, brainUp, code: String(code) };
         } catch (e) {
-            return { success: false, message: `No se pudo pedir el código de enlace: ${errMsg(e)}` };
+            return { success: false, brainUp, message: `No se pudo pedir el código de enlace: ${errMsg(e)}` };
         }
     }
     openQrWindow();
-    return { success: true, message: 'QR generado — escanéalo antes de que expire (1 min).' };
+    return { success: true, brainUp, message: 'QR generado — escanéalo antes de que expire (1 min).' };
 }
 
 async function runAdminCommand(command) {
@@ -288,6 +314,10 @@ function routeApi(req, res, pathname, params) {
     }
     if (pathname === '/pairing' && req.method === 'POST') {
         readBody(req).then((b) => requestPairing(b.phone).then((r) => sendJson(res, 200, r)));
+        return;
+    }
+    if (pathname === '/brain/start' && req.method === 'POST') {
+        sendJson(res, 200, startBrainProcess());
         return;
     }
     if (pathname === '/command' && req.method === 'POST') {

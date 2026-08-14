@@ -448,6 +448,7 @@ async function refresh() {
         ['llamadas IA', fmt(brain.aiCalls)],
         ['último error', trunc(brain.lastErrorMsg || bh.lastError || '—', 32)]
       ]) +
+      (bh.state === 'ok' ? '' : '<button class="btn-toggle" id="brainStart">⚡ Encender brain</button>') +
       card('Bot', [
         ['estado', paused ? 'Pausado' : 'Activo', paused ? 'warn' : 'ok'],
         ['número', d.bot && d.bot.number || '-'],
@@ -520,7 +521,22 @@ async function toggleBot() {
 // Un solo listener (no se pierde al re-renderizar la tarjeta).
 cards.addEventListener('click', e => {
   if (e.target && e.target.id === 'botToggle') toggleBot();
+  if (e.target && e.target.id === 'brainStart') startBrain();
 });
+
+async function startBrain() {
+  const btn = document.getElementById('brainStart');
+  if (btn) { btn.disabled = true; btn.textContent = '⏳ Encendiendo…'; }
+  try {
+    const r = await fetch('/api/brain/start', { method: 'POST' });
+    const d = await r.json();
+    alert(d.message || (d.success ? 'Brain encendiéndose…' : 'No se pudo encender el brain'));
+  } catch (e) {
+    alert('Error al encender el brain: ' + e.message);
+  }
+  // El dashboard se refresca solo (refresh cada X s) y ocultará el botón
+  // cuando el brain pase a estado ok.
+}
 
 async function runCmd() {
   const text = cmd.value.trim();

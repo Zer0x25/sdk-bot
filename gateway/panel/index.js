@@ -74,6 +74,7 @@ const server = http.createServer((req, res) => {
     if (pathname === '/api/command' && req.method === 'POST') { proxy(req, res, '/command'); return; }
     if (pathname === '/api/reset' && req.method === 'POST') { proxy(req, res, '/reset'); return; }
     if (pathname === '/api/restart' && req.method === 'POST') { proxy(req, res, '/restart'); return; }
+    if (pathname === '/api/brain/start' && req.method === 'POST') { proxy(req, res, '/brain/start'); return; }
 
     // Estáticos del front.
     serveStatic(req, res, pathname);
