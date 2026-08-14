@@ -27,6 +27,10 @@
     .nav { order: 3; width: 100%; }
     .live { order: 2; }
     .toolgroup { display: flex; flex-wrap: wrap; gap: 8px; flex: 1 1 100%; }
+    /* Tabla de contactos: oculta la columna LID en móvil (queda Nombre/Tel/Estado/Perfil/Acciones) */
+    th.col-lid, td.col-lid { display: none; }
+    /* En móvil: contador de contactos muestra solo el número (oculta 'contacto(s)') */
+    #ctotal-label { display: none; }
   }
   /* [hidden] global con !important: las reglas display del autor (p.ej.
      .con{display:flex}) anulan el display:none del user agent si no se fuerza */
@@ -297,11 +301,11 @@
       <option value="ignorado">Ignorado</option>
       <option value="handoff">Handoff</option>
     </select>
-    <span id="ctotal" class="hint"></span>
+    <span id="ctotal" class="hint"><b id="ctotal-num">0</b><span id="ctotal-label"> contacto(s)</span></span>
   </div>
   <div id="cList">
     <table id="contacts">
-      <thead><tr><th>Nombre</th><th>Teléfono</th><th>LID</th><th>Estado</th><th>Perfil</th><th>Acciones</th></tr></thead>
+      <thead><tr><th>Nombre</th><th>Teléfono</th><th class="col-lid">LID</th><th>Estado</th><th>Perfil</th><th>Acciones</th></tr></thead>
       <tbody></tbody>
     </table>
     <div id="csentry">Cargando…</div>
@@ -939,13 +943,13 @@ async function loadMore() {
     const r = await fetch('/api/contacts?q=' + encodeURIComponent(cState.q) +
       '&estado=' + encodeURIComponent(cState.estado) + '&page=' + cState.page + '&limit=' + cState.limit);
     const d = await r.json();
-    ctotal.textContent = d.total + ' contacto(s)';
+    ctotal.querySelector('#ctotal-num').textContent = d.total;
     for (const c of d.contacts) {
       const tr = document.createElement('tr');
       const cls = badge[c.estado] || badge.neutro;
       const perfil = c.isContact ? '<select data-key="' + c.key + '" data-kind="perfil"><option>' + (c.perfil || 'default') + '</option><option>lucia</option><option>mateo</option><option>ventas</option><option>cobranzas</option><option>recepcion</option></select>'
         : (c.perfil || '—');
-      tr.innerHTML = '<td>' + esc(c.savedName || '—') + '</td><td>' + esc(c.phone || '—') + '</td><td>' + esc(c.lid || '—') +
+      tr.innerHTML = '<td>' + esc(c.savedName || '—') + '</td><td>' + esc(c.phone || '—') + '</td><td class="col-lid">' + esc(c.lid || '—') +
         '</td><td><span class="badge ' + cls + '">' + c.estado + '</span></td><td>' + perfil + '</td>' +
         '<td><div class="chips">' +
         (c.estado !== 'permitido' ? '<button data-key="' + c.key + '" data-act="permitir">Permitir</button>' : '') +
