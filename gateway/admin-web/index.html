@@ -1075,9 +1075,10 @@ function setContactState(key, estado, btn) {
       if (btn) btn.disabled = false;
       return;
     }
+    const realState = d.state || (estado === 'permitir' ? 'permitido' : (estado === 'ignorar' ? 'ignorado' : 'neutro'));
     const tr = btn ? btn.closest('tr') : null;
     if (tr) {
-      updateRowState(tr, key, estado);
+      updateRowState(tr, key, realState);
     } else {
       resetContactList();
     }

@@ -124,11 +124,16 @@ function parseQuery(raw) {
 // F6-P2: AGENDA DE CONTACTOS (consume contactsRepository/stateService)
 // -------------------------------------------------------------
 
-/** Mapea el valor de estado de ContactRecord al stateType de setNumberState */
+/** Mapea el valor de estado de ContactRecord o acción UI al stateType de setNumberState */
 const ESTADO_TO_TYPE = {
     neutro: 'neutral',
+    neutral: 'neutral',
     permitido: 'allowed',
+    permitir: 'allowed',
+    allowed: 'allowed',
     ignorado: 'ignored',
+    ignorar: 'ignored',
+    ignored: 'ignored',
     handoff: 'handoff'
 };
 

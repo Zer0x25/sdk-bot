@@ -57,15 +57,48 @@ test('GET /contacts/:key devuelve detalle del contacto', async () => {
     assert.strictEqual(d.phone, '56911111111');
 });
 
-test('POST /contacts/:key/estado cambia el estado', async () => {
-    const res = await fetch(`http://127.0.0.1:${port}/contacts/56911111111/estado`, {
+test('POST /contacts/:key/estado cambia el estado (acepta permitido, permitir, ignorar, etc.)', async () => {
+    const res1 = await fetch(`http://127.0.0.1:${port}/contacts/56911111111/estado`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ estado: 'permitido' })
+        body: JSON.stringify({ estado: 'permitir' })
     });
-    assert.strictEqual(res.status, 200);
-    const d = /** @type {any} */ (await res.json());
-    assert.strictEqual(d.success, true);
+    assert.strictEqual(res1.status, 200);
+    const d1 = /** @type {any} */ (await res1.json());
+    assert.strictEqual(d1.success, true);
+    assert.strictEqual(d1.state, 'permitido');
+
+    const res2 = await fetch(`http://127.0.0.1:${port}/contacts/56911111111/estado`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ estado: 'ignorar' })
+    });
+    assert.strictEqual(res2.status, 200);
+    const d2 = /** @type {any} */ (await res2.json());
+    assert.strictEqual(d2.success, true);
+    assert.strictEqual(d2.state, 'ignorado');
+});
+
+test('POST /contacts/:key/perfil asigna y resetea a default', async () => {
+    const res1 = await fetch(`http://127.0.0.1:${port}/contacts/56911111111/perfil`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ perfil: 'lucia' })
+    });
+    assert.strictEqual(res1.status, 200);
+    const d1 = /** @type {any} */ (await res1.json());
+    assert.strictEqual(d1.success, true);
+    assert.strictEqual(d1.profile, 'lucia');
+
+    const res2 = await fetch(`http://127.0.0.1:${port}/contacts/56911111111/perfil`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ perfil: 'default' })
+    });
+    assert.strictEqual(res2.status, 200);
+    const d2 = /** @type {any} */ (await res2.json());
+    assert.strictEqual(d2.success, true);
+    assert.strictEqual(d2.profile, null);
 });
 
 test('GET /profiles devuelve lista de perfiles', async () => {
