@@ -82,6 +82,7 @@ function preloadHistory(remoteJid) {
         // Opción C: hilo real desde el store RAM de Baileys (on-demand, web-like).
         const history = chatStore.getRecent(remoteJid, PRELOAD_MAX_MESSAGES);
         preloadCache.set(remoteJid, { history, cachedAt: Date.now(), source: 'baileys' });
+        logPresencia.info(`🔎 [PRECARGA DEBUG] source=baileys jid=${remoteJid} msgs=${history.length} (etapa1, hilo real de Baileys)`);
         return;
     }
     // Legacy: ir al brain por el historial de lo que el bot respondió.
