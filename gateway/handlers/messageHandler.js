@@ -11,6 +11,7 @@ const { tryConfirm } = require('../services/broadcastService');
 const { tryCleanConfirm } = require('../services/resetCleanFlow');
 const { cat } = require('../services/logger');
 const { num } = require('../tuning');
+const { getChatHistory } = require('../services/brainService');
 
 // 📢 Logging por categoría ([AI], [DEBOUNCE], [PRESENCIA], [COMANDO], [ERROR])
 const log = cat('DEBOUNCE');
@@ -24,6 +25,51 @@ const messageBuffers = new Map();
 const activePresences = new Map();   // Mapa global en memoria RAM del estado de presencia
 const chatInFlight = new Set();      // JIDs con una llamada de IA en curso (serialización por chat)
 const TYPING_TTL_MS = num('GATEWAY_TYPING_TTL_MS', 5000);           // 5.0 segundos: el estado de tecleo expira si el teclado queda inactivo (tunable vía .env.tuning)
+
+// 🧠 PRECARGA DE HISTORIAL EN PRESENCIA (Opción A, "señal de intervención web-like")
+// Al detectar que el cliente está escribiendo (composing), precargamos el
+// historial de ese chat (GET /history del brain) en RAM. Así, cuando el mensaje
+// llega, ya está en cache y se pasa al brain sin esperar la consulta interna.
+// El dedup por TTL evita martillear al brain en cada evento de presencia.
+const PRELOAD_ENABLED = num('GATEWAY_PRELOAD_ENABLED', 0) === 1;
+const PRELOAD_TTL_MS = num('GATEWAY_PRELOAD_TTL_MS', 180000);       // 3 min: el precargo caliente dura esto antes de refrescar (tunable vía .env.tuning)
+const PRELOAD_ONLY_DIRECT = num('GATEWAY_PRELOAD_ONLY_DIRECT', 1) === 1; // solo chats 1-a-1 (no grupos) por defecto
+/** @type {Map<string, { history: Array<any>, cachedAt: number }>} */
+const preloadCache = new Map();
+
+/** JID es 1-a-1 (termina en @s.whatsapp.net / @lid) vs grupo (@g.us). */
+function isDirectJid(jid) {
+    return jid.endsWith('@s.whatsapp.net') || jid.endsWith('@lid');
+}
+
+/**
+ * Dispara la precarga del historial de un chat (solo si está habilitada y el
+ * cache está frío). No bloquea: corre en background.
+ * @param {string} remoteJid
+ */
+function preloadHistory(remoteJid) {
+    if (!PRELOAD_ENABLED) return;
+    if (PRELOAD_ONLY_DIRECT && !isDirectJid(remoteJid)) return;
+    const cached = preloadCache.get(remoteJid);
+    if (cached && (Date.now() - cached.cachedAt) < PRELOAD_TTL_MS) return; // ya caliente
+    // Marcar inmediatamente para evitar descargas paralelas del mismo chat
+    preloadCache.set(remoteJid, { history: cached ? cached.history : [], cachedAt: Date.now() });
+    getChatHistory(remoteJid)
+        .then(history => { preloadCache.set(remoteJid, { history, cachedAt: Date.now() }); })
+        .catch(() => { /* el cache queda con [] y se reintenta tras TTL */ });
+}
+
+/**
+ * Devuelve el historial precargado si está fresco, o undefined para que el
+ * brain caiga a get_history() normal.
+ * @param {string} remoteJid
+ * @returns {Array<any>|undefined}
+ */
+function getPreloadedHistory(remoteJid) {
+    const cached = preloadCache.get(remoteJid);
+    if (cached && (Date.now() - cached.cachedAt) < PRELOAD_TTL_MS) return cached.history;
+    return undefined;
+}
 
 // 📊 Contadores y métricas para GET /status (F4-P3)
 const runtimeStats = { receivedMessages: 0, aiMessages: 0, adminCommands: 0 };
@@ -80,6 +126,11 @@ function handlePresenceUpdate(id, presences) {
 
     const isTyping = presenceState === 'composing' || presenceState === 'recording';
     const isPaused = presenceState === 'paused' || presenceState === 'available';
+
+    // 🧠 Precarga del historial del chat en cuanto el cliente empieza a escribir
+    // (señal de intervención web-like). El dedup por TTL evita llamar al brain
+    // en cada evento de presencia.
+    if (isTyping) preloadHistory(id);
 
     // Buscar buffer que coincida con cualquiera de los candidatos (Phone o LID)
     for (const [bufferJid, buffer] of messageBuffers.entries()) {
@@ -180,7 +231,7 @@ async function handleIncomingMessage(m, sock) {
             // se consume aquí igual que la de broadcast (no va a la IA).
             if (await tryCleanConfirm(textMessage, sock, remoteJid)) return;
             logAI.info(`\n🤖 [ASISTENTE PERSONAL EN SELF-CHAT]: "${decision.text}"`);
-            await enqueueAI(() => processAIChat(decision.text, remoteJid, metadata, sock));
+            await enqueueAI(() => processAIChat(decision.text, remoteJid, metadata, sock, { preloadedHistory: getPreloadedHistory(remoteJid) }));
             return;
         }
 
@@ -339,7 +390,7 @@ function createBufferTimeout(remoteJid, metadata, sock) {
             // 🎯 La cola FIFO global limita las llamadas simultáneas a la IA
             const { active, queued } = poolStats();
             logAI.info(`🎯 [POOL AI] Esperando turno en cola global (activas: ${active}, en cola: ${queued})...`);
-            await enqueueAI(() => processAIChat(fullBufferedText, remoteJid, metadata, sock));
+            await enqueueAI(() => processAIChat(fullBufferedText, remoteJid, metadata, sock, { preloadedHistory: getPreloadedHistory(remoteJid) }));
         } finally {
             chatInFlight.delete(remoteJid);
 
@@ -400,7 +451,7 @@ async function flushQueuedMessages() {
 
         chatInFlight.add(item.jid);
         try {
-            await enqueueAI(() => processAIChat(item.text, item.jid, item.metadata, sock, { fromQueue: true }));
+            await enqueueAI(() => processAIChat(item.text, item.jid, item.metadata, sock, { fromQueue: true, preloadedHistory: getPreloadedHistory(item.jid) }));
             messageQueue.removeHead();
             // ⏱️ Pausa humana entre mensajes encolados (2-5s)
             await new Promise(r => setTimeout(r, 2000 + Math.random() * 3000));

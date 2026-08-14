@@ -202,6 +202,8 @@ async function requestBrain(payload) {
 async function processAIChat(textMessage, remoteJid, metadata, sock, opts = {}) {
     // opts.fromQueue = true cuando el mensaje viene de la cola persistente (F4-P4):
     // no re-encolar y no repetir la alerta al admin (el flush lo gestiona).
+    // opts.preloadedHistory = historial precargado en presencia (Opción A) para
+    // saltarse la consulta interna de get_history() en el brain (ahorro de latencia).
     brainStats.aiCalls += 1;
     brainStats.lastAiAt = new Date().toISOString();
     const displayName = metadata.savedName || metadata.pushName || 'Usuario';
@@ -223,6 +225,9 @@ async function processAIChat(textMessage, remoteJid, metadata, sock, opts = {}) 
         bio: metadata.bio,
         is_business: metadata.isBusiness
     };
+    // Si el gateway precargó el historial en presencia, pasarlo para omitir el
+    // get_history() interno del brain (de lo contrario el brain cae a get_history()).
+    if (opts.preloadedHistory !== undefined) payload.history = opts.preloadedHistory;
 
     try {
         let data;
@@ -551,6 +556,30 @@ function getBrainHealth() {
 }
 
 /**
+ * 📚 Precarga del historial de un chat (GET /history) para la precarga en
+ * presencia (Opción A). No genera respuesta: solo devuelve el contexto que el
+ * brain ya tendría vía get_history(). Devuelve [] si el brain está caído.
+ * @param {string} userJid
+ * @returns {Promise<Array<{role:string, content:string}>>}
+ */
+async function getChatHistory(userJid) {
+    try {
+        const url = `${BRAIN_API_BASE}/history?user_id=${encodeURIComponent(userJid)}&bot_id=${encodeURIComponent(state.ADMIN_PHONE || state.ADMIN_LID || 'single')}`;
+        const response = await fetch(url, {
+            method: 'GET',
+            headers: authHeaders(),
+            signal: AbortSignal.timeout(5000)
+        });
+        if (!response.ok) return [];
+        const data = /** @type {any} */ (await response.json());
+        return Array.isArray(data.history) ? data.history : [];
+    } catch (e) {
+        logError.error("Error al precargar historial del Brain: " + errMsg(e));
+        return [];
+    }
+}
+
+/**
  * Arranca el sondeo periódico. No mantiene el proceso vivo (unref).
  * Llamar una vez al iniciar el gateway.
  */
@@ -576,5 +605,6 @@ module.exports = {
     getBrainStats,
     getBrainHealth,
     getBrainState,
+    getChatHistory,
     startBrainHealthWatch
 };
