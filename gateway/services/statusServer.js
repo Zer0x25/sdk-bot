@@ -31,6 +31,11 @@ function buildStatus() {
     const contacts = getContactsDB();
     const settings = getSettingsDB();
     const mem = process.memoryUsage();
+    const byState = { neutro: 0, permitido: 0, ignorado: 0, handoff: 0 };
+    for (const contact of Object.values(contacts)) {
+        const status = contact && byState[contact.estado] !== undefined ? contact.estado : 'neutro';
+        byState[status] += 1;
+    }
     return {
         status: 'ok',
         uptime_seconds: Math.round(process.uptime()),
@@ -46,6 +51,7 @@ function buildStatus() {
         },
         database: {
             contacts: Object.keys(contacts).length,
+            byState,
             globalMode: settings.globalMode || null,
             currentProfile: settings.currentProfile || null
         },

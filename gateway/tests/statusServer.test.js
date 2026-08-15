@@ -31,6 +31,10 @@ test('GET /status devuelve métricas completas del gateway', async () => {
     assert.strictEqual(typeof data.bot.profile, 'string');
     assert.ok(data.database, 'db');
     assert.strictEqual(typeof data.database.contacts, 'number');
+    assert.ok(data.database.byState, 'conteos de contactos por estado');
+    for (const state of ['neutro', 'permitido', 'ignorado', 'handoff']) {
+        assert.strictEqual(typeof data.database.byState[state], 'number');
+    }
     assert.ok(data.counters, 'contadores');
     assert.strictEqual(typeof data.counters.sentMessages, 'number');
     assert.ok(data.brain, 'métricas del brain');

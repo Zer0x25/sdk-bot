@@ -400,6 +400,13 @@ function card(title, lines) {
 
 const fmt = n => (n ?? 0).toLocaleString();
 const mem = n => Math.round(n / 1048576) + ' MB';
+const age = iso => {
+  if (!iso) return '—';
+  const ms = Date.now() - Date.parse(iso);
+  if (!Number.isFinite(ms) || ms < 0) return '—';
+  const mins = Math.floor(ms / 60000);
+  return mins < 60 ? mins + ' min' : Math.floor(mins / 60) + ' h';
+};
 
 const brainStateClass = st => st === 'Running' ? 'running' : (st === 'Stopped' ? 'stopped' : 'standby');
 
@@ -432,23 +439,27 @@ async function refresh() {
     const brain = d.brain || {};
     const bh = brain.health || {};
     const paused = d.bot && d.bot.paused;
+    const contactStates = (d.database && d.database.byState) || {};
+    const broadcast = d.broadcast || {};
+    const queue = d.queue || {};
+    const brainMemory = (bh.health && bh.health.memory) || {};
     const gw = gatewayState(conn);
     cards.innerHTML =
       card('Gateway (Baileys)', [
         ['estado', gw.label, gw.cls],
         ['WhatsApp', conn.connection || '?', conn.connection === 'open' ? 'ok' : 'warn'],
         ['reconexión', '#' + (conn.reconnectAttempt ?? 0)],
-        ['último motivo', (conn.lastDisconnectReason || '-').slice(0, 24)],
+        ['último motivo', trunc(conn.lastDisconnectReason || '-', 32)],
         ['uptime', Math.round(d.uptime_seconds / 60) + ' min']
       ]) +
       card('Brain', [
         ['estado', bh.state || 'desconocido', brainStateClass(bh.state)],
-        ...(() => { const p = splitProvider((bh.health && bh.health.providers && bh.health.providers.primary) || ''); return [['proveedor', p.provider || '-'], ['modelo', p.model || '-']]; })(),
+        ...(() => { const p = splitProvider((bh.health && bh.health.providers && bh.health.providers.primary) || ''); return [['proveedor', trunc(p.provider, 32)], ['modelo', trunc(p.model, 32)]]; })(),
         ['uptime', bh.health ? Math.round(bh.health.uptime_seconds / 60) + ' min' : '-'],
         ['llamadas IA', fmt(brain.aiCalls)],
         ['último error', trunc(brain.lastErrorMsg || bh.lastError || '—', 32)]
       ]) +
-      (bh.state === 'ok' ? '' : '<button class="btn-toggle" id="brainStart">⚡ Encender brain</button>') +
+      (bh.state === 'Running' ? '' : '<button class="btn-toggle" id="brainStart">⚡ Encender brain</button>') +
       card('Bot', [
         ['estado', paused ? 'Pausado' : 'Activo', paused ? 'warn' : 'ok'],
         ['número', d.bot && d.bot.number || '-'],
@@ -460,20 +471,29 @@ async function refresh() {
         ['estado', (d.database && d.database.globalMode === 'ignored_all') ? 'Ignore_All' : 'Access_All',
           (d.database && d.database.globalMode === 'ignored_all') ? 'warn' : 'ok'],
         ['agenda', fmt(d.database && d.database.contacts)],
+        ['permitidos', fmt(contactStates.permitido)],
+        ['ignorados', fmt(contactStates.ignorado)],
+        ['handoff', fmt(contactStates.handoff)],
         ['modo global', d.database && d.database.globalMode || '-'],
         ['perfil global', d.database && d.database.currentProfile || '-']
       ]) +
       card('Broadcast', [
-        ['estado', d.broadcast && d.broadcast.enabled ? 'ACTIVADO' : 'desactivado', d.broadcast && d.broadcast.enabled ? 'ok' : 'warn'],
-        ['pendientes', fmt(d.broadcast && d.broadcast.pending)],
-        ['límite diario', d.broadcast && d.broadcast.dailyLimit]
+        ['estado', broadcast.enabled ? 'ACTIVADO' : 'desactivado', broadcast.enabled ? 'ok' : 'warn'],
+        ['pendientes', fmt(broadcast.pending)],
+        ['enviando', fmt(broadcast.sending)],
+        ['total', fmt(broadcast.total)],
+        ['límite diario', broadcast.dailyLimit]
       ]) +
       card('Cola', [
-        ['mensajes', fmt(d.queue && d.queue.pending)]
+        ['mensajes', fmt(queue.pending) + ' / ' + fmt(queue.max)],
+        ['más antiguo', age(queue.oldestAt)]
       ]) +
       card('Memoria', [
         ['RSS', mem(d.memory && d.memory.rss)],
-        ['heap', mem(d.memory && d.memory.heapUsed) + ' / ' + mem(d.memory && d.memory.heapTotal)]
+        ['heap', mem(d.memory && d.memory.heapUsed) + ' / ' + mem(d.memory && d.memory.heapTotal)],
+        ['mensajes', fmt(brainMemory.messages)],
+        ['chats', fmt(brainMemory.chats)],
+        ['DB', mem(brainMemory.size_bytes)]
       ]);
     // 💓 Heartbeat del panel: conexión al gateway viva
     livedot.className = 'dot';
