@@ -80,6 +80,8 @@ services:
     # (solo proxifica el bus interno en :5400), NO index.js (que conecta WhatsApp
     # y generaria un segundo gateway del mismo numero -> conflicto de sesion).
     command: ["node", "panel/index.js"]
+    env_file:
+      - ../../gateway/panel/.env
     environment:
       NODE_ENV: production
       ADMIN_WEB_PORT: 3005
