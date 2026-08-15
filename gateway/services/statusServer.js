@@ -21,7 +21,7 @@ const logError = cat('ERROR');
 
 // Estado de conexión que index.js actualiza (no accesible desde aquí)
 const runtime = {
-    connection: 'starting',   // starting | open | close | reconnecting
+    connection: 'starting',   // starting | open | close | reconnecting | standby
     lastConnectAt: null,
     reconnectAttempt: 0,
     lastDisconnectReason: null

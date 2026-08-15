@@ -130,12 +130,23 @@ function getReconnectDelay() {
     return RECONNECT_BACKOFF_MS[idx];
 }
 
-// ¿Hay una sesión guardada en disco? Sin creds.json, WhatsApp espera un QR
-// nuevo y NO hay nada que reconectar: un loop de reconexión solo martillea
-// a WhatsApp (riesgo de baneo). En ese estado, esperar acción del admin
-// (escanear QR, pairing o reset desde el panel/terminal).
-function hasSavedSession() {
-    return fs.existsSync(path.join(AUTH_DIR, 'creds.json'));
+// ¿Hay una sesión REGISTRADA (realmente vinculada a WhatsApp)? Sin creds.json,
+// o con un pairing incompleto (creds.me / pairingCode pero sin `registered`),
+// WhatsApp espera un QR/pairing nuevo y NO hay nada que reconectar: un loop de
+// reconexión solo martillea a WhatsApp (riesgo de baneo). En ese estado el
+// gateway entra en STANDBY y espera acción del admin (escanear QR, pairing o
+// reset desde el panel/terminal). Usar `registered` (no solo existencia de
+// archivo) evita el falso positivo: Baileys crea creds.json al iniciar pairing
+// aunque no se haya completado, lo que disparaba un bucle de QRs.
+function isSessionRegistered() {
+    try {
+        const credsPath = path.join(AUTH_DIR, 'creds.json');
+        if (!fs.existsSync(credsPath)) return false;
+        const creds = JSON.parse(fs.readFileSync(credsPath, 'utf8'));
+        return Boolean(creds && creds.registered);
+    } catch (e) {
+        return false;
+    }
 }
 
 function scheduleReconnect() {
@@ -316,16 +327,29 @@ async function connectToWhatsApp (options = {}) {
             runtime.connection = 'close';
             runtime.lastDisconnectReason = lastDisconnect.error?.message || null;
             const loggedOut = (lastDisconnect.error)?.output?.statusCode === DisconnectReason.loggedOut;
-            const { reconnect, reason } = decideReconnect({ hasSession: hasSavedSession(), loggedOut });
+            const { reconnect, reason } = decideReconnect({ hasSession: isSessionRegistered(), loggedOut });
             log.warn('Conexión cerrada. Motivo:', lastDisconnect.error?.message, '| Reconectando:', reconnect);
             if (reconnect) {
                 runtime.connection = 'reconnecting';
                 runtime.reconnectAttempt = reconnectAttempt;
                 scheduleReconnect();
             } else if (reason === 'sin_sesion') {
-                // Sin sesión: nada que reconectar. El QR/pairing lo resuelve
-                // el admin (terminal o panel web); no reintentar en loop.
-                log.warn('ℹ️ Sin sesión guardada: no se reintenta reconectar automáticamente. Escanea el QR o usa el panel web (pairing/reset) para obtener un QR nuevo.');
+                // Sin sesión REGISTRADA: STANDBY. El gateway NO reintenta en bucle.
+                // Queda vivo (brain + panel arriba) esperando que el admin dispare
+                // el pairing manual: el bus interno recrea el socket vía
+                // /qr/refresh (panel) o "Pair con número". Es el bot "esperando a
+                // su cliente": no martillea a WhatsApp ni queda en bucle de QR.
+                runtime.connection = 'standby';
+                runtime.reconnectAttempt = 0;
+                if (reconnectTimer) { clearTimeout(reconnectTimer); reconnectTimer = null; }
+                log.warn('ℹ️ Sin sesión registrada: gateway en STANDBY. No se reintenta reconectar automáticamente. El admin debe escanear el QR o usar el panel web (pairing/reset) para vincular la cuenta.');
+            } else if (reason === 'logged_out') {
+                // Sesión revocada en el teléfono: tampoco reconectar en loop; el
+                // admin debe escanear un QR nuevo a propósito.
+                runtime.connection = 'standby';
+                runtime.reconnectAttempt = 0;
+                if (reconnectTimer) { clearTimeout(reconnectTimer); reconnectTimer = null; }
+                log.warn('ℹ️ Sesión cerrada/revocada (logged out): gateway en STANDBY. El admin debe escanear un QR nuevo a propósito (panel web o terminal).');
             }
         } else if (connection === 'open') {
             runtime.connection = 'open';
