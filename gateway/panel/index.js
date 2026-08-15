@@ -47,7 +47,11 @@ const GOOGLE_CLIENT_ID = process.env.PANEL_GOOGLE_CLIENT_ID || '';
 const GOOGLE_CLIENT_SECRET = process.env.PANEL_GOOGLE_CLIENT_SECRET || '';
 // Si no se define, se genera uno efímero por arranque (las sesiones se invalidan al reiniciar).
 const SESSION_SECRET = process.env.PANEL_SESSION_SECRET || crypto.randomBytes(32).toString('hex');
-const OAUTH_ENABLED = Boolean(GOOGLE_CLIENT_ID && GOOGLE_CLIENT_SECRET);
+// OAuth se activa solo en PRODUCCIÓN (NODE_ENV=production) o si se fuerza con PANEL_REQUIRE_AUTH=***.
+// En desarrollo el panel queda ABIERTO (mock) aunque haya credenciales, para no frenar el trabajo.
+const NODE_ENV = process.env.NODE_ENV || 'development';
+const FORCE_AUTH = process.env.PANEL_REQUIRE_AUTH === '***' || process.env.PANEL_REQUIRE_AUTH === 'true';
+const OAUTH_ENABLED = Boolean(GOOGLE_CLIENT_ID && GOOGLE_CLIENT_SECRET) && (NODE_ENV === 'production' || FORCE_AUTH);
 // Si se define, solo estos correos (csv, minúsculas) pueden entrar. Vacío = cualquier cuenta Google verificada.
 const ALLOWED_EMAILS = (process.env.PANEL_ALLOWED_EMAILS || '')
     .split(',').map((s) => s.trim().toLowerCase()).filter(Boolean);
@@ -267,10 +271,13 @@ const server = http.createServer(async (req, res) => {
     const u = new URL(req.url || '/', `http://${req.headers.host || HOST + ':' + PORT}`);
     const { pathname } = u;
 
-    // Rutas de auth siempre libres.
-    if (pathname === '/auth/google') return startLogin(req, res);
-    if (pathname === '/auth/callback') return finishLogin(req, res);
-    if (pathname === '/auth/logout') return handleLogout(req, res);
+    // Rutas de auth solo existen cuando OAuth está habilitado (prod/forzado).
+    // En dev (abierto) estas rutas no hacen nada y el panel queda accesible.
+    if (OAUTH_ENABLED) {
+        if (pathname === '/auth/google') return startLogin(req, res);
+        if (pathname === '/auth/callback') return finishLogin(req, res);
+        if (pathname === '/auth/logout') return handleLogout(req, res);
+    }
 
     // Legacy: OAuth deshabilitado => comportamiento original (panel abierto).
     if (!OAUTH_ENABLED) {
