@@ -85,6 +85,7 @@ SDK-Bot/
 │   ├── termux/                   # Scripts y servicios runit para Android (Termux)
 │   └── windows/                  # Scripts batch para Windows (startBrain.bat, startGateway.bat)
 ├── PLAN-ARQUITECTURA.md          # Documentación técnica completa
+├── OAUTH-LESSONS.md              # Lecciones de OAuth Google en el panel (state server-side, SameSite)
 └── ROADMAP.md                    # Hoja de ruta de fases (guía de sesiones)
 ```
 

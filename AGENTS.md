@@ -6,6 +6,7 @@
 - `brain/` es el proceso Python/FastAPI; su entrada es `brain/main.py`.
 - `gateway/panel/` es un tercer proceso independiente. Sirve `gateway/admin-web/` y proxifica `/api/*` al bus HTTP interno del gateway. Corre en `0.0.0.0:5201` (accesible por LAN/Tailscale en dev). **OAuth solo en producción:** el login Google se activa únicamente si `NODE_ENV=production` (o `PANEL_REQUIRE_AUTH=***, además de definir `PANEL_GOOGLE_CLIENT_ID`/`PANEL_GOOGLE_CLIENT_SECRET`. En desarrollo el panel queda **ABIERTO** (sin login) aunque haya credenciales; las rutas `/auth/*` solo existen con OAuth habilitado. La cookie de sesión se firma con HMAC-SHA256 (HttpOnly, Secure tras proxy, 12 h). `index.js` carga `gateway/panel/.env` automáticamente al arrancar. En dev el panel NO se expone vía el dominio público `panel.zer0x.org` (reservado para prod con Docker).
 - En ejecución local arranca primero el brain (`:5100`), luego el gateway; el panel opcional usa `:5201`, el bus del gateway `:5400` y el status server `:5300`.
+- `docs/OAUTH-LESSONS.md`: lecciones reales de la integración OAuth Google en el panel (state server-side, cookie de sesión `SameSite=Lax`, checklist de Google Cloud Console). Léelo antes de tocar el auth del panel.
 - `brain/.env`, `gateway/auth_info_baileys/`, las DB JSON, `brain/memory.db`, `gateway/queue/`, logs y locks contienen estado local o secretos; no los versionar ni usarlos como fixtures.
 - `.env.tuning` sí está versionado y es leído por ambos componentes; las API keys deben permanecer en `brain/.env`.
 
