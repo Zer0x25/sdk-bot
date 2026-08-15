@@ -148,6 +148,44 @@ test('worker envía 1 mensaje por tick y termina en done con notificación al ad
     }
 });
 
+test('worker no duplica el mismo contacto si dos ticks se solapan', async () => {
+    const t = setupEnv();
+    try {
+        process.env.SDK_BROADCAST_ENABLED = '1';
+        writeContacts({
+            '56911111111': contact({ phone: '56911111111', savedName: 'A' })
+        });
+        const bs = freshModules();
+        const sentTo = [];
+        let releaseSend;
+        const sendStarted = new Promise(resolve => { releaseSend = resolve; });
+        let releaseContinue;
+        const continueSend = new Promise(resolve => { releaseContinue = resolve; });
+        const fakeSock = {
+            sendMessage: async (jid) => {
+                sentTo.push(jid);
+                releaseSend();
+                await continueSend;
+                return { key: { id: `test-${jid}` } };
+            }
+        };
+        bs.setSock(fakeSock);
+        bs.setIsConnected(() => true);
+        bs.enqueueBroadcast('Promo', null);
+
+        const firstTick = bs.tick();
+        await sendStarted;
+        const secondTick = bs.tick();
+        releaseContinue();
+        await Promise.all([firstTick, secondTick]);
+
+        assert.deepStrictEqual(sentTo, ['56911111111@s.whatsapp.net']);
+        assert.strictEqual(bs.getBroadcasts()[0].sent, 1);
+    } finally {
+        t.restore();
+    }
+});
+
 test('worker omite contactos que ya superaron el límite diario', async () => {
     const t = setupEnv();
     try {

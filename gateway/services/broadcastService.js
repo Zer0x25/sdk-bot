@@ -306,7 +306,9 @@ function getBroadcastStats() {
  * Resume-safe: el cursor se persiste tras cada envío. No hace nada si los
  * broadcasts están desactivados.
  */
-async function tick() {
+let tickRunning = false;
+
+async function tickUnsafe() {
     if (!isEnabled()) return;
     if (!sock || !isConnectedFn()) return;
 
@@ -364,6 +366,21 @@ async function tick() {
     }
     active.cursor += 1;
     persist();
+}
+
+/**
+ * Ejecuta como máximo un tick a la vez. El intervalo del gateway no espera
+ * al Promise devuelto por tick(); sin este guard, un sendMessage lento podía
+ * hacer que dos ticks usaran el mismo cursor y duplicaran el mensaje.
+ */
+async function tick() {
+    if (tickRunning) return;
+    tickRunning = true;
+    try {
+        return await tickUnsafe();
+    } finally {
+        tickRunning = false;
+    }
 }
 
 async function notifyAdmin(text) {
