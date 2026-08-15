@@ -33,6 +33,8 @@ if (fs.existsSync(DOTENV)) {
     }
 }
 
+const WEB_DIR = path.join(__dirname, '..', 'admin-web');
+
 // Si se define, el redirect_uri de OAuth SIEMPRE usa esta URL canónica
 // (evita que entrar por IP/Tailscale genere un redirect_uri no autorizado en Google).
 const PUBLIC_URL = process.env.PANEL_PUBLIC_URL || '';
@@ -221,7 +223,7 @@ async function finishLogin(req, res) {
                 grant_type: 'authorization_code'
             })
         });
-        const token = await tokenResp.json();
+        const token = /** @type {{ access_token?: string }} */ (await tokenResp.json());
         if (!token.access_token) {
             res.writeHead(401, { 'Content-Type': 'text/plain' });
             res.end('No se pudo obtener el token de Google.');
@@ -230,7 +232,7 @@ async function finishLogin(req, res) {
         const userResp = await fetch('https://www.googleapis.com/oauth2/v2/userinfo', {
             headers: { Authorization: `Bearer ${token.access_token}` }
         });
-        const user = await userResp.json();
+        const user = /** @type {{ email?: string, name?: string, picture?: string }} */ (await userResp.json());
         if (ALLOWED_EMAILS.length && !ALLOWED_EMAILS.includes((user.email || '').toLowerCase())) {
             res.writeHead(403, { 'Content-Type': 'text/plain' });
             res.end('Tu cuenta de Google no está autorizada para este panel.');
@@ -245,8 +247,9 @@ async function finishLogin(req, res) {
         res.writeHead(302, { Location: '/', 'Set-Cookie': sessionCookie(data, secure) });
         res.end();
     } catch (e) {
+        const msg = e instanceof Error ? e.message : String(e);
         res.writeHead(500, { 'Content-Type': 'text/plain' });
-        res.end('Error en el intercambio OAuth: ' + e.message);
+        res.end('Error en el intercambio OAuth: ' + msg);
     }
 }
 
@@ -269,7 +272,7 @@ const server = http.createServer(async (req, res) => {
     // Legacy: OAuth deshabilitado => comportamiento original (panel abierto).
     if (!OAUTH_ENABLED) {
         if (pathname.startsWith('/api/')) {
-            const busPath = req.url.replace(/^\/api/, '') || '/';
+            const busPath = (req.url ?? '/').replace(/^\/api/, '') || '/';
             return proxy(req, res, busPath);
         }
         return serveStatic(req, res, pathname);
@@ -297,7 +300,7 @@ const server = http.createServer(async (req, res) => {
 
     // Autenticado:
     if (pathname.startsWith('/api/')) {
-        const busPath = req.url.replace(/^\/api/, '') || '/';
+        const busPath = (req.url ?? '/').replace(/^\/api/, '') || '/';
         return proxy(req, res, busPath);
     }
     return serveStatic(req, res, pathname);

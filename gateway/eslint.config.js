@@ -35,7 +35,11 @@ module.exports = [
                 clearImmediate: 'readonly',
                 Buffer: 'readonly',
                 fetch: 'readonly',
-                AbortSignal: 'readonly'
+                AbortSignal: 'readonly',
+                URLSearchParams: 'readonly',
+                URL: 'readonly',
+                TextEncoder: 'readonly',
+                TextDecoder: 'readonly'
             }
         },
         rules: {
