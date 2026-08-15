@@ -32,6 +32,7 @@ brain/logs/
 .env
 .env.*
 !.env.tuning
+!.env.example
 
 # OS files
 Thumbs.db
