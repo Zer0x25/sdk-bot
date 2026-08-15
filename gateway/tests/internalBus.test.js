@@ -5,7 +5,7 @@ const assert = require('node:assert');
 const { withTempDbPaths } = require('./helpers/tmpPaths');
 const t = withTempDbPaths();
 
-const { startInternalBus } = require('../services/internalBus');
+const { startInternalBus, handleConnectionUpdate, setSock, qrPayload } = require('../services/internalBus');
 const { upsertContactMetadata } = require('../services/contactsRepository');
 
 let server;
@@ -31,6 +31,17 @@ after(async () => {
     t.restore();
 });
 
+test('QR de un socket reemplazado no puede aparecer en el estado del panel', async () => {
+    const oldSock = {};
+    const newSock = {};
+    setSock(oldSock);
+
+    const staleQr = handleConnectionUpdate({ qr: 'qr-del-socket-anterior' }, oldSock);
+    setSock(newSock);
+    await staleQr;
+
+    assert.strictEqual(qrPayload().qr, null);
+});
 test('GET /status devuelve métricas en JSON', async () => {
     const res = await fetch(`http://127.0.0.1:${port}/status`);
     assert.strictEqual(res.status, 200);

@@ -274,7 +274,7 @@ async function connectToWhatsApp () {
         if (currentSocket !== sock) return;
 
         adminWeb?.handleConnectionUpdate(update); // compat tests
-        internalBus.handleConnectionUpdate(update); // 🔌 bus interno: el panel (3er proceso) captura el QR
+        internalBus.handleConnectionUpdate(update, sock); // 🔌 bus interno: el panel (3er proceso) captura el QR
 
         const { connection, lastDisconnect, qr } = update;
         

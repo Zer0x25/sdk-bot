@@ -761,7 +761,11 @@ function startQrFeed() {
       renderQrState(d);
     } catch (err) { /* evento inválido */ }
   };
-  qrEs.onopen = () => { pairingInProgress = false; }; // reconexión = proceso nuevo
+  // onopen solo confirma el transporte SSE; no significa que Baileys ya
+  // haya generado un QR. pairingInProgress se libera al recibir el QR o un
+  // resultado explícito del refresh, evitando que la UI muestre "no
+  // disponible" mientras el socket todavía está creando la tanda.
+  qrEs.onopen = () => {};
   qrEs.onerror = () => { /* el EventSource reintenta solo */ };
 }
 

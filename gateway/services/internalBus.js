@@ -171,6 +171,7 @@ const LINE_CAP = 8192;
 const AUTH_DIR_RESOLVER = () => process.env.SDK_AUTH_DIR || path.join(__dirname, '..', 'auth_info_baileys');
 /** @type {any} */
 let activeSock = null;
+let socketGeneration = 0;
 /** @type {string | null} */
 let lastQrDataUrl = null;
 const qrClients = new Set();
@@ -185,6 +186,7 @@ let qrTtlMs = QR_TTL_MS;
 let qrExpiryTimer = null;
 let qrWindowOpen = true;
 let resetInProgress = false;
+let qrSequence = 0;
 
 function wsReadyState(sock) {
     const ws = sock && sock.ws;
@@ -238,8 +240,11 @@ function openQrWindow() {
 }
 
 /** El gateway entrega el socket activo de Baileys al bus. */
+/** @param {any} sock */
 function setSock(sock) {
     activeSock = sock;
+    socketGeneration += 1;
+    qrSequence = 0;
     lastQrDataUrl = null;
     qrWindowOpen = true;
     qrExpiresAt = 0;
@@ -249,24 +254,37 @@ function setSock(sock) {
 }
 
 /** Reenvío del connection.update de Baileys: captura y difunde el QR. */
-async function handleConnectionUpdate(update) {
+/** @param {any} update @param {any} sourceSock */
+async function handleConnectionUpdate(update, sourceSock = null) {
     if (!update) return;
+    const generation = socketGeneration;
+    if (sourceSock && sourceSock !== activeSock) return;
     if (update.connection === 'open' || update.connection === 'close') {
         broadcastQrState();
         return;
     }
     if (typeof update.qr !== 'string') return;
     if (update.connection === 'open') return;
+    const sequence = ++qrSequence;
     // Siempre procesar un QR fresco: si la ventana había expirado, la
     // reabrimos. Esto evita el bug "el panel se queda ciego y muestra un
     // QR muerto" — cualquier update.qr nuevo del socket vivo repinta.
     if (!qrWindowOpen || Date.now() >= qrExpiresAt) openQrWindow();
+    let dataUrl;
     try {
-        lastQrDataUrl = await QRCode.toDataURL(update.qr, { margin: 1, width: 280 });
+        dataUrl = await QRCode.toDataURL(update.qr, { margin: 1, width: 280 });
     } catch (e) {
         logError.error(`🔌 [BUS] Error renderizando QR: ${errMsg(e)}`);
-        lastQrDataUrl = null;
+        if (generation === socketGeneration && sequence === qrSequence && (!sourceSock || sourceSock === activeSock)) {
+            lastQrDataUrl = null;
+            broadcastQrState();
+        }
+        return;
     }
+    // Baileys emite una ráfaga de QR y el render es asíncrono. No permitir
+    // que un QR antiguo termine después y sobrescriba al último válido.
+    if (generation !== socketGeneration || sequence !== qrSequence || (sourceSock && sourceSock !== activeSock)) return;
+    lastQrDataUrl = dataUrl;
     broadcastQrState();
 }
 
@@ -695,5 +713,6 @@ function startInternalBus(opts = {}) {
 
 module.exports = {
     startInternalBus, setSock, handleConnectionUpdate, setQrRefresh, setPairingCodeRequester,
-    requestPairing, runAdminCommand, performReset, performRestart, wsReadyState
+    requestPairing, runAdminCommand, performReset, performRestart, wsReadyState,
+    qrPayload
 };
