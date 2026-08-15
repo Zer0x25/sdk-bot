@@ -289,7 +289,17 @@ def _remove_lock():
 def ensure_singleton(allow_restart=False):
     existing = _read_lock()
     if existing and _is_pid_alive(existing):
-        if allow_restart:
+        if existing == os.getpid():
+            # El lock apunta a ESTE mismo proceso. Ocurre en contenedores donde el
+            # servicio corre siempre como PID 1 y, al reiniciar el contenedor
+            # (restart: unless-stopped), el lock persiste en su capa escribible.
+            # No es otra instancia: limpiamos y continuamos (evita el crash-loop).
+            log_instancia.info(f"ℹ️  Lock apunta a este mismo proceso (PID {existing}). Ignorando y continuando.")
+            try:
+                os.remove(BRAIN_LOCK_FILE)
+            except OSError:
+                pass
+        elif allow_restart:
             log_instancia.info(f"♻️  Brain anterior detectado (PID {existing}). Cerrando y reiniciando...")
             try:
                 os.kill(existing, signal.SIGTERM)

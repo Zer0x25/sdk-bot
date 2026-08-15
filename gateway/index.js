@@ -80,7 +80,14 @@ async function ensureSingleInstance() {
     const existing = readLock();
 
     if (existing && isProcessAlive(existing)) {
-        if (allowRestart) {
+        if (existing === process.pid) {
+            // El lock apunta a ESTE mismo proceso. Ocurre en contenedores donde el
+            // servicio corre siempre como PID 1 y, al reiniciar el contenedor
+            // (restart: unless-stopped), el lock persiste en su capa escribible.
+            // No es otra instancia: limpiamos y continuamos (evita el crash-loop).
+            logInstancia.info(`ℹ️  Lock apunta a este mismo proceso (PID ${existing}). Ignorando y continuando...`);
+            try { fs.unlinkSync(GATEWAY_LOCK_FILE); } catch (e) { /* ignorar */ }
+        } else if (allowRestart) {
             logInstancia.info(`♻️  Gateway anterior detectado (PID ${existing}). Cerrando y reiniciando...`);
             try { process.kill(existing, 'SIGTERM'); } catch (e) { /* ya muerto */ }
             await waitForExit(existing, 8000);
