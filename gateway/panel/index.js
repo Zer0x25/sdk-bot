@@ -57,7 +57,6 @@ const ALLOWED_EMAILS = (process.env.PANEL_ALLOWED_EMAILS || '')
     .split(',').map((s) => s.trim().toLowerCase()).filter(Boolean);
 
 const COOKIE_NAME = 'sdkbot_session';
-const STATE_NAME = 'sdkbot_oauth_state';
 const SESSION_TTL_MS = 1000 * 60 * 60 * 12; // 12 horas
 
 const MIME = {
@@ -113,19 +112,18 @@ function externalUrl(req, pathname) {
     return `${proto}://${host}${pathname}`;
 }
 function cookieFlags(secure) {
-    // SameSite=None requerido para que la cookie sobreviva al redirect de vuelta
-    // desde accounts.google.com (navegación cross-site). None implica Secure.
-    const sameSite = secure ? 'SameSite=None; Secure; ' : 'SameSite=Lax; ';
-    return `HttpOnly; ${sameSite}Path=/`;
+    // Sesión: SameSite=Lax (se usa en navegaciones same-site bot.zer0x.org -> bot.zer0x.org).
+    // Lax evita el bloqueo de "cookies de terceros"/privacidad estricta que rompía la
+    // sesión con SameSite=None. Secure solo si venimos por HTTPS (prod via Cloudflare).
+    const parts = ['HttpOnly', 'SameSite=Lax', 'Path=/'];
+    if (secure) parts.push('Secure');
+    return parts.join('; ');
 }
 function sessionCookie(data, secure) {
     const payload = Buffer.from(JSON.stringify(data)).toString('base64url');
     const signed = sign(payload);
     const exp = new Date(data.exp).toUTCString();
     return `${COOKIE_NAME}=${encodeURIComponent(signed)}; ${cookieFlags(secure)} Expires=${exp}`;
-}
-function stateCookie(value, secure) {
-    return `${STATE_NAME}=${value}; ${cookieFlags(secure)} Max-Age=600`;
 }
 function clearCookie(secure) {
     return `${COOKIE_NAME}=; ${cookieFlags(secure)} Max-Age=0`;
@@ -190,9 +188,29 @@ function serveLogin(res) {
 }
 
 // ---------- Handlers de autenticación ----------
+// State de OAuth guardado server-side (en memoria). Evita depender de cookies
+// para el state, que el navegador a veces no reenvía en el callback cross-site
+// desde Google (bloqueo de cookies de terceros / privacidad estricta).
+const OAUTH_STATE_TTL_MS = 1000 * 60 * 10; // 10 min
+const oauthStates = new Map(); // state -> expiry timestamp (ms)
+function saveOAuthState(state) {
+    oauthStates.set(state, Date.now() + OAUTH_STATE_TTL_MS);
+    // limpieza básica de expirados
+    if (oauthStates.size > 100) {
+        const now = Date.now();
+        for (const [k, exp] of oauthStates) if (exp < now) oauthStates.delete(k);
+    }
+}
+function consumeOAuthState(state) {
+    if (!state) return false;
+    const exp = oauthStates.get(state);
+    if (!exp) return false;
+    oauthStates.delete(state);
+    return exp >= Date.now();
+}
 function startLogin(req, res) {
-    const secure = (req.headers['x-forwarded-proto'] || 'https').split(',')[0].trim() === 'https';
     const state = crypto.randomBytes(16).toString('hex');
+    saveOAuthState(state);
     const redirectUri = externalUrl(req, '/auth/callback');
     const authUrl = new URL('https://accounts.google.com/o/oauth2/v2/auth');
     authUrl.searchParams.set('client_id', GOOGLE_CLIENT_ID);
@@ -201,7 +219,7 @@ function startLogin(req, res) {
     authUrl.searchParams.set('scope', 'openid email profile');
     authUrl.searchParams.set('state', state);
     authUrl.searchParams.set('prompt', 'select_account');
-    res.writeHead(302, { Location: authUrl.toString(), 'Set-Cookie': stateCookie(state, secure) });
+    res.writeHead(302, { Location: authUrl.toString() });
     res.end();
 }
 
@@ -210,9 +228,9 @@ async function finishLogin(req, res) {
     const u = new URL(req.url || '/', `http://${req.headers.host || HOST + ':' + PORT}`);
     const code = u.searchParams.get('code');
     const state = u.searchParams.get('state');
-    const cookie = req.headers.cookie || '';
-    const sm = cookie.match(new RegExp(`${STATE_NAME}=([^;]+)`));
-    if (!code || !state || !sm || sm[1] !== state) {
+    // State verificado server-side (no depende de cookies del navegador).
+    const stateOk = consumeOAuthState(state);
+    if (!code || !stateOk) {
         res.writeHead(400, { 'Content-Type': 'text/plain' });
         res.end('Estado OAuth inválido o faltante.');
         return;
