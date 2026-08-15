@@ -495,15 +495,15 @@ async function deleteProfileFile(profileKey) {
 /**
  * 💓 Healthcheck activo del brain (F6-P3 dashboard): el gateway sondea
  * GET /health cada BRAIN_HEALTH_INTERVAL_MS y guarda el estado real del
- * proceso. Así el panel puede mostrar Running / Stopped / Stand-by en vez
+ * proceso. Así el panel puede mostrar Running / Stopped / Idle en vez
  * del heurístico "ok/caído/sin llamadas" que solo miraba la última respuesta.
- * - Running: health 200 OK.
+ * - Running: health 200 OK y llamadas IA en los últimos BRAIN_IDLE_MS.
  * - Stopped: no responde / timeout / conexión rechazada.
- * - Stand-by: Running pero sin llamadas IA en los últimos BRAIN_STANDBY_MS.
+ * - Idle: Running pero sin llamadas IA en los últimos BRAIN_IDLE_MS.
  */
 const BRAIN_HEALTH_INTERVAL_MS = Number(process.env.SDK_BRAIN_HEALTH_INTERVAL_MS || 10000);
 const BRAIN_HEALTH_TIMEOUT_MS = Number(process.env.SDK_BRAIN_HEALTH_TIMEOUT_MS || 4000);
-const BRAIN_STANDBY_MS = Number(process.env.SDK_BRAIN_STANDBY_MS || 5 * 60 * 1000);
+const BRAIN_IDLE_MS = Number(process.env.SDK_BRAIN_IDLE_MS || process.env.SDK_BRAIN_STANDBY_MS || 5 * 60 * 1000);
 
 /** @type {{reachable: boolean, status: string|null, checkedAt: number, health: any, lastError: string|null}} */
 const brainHealth = {
@@ -538,14 +538,14 @@ async function checkBrainHealth() {
 }
 
 /**
- * Estado derivado para el panel: Running / Stopped / Stand-by.
- * @returns {'Running'|'Stopped'|'Stand-by'}
+ * Estado derivado para el panel: Running / Stopped / Idle.
+ * @returns {'Running'|'Stopped'|'Idle'}
  */
 function getBrainState() {
     if (!brainHealth.reachable) return 'Stopped';
     const lastAi = brainStats.lastAiAt ? Date.parse(brainStats.lastAiAt) : null;
-    if (lastAi && (Date.now() - lastAi) < BRAIN_STANDBY_MS) return 'Running';
-    return 'Stand-by';
+    if (lastAi && (Date.now() - lastAi) < BRAIN_IDLE_MS) return 'Running';
+    return 'Idle';
 }
 
 function getBrainHealth() {

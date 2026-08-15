@@ -162,10 +162,13 @@
   #cleanread { font-size: 13px; color: #fbbf24; margin-top: 10px; }
   #cleanerr { color: #f87171; font-size: 12px; margin-top: 6px; }
   #cleanfinal { color: #4ade80; font-size: 13px; margin-top: 10px; }
-  /* 💓 Estado de servicios (Running/Stopped/Stand-by) + heartbeat del panel */
+  /* 💓 Estado de servicios (Running/Stopped/Idle/No Pairing/Reconnecting) + heartbeat del panel */
   .badge-state { display: inline-block; padding: 2px 9px; border-radius: 999px; font-size: 12px; font-weight: 600; }
   .badge-state.running { background: #14532d; color: #86efac; }
   .badge-state.stopped { background: #7f1d1d; color: #fca5a5; }
+  .badge-state.idle { background: #1e3a5f; color: #93c5fd; }
+  .badge-state.nopairing { background: #78350f; color: #fdba74; }
+  .badge-state.reconnecting { background: #854d0e; color: #fde047; }
   .badge-state.standby { background: #78350f; color: #fdba74; }
   .live { display: inline-flex; align-items: center; gap: 6px; font-size: 12px; color: #8b93a5; }
   .dot { width: 9px; height: 9px; border-radius: 50%; background: #4ade80; box-shadow: 0 0 6px #4ade80;
@@ -408,7 +411,7 @@ const age = iso => {
   return mins < 60 ? mins + ' min' : Math.floor(mins / 60) + ' h';
 };
 
-const brainStateClass = st => st === 'Running' ? 'running' : (st === 'Stopped' ? 'stopped' : 'standby');
+const brainStateClass = st => st === 'Running' ? 'running' : (st === 'Stopped' ? 'stopped' : (st === 'Idle' ? 'idle' : 'standby'));
 
 // Trunca textos largos añadiendo elipsis (…) en vez de cortar en seco.
 const trunc = (s, n) => { s = String(s ?? ''); return s.length > n ? s.slice(0, n - 1).trimEnd() + '…' : s; };
@@ -421,14 +424,15 @@ function splitProvider(s) {
   return { provider: s.trim(), model: '-' };
 }
 
-// Estado del gateway/Baileys con el mismo semáforo Running/Stopped/Stand-by:
-// open → Running; reconnecting/starting/close → Stand-by (proceso vivo, Baileys
-// no conectado); si el fetch falla el catch ya marca Stopped.
+// Estado del gateway/Baileys:
+// open → Running (badge running, WhatsApp: Connected);
+// reconnecting → Reconnecting (badge reconnecting, WhatsApp: Reconnecting);
+// starting / close (sin sesión o esperando pairing) → No Pairing (badge nopairing, WhatsApp: No Pairing).
 function gatewayState(conn) {
   const c = conn.connection || 'starting';
-  if (c === 'open') return { label: 'Running', cls: 'running' };
-  if (c === 'reconnecting') return { label: 'Stand-by', cls: 'standby' };
-  return { label: 'Stand-by', cls: 'standby' }; // starting / close (sin sesión)
+  if (c === 'open') return { label: 'Running', cls: 'running', waLabel: 'Connected', waCls: 'ok' };
+  if (c === 'reconnecting') return { label: 'Reconnecting', cls: 'reconnecting', waLabel: 'Reconnecting', waCls: 'warn' };
+  return { label: 'No Pairing', cls: 'nopairing', waLabel: 'No Pairing', waCls: 'warn' };
 }
 
 async function refresh() {
@@ -444,10 +448,13 @@ async function refresh() {
     const queue = d.queue || {};
     const brainMemory = (bh.health && bh.health.memory) || {};
     const gw = gatewayState(conn);
+    const phone = d.bot && (d.bot.number || d.bot.lid);
+    const phoneFormatted = phone ? (String(phone).startsWith('+') ? String(phone) : '+' + phone) : '—';
     cards.innerHTML =
       card('Gateway (Baileys)', [
         ['estado', gw.label, gw.cls],
-        ['WhatsApp', conn.connection || '?', conn.connection === 'open' ? 'ok' : 'warn'],
+        ['WhatsApp', gw.waLabel, gw.waCls],
+        ['teléfono', phoneFormatted],
         ['reconexión', '#' + (conn.reconnectAttempt ?? 0)],
         ['último motivo', trunc(conn.lastDisconnectReason || '-', 32)],
         ['uptime', Math.round(d.uptime_seconds / 60) + ' min']
@@ -459,7 +466,7 @@ async function refresh() {
         ['llamadas IA', fmt(brain.aiCalls)],
         ['último error', trunc(brain.lastErrorMsg || bh.lastError || '—', 32)]
       ]) +
-      (bh.state === 'Running' ? '' : '<button class="btn-toggle" id="brainStart">⚡ Encender brain</button>') +
+      (bh.state === 'Stopped' || !bh.reachable ? '<button class="btn-toggle" id="brainStart">⚡ Encender brain</button>' : '') +
       card('Bot', [
         ['estado', paused ? 'Pausado' : 'Activo', paused ? 'warn' : 'ok'],
         ['número', d.bot && d.bot.number || '-'],
