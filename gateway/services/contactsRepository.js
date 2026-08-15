@@ -22,8 +22,26 @@ const { getContactsDB, saveContactsDB, onContactsCacheUpdate } = require('./db')
  * @property {string} [lastSeen]
  * @property {number} [totalMessages]
  * @property {boolean} [handoff]
+ * @property {string|null} [handoffAt]
  * @property {string|null} [perfil]
  */
+
+const DEFAULT_HANDOFF_TTL_MS = 24 * 60 * 60 * 1000;
+
+/**
+ * ⏳ ¿El handoff está activo o ya expiró (> 24h)?
+ * @param {ContactRecord} [record]
+ * @param {number} [nowMs]
+ * @param {number} [ttlMs]
+ * @returns {boolean}
+ */
+function isHandoffActive(record, nowMs = Date.now(), ttlMs = (Number(process.env.SDK_HANDOFF_TTL_MS) || DEFAULT_HANDOFF_TTL_MS)) {
+    if (!record || record.estado !== 'handoff') return false;
+    if (!record.handoffAt) return true; // sin fecha registrada, activo por compatibilidad
+    const at = Date.parse(record.handoffAt);
+    if (isNaN(at)) return true;
+    return (nowMs - at) < ttlMs;
+}
 
 // Almacén en memoria de contactos de la sesión (RAM de Baileys)
 const contactStore = new Map();
@@ -181,6 +199,13 @@ function cleanContactsDB() {
         //    de string (rompe la API del brain con 422 de validación)
         if (item.bio && typeof item.bio !== 'string') {
             item.bio = null;
+            updated = true;
+        }
+
+        // E) Handoff expirado (>24h): resetear a estado neutro automáticamente
+        if (item.estado === 'handoff' && !isHandoffActive(item)) {
+            item.estado = 'neutro';
+            item.handoffAt = null;
             updated = true;
         }
     });
@@ -372,6 +397,7 @@ module.exports = {
     findExistingKey,
     findKeyByDigits,
     cleanContactsDB,
+    isHandoffActive,
     upsertContactMetadata,
     bulkUpsertContactsMetadata
 };

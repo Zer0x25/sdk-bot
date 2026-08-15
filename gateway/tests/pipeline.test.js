@@ -52,6 +52,21 @@ test('pipeline: estado del contacto (ignorado/permitido/handoff)', () => {
     assert.deepStrictEqual(decideMessageFlow(ctx({ contactRecord: { estado: 'handoff' } })), { type: 'ignore', reason: 'handoff_activo' });
 });
 
+test('pipeline: handoff expira a las 24 horas y vuelve a neutro', () => {
+    state.GLOBAL_MODE = 'allowed_all';
+    const now = Date.now();
+    // Handoff reciente (hace 1 hora) -> sigue activo
+    const recentHandoff = { estado: 'handoff', handoffAt: new Date(now - 3600 * 1000).toISOString() };
+    assert.deepStrictEqual(decideMessageFlow(ctx({ contactRecord: recentHandoff, nowMs: now })), { type: 'ignore', reason: 'handoff_activo' });
+
+    // Handoff viejo (hace 25 horas) -> expiró, vuelve a neutro y responde (en allowed_all)
+    const oldHandoff = { estado: 'handoff', handoffAt: new Date(now - 25 * 3600 * 1000).toISOString() };
+    const res = decideMessageFlow(ctx({ contactRecord: oldHandoff, nowMs: now }));
+    assert.strictEqual(res.type, 'respond');
+    assert.strictEqual(oldHandoff.estado, 'neutro');
+    assert.strictEqual(oldHandoff.handoffAt, null);
+});
+
 test('pipeline: modo global estricto solo deja pasar permitidos', () => {
     state.GLOBAL_MODE = 'ignored_all';
     assert.deepStrictEqual(decideMessageFlow(ctx()), { type: 'ignore', reason: 'modo_global_estricto' });

@@ -1,6 +1,7 @@
 // @ts-check
 const { state } = require('../config');
 const { getSettingsDB, getContactsDB } = require('./db');
+const { isHandoffActive } = require('./contactsRepository');
 const { cat } = require('./logger');
 const log = cat('DEBOUNCE');
 
@@ -127,9 +128,11 @@ function extractTextMessage(msg) {
  * @param {import('./contactsRepository.js').ContactRecord} ctx.contactRecord - registro actual del contacto (upsert previo)
  * @param {boolean} ctx.isSelf - true si es el self-chat del admin
  * @param {boolean} ctx.isFromMe - true si el mensaje lo envió el propio admin
+ * @param {number} [ctx.nowMs]
+ * @param {number} [ctx.handoffTtlMs]
  * @returns {object} descriptor de acción (ver cabecera del módulo)
  */
-function decideMessageFlow({ textMessage, metadata, contactRecord, isSelf, isFromMe }) {
+function decideMessageFlow({ textMessage, metadata, contactRecord, isSelf, isFromMe, nowMs, handoffTtlMs }) {
     // -------------------------------------------------------------
     // SCENARIO 1: MENSAJES EN TU CHAT PROPIO (Self-Chat / Mensaje a ti mismo)
     // -------------------------------------------------------------
@@ -163,7 +166,20 @@ function decideMessageFlow({ textMessage, metadata, contactRecord, isSelf, isFro
 
     // 🛡️ REGLAS DE ESTADOS EN BASE DE DATOS (ContactsDB)
     const settings = getSettingsDB();
-    const estado = contactRecord.estado || 'neutro';
+    let estado = (contactRecord && contactRecord.estado) || 'neutro';
+
+    // ⏳ Verificación de expiración de Handoff (24 horas -> vuelve a neutro)
+    if (estado === 'handoff') {
+        if (isHandoffActive(contactRecord, nowMs, handoffTtlMs)) {
+            return { type: 'ignore', reason: 'handoff_activo' };
+        }
+        // Handoff expirado: transiciona a neutro
+        estado = 'neutro';
+        if (contactRecord) {
+            contactRecord.estado = 'neutro';
+            contactRecord.handoffAt = null;
+        }
+    }
 
     if (estado === 'ignorado') {
         return { type: 'ignore', reason: 'estado_ignorado' };
@@ -188,17 +204,13 @@ function decideMessageFlow({ textMessage, metadata, contactRecord, isSelf, isFro
             `• *Cliente:* ${displayName}\n` +
             `• *Teléfono:* \`${metadata.phoneNumber || 'N/A'}\`\n` +
             `• *LID:* \`${metadata.lid || 'N/A'}\`\n` +
-            `• *Mensaje:* "${textMessage}"\n\n` +
-            `📋 *Comando para reanudar IA (Toca para copiar):*\n` +
+            `• *Mensaje:* "${textMessage}"\n` +
+            `• *Duración:* 24 horas (volverá a neutro automáticamente)\n\n` +
+            `📋 *Comando para reanudar IA antes (Toca para copiar):*\n` +
             `\`\`\`/auto ${targetId}\`\`\`\n\n` +
             `💡 *Tip:* También puedes responder (citar) a esta alerta escribiendo solo \`/auto\` o \`/a\`.`;
 
         return { type: 'handoff', targetId, displayName, adminNotify };
-    }
-
-    // B) Verificar si el cliente ya tiene Handoff Activo (pausado individualmente)
-    if (estado === 'handoff') {
-        return { type: 'ignore', reason: 'handoff_activo' };
     }
 
     // 🧠 CLIENTE NORMAL: entra al de-bounce para responder con IA
@@ -229,5 +241,6 @@ module.exports = {
     getCandidateIdsForPresence,
     extractTextMessage,
     decideMessageFlow,
-    decideReconnect
+    decideReconnect,
+    isHandoffActive
 };

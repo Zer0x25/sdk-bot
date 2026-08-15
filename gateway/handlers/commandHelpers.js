@@ -49,7 +49,7 @@ function isValidTargetId(targetId) {
  */
 const COMMAND_USAGE = {
     ia:      '/ia <numero_o_lid> — o responde (cita) un mensaje del cliente.\n\n*Ejemplo copiable:*\n```/a +56 9 4252 3669```',
-    humano:  '/humano <numero_o_lid> — o responde (cita) un mensaje del cliente.\n\n*Ejemplo copiable:*\n```/h +56 9 4252 3669```',
+    humano:  '/humano <numero_o_lid> — pausa la IA por 24h (vuelve a neutro automáticamente) o responde (cita) un mensaje del cliente.\n\n*Ejemplo copiable:*\n```/h +56 9 4252 3669```',
     limpiar: '/limpiar <numero_o_lid> — o responde (cita) un mensaje del cliente.\n\n*Ejemplo copiable:*\n```/c +56 9 4252 3669```',
     ignorar: '/ignorar <num|agenda|*> —\n\n*Ejemplos copiables:*\n```/i +56 9 4252 3669```\n```/i agenda```\n```/i *```',
     permitir: '/permitir <numero_o_lid|*> —\n\n*Ejemplos copiables:*\n```/p +56 9 4252 3669```\n```/p *```',

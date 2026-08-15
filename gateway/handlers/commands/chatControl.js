@@ -27,7 +27,7 @@ function runHumano({ queryParam }) {
     }
     const res = setNumberState(targetId, 'handoff');
     if (res.success) {
-        return `🤝 *Atención Humana activada para:*\n\`${res.target}\`.\nLa IA permanecerá en silencio para este chat.`;
+        return `🤝 *Atención Humana activada para:*\n\`${res.target}\`.\nLa IA permanecerá en silencio durante 24 horas (volverá a estado neutro automáticamente, o reactiva antes con \`/ia ${res.target}\`).`;
     }
     return syntaxError('humano', `No pude activar atención humana para *${sanitizeMarkdown(queryParam)}*.`);
 }

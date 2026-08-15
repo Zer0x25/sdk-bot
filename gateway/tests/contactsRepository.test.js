@@ -116,3 +116,18 @@ test('bulkUpsertContactsMetadata: procesa en lote y devuelve conteo', () => {
     assert.strictEqual(n, 2);
     assert.strictEqual(Object.keys(getContactsDB()).length, 2);
 });
+
+test('cleanContactsDB: handoff expirado (>24h) vuelve a estado neutro', () => {
+    const db = getContactsDB();
+    const now = Date.now();
+    // Handoff reciente (hace 2 horas) -> sigue en handoff
+    db['56911112222'] = { phone: '56911112222', estado: 'handoff', handoffAt: new Date(now - 2 * 3600 * 1000).toISOString() };
+    // Handoff expirado (hace 26 horas) -> vuelve a neutro
+    db['56933334444'] = { phone: '56933334444', estado: 'handoff', handoffAt: new Date(now - 26 * 3600 * 1000).toISOString() };
+
+    cleanContactsDB();
+
+    assert.strictEqual(db['56911112222'].estado, 'handoff');
+    assert.strictEqual(db['56933334444'].estado, 'neutro');
+    assert.strictEqual(db['56933334444'].handoffAt, null);
+});

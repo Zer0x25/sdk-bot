@@ -39,17 +39,21 @@ function setNumberState(targetId, stateType) {
             'handoff': 'handoff',
             'neutral': 'neutro'
         };
-        db[existingKey].estado = stateMap[stateType] || 'neutro';
+        const nuevoEstado = stateMap[stateType] || 'neutro';
+        db[existingKey].estado = nuevoEstado;
+        db[existingKey].handoffAt = nuevoEstado === 'handoff' ? new Date().toISOString() : null;
         saveContactsDB(db);
         return { success: true, target: db[existingKey].phone || existingKey, state: db[existingKey].estado };
     }
 
     // Si el contacto no existe, creamos uno básico para guardar el estado
     const newKey = cleanTarget;
+    const nuevoEstado = stateType === 'allowed' ? 'permitido' : (stateType === 'ignored' ? 'ignorado' : (stateType === 'handoff' ? 'handoff' : 'neutro'));
     db[newKey] = {
         phone: newKey,
         lid: null,
-        estado: stateType === 'allowed' ? 'permitido' : (stateType === 'ignored' ? 'ignorado' : (stateType === 'handoff' ? 'handoff' : 'neutro')),
+        estado: nuevoEstado,
+        handoffAt: nuevoEstado === 'handoff' ? new Date().toISOString() : null,
         isContact: false,
         firstSeen: new Date().toISOString(),
         lastSeen: new Date().toISOString()
