@@ -123,7 +123,11 @@ function sessionCookie(data, secure) {
     const payload = Buffer.from(JSON.stringify(data)).toString('base64url');
     const signed = sign(payload);
     const exp = new Date(data.exp).toUTCString();
-    return `${COOKIE_NAME}=${encodeURIComponent(signed)}; ${cookieFlags(secure)} Expires=${exp}`;
+    // Max-Age además de Expires: algunos navegadores (modo estricto/incógnito)
+    // ignoran Expires sin Max-Age y tratan la cookie como sesión de navegador
+    // (se borra al cerrar). Max-Age la hace persistente el TTL real.
+    const maxAge = Math.floor((data.exp - Date.now()) / 1000);
+    return `${COOKIE_NAME}=${encodeURIComponent(signed)}; ${cookieFlags(secure)} Expires=${exp}; Max-Age=${maxAge}`;
 }
 function clearCookie(secure) {
     return `${COOKIE_NAME}=; ${cookieFlags(secure)} Max-Age=0`;
