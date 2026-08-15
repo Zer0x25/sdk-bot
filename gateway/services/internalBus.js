@@ -209,7 +209,9 @@ function wsReadyState(sock) {
 }
 
 function hasActiveSession() {
-    return wsReadyState(activeSock) === 1;
+    // El WebSocket puede estar abierto durante el pairing sin que exista una
+    // sesión autenticada. `sock.user` solo aparece después de vincular.
+    return !!(activeSock && activeSock.user && (activeSock.user.id || activeSock.user.lid));
 }
 
 function qrPayload() {

@@ -31,6 +31,13 @@ after(async () => {
     t.restore();
 });
 
+test('WebSocket abierto durante pairing no se marca como sesión vinculada', () => {
+    setSock({ ws: { readyState: 1 } });
+    assert.strictEqual(qrPayload().session, false);
+
+    setSock({ ws: { readyState: 1 }, user: { id: '56942523669@s.whatsapp.net' } });
+    assert.strictEqual(qrPayload().session, true);
+});
 test('QR de un socket reemplazado no puede aparecer en el estado del panel', async () => {
     const oldSock = {};
     const newSock = {};
