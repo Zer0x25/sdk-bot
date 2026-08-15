@@ -33,7 +33,9 @@ if (fs.existsSync(DOTENV)) {
     }
 }
 
-const WEB_DIR = path.join(__dirname, '..', 'admin-web');
+// Si se define, el redirect_uri de OAuth SIEMPRE usa esta URL canónica
+// (evita que entrar por IP/Tailscale genere un redirect_uri no autorizado en Google).
+const PUBLIC_URL = process.env.PANEL_PUBLIC_URL || '';
 const INTERNAL = process.env.GATEWAY_INTERNAL_URL || 'http://127.0.0.1:5400';
 const PORT = Number(process.env.ADMIN_WEB_PORT || 5201);
 const HOST = process.env.ADMIN_WEB_HOST || '0.0.0.0';
@@ -95,6 +97,10 @@ function parseSession(req) {
     }
 }
 function externalUrl(req, pathname) {
+    if (PUBLIC_URL) {
+        const base = PUBLIC_URL.replace(/\/+$/, '');
+        return `${base}${pathname}`;
+    }
     const rawProto = (req.headers['x-forwarded-proto'] || 'https').split(',')[0].trim();
     const proto = rawProto || 'https';
     const host = req.headers.host || `localhost:${PORT}`;
