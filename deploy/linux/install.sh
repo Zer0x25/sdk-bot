@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
-# Instalador de los services de SDK-Bot en systemd --user (estándar homelab).
+# Alternativa legacy: instala los services de SDK-Bot en systemd --user.
+# La producción documentada usa deploy/docker/compose.yml.
 # No requiere sudo: todo el homelab corre en systemd --user + linger de zrx1.
 # Uso: bash install.sh
 set -euo pipefail

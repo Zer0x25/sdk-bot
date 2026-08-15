@@ -1,0 +1,113 @@
+services:
+  brain:
+    build:
+      context: ../..
+      dockerfile: deploy/docker/brain.Dockerfile
+    env_file:
+      - ../../brain/.env
+    environment:
+      NODE_ENV: production
+      BRAIN_HOST: 0.0.0.0
+      BRAIN_PORT: 5100
+      BRAIN_MEMORY_DB: /var/lib/sdk-bot/memory.db
+    volumes:
+      - sdk_bot_state:/var/lib/sdk-bot
+      - sdk_bot_brain_logs:/app/brain/logs
+      - ../../brain/profiles:/app/brain/profiles
+    restart: unless-stopped
+    healthcheck:
+      test:
+        - CMD
+        - python
+        - -c
+        - >-
+          import urllib.request;
+          urllib.request.urlopen('http://127.0.0.1:5100/health', timeout=3)
+      interval: 10s
+      timeout: 5s
+      retries: 6
+      start_period: 10s
+
+  gateway:
+    build:
+      context: ../..
+      dockerfile: deploy/docker/gateway.Dockerfile
+    environment:
+      NODE_ENV: production
+      BRAIN_API_BASE: http://brain:5100
+      INTERNAL_BUS_HOST: 0.0.0.0
+      INTERNAL_BUS_PORT: 5400
+      STATUS_HOST: 127.0.0.1
+      STATUS_PORT: 5300
+      SDK_ADMIN_WEB_ENABLED: 0
+      SDK_AUTH_DIR: /var/lib/sdk-bot/auth_info_baileys
+      SDK_CONTACTS_DB_PATH: /var/lib/sdk-bot/contacts_db.json
+      SDK_SETTINGS_DB_PATH: /var/lib/sdk-bot/settings_db.json
+      SDK_BROADCAST_DB_PATH: /var/lib/sdk-bot/broadcast_db.json
+      SDK_MESSAGE_QUEUE_PATH: /var/lib/sdk-bot/queue/pending_messages.jsonl
+      SDK_GATEWAY_LOCK_PATH: /var/lib/sdk-bot/.gateway.lock
+      BRAIN_MEMORY_DB: /var/lib/sdk-bot/memory.db
+      SDK_ADMIN_WEB_LOG_GATEWAY: /app/gateway/logs
+      SDK_ADMIN_WEB_LOG_BRAIN: /app/brain/logs
+    volumes:
+      - sdk_bot_state:/var/lib/sdk-bot
+      - sdk_bot_gateway_logs:/app/gateway/logs
+      - sdk_bot_brain_logs:/app/brain/logs
+      - ../../brain/.env:/app/brain/.env:ro
+    depends_on:
+      brain:
+        condition: service_healthy
+    restart: unless-stopped
+    healthcheck:
+      test:
+        - CMD
+        - node
+        - -e
+        - >-
+          fetch('http://127.0.0.1:5300/health')
+          .then(r => process.exit(r.ok ? 0 : 1))
+          .catch(() => process.exit(1))
+      interval: 10s
+      timeout: 5s
+      retries: 6
+      start_period: 10s
+
+  panel:
+    build:
+      context: ../..
+      dockerfile: deploy/docker/gateway.Dockerfile
+    environment:
+      NODE_ENV: production
+      ADMIN_WEB_PORT: 5201
+      ADMIN_WEB_HOST: 0.0.0.0
+      GATEWAY_INTERNAL_URL: http://gateway:5400
+    volumes:
+      - sdk_bot_gateway_logs:/app/gateway/logs
+      - sdk_bot_brain_logs:/app/brain/logs
+    depends_on:
+      gateway:
+        condition: service_healthy
+    ports:
+      - "127.0.0.1:5201:5201"
+    restart: unless-stopped
+    healthcheck:
+      test:
+        - CMD
+        - node
+        - -e
+        - >-
+          fetch('http://127.0.0.1:5201/')
+          .then(r => process.exit(r.ok ? 0 : 1))
+          .catch(() => process.exit(1))
+      interval: 10s
+      timeout: 5s
+      retries: 6
+      start_period: 5s
+
+volumes:
+  sdk_bot_state:
+    name: sdk-bot-production-state
+  sdk_bot_gateway_logs:
+    name: sdk-bot-production-gateway-logs
+  sdk_bot_brain_logs:
+    name: sdk-bot-production-brain-logs

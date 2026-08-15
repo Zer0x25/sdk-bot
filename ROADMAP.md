@@ -28,10 +28,10 @@
 - **S1. Brain API sin autenticación** y escuchando en `0.0.0.0:8000` → cualquiera en la red puede consumir IA (costo), leer/borrar memoria y subir perfiles. Debe bindear a `127.0.0.1` o exigir API key.
 - **S2. Sin rate-limiting** en el brain ni en el gateway.
 
-### Docs desactualizados (importante, causa confusiones)
-- **D1.** README y PLAN-ARQUITECTURA dicen cascada **OpenRouter → Groq → Gemini**; el código real es **Groq → OpenRouter → Gemini** (`providers.py`). AGENTS.md ya lo nota.
-- **D2.** PLAN dice modelos `openai/gpt-oss-20b:free` y `gemini-1.5-flash`; el código usa `openrouter/free` y `gemini-flash-lite-latest`.
-- **D3.** README lista solo perfiles `default/lucia/mateo`; existen también `ventas/cobranzas/recepcion`.
+### Docs desactualizados
+- **D1 [resuelto].** README y PLAN-ARQUITECTURA ya reflejan la cascada real **Groq → OpenRouter → Gemini** (`providers.py`).
+- **D2 [resuelto].** La documentación ya no contradice los modelos reales `openrouter/free` y `gemini-flash-lite-latest`.
+- **D3 [resuelto].** README y la estructura del proyecto reflejan los perfiles versionados disponibles.
 
 ---
 
@@ -62,7 +62,7 @@ Objetivo: que el sistema sobreviva solo y sea debuggeable.
 - [x] **B6 / R7** — Pool de concurrencia global (`services/aiQueue.js`): máx 3 `processAIChat` simultáneos con cola FIFO. Verificado con 10 tareas (máx 3 activas, sin cruces).
 - [x] **R6** — Logger rotado por tamaño (5MB, 3 backups): gateway `logs/gateway.log` (pino + pino-roll, categorías `cat: AI/DEBOUNCE/PRESENCIA/COMANDO/ERROR/CORE/INSTANCIA/STORAGE`), brain `logs/brain.log` (`logging_setup.py`, RotatingFileHandler). `reset-session.js` sigue con console (interactivo).
 - [x] **Reconnect robusto** — En `index.js`: `sock.end()` del socket viejo antes de recrear, guard `currentSocket !== sock` para ignorar eventos de sockets reemplazados, y backoff exponencial 2s→5s→15s→60s (topado) con reset en `open`.
-- [x] **Watchdog** — Plantillas systemd en `deploy/` (`sdk-bot-brain.service`, `sdk-bot-gateway.service` con `Requires` del brain + `install.sh`). Pendiente de instalar en el VPS.
+- [x] **Watchdog** — Producción Linux con Docker Compose en `deploy/docker/` (brain, gateway y panel con healthchecks, reinicio y volúmenes persistentes). Las plantillas systemd quedan como alternativa legacy.
 - [x] **R1 (parcial)** — Índices RAM en `storageService.js`: `phoneIndex`, `lidIndex`, `digitsIndex` (Mapas reconstruidos en `saveContactsDB`/`loadDataOnStartup`); `findExistingKey()` O(1) en upserts y `extractUserMetadata`, índice de dígitos + fallback scan en comandos admin.
 - [x] **Retry 1x en brain** — `requestBrain()`: reintento solo en errores transitorios (red/timeout/5xx/proveedor); los 4xx (422 validación) NO se reintentan (son bugs).
 - [ ] **Verificación pendiente en vivo:** matar el gateway a mitad de conversación y ver reconexión con backoff (lógica verificada por código; requiere desconexión real de WhatsApp).

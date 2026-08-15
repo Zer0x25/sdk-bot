@@ -1,6 +1,6 @@
 # 🤖 SDK-Bot
 
-**Plataforma Multi-Bot de WhatsApp 100% Custom, Smart Sync & Automated Handoff** — Gateway de mensajería modular en Node.js + Cerebro IA en Python FastAPI con router multi-proveedor (OpenRouter → Groq → Gemini).
+**Plataforma Multi-Bot de WhatsApp 100% Custom, Smart Sync & Automated Handoff** — Gateway de mensajería modular en Node.js + Cerebro IA en Python FastAPI con router multi-proveedor (Groq → OpenRouter → Gemini).
 
 ---
 
@@ -80,7 +80,8 @@ SDK-Bot/
 │   ├── .env                      # API Keys (gitignored)
 │   └── requirements.txt          # Dependencias Python
 ├── deploy/                       # Scripts y configuraciones de despliegue por plataforma
-│   ├── linux/                    # Servicios systemd --user e instalador Linux (dev.sh, install.sh)
+│   ├── docker/                   # Producción Linux: Docker Compose (brain, gateway, panel)
+│   ├── linux/                    # Lanzamiento manual dev y alternativa systemd legacy
 │   ├── termux/                   # Scripts y servicios runit para Android (Termux)
 │   └── windows/                  # Scripts batch para Windows (startBrain.bat, startGateway.bat)
 ├── PLAN-ARQUITECTURA.md          # Documentación técnica completa
@@ -107,8 +108,8 @@ python -m venv venv && venv\Scripts\pip install -r requirements.txt
 ### 1. Iniciar Cerebro IA (Python FastAPI):
 ```bash
 cd brain
-# Linux / macOS (estándar dev: puerto 5100, bind 0.0.0.0)
-export BRAIN_PORT=5100 BRAIN_HOST=0.0.0.0
+# Linux / macOS (desarrollo manual: puerto 5100, bind 0.0.0.0)
+export NODE_ENV=development BRAIN_PORT=5100 BRAIN_HOST=0.0.0.0
 venv/bin/python main.py
 # Windows
 venv\Scripts\python.exe main.py
@@ -118,6 +119,7 @@ venv\Scripts\python.exe main.py
 ### 2. Iniciar Gateway WhatsApp (Node.js):
 ```bash
 cd gateway
+export NODE_ENV=development
 npm start
 # o: node index.js
 # Si ya está corriendo: `npm start -- --restart` lo reinicia
@@ -127,27 +129,33 @@ npm start
 ### 3. Iniciar Panel Web (Opcional, proceso independiente):
 ```bash
 cd gateway/panel
+export NODE_ENV=development
 node index.js
 # Acceso en el navegador: http://localhost:5201 (o tu IP / Tailscale en el puerto 5201)
 ```
 
-### 4. Producción — despliegue por plataforma
+### 4. Producción — Docker Compose en Linux
 
-El código del bot es **idéntico en las 3 plataformas**; solo cambia el supervisor que lo mantiene vivo. Todos los despliegues viven en `deploy/`:
+El código del bot es el mismo en desarrollo y producción. En Linux, producción usa Docker Compose para supervisar los tres procesos:
 
 | Plataforma | Supervisor | Cómo se despliega |
 |---|---|---|
-| 🐧 **Linux (servidor)** | systemd | `bash deploy/linux/install.sh` → `systemctl --user status sdk-bot-{brain,gateway,panel}` |
+| 🐧 **Linux (servidor)** | Docker Compose | `docker compose -f deploy/docker/compose.yml up -d` |
 | 🤖 **Android (Termux)** | runit | `bash deploy/termux/setup-termux.sh` (o el manual en `deploy/termux/README.md`) |
 | 🪟 **Windows (PC)** | Programador de tareas | `deploy/windows/startBrain.bat` + `startGateway.bat` (ver `deploy/windows/README.md`) |
 
-**Linux — producción en segundo plano (systemd --user, sin sudo):**
+**Linux — producción en segundo plano:**
 ```bash
-cd ~/playground/sdk-bot
-bash deploy/linux/install.sh            # instala, habilita y arranca sdk-bot-brain + sdk-bot-gateway + sdk-bot-panel
-systemctl --user status sdk-bot-brain sdk-bot-gateway sdk-bot-panel   # todos: active (running)
-journalctl --user -u sdk-bot-gateway -f             # logs en vivo
+test -f brain/.env || { echo 'Falta brain/.env'; exit 1; }
+docker compose -f deploy/docker/compose.yml build
+docker compose -f deploy/docker/compose.yml up -d
+docker compose -f deploy/docker/compose.yml ps
+docker compose -f deploy/docker/compose.yml logs -f gateway
 ```
+
+El panel queda en `http://127.0.0.1:5201`. El estado de WhatsApp, las DB, la
+memoria y las colas viven en volúmenes Docker; `docker compose down -v` los
+borra y es un reset destructivo. El detalle está en `deploy/docker/README.md`.
 
 **Termux — todo en un comando:**
 ```bash
@@ -165,20 +173,23 @@ deploy\windows\startGateway.bat  # terminal 2
 cd gateway\panel && node index.js # terminal 3
 ```
 
-### 5. Desarrollo en Linux — alternar entre manual y systemd:
+### 5. Desarrollo en Linux — lanzamiento manual:
 
-Nunca corras manual y systemd del mismo componente a la vez (el lock de instancia única bloquea al segundo que arranque).
+El desarrollo no usa systemd ni Docker Compose. Abre terminales separadas y
+arranca manualmente; siempre inicia el brain antes del gateway.
 
 ```bash
 cd ~/playground/sdk-bot
-bash deploy/linux/dev.sh manual brain      # apaga systemd --user + lanza brain manual (Ctrl+C al terminar)
-bash deploy/linux/dev.sh manual gateway    # idem para el gateway
-bash deploy/linux/dev.sh manual panel      # idem para el panel web
-bash deploy/linux/dev.sh manual ambos      # imprime los comandos para las terminales
-bash deploy/linux/dev.sh reset             # mata lo manual + relanza todo en systemd
-bash deploy/linux/dev.sh reset brain       # solo el brain
-bash deploy/linux/dev.sh status            # estado de services y locks
+bash deploy/linux/dev.sh manual todos      # imprime los comandos para 3 terminales
+# En terminales separadas:
+bash deploy/linux/dev.sh manual brain
+bash deploy/linux/dev.sh manual gateway
+bash deploy/linux/dev.sh manual panel
 ```
+
+`NODE_ENV=development` identifica estos lanzamientos, pero la aplicación no
+usa esa variable como interruptor de comportamiento. No ejecutes a la vez una
+instancia manual y los contenedores de producción sobre la misma sesión.
 
 > 📋 **Logs:** rotación automática (5MB × 3) en `gateway/logs/gateway.log` y `brain/logs/brain.log` (en Termux: `~/logs/sdk-gateway.log`).
 
@@ -223,4 +234,3 @@ Envía estos comandos desde tu propio chat de WhatsApp ("Mensaje a ti mismo"). *
 ## 📄 Licencia
 
 Proyecto privado. Todos los derechos reservados.
-

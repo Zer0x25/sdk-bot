@@ -1,4 +1,4 @@
-# systemd USER-unit del Brain (FastAPI) — estándar homelab (systemd --user)
+# systemd USER-unit legacy del Brain (FastAPI). La producción documentada usa Docker Compose.
 # Instalación:
 #   cp sdk-bot-brain.service ~/.config/systemd/user/
 #   systemctl --user daemon-reload

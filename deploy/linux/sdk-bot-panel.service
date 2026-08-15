@@ -1,4 +1,5 @@
-# systemd USER-unit del Panel Web (3er proceso, independiente del gateway)
+# systemd USER-unit legacy del Panel Web (3er proceso, independiente del gateway).
+# La producción documentada usa Docker Compose.
 # Estándar homelab (systemd --user, sin sudo).
 # Instalación:
 #   cp sdk-bot-panel.service ~/.config/systemd/user/

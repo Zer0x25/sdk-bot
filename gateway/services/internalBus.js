@@ -318,7 +318,8 @@ function setPairingCodeRequester(cb) {
 /**
  * Enciende el brain (proceso Python) si está caído. No bloquea: el spawn
  * corre desacoplado y el healthcheck del gateway lo detectará en ~10s.
- * Usa las mismas env que el systemd (BRAIN_PORT=5100, bind 0.0.0.0).
+ * Usa las mismas env que el desarrollo manual y el despliegue legacy
+ * (BRAIN_PORT=5100, bind 0.0.0.0).
  * @returns {{success: boolean, message: string}}
  */
 function startBrainProcess() {

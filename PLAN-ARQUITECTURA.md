@@ -56,7 +56,7 @@ SDK-Bot/
 │   ├── profiles/                 # Perfiles SOUL editables en Markdown (default, lucia, mateo, cobranzas, recepcion)
 │   ├── .env                      # API Keys (gitignored)
 │   └── requirements.txt          # Dependencias Python
-├── deploy/                       # Despliegue por plataforma (Linux systemd, Termux runit, Windows batch)
+├── deploy/                       # Despliegue por plataforma (Docker Linux, Termux runit, Windows batch)
 ├── PLAN-ARQUITECTURA.md          # Documentación técnica completa
 └── ROADMAP.md                    # Hoja de ruta de fases (guía de sesiones)
 ```

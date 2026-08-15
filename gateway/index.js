@@ -18,6 +18,8 @@ const messageSyncQueue = require('./services/messageSyncQueue'); // sync de hist
 const { isWiping } = require('./services/factoryReset');
 const { cat } = require('./services/logger');
 
+const AUTH_DIR = process.env.SDK_AUTH_DIR || path.join(__dirname, 'auth_info_baileys');
+
 // Opción C: store RAM de mensajes de Baileys (precarga web-like desde el hilo real).
 chatStore.configure({
     maxPerChat: Number(process.env.GATEWAY_PRELOAD_MAX_PER_CHAT) || 200,
@@ -126,7 +128,7 @@ function getReconnectDelay() {
 // a WhatsApp (riesgo de baneo). En ese estado, esperar acción del admin
 // (escanear QR, pairing o reset desde el panel/terminal).
 function hasSavedSession() {
-    return fs.existsSync(path.join(__dirname, 'auth_info_baileys', 'creds.json'));
+    return fs.existsSync(path.join(AUTH_DIR, 'creds.json'));
 }
 
 function scheduleReconnect() {
@@ -148,7 +150,7 @@ async function connectToWhatsApp () {
         try { old.end(new Error('Reconnect por nueva conexión')); } catch (e) { /* ya cerrado */ }
     }
 
-    const { state: authState, saveCreds } = await useMultiFileAuthState('auth_info_baileys');
+    const { state: authState, saveCreds } = await useMultiFileAuthState(AUTH_DIR);
 
     const sock = makeWASocket({
         printQRInTerminal: false,
@@ -332,7 +334,7 @@ ensureSingleInstance().then(connectToWhatsApp);
 // 📊 F4-P3: servidor de métricas local (GET /status y /health en 127.0.0.1)
 startStatusServer();
 
-// 💓 Healthcheck activo del brain para el dashboard (Running/Stopped/Stand-by)
+// 💓 Healthcheck activo del brain para el dashboard (Running/Stopped/Idle)
 require('./services/brainService').startBrainHealthWatch();
 
 // 🔌 Bus interno SIEMPRE arriba: el panel web (3er proceso, gateway/panel/)
