@@ -51,7 +51,10 @@ function startTestServer() {
     });
 }
 
-before(() => startTestServer());
+before(() => {
+    setQrTtlForTests(60000);
+    return startTestServer();
+});
 after(async () => {
     server.close();
     t.restore();

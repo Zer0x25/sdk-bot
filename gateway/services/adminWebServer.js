@@ -348,10 +348,10 @@ let lastQrDataUrl = null;
 /** @type {Set<http.ServerResponse>} clientes SSE de /api/qr */
 const qrClients = new Set();
 // Ventana de QR: cada intento (arranque sin sesión, pairing manual) vale
-// 1 min. Mientras la ventana está abierta el panel muestra el QR y el
+// 2 min 20 s. Mientras la ventana está abierta el panel muestra el QR y el
 // botón de pairing queda bloqueado; al expirar, se vuelve a "no
 // disponible" y solo un pairing nuevo (SIEMPRE manual) la reabre.
-const QR_TTL_MS = num('GATEWAY_QR_TTL_MS', 60000);
+const QR_TTL_MS = num('GATEWAY_QR_TTL_MS', 140000);
 let qrExpiresAt = 0;
 let qrTtlMs = QR_TTL_MS;
 /** @type {NodeJS.Timeout|null} */
@@ -417,7 +417,7 @@ function broadcastQrState() {
     }
 }
 
-/** Abre (o renueva) la ventana de 1 min del QR; al expirar, cierra y avisa. */
+/** Abre (o renueva) la ventana de 2 min 20 s del QR; al expirar, cierra y avisa. */
 function openQrWindow() {
     if (qrExpiryTimer) clearTimeout(qrExpiryTimer);
     qrWindowOpen = true;
@@ -505,10 +505,10 @@ function streamQr(req, res) {
 }
 
 /**
- * POST /api/pairing — pide el código de enlace de 8 dígitos a WhatsApp
+ * POST /api/pairing — pide el código de enlace de 8 caracteres a WhatsApp
  * (pairing con número de teléfono) o abre la ventana del QR (sin número).
  * Mientras haya un QR vigente NO permite otro: hay que esperar a que
- * expire (1 min) y pedirlo de nuevo, siempre manual. Si el gateway no
+ * expire (2 min 20 s) y pedirlo de nuevo, siempre manual. Si el gateway no
  * tiene socket activo (primera vez, o tras el anti-loop sin sesión), se
  * LANZA el gateway: reinicia el proceso para que conecte y genere el
  * QR/pairing. El front lo muestra como "lanzando gateway…".
@@ -559,7 +559,7 @@ async function requestPairing(phone) {
     // Sin teléfono: abrir la ventana del QR (si el socket ya lo emite,
     // llega por SSE; si no, el usuario usa "Lanzar gateway").
     openQrWindow();
-    return { success: true, message: 'QR generado — escanéalo antes de que expire (1 min). Si el QR no aparece en ~20s, usa "Lanzar gateway".' };
+    return { success: true, message: 'QR generado — escanéalo antes de que expire (2 min 20 s). Si el QR no aparece en ~20s, revisa el estado del gateway.' };
 }
 
 let resetInProgress = false;

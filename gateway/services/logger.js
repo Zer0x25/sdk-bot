@@ -2,16 +2,22 @@
 const pino = require('pino');
 const path = require('path');
 const fs = require('fs');
+const os = require('os');
 
 const LOG_DIR = path.join(__dirname, '..', 'logs');
-fs.mkdirSync(LOG_DIR, { recursive: true });
+const TEST_MODE = process.env.SDK_BOT_TEST === '1' || process.execArgv.includes('--test');
+const TEST_LOG_FILE = process.env.SDK_TEST_LOG_PATH || path.join(os.tmpdir(), `sdk-bot-test-${process.pid}.log`);
+const LOG_FILE = TEST_MODE ? TEST_LOG_FILE : path.join(LOG_DIR, 'gateway.log');
+fs.mkdirSync(path.dirname(LOG_FILE), { recursive: true });
 
-const transport = pino.transport({
-    targets: [
+/** @type {any[]} */
+const targets = TEST_MODE
+    ? [{ target: 'pino/file', options: { destination: LOG_FILE } }]
+    : [
         {
             target: 'pino-roll',
             options: {
-                file: path.join(LOG_DIR, 'gateway.log'),
+                file: LOG_FILE,
                 size: '5m',
                 limit: { count: 3 },
                 mkdir: true
@@ -21,8 +27,9 @@ const transport = pino.transport({
             target: 'pino/file',
             options: { destination: 1 }
         }
-    ]
-});
+    ];
+
+const transport = pino.transport({ targets });
 
 const logger = pino({
     level: process.env.LOG_LEVEL || 'info',

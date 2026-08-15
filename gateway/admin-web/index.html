@@ -151,6 +151,14 @@
   .con .btn.danger { background: #7f1d1d; color: #fca5a5; }
   .con .btn:disabled { opacity: .5; cursor: default; }
   .con .choice { flex: 1; min-width: 150px; padding: 16px 18px; font-size: 14px; }
+  /* El código de Baileys es el resultado principal del método por número. */
+  .pair-code-card { margin-top: 14px; padding: 16px; max-width: 430px; text-align: center;
+    background: #0f172a; border: 1px solid #3b82f6; border-radius: 10px; box-shadow: 0 0 18px rgba(37,99,235,.18); }
+  .pair-code-label { color: #93c5fd; font-size: 11px; font-weight: 700; letter-spacing: .12em; text-transform: uppercase; }
+  .pair-code-value { margin: 8px 0 12px; color: #f8fafc; font: 700 34px/1.1 ui-monospace, SFMono-Regular, Menlo, monospace;
+    letter-spacing: .18em; word-break: break-all; }
+  .pair-code-help { color: #aab3c5; font-size: 12px; }
+  .pair-code-actions { display: flex; align-items: center; justify-content: center; gap: 10px; flex-wrap: wrap; }
   #pairmsg, #pairmsg2, #resetmsg { font-size: 12px; color: #aab3c5; margin: 6px 0 0; }
   #pairmsg.ok, #pairmsg2.ok, #resetmsg.ok { color: #4ade80; }
   #pairmsg.err, #pairmsg2.err, #resetmsg.err { color: #f87171; }
@@ -228,16 +236,24 @@
         <div class="row"><span id="qrst"></span></div>
         <div class="row">
           <button class="btn" id="genqrbtn">🔄 Generar QR</button>
-          <button class="btn ghost" id="launchbtn">🚀 Lanzar gateway</button>
         </div>
-        <div id="pairmsg">El QR generado vale 1 minuto: escanéalo con WhatsApp > Dispositivos vinculados > Vincular dispositivo antes de que expire. Si el gateway está apagado, primero usa "Lanzar gateway".</div>
+        <div id="pairmsg">El QR generado vale 2 min 20 s: escanéalo con WhatsApp > Dispositivos vinculados > Vincular dispositivo antes de que expire.</div>
       </div>
       <div id="pairmode-num" hidden>
         <div class="row">
           <input type="tel" id="pairphone" placeholder="Número con código de país (ej: 56912345678)" autocomplete="off">
-          <button class="btn" id="pairbtn">📲 Obtener código de 8 dígitos</button>
+          <button class="btn" id="pairbtn">📲 Obtener código de 8 caracteres</button>
         </div>
-        <div id="pairmsg2">Recibirás un código de enlace de 8 dígitos en WhatsApp (Dispositivos vinculados > Vincular con número de teléfono). Si el gateway está apagado, se lanza solo con el primer intento.</div>
+        <!-- Baileys puede devolver letras y números; se muestra separado del texto para evitar errores al copiarlo. -->
+        <div class="pair-code-card" id="paircodecard" hidden>
+          <div class="pair-code-label">Código de enlace</div>
+          <div class="pair-code-value" id="paircode">—</div>
+          <div class="pair-code-actions">
+            <span class="pair-code-help">WhatsApp &gt; Dispositivos vinculados &gt; Vincular con número de teléfono</span>
+            <button class="btn ghost" id="copycode" type="button">📋 Copiar código</button>
+          </div>
+        </div>
+        <div id="pairmsg2">Recibirás un código de enlace de 8 caracteres en WhatsApp (Dispositivos vinculados &gt; Vincular con número de teléfono). Si el gateway está apagado, se lanza solo con el primer intento.</div>
       </div>
     </div>
   </div>
@@ -386,7 +402,7 @@ function showPage(name) {
     document.getElementById(pages[p]).hidden = p !== name;
     $('.nav .tab[data-page="' + p + '"]').classList.toggle('on', p === name);
   }
-  if (name === 'pairing') refreshSession();
+  if (name === 'pairing') { refreshSession(); refreshPairingState(); }
   if (name === 'contactos') resetContactList();
   if (name === 'perfiles') loadProfiles();
   if (name === 'logs' && !paused) startLogs();
@@ -613,16 +629,17 @@ cmd.addEventListener('keydown', e => { if (e.key === 'Enter') runCmd(); });
 // ─── Conexión y pairing (F6-P4) ───
 // Dos vistas según el estado de la sesión (el SSE /api/qr trae `session`):
 //   - sin sesión → elegir "Pair con QR" o "Pair con número"; el QR con
-//     ventana de 1 min (countdown, "Generar QR" para reabrirla) y el
-//     flujo por número con código de 8 dígitos.
+//     ventana de 2 min 20 s (timer ascendente, "Generar QR" al expirar) y el
+//     flujo por número con código de 8 caracteres.
 //   - con sesión → solo "Resetear sesión" (desvincular + QR nuevo).
 const noview = $('#noview'), connview = $('#connview'), connnum = $('#connnum');
 const pairChoice = $('#pair-choice'), methodBack = $('#method-back');
 const pairmodeQr = $('#pairmode-qr'), pairmodeNum = $('#pairmode-num');
 const qrbox = $('#qrbox'), qrst = $('#qrst');
 const pairphone = $('#pairphone'), pairbtn = $('#pairbtn'), pairmsg2 = $('#pairmsg2');
+const paircodecard = $('#paircodecard'), paircode = $('#paircode'), copycode = $('#copycode');
 const genqrbtn = $('#genqrbtn'), pairmsg = $('#pairmsg');
-const launchbtn = $('#launchbtn'), resetbtn = $('#resetbtn'), resetmsg = $('#resetmsg');
+const resetbtn = $('#resetbtn'), resetmsg = $('#resetmsg');
 const cleanbtn = $('#cleanbtn'), cleanmsg = $('#cleanmsg');
 
 const QR_BADGE = '<div class="noqr"><svg viewBox="0 0 100 100" width="84" height="84" aria-hidden="true">' +
@@ -631,7 +648,8 @@ const QR_BADGE = '<div class="noqr"><svg viewBox="0 0 100 100" width="84" height
   '</svg></div>';
 
 let qrExpiresAt = 0;
-let qrCountdownTimer = null;
+let qrTimerStartedAt = 0;
+let qrTimer = null;
 let pairingInProgress = false;
 let qrFeedStarted = false;
 let qrEs = null; // EventSource del feed QR (para reabrirlo si se cierra)
@@ -655,21 +673,57 @@ async function refreshSession() {
     setSession(!!(d.runtime && d.runtime.connection === 'open'), (d.bot && d.bot.number) || '');
   } catch (e) { /* reintenta en el próximo tick */ }
 }
-setInterval(() => { if (currentPage === 'pairing') refreshSession(); }, 15000);
+
+// El estado vive en el bus para que cambiar de pestaña o recargar no devuelva
+// al selector inicial mientras hay un QR o un código todavía pendiente.
+async function refreshPairingState() {
+  try {
+    const r = await fetch('/api/pairing/status');
+    const d = await r.json();
+    if (!d.active) return;
+    if (d.method === 'qr') {
+      showPairMode('qr', true);
+      if (d.expiresAt) {
+        qrExpiresAt = d.expiresAt;
+        qrTimerStartedAt = d.issuedAt || Date.now();
+        startQrTimer();
+      }
+      if (d.busy) {
+        pairingInProgress = true;
+        qrbox.innerHTML = '<div class="empty">⏳ <span>Generando código QR…</span></div>';
+        qrst.textContent = 'Conectando con WhatsApp para obtener un QR fresco…';
+      }
+    } else if (d.method === 'code') {
+      showPairMode('num', true);
+      if (d.code) {
+        renderPairingCode(d.code);
+      } else {
+        pairingInProgress = true;
+        pairbtn.disabled = true;
+        pairbtn.textContent = '⏳ Solicitando…';
+        pairmsg2.textContent = 'Solicitando código de enlace…';
+      }
+    }
+  } catch (e) { /* reintenta en el próximo tick */ }
+}
+setInterval(() => {
+  if (currentPage === 'pairing') { refreshSession(); refreshPairingState(); }
+}, 15000);
 
 // Elige el método de vinculación: QR o número de teléfono.
-function showPairMode(mode) {
+function showPairMode(mode, restoring = false) {
   pairChoice.hidden = true;
   methodBack.hidden = false;
   pairmodeQr.hidden = mode !== 'qr';
   pairmodeNum.hidden = mode !== 'num';
+  if (mode !== 'num') paircodecard.hidden = true;
   if (mode === 'qr') {
     // Siempre (re)abrir el feed QR al entrar: así no depende del timing
     // del gateway ni de si ya entramos antes. Si no hay QR vigente, pedir
     // uno fresco para que se vea de inmediato (sin cambiar de pestaña).
     if (!qrFeedStarted) { qrFeedStarted = true; startQrFeed(); }
     else if (qrEs && qrEs.readyState === EventSource.CLOSED) { startQrFeed(); }
-    if (!(qrExpiresAt > Date.now())) {
+    if (!restoring && !(qrExpiresAt > Date.now())) {
       refreshQrFromServer();
     }
   }
@@ -682,24 +736,22 @@ $('#backchoice').addEventListener('click', () => {
   methodBack.hidden = true;
   pairmodeQr.hidden = true;
   pairmodeNum.hidden = true;
-  stopQrCountdown();
+  stopQrTimer();
 });
-
-function stopQrCountdown() {
-  if (qrCountdownTimer) { clearInterval(qrCountdownTimer); qrCountdownTimer = null; }
-}
 
 function renderQrState(d) {
   if (d && d.qr) {
     pairingInProgress = false;
-    stopQrCountdown();
+    stopQrTimer();
     qrExpiresAt = d.expiresAt || 0;
+    qrTimerStartedAt = d.issuedAt || Date.now();
     qrbox.innerHTML = '<img src="' + d.qr + '" alt="Código QR de WhatsApp">';
     qrst.className = 'ok';
     qrst.textContent = 'Escanea el QR con WhatsApp > Dispositivos vinculados > Vincular dispositivo.';
-    startQrCountdown();
+    startQrTimer();
   } else {
-    stopQrCountdown();
+    stopQrTimer();
+    qrTimerStartedAt = 0;
     const exp = !!(d && d.expired);
     if (pairingInProgress) {
       qrbox.innerHTML = '<div class="empty">⏳ <span>Generando código QR…</span></div>';
@@ -710,26 +762,30 @@ function renderQrState(d) {
     } else {
       qrbox.innerHTML = '<div class="empty">' + QR_BADGE + '<span>' + (exp ? 'QR expirado' : 'QR no disponible') + '</span></div>';
       qrst.className = exp ? 'warn' : '';
-      qrst.textContent = exp ? 'El QR expiró (1 min sin escanear). Puedes generar otro.' : 'Genera un QR para vincular (válido 1 min).';
+      qrst.textContent = exp ? 'El QR expiró (2 min 20 s sin escanear). Puedes generar otro.' : 'Genera un QR para vincular (válido 2 min 20 s).';
       genqrbtn.disabled = false;
       genqrbtn.textContent = '🔄 Generar QR';
     }
   }
 }
 
-// Countdown regresivo: bloquea "Generar QR" mientras el QR es válido
-function startQrCountdown() {
-  stopQrCountdown();
-  qrCountdownTimer = setInterval(() => {
+// Timer ascendente: bloquea "Generar QR" mientras el QR siga válido.
+function startQrTimer() {
+  stopQrTimer();
+  qrTimer = setInterval(() => {
     const remain = qrExpiresAt - Date.now();
     if (remain <= 0) {
       renderQrState({ qr: null, expired: true });
       return;
     }
-    const s = Math.ceil(remain / 1000);
+    const elapsed = Math.max(0, Math.floor((Date.now() - qrTimerStartedAt) / 1000));
     genqrbtn.disabled = true;
-    genqrbtn.textContent = '⏳ QR vigente: ' + s + 's';
+    genqrbtn.textContent = '⏱️ QR válido: ' + elapsed + 's';
   }, 500);
+}
+
+function stopQrTimer() {
+  if (qrTimer) { clearInterval(qrTimer); qrTimer = null; }
 }
 
 // Pide un QR fresco al gateway (recrea el socket de pairing). Usado al
@@ -749,12 +805,24 @@ async function refreshQrFromServer() {
       pairmsg.className = 'ok';
       pairmsg.textContent = '✅ ' + (d.message || 'QR regenerado — escanea el que aparezca.');
     } else {
+      if (d.method === 'code') {
+        showPairMode('num', true);
+        if (d.code) renderPairingCode(d.code);
+        return;
+      }
       pairmsg.className = 'err';
       pairmsg.textContent = '⚠️ ' + (d.message || 'No se pudo generar el QR');
-      pairingInProgress = false;
-      if (!(qrExpiresAt > Date.now())) {
-        genqrbtn.disabled = false;
-        genqrbtn.textContent = '🔄 Generar QR';
+      if (!d.busy) {
+        pairingInProgress = false;
+        if (d.expiresAt) {
+          qrTimerStartedAt = d.issuedAt || Date.now();
+          qrExpiresAt = d.expiresAt;
+          startQrTimer();
+        }
+        if (!(qrExpiresAt > Date.now())) {
+          genqrbtn.disabled = false;
+          genqrbtn.textContent = '🔄 Generar QR';
+        }
       }
     }
   } catch (e) {
@@ -800,7 +868,17 @@ function startQrFeed() {
 // Reusa refreshQrFromServer() para no duplicar lógica.
 genqrbtn.addEventListener('click', () => { refreshQrFromServer(); });
 
-// "Pair con número": pide el código de enlace de 8 dígitos a WhatsApp.
+function renderPairingCode(code) {
+  paircode.textContent = String(code).trim();
+  paircodecard.hidden = false;
+  pairmsg2.className = 'ok';
+  pairmsg2.textContent = '✅ Código listo. Ingresa el valor de la ficha en WhatsApp para vincular este dispositivo.';
+  pairingInProgress = false;
+  pairbtn.disabled = false;
+  pairbtn.textContent = '🔄 Solicitar otro código';
+}
+
+// "Pair con número": pide el código de enlace de 8 caracteres a WhatsApp.
 pairbtn.addEventListener('click', async () => {
   const phone = pairphone.value.trim();
   if (pairingInProgress) return;
@@ -812,6 +890,9 @@ pairbtn.addEventListener('click', async () => {
   pairingInProgress = true;
   pairbtn.disabled = true;
   pairbtn.textContent = '⏳ Solicitando…';
+  paircodecard.hidden = true;
+  paircode.textContent = '—';
+  copycode.textContent = '📋 Copiar código';
   pairmsg2.className = '';
   pairmsg2.textContent = 'Solicitando código de enlace…';
   try {
@@ -820,49 +901,68 @@ pairbtn.addEventListener('click', async () => {
     });
     const d = await r.json();
     if (d.success) {
-      pairmsg2.className = 'ok';
-      pairmsg2.textContent = d.code
-        ? '✅ Código de enlace: ' + d.code + ' — ingrésalo en WhatsApp > Dispositivos vinculados > Vincular con número de teléfono.'
-        : '✅ ' + (d.message || 'QR generado — escanéalo antes de que expire.');
+      if (d.code) {
+        // No mezclar el código con el texto: el usuario debe poder leerlo y copiarlo sin confundir caracteres.
+        renderPairingCode(d.code);
+      } else {
+        pairmsg2.className = 'ok';
+        pairmsg2.textContent = '✅ ' + (d.message || 'Pairing iniciado.');
+      }
     } else if (d.needsRestart) {
       // El proceso se reinicia: pairingInProgress se mantiene hasta que el
       // SSE reconecte (onopen lo libera); el QR llega con su countdown.
       pairmsg2.className = 'ok';
       pairmsg2.textContent = '🚀 ' + (d.message || 'Lanzando gateway… el QR aparecerá aquí en unos segundos.');
+    } else if (d.method === 'qr') {
+      // El QR tiene prioridad: al elegir código durante una tanda QR,
+      // restaurar la vista al método que realmente sigue pendiente.
+      showPairMode('qr', true);
+      if (d.expiresAt) {
+        qrTimerStartedAt = d.issuedAt || Date.now();
+        qrExpiresAt = d.expiresAt;
+        startQrTimer();
+      }
+      pairingInProgress = !!d.busy;
     } else {
       pairmsg2.className = 'err';
       pairmsg2.textContent = '⚠️ ' + (d.message || 'No se pudo iniciar el pairing');
       pairingInProgress = false;
       pairbtn.disabled = false;
-      pairbtn.textContent = '📲 Obtener código de 8 dígitos';
+      pairbtn.textContent = '📲 Obtener código de 8 caracteres';
     }
   } catch (e) {
     pairmsg2.className = 'err';
     pairmsg2.textContent = '⚠️ Error: ' + e.message;
     pairingInProgress = false;
     pairbtn.disabled = false;
-    pairbtn.textContent = '📲 Obtener código de 8 dígitos';
+    pairbtn.textContent = '📲 Obtener código de 8 caracteres';
   }
 });
 
-// Lanza (reinicia) el gateway: arranca si estaba apagado/sin conexión
-async function launchGateway() {
-  resetmsg.className = '';
-  resetmsg.textContent = 'Lanzando gateway… la página se reconectará sola.';
-  launchbtn.disabled = true;
+// Copia el código exacto; el fallback permite usar el panel dev por HTTP.
+copycode.addEventListener('click', async () => {
+  const value = paircode.textContent.trim();
+  if (!value || value === '—') return;
   try {
-    const r = await fetch('/api/restart', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ confirm: true }) });
-    const d = await r.json();
-    resetmsg.className = d.success ? 'ok' : 'err';
-    resetmsg.textContent = (d.success ? '✅ ' : '⚠️ ') + (d.message || '');
+    if (navigator.clipboard && navigator.clipboard.writeText) {
+      await navigator.clipboard.writeText(value);
+    } else {
+      const area = document.createElement('textarea');
+      area.value = value;
+      area.style.position = 'fixed';
+      area.style.opacity = '0';
+      document.body.appendChild(area);
+      area.select();
+      if (!document.execCommand('copy')) throw new Error('portapapeles no disponible');
+      area.remove();
+    }
+    copycode.textContent = '✅ Copiado';
+    setTimeout(() => { copycode.textContent = '📋 Copiar código'; }, 1600);
   } catch (e) {
-    resetmsg.className = 'err';
-    resetmsg.textContent = '⚠️ Error: ' + e.message;
-  } finally {
-    launchbtn.disabled = false;
+    pairmsg2.className = 'err';
+    pairmsg2.textContent = '⚠️ No se pudo copiar automáticamente; selecciona el código manualmente.';
   }
-}
-launchbtn.addEventListener('click', launchGateway);
+});
 
 // Resetear sesión: solo visible con sesión activa (desvincular + QR nuevo)
 resetbtn.addEventListener('click', async () => {

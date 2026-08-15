@@ -14,6 +14,7 @@
 
 - Primera instalación: ejecuta `cd brain && python3 -m venv venv && venv/bin/pip install -r requirements-dev.txt` y luego `cd gateway && npm ci`.
 - Gateway: `cd gateway && npm run check` ejecuta exactamente `lint`, `typecheck` y luego `node --test`.
+- `npm test` activa `SDK_BOT_TEST=1`: los logs técnicos van a `/tmp/sdk-bot-test-<pid>.log`, nunca a `gateway/logs/` ni a stdout operativo.
 - Brain: `cd brain && venv/bin/ruff check . && venv/bin/python -m pytest tests/ -q`.
 - CI usa Node 22 y Python 3.12; además de las comprobaciones anteriores ejecuta `bash ../deploy/linux/tests/install-smoke.sh` desde `gateway/`.
 - Tests enfocados: `cd gateway && node --test tests/pipeline.test.js`; `cd brain && venv/bin/python -m pytest tests/test_memory.py -q`.
@@ -27,6 +28,7 @@
 - Los archivos `deploy/linux/sdk-bot-*.service` y `install.sh` quedan como alternativa systemd legacy; no son el camino de producción documentado.
 - No ejecutes manualmente y mediante Docker/systemd el mismo componente: los locks de instancia única bloquean la segunda instancia y protegen la sesión de WhatsApp.
 - `cd gateway && npm run reset` renueva la sesión/QR en desarrollo. `npm run clean` es un reset de fábrica destructivo manual: borra sesión, agenda, configuración, colas, memoria y logs, pero conserva `brain/profiles/`; en Docker usa `docker compose ... down -v` solo si realmente quieres borrar los volúmenes.
+- En el panel, el pairing QR mantiene una ventana total de 140s aunque Baileys emita varios QRs; el pairing por número devuelve un código manual de 8 caracteres y no se renueva automáticamente. No mezcles solicitudes QR y código: el estado pendiente se restaura al entrar a la pestaña Pairing.
 
 ## Límites De Arquitectura
 

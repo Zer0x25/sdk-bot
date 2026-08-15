@@ -142,7 +142,11 @@ function scheduleReconnect() {
     }, delay);
 }
 
-async function connectToWhatsApp () {
+/**
+ * @param {{freshQr?: boolean}} [options]
+ */
+async function connectToWhatsApp (options = {}) {
+    const freshQr = options.freshQr === true;
     // 🔌 Cerrar limpiamente un socket anterior que aún esté vivo (evita doble conexión)
     if (currentSocket) {
         const old = currentSocket;
@@ -151,6 +155,16 @@ async function connectToWhatsApp () {
     }
 
     const { state: authState, saveCreds } = await useMultiFileAuthState(AUTH_DIR);
+    // requestPairingCode() escribe `creds.me` antes de que el usuario confirme
+    // el código. Si ese pairing quedó incompleto, Baileys intenta hacer login
+    // con ese número y ya no emite QR. Para un QR explícitamente fresco,
+    // quitar solo esos marcadores; una sesión registrada se conserva intacta.
+    if (freshQr && !authState.creds.registered && (authState.creds.me || authState.creds.pairingCode)) {
+        delete authState.creds.me;
+        delete authState.creds.pairingCode;
+        await saveCreds();
+        log.info('🔌 [BUS] Pairing incompleto descartado antes de generar QR fresco.');
+    }
 
     const sock = makeWASocket({
         printQRInTerminal: false,
@@ -165,17 +179,22 @@ async function connectToWhatsApp () {
     adminWeb?.setSock(sock); // compat tests
     internalBus.setSock(sock); // 🔌 bus interno: el panel (proceso aparte) se entera del socket
     // 🔌 F6-P4: callback de "refrescar QR" desde el panel web. Cierra el
-    // socket de pairing actual y Baileys (sin creds.json) re-emite update.qr
-    // en una tanda fresca. Arregla "el QR del panel expiró y no se actualiza".
+    // socket de pairing actual y Baileys re-emite update.qr en una tanda
+    // fresca. También descarta un pairing por código incompleto.
     internalBus.setQrRefresh(() => {
         log.info('🔌 [BUS] Refresco de QR pedido desde el panel: recreando socket de pairing…');
-        connectToWhatsApp();
+        connectToWhatsApp({ freshQr: true });
     });
-    // 🔌 F6-P4: pairing por código de 8 dígitos desde el panel web. Si el
+    // 🔌 F6-P4: pairing por código de 8 caracteres desde el panel web. Si el
     // socket actual está cerrado (tras agotar intentos de QR), lo recrea y
     // espera a que esté listo para pedir el código a WhatsApp. Así el método
     // "Pair con número" funciona aunque no haya QR vigente.
     internalBus.setPairingCodeRequester(async (number) => {
+        // La guía de Baileys exige pedir código solo para una cuenta no
+        // registrada. Una sesión ya vinculada debe pasar por reset explícito.
+        if (authState.creds.registered) {
+            throw new Error('La sesión ya está registrada; resetea antes de pedir otro código.');
+        }
         if (!currentSocket || wsReadyState(currentSocket) === 3) {
             log.info('🔌 [BUS] Socket cerrado: recreando para pedir código de pairing…');
             connectToWhatsApp();

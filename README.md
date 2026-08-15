@@ -159,6 +159,20 @@ abierto (comportamiento legacy).
   `https://panel.zer0x.org` (TLS en el borde; Caddy proxifica a
   `127.0.0.1:5201` / `host.docker.internal:5201`).
 
+#### Pairing desde el panel
+
+- **QR:** Baileys puede emitir varios QRs consecutivos durante una misma
+  solicitud. El panel reemplaza la imagen, pero mantiene una sola ventana total
+  de 140 segundos (`GATEWAY_QR_TTL_MS=140000`); no permite pedir otro hasta que
+  expire. El timer cuenta hacia arriba desde el primer QR.
+- **Código:** se solicita con un número que incluya el código de país, sin `+`.
+  Baileys devuelve un código de 8 caracteres, que se muestra en una ficha
+  grande con copia al portapapeles. Solicitar otro código es manual y reemplaza
+  el anterior; no hay renovación automática.
+- El bus interno conserva el método pendiente (`QR` o `código`). Si se cambia
+  de pestaña o se recarga el panel, Pairing restaura directamente el método
+  activo y bloquea solicitudes cruzadas.
+
 ### 4. Producción — Docker Compose en Linux
 
 El código del bot es el mismo en desarrollo y producción. En Linux, producción usa Docker Compose para supervisar los tres procesos:
@@ -217,6 +231,7 @@ usa esa variable como interruptor de comportamiento. No ejecutes a la vez una
 instancia manual y los contenedores de producción sobre la misma sesión.
 
 > 📋 **Logs:** rotación automática (5MB × 3) en `gateway/logs/gateway.log` y `brain/logs/brain.log` (en Termux: `~/logs/sdk-gateway.log`).
+> Los tests no escriben en esos logs: `npm test` guarda sus logs técnicos en `/tmp/sdk-bot-test-<pid>.log` y deja en consola solo el resultado de `node:test`.
 
 ### 6. Re-sincronizar Libreta Completa de Contactos (Fresh QR):
 ```bash

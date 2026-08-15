@@ -7,7 +7,7 @@
     "reset": "node reset-session.js",
     "resync": "node reset-session.js",
     "clean": "node reset-clean.js",
-    "test": "node --test",
+    "test": "SDK_BOT_TEST=1 node --test",
     "lint": "eslint .",
     "lint:fix": "eslint . --fix",
     "typecheck": "tsc -p jsconfig.json",

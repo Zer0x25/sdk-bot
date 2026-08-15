@@ -158,7 +158,10 @@ function serveStatic(req, res, pathname) {
     if (!file.startsWith(WEB_DIR)) { res.writeHead(403); res.end('forbidden'); return; }
     fs.readFile(file, (err, data) => {
         if (err) { res.writeHead(404); res.end('not found'); return; }
-        res.writeHead(200, { 'Content-Type': MIME[path.extname(file)] || 'application/octet-stream' });
+        res.writeHead(200, {
+            'Content-Type': MIME[path.extname(file)] || 'application/octet-stream',
+            'Cache-Control': 'no-store'
+        });
         res.end(data);
     });
 }

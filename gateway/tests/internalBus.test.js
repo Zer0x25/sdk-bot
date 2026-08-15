@@ -5,7 +5,7 @@ const assert = require('node:assert');
 const { withTempDbPaths } = require('./helpers/tmpPaths');
 const t = withTempDbPaths();
 
-const { startInternalBus, handleConnectionUpdate, setSock, qrPayload } = require('../services/internalBus');
+const { startInternalBus, handleConnectionUpdate, setSock, setQrRefresh, setPairingCodeRequester, qrPayload } = require('../services/internalBus');
 const { upsertContactMetadata } = require('../services/contactsRepository');
 
 let server;
@@ -38,6 +38,15 @@ test('WebSocket abierto durante pairing no se marca como sesión vinculada', () 
     setSock({ ws: { readyState: 1 }, user: { id: '56942523669@s.whatsapp.net' } });
     assert.strictEqual(qrPayload().session, true);
 });
+test('el cierre de un socket limpia la sesión del panel y su QR', async () => {
+    const sock = { user: { id: '56942523669@s.whatsapp.net' } };
+    setSock(sock);
+    await handleConnectionUpdate({ qr: '2@qr-antes-del-cierre' }, sock);
+    assert.ok(qrPayload().qr);
+    await handleConnectionUpdate({ connection: 'close' }, sock);
+    assert.strictEqual(qrPayload().session, false);
+    assert.strictEqual(qrPayload().qr, null);
+});
 test('QR de un socket reemplazado no puede aparecer en el estado del panel', async () => {
     const oldSock = {};
     const newSock = {};
@@ -48,6 +57,70 @@ test('QR de un socket reemplazado no puede aparecer en el estado del panel', asy
     await staleQr;
 
     assert.strictEqual(qrPayload().qr, null);
+});
+test('el bus bloquea refresh duplicado mientras genera o conserva un QR válido', async () => {
+    const sock = {};
+    let refreshes = 0;
+    setSock(sock);
+    setQrRefresh(() => { refreshes += 1; });
+
+    const first = /** @type {any} */ (await (await fetch(`http://127.0.0.1:${port}/qr/refresh`, { method: 'POST' })).json());
+    const second = /** @type {any} */ (await (await fetch(`http://127.0.0.1:${port}/qr/refresh`, { method: 'POST' })).json());
+    assert.strictEqual(first.success, true);
+    assert.strictEqual(second.success, false);
+    assert.strictEqual(second.busy, true);
+    assert.strictEqual(refreshes, 1);
+
+    await handleConnectionUpdate({ qr: '2@qr-refresh-bloqueado' }, sock);
+    const third = /** @type {any} */ (await (await fetch(`http://127.0.0.1:${port}/qr/refresh`, { method: 'POST' })).json());
+    assert.strictEqual(third.success, false);
+    assert.match(third.message, /QR vigente/);
+    assert.strictEqual(refreshes, 1);
+    await handleConnectionUpdate({ connection: 'close' }, sock);
+});
+test('los QRs sucesivos conservan la misma ventana total', async () => {
+    const sock = {};
+    setSock(sock);
+    await handleConnectionUpdate({ qr: '2@qr-secuencia-1' }, sock);
+    const first = qrPayload();
+    await handleConnectionUpdate({ qr: '2@qr-secuencia-2' }, sock);
+    const second = qrPayload();
+    assert.ok(first.qr);
+    assert.ok(second.qr);
+    assert.strictEqual(second.issuedAt, first.issuedAt);
+    assert.strictEqual(second.expiresAt, first.expiresAt);
+    await handleConnectionUpdate({ connection: 'close' }, sock);
+});
+test('el estado pendiente restaura el método y bloquea el método cruzado', async () => {
+    const sock = {};
+    setSock(sock);
+    await handleConnectionUpdate({ qr: '2@qr-metodo-pendiente' }, sock);
+
+    const status = /** @type {any} */ (await (await fetch(`http://127.0.0.1:${port}/pairing/status`)).json());
+    assert.strictEqual(status.method, 'qr');
+    assert.strictEqual(status.active, true);
+
+    const code = /** @type {any} */ (await (await fetch(`http://127.0.0.1:${port}/pairing`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ phone: '56912345678' })
+    })).json());
+    assert.strictEqual(code.success, false);
+    assert.strictEqual(code.method, 'qr');
+    await handleConnectionUpdate({ connection: 'close' }, sock);
+
+    setSock({});
+    setPairingCodeRequester(async () => 'AB12CD34');
+    const requested = /** @type {any} */ (await (await fetch(`http://127.0.0.1:${port}/pairing`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ phone: '56912345678' })
+    })).json());
+    assert.strictEqual(requested.code, 'AB12CD34');
+    const codeStatus = /** @type {any} */ (await (await fetch(`http://127.0.0.1:${port}/pairing/status`)).json());
+    assert.strictEqual(codeStatus.method, 'code');
+    assert.strictEqual(codeStatus.code, 'AB12CD34');
+    await handleConnectionUpdate({ connection: 'close' });
 });
 test('GET /status devuelve métricas en JSON', async () => {
     const res = await fetch(`http://127.0.0.1:${port}/status`);

@@ -179,14 +179,26 @@ const qrClients = new Set();
 let qrRefreshCb = null;
 /** @type {any} Callback que el gateway inyecta para pedir código de pairing por número. */
 let pairingCodeRequester = null;
-const QR_TTL_MS = num('GATEWAY_QR_TTL_MS', 60000);
+/** Estado compartido para que el panel pueda restaurar el método pendiente. */
+/** @type {'qr'|'code'|null} */
+let pairingMethod = null;
+/** @type {string|null} */
+let pairingCodeValue = null;
+/** @type {string|null} */
+let pairingPhone = null;
+let pairingCodeRequestInProgress = false;
+const QR_TTL_MS = num('GATEWAY_QR_TTL_MS', 140000);
 let qrExpiresAt = 0;
 let qrTtlMs = QR_TTL_MS;
 /** @type {any} */
 let qrExpiryTimer = null;
+/** @type {any} */
+let qrRefreshTimer = null;
 let qrWindowOpen = true;
 let resetInProgress = false;
 let qrSequence = 0;
+let qrIssuedAt = 0;
+let qrRefreshInProgress = false;
 
 function wsReadyState(sock) {
     const ws = sock && sock.ws;
@@ -214,11 +226,30 @@ function hasActiveSession() {
     return !!(activeSock && activeSock.user && (activeSock.user.id || activeSock.user.lid));
 }
 
+function pairingStatus() {
+    return {
+        active: pairingMethod !== null,
+        method: pairingMethod,
+        busy: pairingMethod === 'qr' ? qrRefreshInProgress : pairingCodeRequestInProgress,
+        code: pairingMethod === 'code' ? pairingCodeValue : null,
+        phone: pairingMethod === 'code' ? pairingPhone : null,
+        issuedAt: pairingMethod === 'qr' ? qrIssuedAt || null : null,
+        expiresAt: pairingMethod === 'qr' ? qrExpiresAt || null : null
+    };
+}
+
+function clearPairingState() {
+    pairingMethod = null;
+    pairingCodeValue = null;
+    pairingPhone = null;
+    pairingCodeRequestInProgress = false;
+}
+
 function qrPayload() {
     const active = qrWindowOpen && !!lastQrDataUrl;
     return active
-        ? { qr: lastQrDataUrl, expiresAt: qrExpiresAt || Date.now() + qrTtlMs, expired: false, session: hasActiveSession() }
-        : { qr: null, expiresAt: null, expired: !qrWindowOpen, session: hasActiveSession() };
+        ? { qr: lastQrDataUrl, issuedAt: qrIssuedAt, expiresAt: qrExpiresAt || Date.now() + qrTtlMs, expired: false, session: hasActiveSession(), pairing: pairingStatus() }
+        : { qr: null, issuedAt: null, expiresAt: null, expired: !qrWindowOpen, session: hasActiveSession(), pairing: pairingStatus() };
 }
 
 function broadcastQrState() {
@@ -231,11 +262,19 @@ function broadcastQrState() {
 function openQrWindow() {
     if (qrExpiryTimer) clearTimeout(qrExpiryTimer);
     qrWindowOpen = true;
+    pairingMethod = 'qr';
+    pairingCodeValue = null;
+    pairingPhone = null;
+    pairingCodeRequestInProgress = false;
     qrExpiresAt = Date.now() + qrTtlMs;
+    qrIssuedAt = Date.now();
     qrExpiryTimer = setTimeout(() => {
         qrWindowOpen = false;
         lastQrDataUrl = null;
+        qrIssuedAt = 0;
         qrExpiresAt = 0;
+        qrRefreshInProgress = false;
+        if (pairingMethod === 'qr') clearPairingState();
         broadcastQrState();
     }, qrTtlMs);
     if (qrExpiryTimer.unref) qrExpiryTimer.unref();
@@ -248,10 +287,31 @@ function setSock(sock) {
     socketGeneration += 1;
     qrSequence = 0;
     lastQrDataUrl = null;
+    qrIssuedAt = 0;
     qrWindowOpen = true;
     qrExpiresAt = 0;
     if (qrExpiryTimer) clearTimeout(qrExpiryTimer);
     qrExpiryTimer = null;
+    broadcastQrState();
+}
+
+/** Invalida el socket cerrado y cualquier QR que haya emitido. */
+/** @param {any} sock */
+function clearSock(sock = null) {
+    if (sock && sock !== activeSock) return;
+    activeSock = null;
+    socketGeneration += 1;
+    qrSequence = 0;
+    lastQrDataUrl = null;
+    qrIssuedAt = 0;
+    qrWindowOpen = true;
+    qrExpiresAt = 0;
+    if (qrExpiryTimer) clearTimeout(qrExpiryTimer);
+    qrExpiryTimer = null;
+    if (qrRefreshTimer) clearTimeout(qrRefreshTimer);
+    qrRefreshTimer = null;
+    qrRefreshInProgress = false;
+    clearPairingState();
     broadcastQrState();
 }
 
@@ -261,17 +321,25 @@ async function handleConnectionUpdate(update, sourceSock = null) {
     if (!update) return;
     const generation = socketGeneration;
     if (sourceSock && sourceSock !== activeSock) return;
-    if (update.connection === 'open' || update.connection === 'close') {
+    if (update.connection === 'close') {
+        clearSock(sourceSock);
+        return;
+    }
+    if (update.connection === 'open') {
+        clearPairingState();
         broadcastQrState();
         return;
     }
     if (typeof update.qr !== 'string') return;
+    if (pairingMethod === 'code') return;
     if (update.connection === 'open') return;
     const sequence = ++qrSequence;
-    // Siempre procesar un QR fresco: si la ventana había expirado, la
-    // reabrimos. Esto evita el bug "el panel se queda ciego y muestra un
-    // QR muerto" — cualquier update.qr nuevo del socket vivo repinta.
-    if (!qrWindowOpen || Date.now() >= qrExpiresAt) openQrWindow();
+    // Una tanda de Baileys puede traer varios QRs (el siguiente reemplaza al
+    // anterior). Todos comparten la misma ventana total: solo el primer QR
+    // inicia el timer; un QR tardío después de expirar no abre otra ventana.
+    if (!qrWindowOpen || (qrExpiresAt && Date.now() >= qrExpiresAt)) return;
+    if (!qrExpiresAt) openQrWindow();
+    pairingMethod = 'qr';
     let dataUrl;
     try {
         dataUrl = await QRCode.toDataURL(update.qr, { margin: 1, width: 280 });
@@ -279,6 +347,7 @@ async function handleConnectionUpdate(update, sourceSock = null) {
         logError.error(`🔌 [BUS] Error renderizando QR: ${errMsg(e)}`);
         if (generation === socketGeneration && sequence === qrSequence && (!sourceSock || sourceSock === activeSock)) {
             lastQrDataUrl = null;
+            qrRefreshInProgress = false;
             broadcastQrState();
         }
         return;
@@ -287,6 +356,9 @@ async function handleConnectionUpdate(update, sourceSock = null) {
     // que un QR antiguo termine después y sobrescriba al último válido.
     if (generation !== socketGeneration || sequence !== qrSequence || (sourceSock && sourceSock !== activeSock)) return;
     lastQrDataUrl = dataUrl;
+    qrRefreshInProgress = false;
+    if (qrRefreshTimer) clearTimeout(qrRefreshTimer);
+    qrRefreshTimer = null;
     broadcastQrState();
 }
 
@@ -345,22 +417,52 @@ async function requestPairing(phone) {
     if (clean.length > 0 && clean.length < 9) {
         return { success: false, brainUp, message: 'Número inválido: se espera el número completo con código de país (ej: 56912345678)' };
     }
-    // 🔑 Pairing por NÚMERO: ir directo a pedir el código. El requester del
+    const qrPending = qrRefreshInProgress || (pairingMethod === 'qr' && qrWindowOpen && qrExpiresAt > Date.now());
+    // 🔑 Pairing por NÚMERO: ir directo a pedir el código de 8 caracteres. El requester del
     // gateway recrea el socket si está cerrado (tras agotar QR) y espera a
     // que esté listo. NO pasar por la guarda de "socket cerrado" de abajo,
     // que devolvería "el QR llegará" y nunca pediría el código.
     if (clean.length >= 9) {
+        if (qrPending) {
+            return {
+                success: false,
+                brainUp,
+                method: 'qr',
+                busy: qrRefreshInProgress,
+                issuedAt: qrIssuedAt || null,
+                expiresAt: qrExpiresAt || null,
+                message: 'Hay una solicitud de QR vigente: escanéala o espera a que termine antes de pedir un código.'
+            };
+        }
+        if (pairingCodeRequestInProgress) {
+            return { success: false, brainUp, message: 'Ya hay una solicitud de código en curso; espera su resultado.' };
+        }
+        pairingMethod = 'code';
+        pairingCodeValue = null;
+        pairingPhone = clean;
+        pairingCodeRequestInProgress = true;
         try {
             if (typeof pairingCodeRequester === 'function') {
                 const code = await pairingCodeRequester(clean);
-                return { success: true, brainUp, code: String(code) };
+                pairingCodeValue = String(code);
+                return { success: true, brainUp, code: pairingCodeValue };
             }
-            if (!activeSock) return { success: false, brainUp, message: 'No hay socket activo para pedir el código.' };
+            if (!activeSock) {
+                clearPairingState();
+                return { success: false, brainUp, message: 'No hay socket activo para pedir el código.' };
+            }
             const code = await activeSock.requestPairingCode(clean);
-            return { success: true, brainUp, code: String(code) };
+            pairingCodeValue = String(code);
+            return { success: true, brainUp, code: pairingCodeValue };
         } catch (e) {
+            clearPairingState();
             return { success: false, brainUp, message: `No se pudo pedir el código de enlace: ${errMsg(e)}` };
+        } finally {
+            pairingCodeRequestInProgress = false;
         }
+    }
+    if (pairingCodeRequestInProgress || pairingMethod === 'code') {
+        return { success: false, brainUp, message: 'Hay una solicitud de código pendiente: usa el código mostrado o espera a que termine.' };
     }
     if (qrWindowOpen && Date.now() < qrExpiresAt) {
         const s = Math.ceil((qrExpiresAt - Date.now()) / 1000);
@@ -376,7 +478,7 @@ async function requestPairing(phone) {
         return { success: true, brainUp, message: 'Gateway activo: el QR llegará por SSE en unos segundos.' };
     }
     openQrWindow();
-    return { success: true, brainUp, message: 'QR generado — escanéalo antes de que expire (1 min).' };
+    return { success: true, brainUp, message: 'QR generado — escanéalo antes de que expire (2 min 20 s).' };
 }
 
 async function runAdminCommand(input) {
@@ -570,16 +672,55 @@ function routeApi(req, res, pathname, params) {
         return;
     }
     if (pathname === '/qr/refresh' && req.method === 'POST') {
-        // Fuerza una tanda de QR fresca: el gateway cierra el socket de
-        // pairing actual y Baileys (sin creds) re-emite update.qr. Esto
-        // arregla "el QR del panel expiró y no se actualiza": el botón
-        // Refrescar del panel llama aquí y obtiene uno vivo de inmediato.
+        // No repetir el comando mientras hay un QR válido o una tanda en curso.
+        // El bloqueo vive en el bus, no solo en el botón del navegador.
+        if (pairingCodeRequestInProgress || pairingMethod === 'code') {
+            sendJson(res, 200, { success: false, method: 'code', code: pairingCodeValue, message: 'Hay un pairing por código pendiente: usa el código mostrado antes de pedir un QR.' });
+            return;
+        }
+        if (qrRefreshInProgress) {
+            sendJson(res, 200, { success: false, busy: true, message: 'QR en generación: espera a que aparezca.' });
+            return;
+        }
+        if (qrWindowOpen && lastQrDataUrl && Date.now() < qrExpiresAt) {
+            const seconds = Math.ceil((qrExpiresAt - Date.now()) / 1000);
+            sendJson(res, 200, { success: false, issuedAt: qrIssuedAt, expiresAt: qrExpiresAt, message: `QR vigente: escanéalo (${seconds}s restantes).` });
+            return;
+        }
         if (typeof qrRefreshCb === 'function') {
-            try { qrRefreshCb(); sendJson(res, 200, { success: true, message: 'Regenerando QR…' }); }
-            catch (e) { sendJson(res, 500, { success: false, message: errMsg(e) }); }
+            pairingMethod = 'qr';
+            pairingCodeValue = null;
+            pairingPhone = null;
+            pairingCodeRequestInProgress = false;
+            qrRefreshInProgress = true;
+            if (qrRefreshTimer) clearTimeout(qrRefreshTimer);
+            qrRefreshTimer = setTimeout(() => {
+                qrRefreshInProgress = false;
+                qrRefreshTimer = null;
+                broadcastQrState();
+            }, 10000);
+            if (qrRefreshTimer.unref) qrRefreshTimer.unref();
+            try {
+                Promise.resolve(qrRefreshCb()).catch(() => {
+                    qrRefreshInProgress = false;
+                    if (qrRefreshTimer) clearTimeout(qrRefreshTimer);
+                    qrRefreshTimer = null;
+                });
+                sendJson(res, 200, { success: true, message: 'Regenerando QR…' });
+            }
+            catch (e) {
+                qrRefreshInProgress = false;
+                if (qrRefreshTimer) clearTimeout(qrRefreshTimer);
+                qrRefreshTimer = null;
+                sendJson(res, 500, { success: false, message: errMsg(e) });
+            }
         } else {
             sendJson(res, 200, { success: false, message: 'No hay socket activo para regenerar el QR.' });
         }
+        return;
+    }
+    if (pathname === '/pairing/status' && req.method === 'GET') {
+        sendJson(res, 200, pairingStatus());
         return;
     }
     if (pathname === '/brain/start' && req.method === 'POST') {
@@ -715,7 +856,7 @@ function startInternalBus(opts = {}) {
 }
 
 module.exports = {
-    startInternalBus, setSock, handleConnectionUpdate, setQrRefresh, setPairingCodeRequester,
+    startInternalBus, setSock, clearSock, handleConnectionUpdate, setQrRefresh, setPairingCodeRequester,
     requestPairing, runAdminCommand, performReset, performRestart, wsReadyState,
     qrPayload
 };
