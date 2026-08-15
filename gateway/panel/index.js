@@ -109,7 +109,10 @@ function externalUrl(req, pathname) {
     return `${proto}://${host}${pathname}`;
 }
 function cookieFlags(secure) {
-    return `HttpOnly; ${secure ? 'Secure; ' : ''}SameSite=Lax; Path=/`;
+    // SameSite=None requerido para que la cookie sobreviva al redirect de vuelta
+    // desde accounts.google.com (navegación cross-site). None implica Secure.
+    const sameSite = secure ? 'SameSite=None; Secure; ' : 'SameSite=Lax; ';
+    return `HttpOnly; ${sameSite}Path=/`;
 }
 function sessionCookie(data, secure) {
     const payload = Buffer.from(JSON.stringify(data)).toString('base64url');
