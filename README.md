@@ -134,6 +134,30 @@ node index.js
 # Acceso en el navegador: http://localhost:5201 (o tu IP / Tailscale en el puerto 5201)
 ```
 
+#### 🔐 OAuth con Google (opcional, recomendado en producción)
+
+El panel soporta login con Google OAuth 2.0. Cuando están presentes las
+variables `PANEL_GOOGLE_CLIENT_ID` y `PANEL_GOOGLE_CLIENT_SECRET`, **todas las
+rutas (excepto `/auth/*`) exigen sesión Google**; sin ellas el panel queda
+abierto (comportamiento legacy).
+
+- Crea un "ID de cliente de OAuth" (Aplicación web) en Google Cloud Console.
+  - Orígenes autorizados JS: `https://panel.zer0x.org`
+  - URIs de redirección: `https://panel.zer0x.org/auth/callback`
+- Guarda las credenciales en `gateway/panel/.env` (ya está en `.gitignore`):
+  ```
+  PANEL_GOOGLE_CLIENT_ID=....apps.googleusercontent.com
+  PANEL_GOOGLE_CLIENT_SECRET=....
+  PANEL_SESSION_SECRET=<secreto-fijo-32-bytes>
+  PANEL_ALLOWED_EMAILS=           # csv de correos permitidos; vacío = cualquier cuenta Google
+  ```
+- El server carga `gateway/panel/.env` automáticamente al arrancar (no
+  necesita `export`). La cookie de sesión se firma con HMAC-SHA256
+  (HttpOnly, Secure tras proxy HTTPS, SameSite=Lax, 12 h).
+- En el homelab el panel se expone vía Caddy + Cloudflare Tunnel en
+  `https://panel.zer0x.org` (TLS en el borde; Caddy proxifica a
+  `127.0.0.1:5201` / `host.docker.internal:5201`).
+
 ### 4. Producción — Docker Compose en Linux
 
 El código del bot es el mismo en desarrollo y producción. En Linux, producción usa Docker Compose para supervisar los tres procesos:

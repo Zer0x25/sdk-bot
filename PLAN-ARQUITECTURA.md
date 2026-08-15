@@ -103,7 +103,7 @@ SDK-Bot/
 - Script `reset-clean.js` (F7) para un restablecimiento de fábrica total con borrado de memoria, agenda, colas, logs y settings.
 
 ### 7. 🖥️ Panel Web Desacoplado & Bus Interno (Arquitectura de 3 Procesos)
-- **Panel Web (`gateway/panel/index.js`):** Proceso HTTP independiente en puerto `5201` (bind `0.0.0.0`) que sirve el frontend administrativo y actúa como proxy inverso.
+- **Panel Web (`gateway/panel/index.js`):** Proceso HTTP independiente en puerto `5201` (bind `0.0.0.0`) que sirve el frontend administrativo y actúa como proxy inverso. Carga `gateway/panel/.env` al arrancar y soporta login opcional con Google OAuth 2.0: cuando `PANEL_GOOGLE_CLIENT_ID` y `PANEL_GOOGLE_CLIENT_SECRET` están definidas, todas las rutas (excepto `/auth/*`) exigen sesión Google; la sesión es una cookie HMAC-SHA256 (HttpOnly, Secure tras proxy HTTPS, SameSite=Lax, 12 h). Sin esas env el panel queda abierto (legacy). En el homelab se expone vía Caddy + Cloudflare Tunnel en `https://panel.zer0x.org`.
 - **Bus Interno HTTP (`gateway/services/internalBus.js` en puerto `5400`):** Expuesto por el gateway en loopback (`127.0.0.1:5400`). Permite consultar estado, transmitir el QR y logs por SSE, regenerar QR bajo demanda (`/qr/refresh`), vincular por número (`/pairing`), ejecutar comandos admin y arrancar el brain (`/brain/start`). Si el gateway cae, el panel sigue vivo y el frontend se reconecta solo al volver el servicio.
 
 ---

@@ -4,7 +4,7 @@
 
 - `gateway/` es el proceso Node.js/Baileys; su entrada es `gateway/index.js`.
 - `brain/` es el proceso Python/FastAPI; su entrada es `brain/main.py`.
-- `gateway/panel/` es un tercer proceso independiente. Sirve `gateway/admin-web/` y proxifica `/api/*` al bus HTTP interno del gateway.
+- `gateway/panel/` es un tercer proceso independiente. Sirve `gateway/admin-web/` y proxifica `/api/*` al bus HTTP interno del gateway. Soporta login opcional con Google OAuth 2.0: si `gateway/panel/.env` define `PANEL_GOOGLE_CLIENT_ID` y `PANEL_GOOGLE_CLIENT_SECRET`, todas las rutas (salvo `/auth/*`) exigen sesión Google; la cookie de sesión se firma con HMAC-SHA256 (HttpOnly, Secure tras proxy, 12 h). Sin esas env, el panel queda abierto (legacy). `index.js` carga `gateway/panel/.env` automáticamente al arrancar.
 - En ejecución local arranca primero el brain (`:5100`), luego el gateway; el panel opcional usa `:5201`, el bus del gateway `:5400` y el status server `:5300`.
 - `brain/.env`, `gateway/auth_info_baileys/`, las DB JSON, `brain/memory.db`, `gateway/queue/`, logs y locks contienen estado local o secretos; no los versionar ni usarlos como fixtures.
 - `.env.tuning` sí está versionado y es leído por ambos componentes; las API keys deben permanecer en `brain/.env`.
