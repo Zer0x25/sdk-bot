@@ -18,7 +18,11 @@ jobs:
         run: |
           cd /home/zrx1/server.lab/repos/sdk-bot
           git pull origin main
-          docker compose -f deploy/docker/compose.yml up -d --build
+          # --force-recreate: el self-runner NO recrea contenedores ya
+          # existentes y estables con `up -d --build`, dejando correr la
+          # imagen vieja tras un fix. Forzar recreación hace el deploy
+          # idempotente y autónomo (sin intervención manual en la VM).
+          docker compose -f deploy/docker/compose.yml up -d --build --force-recreate
           docker image prune -f
 
       - name: Post-Deploy Health Check
