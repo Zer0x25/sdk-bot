@@ -2,12 +2,15 @@
 
 ## Estructura
 
-- `gateway/` es el proceso Node.js/Baileys; su entrada es `gateway/index.js`.
+- `gateway/` es el proceso Node.js del **Adapter Hub Multi-Canal**; su entrada es `gateway/index.js`.
+  - `gateway/core/`: Interfaces abstractas (`ChannelAdapter.js`, `StandardMessage.js`).
+  - `gateway/adapters/`: Implementaciones de canal (`whatsappAdapter.js` con Baileys, `telegramAdapter.js` con Bot API Polling).
 - `brain/` es el proceso Python/FastAPI; su entrada es `brain/main.py`.
 - `gateway/panel/` es un tercer proceso independiente. Sirve `gateway/admin-web/` y proxifica `/api/*` al bus HTTP interno del gateway. Corre en `0.0.0.0:5201` (accesible por LAN/Tailscale en dev). **OAuth solo en producción:** el login Google se activa únicamente si `NODE_ENV=production` (o `PANEL_REQUIRE_AUTH=***, además de definir `PANEL_GOOGLE_CLIENT_ID`/`PANEL_GOOGLE_CLIENT_SECRET`. En desarrollo el panel queda **ABIERTO** (sin login) aunque haya credenciales; las rutas `/auth/*` solo existen con OAuth habilitado. La cookie de sesión se firma con HMAC-SHA256 (HttpOnly, Secure tras proxy, 12 h). `index.js` carga `gateway/panel/.env` automáticamente al arrancar. En dev el panel NO se expone vía el dominio público `panel.zer0x.org` (reservado para prod con Docker).
 - En ejecución local arranca primero el brain (`:5100`), luego el gateway; el panel opcional usa `:5201`, el bus del gateway `:5400` y el status server `:5300`.
 - `docs/OAUTH-LESSONS.md`: lecciones reales de la integración OAuth Google en el panel (state server-side, cookie de sesión `SameSite=Lax`, checklist de Google Cloud Console). Léelo antes de tocar el auth del panel.
-- `brain/.env`, `gateway/auth_info_baileys/`, las DB JSON, `brain/memory.db`, `gateway/queue/`, logs y locks contienen estado local o secretos; no los versionar ni usarlos como fixtures.
+- `docs/adr/001-multi-channel-adapter-hub.md`: arquitectura del Adapter Hub y normalización agnóstica con `StandardMessage`.
+- `brain/.env`, `gateway/auth_info_baileys/`, las DB JSON (`contacts_db.json`, `settings_db.json`, `broadcast_db.json`), `brain/memory.db`, `gateway/queue/`, logs y locks contienen estado local o secretos; no los versionar ni usarlos como fixtures.
 - `.env.tuning` sí está versionado y es leído por ambos componentes; las API keys deben permanecer en `brain/.env`.
 
 ## Instalación Y Verificación
@@ -16,9 +19,10 @@
 - Gateway: `cd gateway && npm run check` ejecuta exactamente `lint`, `typecheck` y luego `node --test`.
 - `npm test` activa `SDK_BOT_TEST=1`: los logs técnicos van a `/tmp/sdk-bot-test-<pid>.log`, nunca a `gateway/logs/` ni a stdout operativo.
 - Brain: `cd brain && venv/bin/ruff check . && venv/bin/python -m pytest tests/ -q`.
-- CI usa Node 22 y Python 3.12; además de las comprobaciones anteriores ejecuta `bash ../deploy/linux/tests/install-smoke.sh` desde `gateway/`.
-- Tests enfocados: `cd gateway && node --test tests/pipeline.test.js`; `cd brain && venv/bin/python -m pytest tests/test_memory.py -q`.
-- Los tests del gateway redirigen sus DB con `SDK_CONTACTS_DB_PATH` y `SDK_SETTINGS_DB_PATH`; los tests del brain usan `BRAIN_MEMORY_DB`. Mantén ese aislamiento y nunca cambies rutas de producción en código fuente.
+- CI usa Node 22 y Python 3.12; además de las comprobaciones anteriores ejecuta `bash ../deploy/linux/tests/install-smoke.sh` desde `gateway/`. Release-please gestiona el versionado semántico automatizado en merge a `main`.
+- Tests enfocados: `cd gateway && node --test tests/pipeline.test.js`; `cd gateway && node --test tests/telegram.test.js`; `cd gateway && node --test tests/adminPairing.test.js`; `cd brain && venv/bin/python -m pytest tests/test_memory.py -q`.
+- Los tests del gateway redirigen sus DB con `SDK_CONTACTS_DB_PATH`, `SDK_SETTINGS_DB_PATH`, `SDK_BROADCAST_DB_PATH` y `SDK_MESSAGE_QUEUE_PATH`; los tests del brain usan `BRAIN_MEMORY_DB`. Mantén ese aislamiento y nunca cambies rutas de producción en código fuente.
+- **Gotchas en tests de Node:** El poller de Telegram y los streams SSE infinitos (`/qr`, `/logs/stream`) deben cerrarse/abortarse (`stopTelegramPoller()`, `reader.cancel()`) en los tests para no dejar colgado el event loop.
 
 ## Desarrollo Y Despliegue
 
@@ -27,13 +31,17 @@
 - `NODE_ENV=development`/`production` identifica el launcher, pero no es un interruptor funcional; el supervisor y las variables específicas (`BRAIN_API_BASE`, rutas de estado, hosts y puertos) distinguen ambos entornos.
 - Los archivos `deploy/linux/sdk-bot-*.service` y `install.sh` quedan como alternativa systemd legacy; no son el camino de producción documentado.
 - No ejecutes manualmente y mediante Docker/systemd el mismo componente: los locks de instancia única bloquean la segunda instancia y protegen la sesión de WhatsApp.
-- `cd gateway && npm run reset` renueva la sesión/QR en desarrollo. `npm run clean` es un reset de fábrica destructivo manual: borra sesión, agenda, configuración, colas, memoria y logs, pero conserva `brain/profiles/`; en Docker usa `docker compose ... down -v` solo si realmente quieres borrar los volúmenes.
-- En el panel, el pairing QR mantiene una ventana total de 140s aunque Baileys emita varios QRs; el pairing por número devuelve un código manual de 8 caracteres y no se renueva automáticamente. No mezcles solicitudes QR y código: el estado pendiente se restaura al entrar a la pestaña Pairing.
+- `cd gateway && npm run reset` renueva la sesión/QR de WhatsApp en desarrollo. `npm run clean` es un reset de fábrica destructivo manual: borra sesión, agenda, configuración, colas, memoria y logs, pero conserva `brain/profiles/`; en Docker usa `docker compose ... down -v` solo si realmente quieres borrar los volúmenes.
+- En el panel:
+  - **WhatsApp:** El pairing QR mantiene una ventana total de 140s aunque Baileys emita varios QRs; el pairing por número devuelve un código manual de 8 caracteres y no se renueva automáticamente. No mezcles solicitudes QR y código: el estado pendiente se restaura al entrar a la pestaña WhatsApp/Pairing.
+  - **Telegram:** Pestaña dedicada para ingresar Bot Token y Chat ID con testeo en vivo (`/api/telegram/test`) y guardado en `settings_db.json` (`/api/telegram/settings`).
 
 ## Límites De Arquitectura
 
+- **Adapter Hub Multi-Canal:** Todos los canales normalizan mensajes entrantes a `StandardMessage` (`gateway/core/StandardMessage.js`) y heredan de `ChannelAdapter` (`gateway/core/ChannelAdapter.js`).
+- **IDs Compuestos:** Para aislar memoria y contactos entre canales, las IDs remotas usan prefijo de canal: `whatsapp:<numero/lid>` o `telegram:<chat_id>`.
 - Las decisiones de flujo de mensajes son puras y viven en `gateway/services/pipeline.js`; los efectos secundarios, buffers y serialización por chat viven en `gateway/handlers/messageHandler.js`.
-- Los comandos admin se registran por módulos en `gateway/handlers/commands/` y se agregan al registro de `commandHandler.js`; no recrees un switch monolítico.
+- Los comandos admin se registran por módulos en `gateway/handlers/commands/` y se agregan al registro de `commandHandler.js`; no recrees un switch monolítico. Se ejecutan tanto desde el self-chat de WhatsApp (con extracción de citas) como desde el chat admin de Telegram (con menú nativo de comandos de Telegram Bot API).
 - Los errores de sintaxis de comandos deben usar `syntaxError()`/`COMMAND_USAGE`; texto de usuario interpolado en Markdown debe pasar por `sanitizeMarkdown()`.
 - La persistencia de contactos y settings se maneja mediante `gateway/services/db.js` y sus rutas configurables; conserva el guardado diferido/atómico y el bloqueo de instancia.
 - El router real del brain es Groq → OpenRouter → Gemini en `brain/providers.py`; si la documentación difiere, sigue el código y la configuración ejecutables.

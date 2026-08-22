@@ -1,15 +1,16 @@
 # 🤖 SDK-Bot
 
-**Plataforma Multi-Bot de WhatsApp 100% Custom, Smart Sync & Automated Handoff** — Gateway de mensajería modular en Node.js + Cerebro IA en Python FastAPI con router multi-proveedor (Groq → OpenRouter → Gemini).
+**Plataforma Multi-Canal (WhatsApp & Telegram) 100% Custom, Smart Sync & Automated Handoff** — Gateway de mensajería modular con arquitectura Adapter Hub en Node.js + Cerebro IA en Python FastAPI con router multi-proveedor (Groq → OpenRouter → Gemini).
 
 ---
 
 ## 🎯 Características Principales
 
+- **🔌 Arquitectura Adapter Hub Multi-Canal:** Conexión simultánea a múltiples redes de mensajería (**WhatsApp** vía Baileys y **Telegram** vía Bot API Polling) normalizadas mediante `StandardMessage` e IDs compuestas (`whatsapp:<jid>`, `telegram:<chat_id>`).
 - **🤝 Derivación a Humano (Single-User Handoff):** Si un cliente pide *"hablar con un asesor"*, la IA se pausa **únicamente para ese cliente** y notifica al Admin en Self-Chat (`/auto <num>` o `/a` para reactivar, `/handoff <num>` o `/h` para pausar).
 - **🧠 De-bounce Queue Adaptativo Estocástico:** Acumula mensajes consecutivos con temporizador estocástico adaptativo (5s-7s en mensajes cortos, 7.5s-12s en textos largos/múltiples, con capas estocásticas de ocupación/distracción de 1-2 min al 12% y 3-4 min al 5%). Si el usuario escribe despacio (`composing`), los temporizadores se renuevan continuamente sin cortar la idea del cliente.
 - **⏱️ Auto-Expiración de Escritura (5.0s):** Si el cliente se arrepiente y borra lo que escribía sin enviar evento de pausa, el estado expira automáticamente a los 5.0s (`TYPING_TTL_MS`) y arranca el temporizador de silencio.
-- **🧠 Memoria de Conversación Persistente (2 etapas, web-like):** El cerebro guarda el historial en SQLite (aislado por bot+usuario, ventana de 7 días / sin tope de cantidad / ~5000 tokens). Al detectar que el cliente **empieza a escribir** (`composing`), el gateway **precarga el contexto de ese chat** (señal de intervención igual al cliente web: "abre el chat y ya sabe de qué va") con una ventana reciente acotada (25 mensajes por defecto, `GATEWAY_PRELOAD_*` en `.env.tuning`). Cuando el mensaje **llega**, la respuesta usa el contexto **COMPLETO** (7d / 5000 tok) del cerebro. La precarga es solo señal y NO se inyecta en la respuesta. Tunable vía `.env.tuning`.
+- **🧠 Memoria de Conversación Persistente (2 etapas, web-like):** El cerebro guarda el historial en SQLite (aislado por canal+usuario, ventana de 7 días / sin tope de cantidad / ~5000 tokens). Al detectar que el cliente **empieza a escribir** (`composing`), el gateway **precarga el contexto de ese chat** (señal de intervención igual al cliente web: "abre el chat y ya sabe de qué va") con una ventana reciente acotada (25 mensajes por defecto, `GATEWAY_PRELOAD_*` en `.env.tuning`). Cuando el mensaje **llega**, la respuesta usa el contexto **COMPLETO** (7d / 5000 tok) del cerebro. La precarga es solo señal y NO se inyecta en la respuesta. Tunable vía `.env.tuning`.
 - **🛡️ Simulación Humana Ultra-Realista (Multi-Bubble & Jitter Rate Limiter):** 
   - Simula tiempo de **lectura/pensamiento** inicial (800ms - 3.3s) antes de encender el teclado.
   - Velocidad de tecleo natural a ritmo humano (7 a 10 char/s, 100ms - 135ms por carácter) con **varianza aleatoria estocástica (jitter)** para evadir algoritmos de detección de Meta (1.5s a 16s máximo por globo).
@@ -21,14 +22,14 @@
 - **🌎 Detección Automática de País e Idioma Nativo:**
   - Cobertura completa de prefijos telefónicos de toda América (Sur, Centro, Norte y Caribe) y Europa.
   - Inyección automática del **idioma del cliente** (Portugués, Inglés, Francés, Alemán, Italiano, Neerlandés, etc.) al prompt de la IA para ofrecer atención en su idioma nativo si es diferente al español.
-- **🚨 Alertas Silenciosas de Error al Self-Chat:** 
+- **🚨 Alertas Silenciosas de Error al Self-Chat / Telegram Admin:** 
   - Los errores técnicos o caídas de la IA **nunca se envían al cliente**. 
-  - En su lugar, el sistema notifica en privado al Self-Chat del Admin con el nombre del cliente, teléfono, país, mensaje original, diagnóstico explícito y el comando rápido `/handoff <num>` para tomar la conversación.
+  - En su lugar, el sistema notifica en privado al canal de administración con el diagnóstico explícito y comandos rápidos.
 - **🗂️ Motor de Estados Centralizado (`contacts_db.json` & `settings_db.json`):**
-  - Persistencia de `savedName` (Agenda), `pushName` (Público), `phone`, `lid`, `country`, `language`, `profilePicUrl` HD, `bio`, `isBusiness` y `estado` (`permitido`, `ignorado`, `handoff`, `neutro`).
+  - Persistencia de `savedName` (Agenda), `pushName` (Público), `phone`, `lid`, `country`, `language`, `profilePicUrl` HD, `bio`, `isBusiness`, config de Telegram y `estado` (`permitido`, `ignorado`, `handoff`, `neutro`).
   - Refresco inteligente TTL de 24 horas para foto y biografía.
   - Inserciones masivas ultra-rápidas en lote (`bulkUpsertContactsMetadata`).
-- **🚀 Re-Sincronización Automatizada (`npm run reset`):** Script `reset-session.js` para limpiar sesión y escanear un QR nuevo con descarga masiva de libreta.
+- **🚀 Re-Sincronización Automatizada (`npm run reset`):** Script `reset-session.js` para limpiar sesión de WhatsApp y escanear un QR nuevo con descarga masiva de libreta.
 
 ---
 
@@ -36,15 +37,17 @@
 
 ```
 SDK-Bot/
-├── gateway/                      # Capa de Mensajería (Node.js + Baileys)
-│   ├── index.js                  # Entrada Baileys (presenceSubscribe, syncFullHistory, bus interno :5400)
+├── gateway/                      # Capa de Mensajería (Node.js + Adapter Hub)
+│   ├── index.js                  # Orquestador del Hub (adapters, pipeline, bus interno :5400)
+│   ├── core/                     # Interfaces abstractas (ChannelAdapter, StandardMessage)
+│   ├── adapters/                 # Adaptadores de red (whatsappAdapter, telegramAdapter)
 │   ├── reset-session.js          # Script de re-sincronización de libreta (npm run reset)
 │   ├── reset-clean.js            # Reset limpio de fábrica F7 (npm run clean)
 │   ├── config.js                 # Estado global, URLs y registro anti-bucle
 │   ├── tuning.js                 # Variables de afinación y rendimiento
 │   ├── panel/                    # Panel Web — 3er proceso independiente (puerto 5201)
 │   │   └── index.js              # Servidor HTTP proxy hacia el bus interno (:5400) y estáticos
-│   ├── admin-web/                # Frontend web estático (HTML/CSS/JS puro, dashboard, pairing, etc.)
+│   ├── admin-web/                # Frontend web estático (dashboard, pairing WA, telegram, contactos, etc.)
 │   ├── store/
 │   │   └── chatStore.js          # Store RAM de mensajes de Baileys (precarga web-like)
 │   ├── services/
@@ -87,7 +90,7 @@ SDK-Bot/
 ├── docs/                       # Documentación Técnica
 │   ├── ARCHITECTURE.md           # Plan de Arquitectura Completo
 │   ├── ROADMAP.md                # Hoja de ruta de fases (guía de sesiones)
-│   ├── adr/                      # Architecture Decision Records
+│   ├── adr/                      # Architecture Decision Records (ADR 001 Adapter Hub)
 │   └── OAUTH-LESSONS.md          # Lecciones de OAuth Google en el panel
 ```
 
@@ -161,19 +164,15 @@ abierto (comportamiento legacy).
   `https://panel.zer0x.org` (TLS en el borde; Caddy proxifica a
   `127.0.0.1:5201` / `host.docker.internal:5201`).
 
-#### Pairing desde el panel
+#### Canales y Pairing desde el panel
 
-- **QR:** Baileys puede emitir varios QRs consecutivos durante una misma
-  solicitud. El panel reemplaza la imagen, pero mantiene una sola ventana total
-  de 140 segundos (`GATEWAY_QR_TTL_MS=140000`); no permite pedir otro hasta que
-  expire. El timer cuenta hacia arriba desde el primer QR.
-- **Código:** se solicita con un número que incluya el código de país, sin `+`.
-  Baileys devuelve un código de 8 caracteres, que se muestra en una ficha
-  grande con copia al portapapeles. Solicitar otro código es manual y reemplaza
-  el anterior; no hay renovación automática.
-- El bus interno conserva el método pendiente (`QR` o `código`). Si se cambia
-  de pestaña o se recarga el panel, Pairing restaura directamente el método
-  activo y bloquea solicitudes cruzadas.
+- **WhatsApp:**
+  - **QR:** Baileys puede emitir varios QRs consecutivos durante una misma solicitud. El panel reemplaza la imagen, pero mantiene una sola ventana total de 140 segundos (`GATEWAY_QR_TTL_MS=140000`); no permite pedir otro hasta que expire. El timer cuenta hacia arriba desde el primer QR.
+  - **Código:** se solicita con un número que incluya el código de país, sin `+`. Baileys devuelve un código de 8 caracteres, que se muestra en una ficha grande con copia al portapapeles. Solicitar otro código es manual y reemplaza el anterior; no hay renovación automática.
+  - El bus interno conserva el método pendiente (`QR` o `código`). Si se cambia de pestaña o se recarga el panel, Pairing restaura directamente el método activo y bloquea solicitudes cruzadas.
+- **Telegram:**
+  - Pestaña dedicada para ingresar el **Telegram Bot Token** y obtener automáticamente el **Chat ID** de administración pulsando *"Testear y Obtener Chat ID"*.
+  - Guarda la configuración en caliente en `settings_db.json` sin reiniciar el gateway. El adaptador inicia polling automático y configura el menú de comandos en Telegram.
 
 ### 4. Producción — Docker Compose en Linux
 
@@ -244,9 +243,10 @@ npm run reset
 
 ---
 
-## 🎮 Comandos Admin (Self-Chat en WhatsApp)
+## 🎮 Comandos Admin (WhatsApp Self-Chat & Telegram Bot)
 
-Envía estos comandos desde tu propio chat de WhatsApp ("Mensaje a ti mismo"). **Nota:** Puedes citar (responder) cualquier mensaje de cliente o alerta para omitir el `<num/lid>`.
+Envía estos comandos desde tu chat de WhatsApp ("Mensaje a ti mismo") o directamente a tu bot en **Telegram**.
+**Nota:** En WhatsApp puedes citar (responder) cualquier mensaje de cliente o alerta para omitir el `<num/lid>`. En Telegram los comandos están preconfigurados en el menú interactivo.
 
 | Comando | Alias Cortos | Descripción |
 |---------|--------------|-------------|
@@ -269,7 +269,7 @@ Envía estos comandos desde tu propio chat de WhatsApp ("Mensaje a ti mismo"). *
 | `/estado` | `/e`, `/menu`, `/status`, `/help`, `/admin` | Panel de estado general del bot y menú de ayuda |
 | `/init` | `/guia`, `/startguide` | Ver guía rápida de inicio explicativa interactiva |
 
-> 💡 Los textos normales enviados en Self-Chat activan el modo **Asistente Personal IA**.
+> 💡 Los textos normales enviados en Self-Chat o Telegram Admin activan el modo **Asistente Personal IA**.
 
 ---
 
