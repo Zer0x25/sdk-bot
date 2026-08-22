@@ -25,8 +25,9 @@ test('GET /status devuelve métricas completas del gateway', async () => {
     assert.strictEqual(data.status, 'ok');
     assert.strictEqual(typeof data.uptime_seconds, 'number');
     assert.ok(data.pid > 0);
-    assert.ok(data.runtime, 'objeto runtime');
-    assert.strictEqual(data.runtime.connection, 'starting');
+    assert.ok(data.channels, 'objeto channels');
+    assert.strictEqual(data.channels.whatsapp.connection, 'starting');
+    assert.strictEqual(data.channels.telegram.connection, 'starting');
     assert.ok(data.bot, 'estado del bot');
     assert.strictEqual(typeof data.bot.profile, 'string');
     assert.ok(data.database, 'db');

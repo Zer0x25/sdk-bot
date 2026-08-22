@@ -19,12 +19,12 @@ const logError = cat("ERROR");
  * @param {object} docMessage - message.documentMessage (o contenido de quotedMessage)
  * @param {object} [msgKey] - key del mensaje original para downloadMediaMessage
  */
-async function handleProfileUpload(sock, remoteJid, docMessage, msgKey) {
+async function handleProfileUpload(adapter, remoteJid, docMessage, msgKey) {
     try {
         const fileName = docMessage?.fileName || 'perfil.md';
         const match = fileName.match(/^([a-z0-9_-]+)\.(md|txt)$/i);
         if (!match) {
-            await sock.sendMessage(remoteJid, { text: `⚠️ *Archivo no válido:* \`${fileName}\`. Debe llamarse \`perfil.md\` o \`<key>.md\` (ej: \`lucia.md\`).` });
+            await adapter.sendMessage(remoteJid, `⚠️ *Archivo no válido:* \`${fileName}\`. Debe llamarse \`perfil.md\` o \`<key>.md\` (ej: \`lucia.md\`).`);
             return false;
         }
         const profileKey = match[1].toLowerCase();
@@ -39,7 +39,7 @@ async function handleProfileUpload(sock, remoteJid, docMessage, msgKey) {
             reuploadRequest: async (msg) => msg
         });
         if (!buffer) {
-            await sock.sendMessage(remoteJid, { text: `⚠️ No pude descargar el archivo \`${fileName}\`. Intenta reenviarlo citándolo con \`/update\`.` });
+            await adapter.sendMessage(remoteJid, `⚠️ No pude descargar el archivo \`${fileName}\`. Intenta reenviarlo citándolo con \`/update\`.`);
             return false;
         }
 
@@ -47,29 +47,25 @@ async function handleProfileUpload(sock, remoteJid, docMessage, msgKey) {
         const result = await importProfileFile(profileKey, content);
 
         if (result && result.success) {
-            const sent = await sock.sendMessage(remoteJid, {
-                text: `✅ *Perfil \`${profileKey}\` actualizado:*\n` +
+            const sent = await adapter.sendMessage(remoteJid, `✅ *Perfil \`${profileKey}\` actualizado:*\n` +
                     `• *Nombre:* ${result.nombre}\n` +
                     `• *Reglas:* ${result.reglas} | *Ejemplos:* ${result.ejemplos}\n\n` +
-                    `Comprueba el prompt: \`/perfil ver ${profileKey}\``
-            });
+                    `Comprueba el prompt: \`/perfil ver ${profileKey}\``);
             registerSentMessage(sent);
             return true;
         }
 
-        const sent = await sock.sendMessage(remoteJid, {
-            text: `⚠️ *Rechazado* (${fileName}): ${result?.message || 'Brain apagado o error de importación'}. El perfil no fue modificado.`
-        });
+        const sent = await adapter.sendMessage(remoteJid, `⚠️ *Rechazado* (${fileName}): ${result?.message || 'Brain apagado o error de importación'}. El perfil no fue modificado.`);
         registerSentMessage(sent);
         return false;
     } catch (e) {
         logError.error("⚠️ Error al importar perfil desde documento:", e.message);
-        await sock.sendMessage(remoteJid, { text: `⚠️ Error al importar el perfil: ${e.message}` }).catch(() => {});
+        await adapter.sendMessage(remoteJid, `⚠️ Error al importar el perfil: ${e.message}`).catch(() => {});
         return false;
     }
 }
 
-async function runPerfil({ sock, remoteJid, queryParam, rawMsg }) {
+async function runPerfil({ adapter, remoteJid, queryParam, rawMsg }) {
     const profiles = await getAvailableProfiles();
     const profileList = profiles.map(p => `• \`${p.key}\` - *${p.nombre}*: ${p.descripcion}`).join('\n');
 
@@ -116,12 +112,11 @@ async function runPerfil({ sock, remoteJid, queryParam, rawMsg }) {
             return `⚠️ Perfil *"${keyToExport}"* no encontrado o brain apagado.`;
         }
         try {
-            await sock.sendMessage(remoteJid, {
+            await adapter.sendMessage(remoteJid, {
                 document: Buffer.from(exported.content, 'utf8'),
-                mimetype: 'text/markdown',
                 fileName: exported.filename,
                 caption: `📤 Perfil *${keyToExport}*. Edítalo y envíalo citando este archivo con \`/update\`.`
-            });
+            }, { mimetype: 'text/markdown' });
             return null; // La respuesta es el propio documento
         } catch (e) {
             logError.error("⚠️ Error al enviar documento de perfil:", e.message);
@@ -166,7 +161,7 @@ async function runPerfil({ sock, remoteJid, queryParam, rawMsg }) {
     return `⚠️ ${globalRes.message}`;
 }
 
-async function runUpdate({ sock, remoteJid, rawMsg }) {
+async function runUpdate({ adapter, remoteJid, rawMsg }) {
     // El admin cita un documento .md con /update, o envía el documento con caption /update
     const quotedDoc = rawMsg?.message?.extendedTextMessage?.contextInfo?.quotedMessage?.documentMessage ||
                       rawMsg?.message?.extendedTextMessage?.contextInfo?.quotedMessage?.documentWithCaptionMessage?.message?.documentMessage;
@@ -185,7 +180,7 @@ async function runUpdate({ sock, remoteJid, rawMsg }) {
         return usageOf('update');
     }
 
-    await handleProfileUpload(sock, remoteJid, docMsg, docKey);
+    await handleProfileUpload(adapter, remoteJid, docMsg, docKey);
     return null; // handleProfileUpload ya respondió
 }
 

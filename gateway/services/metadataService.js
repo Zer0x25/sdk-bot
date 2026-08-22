@@ -227,9 +227,9 @@ async function enrichContactExtraData(sock, jid, metadata, forceRefresh = false)
 function isSelfChat(remoteJid, _isFromMe) {
     if (!remoteJid) return false;
     
-    const cleanTarget = remoteJid.split('@')[0].split(':')[0].replace(/[^0-9]/g, '');
-    const cleanAdminPhone = state.ADMIN_PHONE ? state.ADMIN_PHONE.split(':')[0].replace(/[^0-9]/g, '') : '';
-    const cleanAdminLid = state.ADMIN_LID ? state.ADMIN_LID.split(':')[0].replace(/[^0-9]/g, '') : '';
+    const cleanTarget = (remoteJid.match(/\d+/) || [''])[0];
+    const cleanAdminPhone = state.ADMIN_PHONE ? (state.ADMIN_PHONE.match(/\d+/) || [''])[0] : '';
+    const cleanAdminLid = state.ADMIN_LID ? (state.ADMIN_LID.match(/\d+/) || [''])[0] : '';
 
     if (cleanAdminLid && cleanTarget === cleanAdminLid) return true;
     if (cleanAdminPhone && cleanTarget === cleanAdminPhone) return true;

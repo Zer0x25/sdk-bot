@@ -20,11 +20,19 @@ const log = cat('CORE');
 const logError = cat('ERROR');
 
 // Estado de conexión que index.js actualiza (no accesible desde aquí)
-const runtime = {
-    connection: 'starting',   // starting | open | close | reconnecting | standby
-    lastConnectAt: null,
-    reconnectAttempt: 0,
-    lastDisconnectReason: null
+const channels = {
+    whatsapp: {
+        connection: 'starting',   // starting | open | close | reconnecting | standby
+        lastConnectAt: null,
+        reconnectAttempt: 0,
+        lastDisconnectReason: null
+    },
+    telegram: {
+        connection: 'starting',   // starting | open | close
+        lastConnectAt: null,
+        reconnectAttempt: 0,
+        lastDisconnectReason: null
+    }
 };
 
 function buildStatus() {
@@ -41,7 +49,7 @@ function buildStatus() {
         uptime_seconds: Math.round(process.uptime()),
         pid: process.pid,
         node: process.version,
-        runtime,
+        channels,
         bot: {
             number: state.ADMIN_PHONE || state.ADMIN_LID || null,
             lid: state.ADMIN_LID || null,
@@ -101,4 +109,4 @@ function startStatusServer(opts = {}) {
     return server;
 }
 
-module.exports = { startStatusServer, runtime, buildStatus };
+module.exports = { startStatusServer, channels, buildStatus };

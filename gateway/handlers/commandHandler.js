@@ -12,7 +12,7 @@ const { num } = require('../tuning');
  * 🧩 Definición de un comando admin en la tabla de registro
  * @typedef {Object} CommandDef
  * @property {string[]} aliases
- * @property {(ctx: {sock: any, remoteJid: string, queryParam: string, rawMsg: any}) => (string|null) | Promise<string|null>} run
+ * @property {(ctx: {adapter: any, remoteJid: string, queryParam: string, rawMsg: any}) => (string|null) | Promise<string|null>} run
  */
 
 /** @type {CommandDef[]} */
@@ -64,18 +64,18 @@ function getCommandStats() {
  * 👑 Despachador de comandos admin (self-chat)
  * @param {string} textMessage
  * @param {string} remoteJid
- * @param {any} sock
+ * @param {any} adapter
  * @param {import('../services/metadataService.js').UserMetadata} metadata
  * @param {any} [rawMsg]
  */
-async function handleAdminCommand(textMessage, remoteJid, sock, metadata, rawMsg = null) {
+async function handleAdminCommand(textMessage, remoteJid, adapter, metadata, rawMsg = null) {
     commandStats.adminCommands += 1;
     commandStats.lastCommandAt = new Date().toISOString();
 
     // ⏱️ S2 — Rate limit de comandos admin (protege de spam accidental de comandos)
     if (adminCommandLimiter(remoteJid)) {
         log.warn(`⏱️ [RATE LIMIT ADMIN] ${remoteJid} excedió ${ADMIN_CMD_MAX_PER_MIN} comandos/min. Ignorado: ${textMessage.slice(0, 60)}`);
-        await sock.sendMessage(remoteJid, { text: "⏱️ *Demasiados comandos por minuto.* Espera unos segundos e inténtalo de nuevo." });
+        await adapter.sendMessage(remoteJid, "⏱️ *Demasiados comandos por minuto.* Espera unos segundos e inténtalo de nuevo.");
         return;
     }
 
@@ -97,7 +97,7 @@ async function handleAdminCommand(textMessage, remoteJid, sock, metadata, rawMsg
     const def = commandRegistry.get(command);
     let adminResponse;
     if (def) {
-        adminResponse = await def.run({ sock, remoteJid, queryParam, rawMsg });
+        adminResponse = await def.run({ adapter, remoteJid, queryParam, rawMsg });
     } else {
         adminResponse = `⚠️ Comando no reconocido: *${command}*. Usa \`/e\` o \`/estado\` para ver el menú.`;
     }
@@ -107,7 +107,7 @@ async function handleAdminCommand(textMessage, remoteJid, sock, metadata, rawMsg
         const chunks = chunkAdminText(adminResponse);
         for (let i = 0; i < chunks.length; i++) {
             const suffix = chunks.length > 1 ? `\n_(Mensaje ${i + 1}/${chunks.length})_` : '';
-            const sentMsg = await sock.sendMessage(remoteJid, { text: chunks[i] + suffix });
+            const sentMsg = await adapter.sendMessage(remoteJid, chunks[i] + suffix);
             registerSentMessage(sentMsg);
         }
     } catch (e) {

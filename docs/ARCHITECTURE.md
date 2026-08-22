@@ -13,8 +13,10 @@ Crear una plataforma escalable donde podamos levantar `N` cantidad de bots de Wh
 
 ```
 SDK-Bot/
-├── gateway/                      # Capa de Mensajería (Node.js + Baileys)
-│   ├── index.js                  # Punto de entrada ultraligero (syncFullHistory, presenceSubscribe, bus :5400)
+├── gateway/                      # Capa de Mensajería (Node.js + Hub de Adaptadores)
+│   ├── index.js                  # Punto de entrada (orquesta adaptadores, pipelines y colas)
+│   ├── core/                     # Interfaces abstractas (ChannelAdapter, StandardMessage)
+│   ├── adapters/                 # Implementaciones de red (whatsappAdapter, telegramAdapter)
 │   ├── reset-session.js          # Script de re-sincronización de libreta (npm run reset / Fresh QR)
 │   ├── reset-clean.js            # Reset limpio de fábrica F7 (npm run clean)
 │   ├── config.js                 # Estado global, URLs y registro anti-bucle
@@ -46,7 +48,7 @@ SDK-Bot/
 │   ├── settings_db.json          # Configuración global del bot (globalMode: allowed_all / ignored_all)
 │   ├── settings_db.json.example  # Plantilla de configuración global
 │   ├── *.json.example            # Plantillas de ejemplo para despliegues limpios
-│   └── auth_info_baileys/        # Sesión y estado de WhatsApp (gitignored)
+│   ├── auth_info_baileys/        # Sesión y estado de WhatsApp (gitignored)
 ├── brain/                        # Capa de Inteligencia (Python + FastAPI)
 │   ├── main.py                   # Aplicación FastAPI modularizada (/chat, /reset-memory, /profiles, :5100)
 │   ├── config.py                 # API Keys y modelos (Groq, OpenRouter, Gemini)
@@ -114,7 +116,7 @@ SDK-Bot/
 ## 🔒 Pipeline de Seguridad y Flujo de Mensajes
 
 ```
-Mensaje Entrante en Baileys (messages.upsert)
+Mensaje Entrante en Adapter Hub (WhatsApp, Telegram, etc.)
 │
 ├── 🗂️ Registro/Actualización en contacts_db.json (bulkUpsert / upsertContactMetadata)
 ├── 🧠 Smart TTL Check (¿lastEnrichedAt < 24h? SÍ: Omitir Red | NO: Consultar Foto/Bio)

@@ -121,13 +121,13 @@ function calculateTypingDelay(bubbleText) {
 /**
  * 🚨 Notificar al Administrador en Self-Chat en caso de error técnico o fallo de IA
  */
-async function notifyAdminError(sock, metadata, textMessage, errorDetails) {
+async function notifyAdminError(adapter, metadata, textMessage, errorDetails) {
     if (!state.ADMIN_PHONE && !state.ADMIN_LID) {
         logError.error("⚠️ [ERROR ADMIN] No se detectó ADMIN_PHONE ni ADMIN_LID para enviar alerta de error.");
         return;
     }
 
-    const adminJid = state.ADMIN_PHONE ? `${state.ADMIN_PHONE}@s.whatsapp.net` : `${state.ADMIN_LID}@lid`;
+    const adminJid = state.ADMIN_PHONE ? `whatsapp:${state.ADMIN_PHONE}` : `whatsapp:${state.ADMIN_LID}`;
     const displayName = metadata.savedName || metadata.pushName || 'Desconocido';
     const phone = metadata.phoneNumber || 'N/A';
     const lid = metadata.lid || 'N/A';
@@ -161,7 +161,7 @@ async function notifyAdminError(sock, metadata, textMessage, errorDetails) {
         `\`/handoff ${targetKey}\``;
 
     try {
-        const sentAlert = await sock.sendMessage(adminJid, { text: adminAlert });
+        const sentAlert = await adapter.sendMessage(adminJid, adminAlert);
         registerSentMessage(sentAlert);
     } catch (err) {
         logError.error("Error al enviar alerta a Self-Chat del Admin: " + errMsg(err));
@@ -199,7 +199,7 @@ async function requestBrain(payload) {
     return data;
 }
 
-async function processAIChat(textMessage, remoteJid, metadata, sock, opts = {}) {
+async function processAIChat(textMessage, remoteJid, metadata, adapter, opts = {}) {
     // opts.fromQueue = true cuando el mensaje viene de la cola persistente (F4-P4):
     // no re-encolar y no repetir la alerta al admin (el flush lo gestiona).
     // Nota: la precarga en presencia (Opción A) es SOLO señal de intervención;
@@ -265,15 +265,15 @@ async function processAIChat(textMessage, remoteJid, metadata, sock, opts = {}) 
 
                 log.info(`[SIMULACIÓN HUMANA] ⌨️ Tecleando globo ${i + 1}/${bubbles.length} (${bubble.length} chars) durante ${(typingDelay / 1000).toFixed(2)}s...`);
                 
-                await sock.sendPresenceUpdate('composing', remoteJid);
+                await adapter.sendPresenceUpdate('composing', remoteJid);
                 await new Promise(r => setTimeout(r, typingDelay));
 
-                const sentMsg = await sock.sendMessage(remoteJid, { text: bubble });
+                const sentMsg = await adapter.sendMessage(remoteJid, bubble);
                 registerSentMessage(sentMsg);
 
                 // ☕ Pausa humana entre globos consecutivos
                 if (i < bubbles.length - 1) {
-                    await sock.sendPresenceUpdate('paused', remoteJid).catch(() => {});
+                    await adapter.sendPresenceUpdate('paused', remoteJid).catch(() => {});
                     const pauseBetweenBubbles = 1000 + Math.floor(Math.random() * 1200); // 1.0s a 2.2s
                     log.info(`[SIMULACIÓN HUMANA] ☕ Pausa entre globos de ${(pauseBetweenBubbles / 1000).toFixed(2)}s...`);
                     await new Promise(r => setTimeout(r, pauseBetweenBubbles));
@@ -284,18 +284,18 @@ async function processAIChat(textMessage, remoteJid, metadata, sock, opts = {}) 
             if (opts.fromQueue) {
                 throw new Error(data.error || "Respuesta vacía del cerebro IA");
             }
-            await notifyAdminError(sock, metadata, textMessage, data.error || "Respuesta vacía del cerebro IA");
+            await notifyAdminError(adapter, metadata, textMessage, data.error || "Respuesta vacía del cerebro IA");
         }
     } catch (error) {
         brainStats.lastErrorAt = new Date().toISOString();
         brainStats.lastErrorMsg = errMsg(error);
         logError.error("Error al conectar con el cerebro: " + errMsg(error));
-        await handleBrainFailure(error, textMessage, remoteJid, metadata, sock, opts);
+        await handleBrainFailure(error, textMessage, remoteJid, metadata, adapter, opts);
         // 📥 F4-P4: en modo cola, el error debe llegar al flush (que marca el intento
         // y reintenta después). En el flujo normal, el error queda manejado aquí.
         if (opts.fromQueue) throw error;
     } finally {
-        await sock.sendPresenceUpdate('paused', remoteJid).catch(() => {});
+        await adapter.sendPresenceUpdate('paused', remoteJid).catch(() => {});
     }
 }
 
@@ -308,7 +308,7 @@ let lastBrainAlertAt = 0;
  * 🛠️ Fallo transitorio del brain: encola el mensaje en disco (F4-P4) y avisa al
  * admin con throttle. Los 4xx (bug) NO se encolan: se avisa tal cual.
  */
-async function handleBrainFailure(error, textMessage, remoteJid, metadata, sock, opts) {
+async function handleBrainFailure(error, textMessage, remoteJid, metadata, adapter, opts) {
     const err = /** @type {Error & {status?: number}} */ (error);
     const transitory = !err.status || err.status >= 500;
     const msg = errMsg(error);
@@ -337,7 +337,7 @@ async function handleBrainFailure(error, textMessage, remoteJid, metadata, sock,
         : (transitory
             ? '\n❌ *Cola de mensajes llena — este mensaje del cliente se PERDIÓ.*'
             : '');
-    await notifyAdminError(sock, metadata, textMessage, msg + suffix);
+    await notifyAdminError(adapter, metadata, textMessage, msg + suffix);
 }
 
 async function clearAIMemory(userJid) {

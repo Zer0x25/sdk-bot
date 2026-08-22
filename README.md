@@ -84,9 +84,11 @@ SDK-Bot/
 │   ├── linux/                    # Lanzamiento manual dev y alternativa systemd legacy
 │   ├── termux/                   # Scripts y servicios runit para Android (Termux)
 │   └── windows/                  # Scripts batch para Windows (startBrain.bat, startGateway.bat)
-├── PLAN-ARQUITECTURA.md          # Documentación técnica completa
-├── OAUTH-LESSONS.md              # Lecciones de OAuth Google en el panel (state server-side, SameSite)
-└── ROADMAP.md                    # Hoja de ruta de fases (guía de sesiones)
+├── docs/                       # Documentación Técnica
+│   ├── ARCHITECTURE.md           # Plan de Arquitectura Completo
+│   ├── ROADMAP.md                # Hoja de ruta de fases (guía de sesiones)
+│   ├── adr/                      # Architecture Decision Records
+│   └── OAUTH-LESSONS.md          # Lecciones de OAuth Google en el panel
 ```
 
 ---

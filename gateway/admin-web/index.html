@@ -482,22 +482,21 @@ function splitProvider(s) {
   return { provider: s.trim(), model: '-' };
 }
 
-// Estado del gateway/Baileys:
-// open → Running (badge running, WhatsApp: Connected);
-// reconnecting → Reconnecting (badge reconnecting, WhatsApp: Reconnecting);
-// starting / close (sin sesión o esperando pairing) → No Pairing (badge nopairing, WhatsApp: No Pairing).
-function gatewayState(conn) {
-  const c = conn.connection || 'starting';
-  if (c === 'open') return { label: 'Running', cls: 'running', waLabel: 'Connected', waCls: 'ok' };
-  if (c === 'reconnecting') return { label: 'Reconnecting', cls: 'reconnecting', waLabel: 'Reconnecting', waCls: 'warn' };
-  return { label: 'No Pairing', cls: 'nopairing', waLabel: 'No Pairing', waCls: 'warn' };
+// Estado genérico de conexión de canal
+function channelState(conn) {
+  const c = conn?.connection || 'starting';
+  if (c === 'open') return { label: 'Connected', cls: 'ok' };
+  if (c === 'reconnecting') return { label: 'Reconnecting', cls: 'warn' };
+  return { label: 'Disconnected', cls: 'warn' };
 }
 
 async function refresh() {
   try {
     const r = await fetch('/api/status');
     const d = await r.json();
-    const conn = d.runtime || {};
+    const channels = d.channels || {};
+    const wa = channels.whatsapp || {};
+    const tg = channels.telegram || {};
     const brain = d.brain || {};
     const bh = brain.health || {};
     const paused = d.bot && d.bot.paused;
@@ -505,17 +504,21 @@ async function refresh() {
     const broadcast = d.broadcast || {};
     const queue = d.queue || {};
     const brainMemory = (bh.health && bh.health.memory) || {};
-    const gw = gatewayState(conn);
+    const waSt = channelState(wa);
+    const tgSt = channelState(tg);
     const phone = d.bot && (d.bot.number || d.bot.lid);
     const phoneFormatted = phone ? (String(phone).startsWith('+') ? String(phone) : '+' + phone) : '—';
     cards.innerHTML =
-      card('Gateway (Baileys)', [
-        ['estado', gw.label, gw.cls],
-        ['WhatsApp', gw.waLabel, gw.waCls],
-        ['teléfono', phoneFormatted],
-        ['reconexión', '#' + (conn.reconnectAttempt ?? 0)],
-        ['último motivo', trunc(conn.lastDisconnectReason || '-', 32)],
-        ['uptime', Math.round(d.uptime_seconds / 60) + ' min']
+      card('Gateway (Core)', [
+        ['uptime', Math.round(d.uptime_seconds / 60) + ' min'],
+        ['versión node', d.node || '-'],
+        ['memoria RAM', Math.round((d.memory?.rss || 0) / 1024 / 1024) + ' MB']
+      ]) +
+      card('Canales (Adapters)', [
+        ['WhatsApp', waSt.label, waSt.cls],
+        ['wa reconexión', '#' + (wa.reconnectAttempt ?? 0)],
+        ['Telegram', tgSt.label, tgSt.cls],
+        ['teléfono admin', phoneFormatted]
       ]) +
       card('Brain', [
         ['estado', bh.state || 'desconocido', brainStateClass(bh.state)],
@@ -712,7 +715,8 @@ async function refreshSession() {
   try {
     const r = await fetch('/api/status');
     const d = await r.json();
-    setSession(!!(d.runtime && d.runtime.connection === 'open'), (d.bot && d.bot.number) || '');
+    const isOpen = !!(d.channels && d.channels.whatsapp && d.channels.whatsapp.connection === 'open');
+    setSession(isOpen, (d.bot && d.bot.number) || '');
   } catch (e) { /* reintenta en el próximo tick */ }
 }
 

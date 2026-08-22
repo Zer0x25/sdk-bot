@@ -236,9 +236,10 @@ function cleanContactsDB() {
 
 /**
  * @param {ContactMetadataInput} metadata
+ * @param {string} [remoteId] - ID compuesto (ej: whatsapp:123, telegram:456)
  * @returns {ContactRecord|null}
  */
-function upsertContactMetadata(metadata) {
+function upsertContactMetadata(metadata, remoteId = undefined) {
     const { phoneNumber, lid, savedName, pushName, verifiedName, country, language, isContact, bio, profilePicUrl, isBusiness, lastEnrichedAt } = metadata;
 
     if (phoneNumber && isJunkJid(phoneNumber)) return null;
@@ -254,11 +255,12 @@ function upsertContactMetadata(metadata) {
     // cleanContactsDB() por llamada: mantenimiento aparte, solo arranque)
     let existingKey = findExistingKey(phoneNumber, lid);
 
-    let targetKey = phoneNumber || (existingKey && db[existingKey].phone ? db[existingKey].phone : lid);
+    let targetKey = remoteId || phoneNumber || (existingKey && db[existingKey].phone ? db[existingKey].phone : lid);
 
     if (!targetKey) return null;
 
     if (existingKey && existingKey !== targetKey) {
+        // Migramos los datos al nuevo remoteId compuesto
         const oldData = db[existingKey];
         delete db[existingKey];
         indexRemove(existingKey, oldData);
@@ -339,6 +341,10 @@ function bulkUpsertContactsMetadata(contactsList) {
         let existingKey = findExistingKey(phoneNumber, lid);
 
         let targetKey = phoneNumber || (existingKey && db[existingKey].phone ? db[existingKey].phone : lid);
+        // Podríamos pasar remoteId desde bulkUpsert, pero como viene de syncs legacy (WA agenda), phoneNumber o lid es seguro por ahora para WA.
+        // Convertiremos los syncs a formato "whatsapp:PHONE" cuando el adapter lo haga.
+        if (phoneNumber) targetKey = `whatsapp:${phoneNumber}`;
+        else if (lid) targetKey = `whatsapp:${lid}`;
 
         if (!targetKey) return;
 

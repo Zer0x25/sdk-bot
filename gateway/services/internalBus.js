@@ -140,20 +140,20 @@ function setContactPerfil(key, perfil) {
  */
 function makeVirtualSock(replies) {
     return {
-        /** @param {any} msg */
-        async sendMessage(_jid, msg) {
-            if (msg && typeof msg.text === 'string') {
-                replies.push({ type: 'text', text: msg.text });
-            } else if (msg && msg.document) {
-                const buf = Buffer.isBuffer(msg.document) ? msg.document : Buffer.from(msg.document);
+        /** @param {any} text */
+        async sendMessage(_jid, text, options) {
+            if (typeof text === 'string') {
+                replies.push({ type: 'text', text: text });
+            } else if (text && text.document) {
+                const buf = Buffer.isBuffer(text.document) ? text.document : Buffer.from(text.document);
                 replies.push({
                     type: 'document',
-                    fileName: msg.fileName || 'archivo',
-                    caption: msg.caption || '',
+                    fileName: text.fileName || 'archivo',
+                    caption: text.caption || '',
                     base64: buf.toString('base64')
                 });
             } else {
-                replies.push({ type: 'other', text: JSON.stringify(msg).slice(0, 500) });
+                replies.push({ type: 'other', text: JSON.stringify(text).slice(0, 500) });
             }
             return null;
         }
@@ -202,7 +202,10 @@ let qrIssuedAt = 0;
 let qrRefreshInProgress = false;
 
 function wsReadyState(sock) {
-    const ws = sock && sock.ws;
+    if (!sock) return null;
+    if (typeof sock.readyState !== 'undefined') return sock.readyState;
+    
+    const ws = sock.ws;
     if (!ws) return null;
     if (typeof ws.readyState === 'number') return ws.readyState;
     if (typeof ws.isOpen === 'boolean') {
@@ -222,8 +225,9 @@ function wsReadyState(sock) {
 }
 
 function hasActiveSession() {
-    // El WebSocket puede estar abierto durante el pairing sin que exista una
-    // sesión autenticada. `sock.user` solo aparece después de vincular.
+    if (!activeSock) return false;
+    if (typeof activeSock.isSessionRegistered === 'function') return activeSock.isSessionRegistered();
+    // Fallback for native sock
     return !!(activeSock && activeSock.user && (activeSock.user.id || activeSock.user.lid));
 }
 
@@ -770,7 +774,7 @@ function routeApi(req, res, pathname, params) {
             if (!activeSock) return sendJson(res, 500, { success: false, message: 'No socket activo' });
             if (!b.jid || !b.message) return sendJson(res, 400, { success: false, message: 'Falta jid o message' });
             try {
-                await activeSock.sendMessage(b.jid, { text: b.message });
+                await activeSock.sendMessage(b.jid, b.message);
                 sendJson(res, 200, { success: true });
             } catch (e) {
                 sendJson(res, 500, { success: false, message: errMsg(e) });

@@ -196,35 +196,44 @@ function handlePresenceUpdate(id, presences) {
     }
 }
 
-async function handleIncomingMessage(m, sock) {
-    const msg = m.messages[0];
-    if (!msg || !msg.message) return;
+async function handleIncomingMessage(stdMsg) {
+    if (!stdMsg || !stdMsg.text) return;
 
     runtimeStats.receivedMessages += 1;
 
-    // 🛑 ANTI-BUCLE: Ignorar mensajes generados por el propio bot
-    if (msg.key.id && isBotSentMessage(msg.key.id)) {
+    const isFromMe = stdMsg.metadata.isFromMe;
+    const metadata = stdMsg.metadata;
+    // We use the unified ID as the remoteJid now (e.g. 'whatsapp:123', 'telegram:456')
+    const remoteJid = stdMsg.remoteId; 
+    const { phoneNumber, lid, savedName, pushName } = metadata;
+    const textMessage = stdMsg.text;
+
+    // Get the correct adapter
+    const { getAdapter } = require('../index');
+    const adapter = getAdapter(stdMsg.channel);
+    if (!adapter) {
+        logError.error(`Adapter not found for channel ${stdMsg.channel}`);
         return;
     }
 
-    const isFromMe = msg.key.fromMe;
-    const metadata = extractUserMetadata(msg);
-    const { remoteJid, phoneNumber, lid, savedName, pushName } = metadata;
-
     // 🔔 SUSCRIBIR EN TIEMPO REAL A EVENTOS DE PRESENCIA (composing/paused) DE ESTE CLIENTE AL INICIAR
-    sock.presenceSubscribe(remoteJid).catch(e => logError.error(`⚠️ Error al suscribir presencia de ${remoteJid}:`, e.message));
-    if (phoneNumber) sock.presenceSubscribe(`${phoneNumber}@s.whatsapp.net`).catch(e => logError.error(`⚠️ Error al suscribir presencia (Phone) de ${phoneNumber}:`, e.message));
-    if (lid) sock.presenceSubscribe(`${lid}@lid`).catch(e => logError.error(`⚠️ Error al suscribir presencia (LID) de ${lid}:`, e.message));
+    // Solo si es whatsapp
+    if (stdMsg.channel === 'whatsapp') {
+        const sock = adapter.sock; // fallback for native methods
+        if (sock) {
+            sock.presenceSubscribe(stdMsg.rawId).catch(e => logError.error(`⚠️ Error al suscribir presencia de ${stdMsg.rawId}:`, e.message));
+            if (phoneNumber) sock.presenceSubscribe(`${phoneNumber}@s.whatsapp.net`).catch(e => logError.error(`⚠️ Error al suscribir presencia (Phone) de ${phoneNumber}:`, e.message));
+            if (lid) sock.presenceSubscribe(`${lid}@lid`).catch(e => logError.error(`⚠️ Error al suscribir presencia (LID) de ${lid}:`, e.message));
+        }
+    }
 
     // 🗂️ GUARDAR / ACTUALIZAR CONTACTO EN BASE DE DATOS
-    const contactRecord = upsertContactMetadata(metadata) || { estado: 'neutro' };
+    const contactRecord = upsertContactMetadata(metadata, remoteJid) || { estado: 'neutro' };
 
-    // 🔄 Enriquecimiento asíncrono en segundo plano (Foto de Perfil & Bio)
-    enrichContactExtraData(sock, remoteJid, metadata);
-
-    // Extraer texto del mensaje
-    const textMessage = extractTextMessage(msg);
-    if (!textMessage) return; // Ignorar si no hay texto
+    // 🔄 Enriquecimiento asíncrono en segundo plano (Foto de Perfil & Bio) solo para WA
+    if (stdMsg.channel === 'whatsapp' && adapter.sock) {
+        enrichContactExtraData(adapter.sock, stdMsg.rawId, metadata);
+    }
 
     const isSelf = isSelfChat(remoteJid, isFromMe);
     const displayName = savedName ? `${savedName} (Agenda)` : pushName;
@@ -239,19 +248,19 @@ async function handleIncomingMessage(m, sock) {
 
     switch (decision.type) {
         case 'admin_command': {
-            await handleAdminCommand(decision.text, remoteJid, sock, metadata, msg);
+            await handleAdminCommand(decision.text, remoteJid, adapter, metadata, stdMsg);
             return;
         }
 
         case 'self_chat_ai': {
             // 📢 F4-P5: si hay una confirmación de broadcast pendiente y el admin
             // respondió "si"/"cancelar", se consume aquí (no va a la IA).
-            if (await tryConfirm(textMessage, sock, remoteJid)) return;
+            if (await tryConfirm(textMessage, adapter, remoteJid)) return;
             // 🧨 F7: confirmación del reset limpio (palabra mágica con timers) —
             // se consume aquí igual que la de broadcast (no va a la IA).
-            if (await tryCleanConfirm(textMessage, sock, remoteJid)) return;
+            if (await tryCleanConfirm(textMessage, adapter, remoteJid)) return;
             logAI.info(`\n🤖 [ASISTENTE PERSONAL EN SELF-CHAT]: "${decision.text}"`);
-            await enqueueAI(() => processAIChat(decision.text, remoteJid, metadata, sock));
+            await enqueueAI(() => processAIChat(decision.text, remoteJid, metadata, adapter));
             return;
         }
 
@@ -261,13 +270,13 @@ async function handleIncomingMessage(m, sock) {
 
             // 1. Notificar al Admin en Self-Chat
             if (state.ADMIN_PHONE || state.ADMIN_LID) {
-                const adminJid = state.ADMIN_PHONE ? `${state.ADMIN_PHONE}@s.whatsapp.net` : `${state.ADMIN_LID}@lid`;
-                sock.sendMessage(adminJid, { text: decision.adminNotify }).catch(() => {});
+                const adminJid = state.ADMIN_PHONE ? `whatsapp:${state.ADMIN_PHONE}` : `whatsapp:${state.ADMIN_LID}`;
+                adapter.sendMessage(adminJid, decision.adminNotify).catch(() => {});
             }
 
             // 2. Avisar al cliente
             const clientNotice = ` Un momento por favor. He notificado a un asesor humano para que revise tu solicitud a la brevedad.`;
-            const sentNotice = await sock.sendMessage(remoteJid, { text: clientNotice });
+            const sentNotice = await adapter.sendMessage(remoteJid, clientNotice);
             registerSentMessage(sentNotice);
             return;
         }
@@ -297,7 +306,7 @@ async function handleIncomingMessage(m, sock) {
                 if (inflightBuffer) {
                     inflightBuffer.messages.push(decision.text);
                     inflightBuffer.lastActivity = Date.now();
-                    inflightBuffer.onTimeout = createBufferTimeout(remoteJid, metadata, sock);
+                    inflightBuffer.onTimeout = createBufferTimeout(remoteJid, metadata, adapter);
                     if (inflightBuffer.timer) clearTimeout(inflightBuffer.timer);
                     if (inflightBuffer.typingExpiryTimer) clearTimeout(inflightBuffer.typingExpiryTimer);
                     inflightBuffer.timer = null;
@@ -307,7 +316,7 @@ async function handleIncomingMessage(m, sock) {
                         isTyping: false,
                         lastTypingTime: null,
                         lastActivity: Date.now(),
-                        onTimeout: createBufferTimeout(remoteJid, metadata, sock),
+                        onTimeout: createBufferTimeout(remoteJid, metadata, adapter),
                         timer: null,
                         typingExpiryTimer: null
                     });
@@ -318,7 +327,7 @@ async function handleIncomingMessage(m, sock) {
 
             let existingBuffer = messageBuffers.get(remoteJid);
 
-            const onTimeout = createBufferTimeout(remoteJid, metadata, sock);
+            const onTimeout = createBufferTimeout(remoteJid, metadata, adapter);
 
             if (existingBuffer) {
                 if (existingBuffer.timer) clearTimeout(existingBuffer.timer);
@@ -358,7 +367,7 @@ async function handleIncomingMessage(m, sock) {
  * Al expirar el silencio, verifica presencia local, envía a la IA y, si durante
  * la llamada llegaron mensajes nuevos, programa el siguiente lote (serializado).
  */
-function createBufferTimeout(remoteJid, metadata, sock) {
+function createBufferTimeout(remoteJid, metadata, adapter) {
     const displayName = metadata.savedName ? `${metadata.savedName} (Agenda)` : (metadata.pushName || 'Desconocido');
     const phoneNumber = metadata.phoneNumber;
     const lid = metadata.lid;
@@ -410,7 +419,7 @@ function createBufferTimeout(remoteJid, metadata, sock) {
             // 🎯 La cola FIFO global limita las llamadas simultáneas a la IA
             const { active, queued } = poolStats();
             logAI.info(`🎯 [POOL AI] Esperando turno en cola global (activas: ${active}, en cola: ${queued})...`);
-            await enqueueAI(() => processAIChat(fullBufferedText, remoteJid, metadata, sock));
+            await enqueueAI(() => processAIChat(fullBufferedText, remoteJid, metadata, adapter));
         } finally {
             chatInFlight.delete(remoteJid);
 
@@ -454,8 +463,8 @@ const MAX_QUEUE_ATTEMPTS = 5; // un mensaje encolado se intenta hasta 5 veces an
 async function flushQueuedMessages() {
     while (true) {
         const item = messageQueue.peek();
-        const sock = messageQueue.getSock();
-        if (!item || !sock) return;
+        const adapter = messageQueue.getSock(); // Fallback for old name, will need adapter!
+        if (!item || !adapter) return;
 
         // No pisar un chat con IA en curso (buffer timer activo)
         if (chatInFlight.has(item.jid)) return;
@@ -471,7 +480,7 @@ async function flushQueuedMessages() {
 
         chatInFlight.add(item.jid);
         try {
-            await enqueueAI(() => processAIChat(item.text, item.jid, item.metadata, sock, { fromQueue: true }));
+            await enqueueAI(() => processAIChat(item.text, item.jid, item.metadata, adapter, { fromQueue: true }));
             messageQueue.removeHead();
             // ⏱️ Pausa humana entre mensajes encolados (2-5s)
             await new Promise(r => setTimeout(r, 2000 + Math.random() * 3000));
