@@ -36,7 +36,7 @@ const {
     importProfileFile, deleteProfileFile, reloadProfiles
 } = require('./brainService');
 const { getContactsDB, getSettingsDB, saveSettingsDB } = require('./db');
-const { sendTelegramMessage, testAndGetChatId, setTelegramCommandCallback, startTelegramPoller } = require('./telegramService');
+const { sendTelegramMessage, testAndGetChatId, setTelegramCommandCallback, startTelegramPoller, stopTelegramPoller } = require('./telegramService');
 const { findKeyByDigits } = require('./contactsRepository');
 const { setNumberState, setContactProfile } = require('./stateService');
 const { num } = require('../tuning');
@@ -911,6 +911,13 @@ function startInternalBus(opts = {}) {
         setTelegramCommandCallback(runAdminCommand);
         startTelegramPoller();
     });
+    
+    const originalClose = server.close.bind(server);
+    server.close = function(cb) {
+        stopTelegramPoller();
+        return originalClose(cb);
+    };
+    
     return server;
 }
 

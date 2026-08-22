@@ -126,6 +126,8 @@ function updateTelegramMenu(token) {
 let pollerActive = false;
 let lastUpdateId = 0;
 let commandCallback = null;
+let currentPollReq = null;
+let currentPollTimer = null;
 
 function setTelegramCommandCallback(cb) {
     commandCallback = cb;
@@ -138,7 +140,8 @@ async function pollTelegram() {
     const chatId = String(settings.telegramChatId);
 
     if (!token || !chatId) {
-        setTimeout(pollTelegram, 5000);
+        currentPollTimer = setTimeout(pollTelegram, 5000);
+        currentPollTimer.unref();
         return;
     }
 
@@ -152,9 +155,11 @@ async function pollTelegram() {
                     catch (e) { reject(e); }
                 });
             });
+            currentPollReq = req;
             req.on('error', reject);
             req.setTimeout(35000, () => { req.destroy(); resolve({ ok: true, result: [] }); });
         });
+        currentPollReq = null;
 
         if (updates.ok && updates.result) {
             for (const u of updates.result) {
@@ -202,6 +207,14 @@ function startTelegramPoller() {
 
 function stopTelegramPoller() {
     pollerActive = false;
+    if (currentPollTimer) {
+        clearTimeout(currentPollTimer);
+        currentPollTimer = null;
+    }
+    if (currentPollReq) {
+        currentPollReq.destroy();
+        currentPollReq = null;
+    }
 }
 
 module.exports = {

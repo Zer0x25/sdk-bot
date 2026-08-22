@@ -27,7 +27,7 @@ const { withTempDbPaths } = require('./helpers/tmpPaths');
 
 const t = withTempDbPaths();
 
-const { startInternalBus, setSock, handleConnectionUpdate, resetInProgressForTests, setQrTtlForTests, resetQrForTests } = require('../services/internalBus');
+const { startInternalBus, setSock, clearSock, handleConnectionUpdate, resetInProgressForTests, setQrTtlForTests, resetQrForTests } = require('../services/internalBus');
 
 // Socket fake con las piezas que usa el panel (setSock/requestPairingCode)
 const fakeSock = {
@@ -163,7 +163,8 @@ test('SSE /qr informa session (rc14 wrapper con getters y readyState clásico)',
 
     const rc14Sock = { ws: { isOpen: true, isClosed: false }, user: { id: '123' } };
     setSock(rc14Sock);
-    await (await fetch(`http://127.0.0.1:${port}/qr`)).text();
+    clearSock(); // clear the socket to make session false
+    res = await fetch(`http://127.0.0.1:${port}/qr`);
     ({ hit, reader } = await readSse(res, ev => ev.session === false));
     assert.ok(hit, 'session false sin socket');
     reader.cancel();
