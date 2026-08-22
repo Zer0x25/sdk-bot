@@ -195,9 +195,10 @@
 <body>
 <header class="topbar">
   <h1>🖥️ SDK-Bot · Panel de administración</h1>
-<nav class="nav">
+  <nav class="nav">
     <button class="tab" data-page="dashboard">📊 Dashboard</button>
-    <button class="tab" data-page="pairing">📲 Pairing</button>
+    <button class="tab" data-page="pairing"><svg viewBox="0 0 24 24" width="16" height="16" fill="#25D366" style="vertical-align: -3px; margin-right: 4px;"><path d="M17.472 14.382c-.297-.149-1.758-.867-2.03-.967-.273-.099-.471-.148-.67.15-.197.297-.767.966-.94 1.164-.173.199-.347.223-.644.075-.297-.15-1.255-.463-2.39-1.475-.883-.788-1.48-1.761-1.653-2.059-.173-.297-.018-.458.13-.606.134-.133.298-.347.446-.52.149-.174.198-.298.298-.497.099-.198.05-.371-.025-.52-.075-.149-.669-1.612-.916-2.207-.242-.579-.487-.5-.669-.51-.173-.008-.371-.01-.57-.01-.198 0-.52.074-.792.372-.272.297-1.04 1.016-1.04 2.479 0 1.462 1.065 2.875 1.213 3.074.149.198 2.096 3.2 5.077 4.487.709.306 1.262.489 1.694.625.712.227 1.36.195 1.871.118.571-.085 1.758-.719 2.006-1.413.248-.694.248-1.289.173-1.413-.074-.124-.272-.198-.57-.347m-5.421 7.403h-.004a9.87 9.87 0 01-5.031-1.378l-.361-.214-3.741.982.998-3.648-.235-.374a9.86 9.86 0 01-1.51-5.26c.001-5.45 4.436-9.884 9.888-9.884 2.64 0 5.122 1.03 6.988 2.898a9.825 9.825 0 012.893 6.994c-.003 5.45-4.437 9.884-9.885 9.884m8.413-18.297A11.815 11.815 0 0012.05 0C5.495 0 .16 5.335.157 11.892c0 2.096.547 4.142 1.588 5.945L.057 24l6.305-1.654a11.882 11.882 0 005.683 1.448h.005c6.554 0 11.89-5.335 11.893-11.893a11.821 11.821 0 00-3.48-8.413Z"/></svg>WhatsApp</button>
+    <button class="tab" data-page="integrations"><svg viewBox="0 0 24 24" width="16" height="16" fill="#2AABEE" style="vertical-align: -3px; margin-right: 4px;"><path d="M11.944 0A12 12 0 0 0 0 12a12 12 0 0 0 12 12 12 12 0 0 0 12-12A12 12 0 0 0 12 0a12 12 0 0 0-.056 0zm4.962 7.224c.1-.002.321.023.465.14a.506.506 0 0 1 .171.325c.016.093.036.306.02.472-.18 1.898-.962 6.502-1.36 8.627-.168.9-.499 1.201-.82 1.23-.696.065-1.225-.46-1.9-.902-1.056-.693-1.653-1.124-2.678-1.8-1.185-.78-.417-1.21.258-1.91.177-.184 3.247-2.977 3.307-3.23.007-.032.014-.15-.056-.212s-.174-.041-.249-.024c-.106.024-1.793 1.14-5.061 3.345-.48.33-.913.49-1.302.48-.428-.008-1.252-.241-1.865-.44-.752-.245-1.349-.374-1.297-.789.027-.216.325-.437.893-.663 3.498-1.524 5.83-2.529 6.998-3.014 3.332-1.386 4.025-1.627 4.476-1.635z"/></svg>Telegram</button>
     <button class="tab" data-page="contactos">📇 Contactos</button>
     <button class="tab" data-page="perfiles">🧠 Perfiles</button>
     <button class="tab" data-page="logs">📜 Logs</button>
@@ -218,7 +219,7 @@
 </section>
 
 <section id="page-pairing" class="page" hidden>
-  <h2>📲 Conexión y pairing</h2>
+  <h2><svg viewBox="0 0 24 24" width="18" height="18" fill="#25D366" style="vertical-align: -3px; margin-right: 6px;"><path d="M17.472 14.382c-.297-.149-1.758-.867-2.03-.967-.273-.099-.471-.148-.67.15-.197.297-.767.966-.94 1.164-.173.199-.347.223-.644.075-.297-.15-1.255-.463-2.39-1.475-.883-.788-1.48-1.761-1.653-2.059-.173-.297-.018-.458.13-.606.134-.133.298-.347.446-.52.149-.174.198-.298.298-.497.099-.198.05-.371-.025-.52-.075-.149-.669-1.612-.916-2.207-.242-.579-.487-.5-.669-.51-.173-.008-.371-.01-.57-.01-.198 0-.52.074-.792.372-.272.297-1.04 1.016-1.04 2.479 0 1.462 1.065 2.875 1.213 3.074.149.198 2.096 3.2 5.077 4.487.709.306 1.262.489 1.694.625.712.227 1.36.195 1.871.118.571-.085 1.758-.719 2.006-1.413.248-.694.248-1.289.173-1.413-.074-.124-.272-.198-.57-.347m-5.421 7.403h-.004a9.87 9.87 0 01-5.031-1.378l-.361-.214-3.741.982.998-3.648-.235-.374a9.86 9.86 0 01-1.51-5.26c.001-5.45 4.436-9.884 9.888-9.884 2.64 0 5.122 1.03 6.988 2.898a9.825 9.825 0 012.893 6.994c-.003 5.45-4.437 9.884-9.885 9.884m8.413-18.297A11.815 11.815 0 0012.05 0C5.495 0 .16 5.335.157 11.892c0 2.096.547 4.142 1.588 5.945L.057 24l6.305-1.654a11.882 11.882 0 005.683 1.448h.005c6.554 0 11.89-5.335 11.893-11.893a11.821 11.821 0 00-3.48-8.413Z"/></svg>WhatsApp</h2>
 
   <!-- VISTA: sin sesión de WhatsApp — elegir método de vinculación -->
   <div class="con" id="noview">
@@ -384,6 +385,46 @@
   <div id="logbox"></div>
 </section>
 
+<section id="page-integrations" class="page" hidden>
+  <h2><svg viewBox="0 0 24 24" width="18" height="18" fill="#2AABEE" style="vertical-align: -3px; margin-right: 6px;"><path d="M11.944 0A12 12 0 0 0 0 12a12 12 0 0 0 12 12 12 12 0 0 0 12-12A12 12 0 0 0 12 0a12 12 0 0 0-.056 0zm4.962 7.224c.1-.002.321.023.465.14a.506.506 0 0 1 .171.325c.016.093.036.306.02.472-.18 1.898-.962 6.502-1.36 8.627-.168.9-.499 1.201-.82 1.23-.696.065-1.225-.46-1.9-.902-1.056-.693-1.653-1.124-2.678-1.8-1.185-.78-.417-1.21.258-1.91.177-.184 3.247-2.977 3.307-3.23.007-.032.014-.15-.056-.212s-.174-.041-.249-.024c-.106.024-1.793 1.14-5.061 3.345-.48.33-.913.49-1.302.48-.428-.008-1.252-.241-1.865-.44-.752-.245-1.349-.374-1.297-.789.027-.216.325-.437.893-.663 3.498-1.524 5.83-2.529 6.998-3.014 3.332-1.386 4.025-1.627 4.476-1.635z"/></svg>Telegram</h2>
+  <div class="con">
+    <div class="side">
+      <div class="row">
+        <span class="hint">Instrucciones:</span>
+      </div>
+      <div class="row">
+        <span class="hint">1. Crea un bot hablando con @BotFather en Telegram.</span>
+      </div>
+      <div class="row">
+        <span class="hint">2. Envía un comando /start a tu nuevo bot.</span>
+      </div>
+      <div class="row" style="margin-top:12px">
+        <input type="text" id="tgToken" placeholder="Telegram Bot Token" style="background:#0f1115;border:1px solid #262b36;color:#e6e6e6;border-radius:8px;padding:8px;width:100%;" autocomplete="off">
+      </div>
+      <div class="row" style="margin-top:12px">
+        <button class="btn primary" id="tgTestBtn">Testear y Obtener Chat ID</button>
+      </div>
+      <div class="row" style="margin-top:12px">
+        <input type="text" id="tgChatId" placeholder="Chat ID (automático o manual)" style="background:#0f1115;border:1px solid #262b36;color:#e6e6e6;border-radius:8px;padding:8px;width:100%;" autocomplete="off">
+      </div>
+      <div class="row" style="margin-top:12px">
+        <button class="btn primary" id="tgSaveBtn">Guardar Configuración</button>
+      </div>
+      <div class="row" style="margin-top:12px">
+        <button class="btn danger" id="tgResetBtn" style="display:none;">Desconectar Telegram</button>
+      </div>
+      <div id="tgMsg" style="margin-top:12px;font-size:12px;"></div>
+    </div>
+    <div class="main-col">
+      <div class="card" style="background:#171a21; border:1px solid #262b36; border-radius:12px; padding:16px;">
+        <h3 style="margin-top:0">ℹ️ Sobre la integración</h3>
+        <p style="color:#aab3c5; line-height:1.6">Telegram es el canal más robusto para recibir notificaciones push en tiempo real. Cuando configuras tu Bot Token y Chat ID, el bot enviará reportes y alertas críticas hacia tu cuenta de Telegram sin los problemas de silenciamiento del self-chat de WhatsApp.</p>
+      </div>
+
+    </div>
+  </div>
+</section>
+
 <script>
 const $ = s => document.querySelector(s);
 const cards = $('#cards'), out = $('#out'), cmd = $('#cmd'), run = $('#run');
@@ -394,7 +435,7 @@ let lastStatus = null; // último status del gateway, para acciones interactivas
 // ─── Navegación por pestañas ───
 // Cada pestaña es una sección `#page-<name>`; las conexiones (SSE del QR,
 // logs) y cargas (contactos) se hacen perezosamente al abrir la pestaña.
-const pages = { dashboard: 'page-dashboard', pairing: 'page-pairing', contactos: 'page-contactos', perfiles: 'page-perfiles', logs: 'page-logs' };
+const pages = { dashboard: 'page-dashboard', pairing: 'page-pairing', contactos: 'page-contactos', perfiles: 'page-perfiles', logs: 'page-logs', integrations: 'page-integrations' };
 function showPage(name) {
   if (!pages[name]) name = 'dashboard';
   currentPage = name;
@@ -406,6 +447,7 @@ function showPage(name) {
   if (name === 'contactos') resetContactList();
   if (name === 'perfiles') loadProfiles();
   if (name === 'logs' && !paused) startLogs();
+  if (name === 'integrations') loadTgSettings();
   if (location.hash !== '#' + name) history.replaceState(null, '', '#' + name);
 }
 document.querySelectorAll('.nav .tab').forEach(t => t.addEventListener('click', () => showPage(t.dataset.page)));
@@ -1529,6 +1571,150 @@ lclear.addEventListener('click', async () => {
     if (!paused) startLogs(); // recarga el SSE (historial ahora vacío)
     lstatus.textContent = 'Historial limpiado';
   } catch (e) { lstatus.textContent = 'Error: ' + e.message; }
+});
+
+const tgToken = $('#tgToken'), tgChatId = $('#tgChatId'), tgMsg = $('#tgMsg');
+const tgTestBtn = $('#tgTestBtn'), tgSaveBtn = $('#tgSaveBtn'), tgResetBtn = $('#tgResetBtn');
+
+function setTgUIState(connected) {
+  if (connected) {
+    tgToken.readOnly = true;
+    tgChatId.readOnly = true;
+    tgToken.style.opacity = '0.5';
+    tgChatId.style.opacity = '0.5';
+    tgTestBtn.style.display = 'none';
+    tgSaveBtn.style.display = 'none';
+    tgResetBtn.style.display = 'block';
+  } else {
+    tgToken.readOnly = false;
+    tgChatId.readOnly = false;
+    tgToken.style.opacity = '1';
+    tgChatId.style.opacity = '1';
+    tgTestBtn.style.display = 'block';
+    tgSaveBtn.style.display = 'block';
+    tgResetBtn.style.display = 'none';
+    tgToken.value = '';
+    tgChatId.value = '';
+    tgMsg.textContent = '';
+  }
+}
+
+function maskToken(t) {
+  if (!t || t.length < 10) return t;
+  return t.substring(0, 5) + '...' + t.substring(t.length - 5);
+}
+
+let rawTgToken = '';
+
+async function loadTgSettings() {
+  try {
+    const r = await fetch('/api/telegram/settings');
+    if (r.ok) {
+      const d = await r.json();
+      if (d.token && d.chatId) {
+        rawTgToken = d.token;
+        tgToken.value = maskToken(d.token);
+        tgChatId.value = d.chatId;
+        setTgUIState(true);
+        tgMsg.style.color = '#4ade80';
+        tgMsg.textContent = '✅ Conectado a Telegram.';
+      } else {
+        setTgUIState(false);
+      }
+    }
+  } catch (e) {
+    console.error('Error cargando config telegram', e);
+  }
+}
+
+tgToken.addEventListener('focus', () => {
+  if (!tgToken.readOnly && rawTgToken) {
+    tgToken.value = rawTgToken;
+  }
+});
+tgToken.addEventListener('input', e => {
+  rawTgToken = e.target.value;
+});
+
+tgTestBtn.addEventListener('click', async () => {
+  const token = rawTgToken.trim() || tgToken.value.trim();
+  if (!token) {
+    tgMsg.style.color = '#f87171';
+    tgMsg.textContent = '⚠️ Ingresa el Token primero.';
+    return;
+  }
+  tgTestBtn.disabled = true;
+  tgMsg.style.color = '#aab3c5';
+  tgMsg.textContent = '⏳ Probando conexión...';
+  try {
+    const r = await fetch('/api/telegram/test', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ token })
+    });
+    const d = await r.json();
+    if (d.success) {
+      tgMsg.style.color = '#4ade80';
+      tgMsg.textContent = '✅ Mensaje de prueba enviado. Chat ID obtenido.';
+      if (d.chatId) tgChatId.value = d.chatId;
+    } else {
+      tgMsg.style.color = '#f87171';
+      tgMsg.textContent = '⚠️ Error: ' + (d.message || 'No se pudo verificar');
+    }
+  } catch (e) {
+    tgMsg.style.color = '#f87171';
+    tgMsg.textContent = '⚠️ Error: ' + e.message;
+  }
+  tgTestBtn.disabled = false;
+});
+
+tgSaveBtn.addEventListener('click', async () => {
+  const token = rawTgToken.trim() || tgToken.value.trim();
+  const chatId = tgChatId.value.trim();
+  tgSaveBtn.disabled = true;
+  tgMsg.style.color = '#aab3c5';
+  tgMsg.textContent = '⏳ Guardando...';
+  try {
+    const r = await fetch('/api/telegram/settings', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ token, chatId })
+    });
+    const d = await r.json();
+    if (d.success) {
+      rawTgToken = token;
+      tgToken.value = maskToken(token);
+      setTgUIState(true);
+      tgMsg.style.color = '#4ade80';
+      tgMsg.textContent = '✅ Configuración guardada correctamente.';
+    } else {
+      tgMsg.style.color = '#f87171';
+      tgMsg.textContent = '⚠️ Error al guardar: ' + (d.message || '');
+    }
+  } catch (e) {
+    tgMsg.style.color = '#f87171';
+    tgMsg.textContent = '⚠️ Error: ' + e.message;
+  }
+  tgSaveBtn.disabled = false;
+});
+
+tgResetBtn.addEventListener('click', async () => {
+  if (!confirm('¿Estás seguro de desconectar Telegram? Dejarás de recibir notificaciones push.')) return;
+  tgResetBtn.disabled = true;
+  try {
+    const r = await fetch('/api/telegram/settings', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ token: '', chatId: '' })
+    });
+    if (r.ok) {
+      rawTgToken = '';
+      setTgUIState(false);
+    }
+  } catch(e) {
+    console.error(e);
+  }
+  tgResetBtn.disabled = false;
 });
 
 refresh();
