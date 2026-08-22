@@ -35,7 +35,8 @@ const {
     getBrainHealth, getAvailableProfiles, getProfileDetail, exportProfileFile,
     importProfileFile, deleteProfileFile, reloadProfiles
 } = require('./brainService');
-const { getContactsDB } = require('./db');
+const { getContactsDB, getSettingsDB, saveSettingsDB } = require('./db');
+const { sendTelegramMessage, testAndGetChatId, setTelegramCommandCallback, startTelegramPoller } = require('./telegramService');
 const { findKeyByDigits } = require('./contactsRepository');
 const { setNumberState, setContactProfile } = require('./stateService');
 const { num } = require('../tuning');
@@ -727,16 +728,68 @@ function routeApi(req, res, pathname, params) {
         sendJson(res, 200, startBrainProcess());
         return;
     }
+    if (pathname === '/telegram/settings' && req.method === 'GET') {
+        const s = getSettingsDB();
+        sendJson(res, 200, { token: s.telegramToken || '', chatId: s.telegramChatId || '' });
+        return;
+    }
+    if (pathname === '/telegram/settings' && req.method === 'POST') {
+        readBody(req).then((b) => {
+            const s = getSettingsDB();
+            s.telegramToken = b.token || '';
+            s.telegramChatId = b.chatId || '';
+            saveSettingsDB(s);
+            sendJson(res, 200, { success: true });
+        }).catch(e => sendJson(res, 500, { success: false, message: errMsg(e) }));
+        return;
+    }
+    if (pathname === '/telegram/test' && req.method === 'POST') {
+        readBody(req).then(async (b) => {
+            try {
+                if (!b.token) throw new Error('Se requiere el token del bot');
+                // Si mandan un token nuevo pero sin chatId, lo buscamos
+                let chatId = b.chatId;
+                if (!chatId) {
+                    chatId = await testAndGetChatId(b.token);
+                }
+                await sendTelegramMessage('🤖 *Test de notificaciones SDK-Bot*\n\n¡La integración de Telegram se ha configurado con éxito!', b.token, chatId);
+                sendJson(res, 200, { success: true, chatId: chatId });
+            } catch (e) {
+                sendJson(res, 400, { success: false, message: errMsg(e) });
+            }
+        });
+        return;
+    }
+
     if (pathname === '/command' && req.method === 'POST') {
         readBody(req).then((b) => runAdminCommand(b.command).then((r) => sendJson(res, 200, r)));
         return;
     }
+    if (pathname === '/notify' && req.method === 'POST') {
+        readBody(req).then(async (b) => {
+            if (!activeSock) return sendJson(res, 500, { success: false, message: 'No socket activo' });
+            if (!b.jid || !b.message) return sendJson(res, 400, { success: false, message: 'Falta jid o message' });
+            try {
+                await activeSock.sendMessage(b.jid, { text: b.message });
+                sendJson(res, 200, { success: true });
+            } catch (e) {
+                sendJson(res, 500, { success: false, message: errMsg(e) });
+            }
+        });
+        return;
+    }
     if (pathname === '/reset' && req.method === 'POST') {
-        readBody(req).then((b) => performReset(!!b.clean).then((r) => sendJson(res, 200, r)));
+        readBody(req).then((b) => {
+            if (b.confirm !== true) return sendJson(res, 400, { success: false, message: 'Se requiere confirm: true (el front pide confirmación antes de llamar)' });
+            performReset(!!b.clean).then((r) => sendJson(res, 200, r));
+        });
         return;
     }
     if (pathname === '/restart' && req.method === 'POST') {
-        readBody(req).then(() => performRestart().then((r) => sendJson(res, 200, r)));
+        readBody(req).then((b) => {
+            if (b.confirm !== true) return sendJson(res, 400, { success: false, message: 'Se requiere confirm: true (el front pide confirmación antes de llamar)' });
+            performRestart().then((r) => sendJson(res, 200, r));
+        });
         return;
     }
 
@@ -851,6 +904,8 @@ function startInternalBus(opts = {}) {
     server.on('error', (e) => logError.error(`🔌 [BUS] Error en bus interno: ${e && e.message}`));
     server.listen(port, host, () => {
         log.info(`🔌 [BUS] Bus interno en http://${host}:${port} (panel web lo consume aquí)`);
+        setTelegramCommandCallback(runAdminCommand);
+        startTelegramPoller();
     });
     return server;
 }
@@ -858,5 +913,21 @@ function startInternalBus(opts = {}) {
 module.exports = {
     startInternalBus, setSock, clearSock, handleConnectionUpdate, setQrRefresh, setPairingCodeRequester,
     requestPairing, runAdminCommand, performReset, performRestart, wsReadyState,
-    qrPayload
+    qrPayload, resetInProgressForTests, setQrTtlForTests, resetQrForTests
 };
+
+// --- Test Helpers ---
+function resetInProgressForTests() {
+    resetInProgress = false;
+}
+function setQrTtlForTests(ms) {
+    qrTtlMs = ms;
+}
+function resetQrForTests() {
+    qrWindowOpen = true;
+    qrExpiresAt = 0;
+    lastQrDataUrl = null;
+    if (qrExpiryTimer) clearTimeout(qrExpiryTimer);
+    qrExpiryTimer = null;
+    clearPairingState();
+}

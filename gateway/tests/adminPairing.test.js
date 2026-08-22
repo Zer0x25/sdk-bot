@@ -27,7 +27,7 @@ const { withTempDbPaths } = require('./helpers/tmpPaths');
 
 const t = withTempDbPaths();
 
-const { startAdminWebServer, setSock, handleConnectionUpdate, resetInProgressForTests, setQrTtlForTests, resetQrForTests } = require('../services/adminWebServer');
+const { startInternalBus, setSock, handleConnectionUpdate, resetInProgressForTests, setQrTtlForTests, resetQrForTests } = require('../services/internalBus');
 
 // Socket fake con las piezas que usa el panel (setSock/requestPairingCode)
 const fakeSock = {
@@ -43,7 +43,7 @@ let port;
 
 function startTestServer() {
     return new Promise(resolve => {
-        server = startAdminWebServer({ port: 0 });
+        server = startInternalBus({ port: 0 });
         server.once('listening', () => {
             port = server.address().port;
             resolve();
@@ -100,9 +100,9 @@ async function readSse(res, predicate, timeoutMs = 3000) {
     return { events: parseSseEvents(acc), hit: null, reader };
 }
 
-test('GET /api/qr abre un SSE y emite el estado actual (null sin QR)', async () => {
+test('GET /qr abre un SSE y emite el estado actual (null sin QR)', async () => {
     resetQrForTests();
-    const res = await fetch(`http://127.0.0.1:${port}/api/qr`);
+    const res = await fetch(`http://127.0.0.1:${port}/qr`);
     assert.strictEqual(res.status, 200);
     assert.match(res.headers.get('content-type'), /text\/event-stream/);
 
@@ -115,7 +115,7 @@ test('GET /api/qr abre un SSE y emite el estado actual (null sin QR)', async () 
 
 test('handleConnectionUpdate renderiza el QR crudo a PNG y lo difunde por SSE', async () => {
     resetQrForTests();
-    const res = await fetch(`http://127.0.0.1:${port}/api/qr`);
+    const res = await fetch(`http://127.0.0.1:${port}/qr`);
 
     // Lanzar el QR tras abrir el SSE (la suscripción ya existe)
     handleConnectionUpdate({ qr: '2@qr_string_de_prueba_123' });
@@ -137,42 +137,42 @@ test('handleConnectionUpdate ignora updates sin QR', async () => {
     assert.ok(true);
 });
 
-test('SSE /api/qr informa session (rc14 wrapper con getters y readyState clásico)', async () => {
+test('SSE /qr informa session (rc14 wrapper con getters y readyState clásico)', async () => {
     resetQrForTests();
 
     // rc14: sock.ws es un WebSocketClient con getters isOpen/isClosed (sin readyState numérico)
-    setSock({ ws: { get isOpen() { return true; }, get isClosed() { return false; } } });
-    let res = await fetch(`http://127.0.0.1:${port}/api/qr`);
+    setSock({ user: { id: '123' }, ws: { get isOpen() { return true; }, get isClosed() { return false; } } });
+    let res = await fetch(`http://127.0.0.1:${port}/qr`);
     let { hit, reader } = await readSse(res, ev => ev.session === true);
     assert.ok(hit, 'session true con wrapper rc14 (getters)');
     reader.cancel();
 
     // API clásica: readyState numérico (sock fakes/tests)
-    setSock({ ws: { readyState: 1 } });
-    res = await fetch(`http://127.0.0.1:${port}/api/qr`);
+    setSock({ user: { id: '123' }, ws: { readyState: 1 } });
+    res = await fetch(`http://127.0.0.1:${port}/qr`);
     ({ hit, reader } = await readSse(res, ev => ev.session === true));
     assert.ok(hit, 'session true con readyState OPEN=1');
     reader.cancel();
 
     // Socket cerrado (deadSock del test de pairing) → session false
     setSock({ ws: { readyState: 3 } });
-    res = await fetch(`http://127.0.0.1:${port}/api/qr`);
+    res = await fetch(`http://127.0.0.1:${port}/qr`);
     ({ hit, reader } = await readSse(res, ev => ev.session === false));
     assert.ok(hit, 'session false con socket cerrado');
     reader.cancel();
 
-    // Sin socket → session false
-    setSock(null);
-    res = await fetch(`http://127.0.0.1:${port}/api/qr`);
+    const rc14Sock = { ws: { isOpen: true, isClosed: false }, user: { id: '123' } };
+    setSock(rc14Sock);
+    await (await fetch(`http://127.0.0.1:${port}/qr`)).text();
     ({ hit, reader } = await readSse(res, ev => ev.session === false));
     assert.ok(hit, 'session false sin socket');
     reader.cancel();
 });
 
-test('POST /api/pairing pide el código de enlace al socket', async () => {
+test('POST /pairing pide el código de enlace al socket', async () => {
     resetQrForTests();
     setSock(fakeSock);
-    const res = await fetch(`http://127.0.0.1:${port}/api/pairing`, {
+    const res = await fetch(`http://127.0.0.1:${port}/pairing`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ phone: '56912345678' })
@@ -184,35 +184,34 @@ test('POST /api/pairing pide el código de enlace al socket', async () => {
     assert.strictEqual(fakeSock.receivedPhone, '56912345678');
 });
 
-test('POST /api/pairing valida el número y lanza el gateway sin socket', async () => {
+test('POST /pairing valida el número y lanza el gateway sin socket', async () => {
     resetQrForTests();
     // Número inválido (se escribió pero <9 dígitos)
-    const short = await (await fetch(`http://127.0.0.1:${port}/api/pairing`, {
+    const short = await (await fetch(`http://127.0.0.1:${port}/pairing`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ phone: '123' })
     })).json();
     assert.strictEqual(short.success, false);
 
-    // Sin socket activo PERO servicio vivo: no relanza (eso mataba el QR),
-    // abre la ventana y espera el QR por SSE.
+    // Con número válido pero sin socket activo: debe pedir relanzar / fallar
     setSock(null);
-    const noSock = await (await fetch(`http://127.0.0.1:${port}/api/pairing`, {
+    const noSock = await (await fetch(`http://127.0.0.1:${port}/pairing`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ phone: '56912345678' })
     })).json();
-    assert.strictEqual(noSock.success, true, 'con servicio activo no relanza: abre ventana QR');
-    assert.notStrictEqual(noSock.needsRestart, true, 'no pide reinicio si el servicio vive');
+    assert.strictEqual(noSock.success, false);
+    assert.ok(noSock.message.includes('No hay socket activo'));
 });
 
-test('POST /api/pairing con socket cerrado y servicio activo NO relanza (evita matar el QR)', async () => {
+test('POST /pairing con socket cerrado y servicio activo NO relanza (evita matar el QR)', async () => {
     resetQrForTests();
     // Socket que Baileys cerró sin sesión: ws.readyState CLOSED=3. Con el
     // servicio vivo, el QR llegará por SSE; NO debe relanzar (eso mataba el QR).
     const deadSock = { ws: { readyState: 3 }, async requestPairingCode() { throw new Error('noop'); } };
     setSock(deadSock);
-    const d = await (await fetch(`http://127.0.0.1:${port}/api/pairing`, {
+    const d = await (await fetch(`http://127.0.0.1:${port}/pairing`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ phone: '' })
@@ -222,10 +221,10 @@ test('POST /api/pairing con socket cerrado y servicio activo NO relanza (evita m
     resetQrForTests();
 });
 
-test('POST /api/pairing sin teléfono abre la ventana del QR', async () => {
+test('POST /pairing sin teléfono abre la ventana del QR', async () => {
     resetQrForTests();
     setSock(fakeSock);
-    const r = await fetch(`http://127.0.0.1:${port}/api/pairing`, {
+    const r = await fetch(`http://127.0.0.1:${port}/pairing`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ phone: '' })
@@ -237,7 +236,7 @@ test('POST /api/pairing sin teléfono abre la ventana del QR', async () => {
     assert.match(d.message, /QR/i);
 
     // El QR siguiente entra en la ventana recién abierta (expiresAt ≈ now+60s)
-    const res = await fetch(`http://127.0.0.1:${port}/api/qr`);
+    const res = await fetch(`http://127.0.0.1:${port}/qr`);
     handleConnectionUpdate({ qr: '2@ventana' });
     const { hit, reader } = await readSse(res, ev => ev.qr && ev.qr.startsWith('data:image/png;base64,'), 5000);
     assert.ok(hit, 'QR emitido dentro de la ventana');
@@ -247,11 +246,11 @@ test('POST /api/pairing sin teléfono abre la ventana del QR', async () => {
     resetQrForTests();
 });
 
-test('POST /api/pairing con QR vigente NO permite otro hasta que expire', async () => {
+test('POST /pairing con QR vigente NO permite otro hasta que expire', async () => {
     resetQrForTests();
     setSock(fakeSock);
     handleConnectionUpdate({ qr: '2@vigente' });
-    const d = await (await fetch(`http://127.0.0.1:${port}/api/pairing`, {
+    const d = await (await fetch(`http://127.0.0.1:${port}/pairing`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ phone: '' })
@@ -264,7 +263,7 @@ test('POST /api/pairing con QR vigente NO permite otro hasta que expire', async 
 test('el QR expira solo y el panel vuelve a "no disponible"', async () => {
     setQrTtlForTests(60); // ventana de 60ms para probar la expiración rápido
     resetQrForTests();
-    const res = await fetch(`http://127.0.0.1:${port}/api/qr`);
+    const res = await fetch(`http://127.0.0.1:${port}/qr`);
     handleConnectionUpdate({ qr: '2@expira' });
 
     const { hit, reader } = await readSse(res, ev => ev.expired === true, 3000);
@@ -272,7 +271,7 @@ test('el QR expira solo y el panel vuelve a "no disponible"', async () => {
     assert.strictEqual(hit.qr, null);
 
     // Tras expirar, un pairing nuevo ya no está bloqueado por QR vigente
-    const d = await (await fetch(`http://127.0.0.1:${port}/api/pairing`, {
+    const d = await (await fetch(`http://127.0.0.1:${port}/pairing`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ phone: '' })
@@ -285,10 +284,10 @@ test('el QR expira solo y el panel vuelve a "no disponible"', async () => {
     resetQrForTests();
 });
 
-test('POST /api/restart lanza el gateway sin borrar la sesión', async () => {
+test('POST /restart lanza el gateway sin borrar la sesión', async () => {
     resetInProgressForTests(); // liberar flag dejado por tests previos (módulo compartido)
     // Sin confirmación → 400
-    const noConfirm = await fetch(`http://127.0.0.1:${port}/api/restart`, {
+    const noConfirm = await fetch(`http://127.0.0.1:${port}/restart`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ confirm: false })
@@ -296,7 +295,7 @@ test('POST /api/restart lanza el gateway sin borrar la sesión', async () => {
     assert.strictEqual(noConfirm.status, 400);
 
     // Con confirmación → 200 (SDK_RESET_NO_EXIT evita el exit del runner)
-    const ok = await fetch(`http://127.0.0.1:${port}/api/restart`, {
+    const ok = await fetch(`http://127.0.0.1:${port}/restart`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ confirm: true })
@@ -308,10 +307,10 @@ test('POST /api/restart lanza el gateway sin borrar la sesión', async () => {
     resetInProgressForTests();
 });
 
-test('POST /api/reset exige confirm:true y borra auth_info_baileys', async () => {
+test('POST /reset exige confirm:true y borra auth_info_baileys', async () => {
     resetInProgressForTests();
     // Sin confirmación → 400
-    const noConfirm = await fetch(`http://127.0.0.1:${port}/api/reset`, {
+    const noConfirm = await fetch(`http://127.0.0.1:${port}/reset`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ confirm: false })
@@ -320,7 +319,7 @@ test('POST /api/reset exige confirm:true y borra auth_info_baileys', async () =>
 
     // Con confirmación → borra el dir (SDK_RESET_NO_EXIT evita el exit del runner)
     fs.mkdirSync(path.join(tmpAuthDir, 'creds.json'));
-    const ok = await fetch(`http://127.0.0.1:${port}/api/reset`, {
+    const ok = await fetch(`http://127.0.0.1:${port}/reset`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ confirm: true })
@@ -331,7 +330,7 @@ test('POST /api/reset exige confirm:true y borra auth_info_baileys', async () =>
     assert.ok(!fs.existsSync(tmpAuthDir), 'auth dir eliminado');
 
     // Reset repetido en curso → mensaje claro
-    const again = await (await fetch(`http://127.0.0.1:${port}/api/reset`, {
+    const again = await (await fetch(`http://127.0.0.1:${port}/reset`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ confirm: true })
@@ -340,7 +339,7 @@ test('POST /api/reset exige confirm:true y borra auth_info_baileys', async () =>
     resetInProgressForTests();
 });
 
-test('POST /api/reset con clean:true borra TODO el estado (factory reset F7)', async () => {
+test('POST /reset con clean:true borra TODO el estado (factory reset F7)', async () => {
     resetInProgressForTests();
     // Poblar todos los archivos de estado (apuntan a tmp por las env vars)
     const paths = [
@@ -361,7 +360,7 @@ test('POST /api/reset con clean:true borra TODO el estado (factory reset F7)', a
     }
 
     // Sin confirmación → 400
-    const noConfirm = await fetch(`http://127.0.0.1:${port}/api/reset`, {
+    const noConfirm = await fetch(`http://127.0.0.1:${port}/reset`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ confirm: false, clean: true })
@@ -369,7 +368,7 @@ test('POST /api/reset con clean:true borra TODO el estado (factory reset F7)', a
     assert.strictEqual(noConfirm.status, 400);
 
     // Con confirmación + clean:true → wipe total (SDK_RESET_NO_EXIT evita el exit)
-    const ok = await fetch(`http://127.0.0.1:${port}/api/reset`, {
+    const ok = await fetch(`http://127.0.0.1:${port}/reset`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ confirm: true, clean: true })
@@ -384,7 +383,7 @@ test('POST /api/reset con clean:true borra TODO el estado (factory reset F7)', a
     assert.ok(fs.existsSync(path.join(__dirname, '..', '..', 'brain', 'profiles', 'default.md')), 'perfil SOUL intacto');
 
     // Reset en curso → el segundo intento queda bloqueado
-    const again = await (await fetch(`http://127.0.0.1:${port}/api/reset`, {
+    const again = await (await fetch(`http://127.0.0.1:${port}/reset`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ confirm: true, clean: true })

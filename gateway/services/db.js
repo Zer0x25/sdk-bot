@@ -13,6 +13,8 @@ const logError = cat("ERROR");
  * @typedef {Object} SettingsDB
  * @property {string} [globalMode]
  * @property {string} [currentProfile]
+ * @property {string} [telegramToken]
+ * @property {string} [telegramChatId]
  */
 
 /**

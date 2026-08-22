@@ -7,7 +7,7 @@
  *
  * Lo consumen:
  *   - reset-clean.js (CLI, `npm run clean`): detiene instancias → borra → relanza.
- *   - adminWebServer.js (panel): POST /api/reset con clean:true.
+ *   - internalBus.js: POST /api/reset con clean:true.
  *
  * Rutas: mismas env vars que los módulos productores (SDK_AUTH_DIR,
  * SDK_CONTACTS_DB_PATH, …) para que los tests apunten a temporales y el
