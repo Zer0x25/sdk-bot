@@ -4,16 +4,44 @@
  */
 
 import { $, maskToken } from '../utils.js';
-import { getTelegramSettings, testTelegramToken, saveTelegramSettings } from '../api.js';
+import { getTelegramSettings, testTelegramToken, saveTelegramSettings, getStatus } from '../api.js';
 
 const tgToken = /** @type {HTMLInputElement} */ ($('#tgToken'));
 const tgChatId = /** @type {HTMLInputElement} */ ($('#tgChatId'));
 const tgMsg = $('#tgMsg');
+const tgStatus = $('#tgStatus');
 const tgTestBtn = /** @type {HTMLButtonElement} */ ($('#tgTestBtn'));
 const tgSaveBtn = /** @type {HTMLButtonElement} */ ($('#tgSaveBtn'));
 const tgResetBtn = /** @type {HTMLButtonElement} */ ($('#tgResetBtn'));
 
 let rawTgToken = '';
+
+function setTgStatus(text, cls) {
+  if (!tgStatus) return;
+  tgStatus.className = cls || 'hint';
+  tgStatus.textContent = text;
+}
+
+/** Badge de estado del canal según /status del gateway */
+export async function refreshTgStatus() {
+  try {
+    const d = await getStatus();
+    const tg = (d.channels && d.channels.telegram) || {};
+    const conn = tg.connection || 'starting';
+    const reason = tg.lastDisconnectReason;
+    if (conn === 'open') {
+      setTgStatus('● Telegram conectado y escuchando comandos.', 'ok');
+    } else if (reason === 'token_invalido') {
+      setTgStatus('● Token inválido o revocado: genera uno nuevo con @BotFather y guárdalo aquí.', 'bad');
+    } else if (reason === 'sin_token') {
+      setTgStatus('● Sin token configurado: sigue los pasos de abajo para vincular tu bot.', 'warn');
+    } else {
+      setTgStatus('● Telegram desconectado o iniciando…', 'warn');
+    }
+  } catch (e) {
+    setTgStatus('Estado no disponible (gateway sin responder).', 'warn');
+  }
+}
 
 function setTgUIState(connected) {
   if (connected) {
@@ -39,6 +67,7 @@ function setTgUIState(connected) {
 }
 
 export async function loadTgSettings() {
+  refreshTgStatus();
   try {
     const d = await getTelegramSettings();
     if (d.token && d.chatId) {
@@ -47,7 +76,7 @@ export async function loadTgSettings() {
       tgChatId.value = d.chatId;
       setTgUIState(true);
       tgMsg.style.color = '#4ade80';
-      tgMsg.textContent = '✅ Conectado a Telegram.';
+      tgMsg.textContent = '✅ Bot configurado. Si cambió el token en BotFather, ingrésalo de nuevo y guarda.';
     } else {
       setTgUIState(false);
     }
@@ -108,7 +137,9 @@ export function initTelegramTab() {
         tgToken.value = maskToken(token);
         setTgUIState(true);
         tgMsg.style.color = '#4ade80';
-        tgMsg.textContent = '✅ Configuración guardada correctamente.';
+        tgMsg.textContent = '✅ ' + (d.message || 'Configuración guardada correctamente.');
+        // El adaptador se reconecta en caliente; refrescar el badge enseguida
+        setTimeout(refreshTgStatus, 2500);
       } else {
         tgMsg.style.color = '#f87171';
         tgMsg.textContent = '⚠️ Error al guardar: ' + (d.message || '');
@@ -127,6 +158,9 @@ export function initTelegramTab() {
       await saveTelegramSettings('', '');
       rawTgToken = '';
       setTgUIState(false);
+      setTgStatus('● Sin token configurado: sigue los pasos de abajo para vincular tu bot.', 'warn');
+      tgMsg.style.color = '#aab3c5';
+      tgMsg.textContent = 'Telegram desconectado. Puedes volver a vincularlo cuando quieras.';
     } catch (e) {
       console.error(e);
     }

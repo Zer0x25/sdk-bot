@@ -40,10 +40,14 @@ export function splitProvider(s) {
   return { provider: s.trim(), model: '-' };
 }
 
-/** Estado genérico de conexión de canal */
+/** Estado genérico de conexión de canal, con motivo legible si lo hay */
 export function channelState(conn) {
   const c = conn?.connection || 'starting';
+  const r = conn?.lastDisconnectReason;
   if (c === 'open') return { label: 'Connected', cls: 'ok' };
+  if (r === 'logged_out') return { label: 'Sesión revocada — revincular', cls: 'bad' };
+  if (r === 'sin_sesion') return { label: 'Sin vincular', cls: 'warn' };
+  if (r === 'token_invalido') return { label: 'Token inválido — reconfigurar', cls: 'bad' };
   if (c === 'reconnecting') return { label: 'Reconnecting', cls: 'warn' };
   return { label: 'Disconnected', cls: 'warn' };
 }

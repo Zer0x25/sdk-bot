@@ -67,6 +67,7 @@
             <span class="pair-code-help">WhatsApp &gt; Dispositivos vinculados &gt; Vincular con número de teléfono</span>
             <button class="btn ghost" id="copycode" type="button">📋 Copiar código</button>
           </div>
+          <div class="pair-code-help" id="paircodeage" hidden style="margin-top:8px"></div>
         </div>
         <div id="pairmsg2">Recibirás un código de enlace de 8 caracteres en WhatsApp (Dispositivos vinculados &gt; Vincular con número de teléfono). Si el gateway está apagado, se lanza solo con el primer intento.</div>
       </div>
@@ -204,25 +205,37 @@
   <div class="con">
     <div class="side">
       <div class="row">
-        <span class="hint">Instrucciones:</span>
+        <span id="tgStatus" class="hint">Estado: verificando…</span>
       </div>
       <div class="row">
-        <span class="hint">1. Crea un bot hablando con @BotFather en Telegram.</span>
+        <span class="hint"><b>Cómo vincular tu bot (2 minutos):</b></span>
       </div>
       <div class="row">
-        <span class="hint">2. Envía un comando /start a tu nuevo bot.</span>
+        <span class="hint">1️⃣ Habla con <b>@BotFather</b> en Telegram → comando <code>/newbot</code> → copia el token que te da (se ve como <code>123456789:AAE…</code>).</span>
+      </div>
+      <div class="row">
+        <span class="hint">2️⃣ Pega el token abajo.</span>
+      </div>
+      <div class="row">
+        <span class="hint">3️⃣ Desde TU cuenta, envía <b>/start</b> a tu bot nuevo (sin ese mensaje no se puede descubrir tu Chat ID).</span>
+      </div>
+      <div class="row">
+        <span class="hint">4️⃣ Pulsa «Probar y obtener Chat ID»: se descubre solo y llega un mensaje de prueba.</span>
+      </div>
+      <div class="row">
+        <span class="hint">5️⃣ Pulsa «Guardar y conectar»: el bot conecta al instante, sin reiniciar nada. 🎉</span>
       </div>
       <div class="row" style="margin-top:12px">
-        <input type="text" id="tgToken" placeholder="Telegram Bot Token" style="background:#0f1115;border:1px solid #262b36;color:#e6e6e6;border-radius:8px;padding:8px;width:100%;" autocomplete="off">
+        <input type="text" id="tgToken" placeholder="Telegram Bot Token (ej: 123456789:AAE…)" style="background:#0f1115;border:1px solid #262b36;color:#e6e6e6;border-radius:8px;padding:8px;width:100%;" autocomplete="off">
       </div>
       <div class="row" style="margin-top:12px">
-        <button class="btn primary" id="tgTestBtn">Testear y Obtener Chat ID</button>
+        <button class="btn primary" id="tgTestBtn">🔎 Probar y obtener Chat ID</button>
       </div>
       <div class="row" style="margin-top:12px">
         <input type="text" id="tgChatId" placeholder="Chat ID (automático o manual)" style="background:#0f1115;border:1px solid #262b36;color:#e6e6e6;border-radius:8px;padding:8px;width:100%;" autocomplete="off">
       </div>
       <div class="row" style="margin-top:12px">
-        <button class="btn primary" id="tgSaveBtn">Guardar Configuración</button>
+        <button class="btn primary" id="tgSaveBtn">💾 Guardar y conectar</button>
       </div>
       <div class="row" style="margin-top:12px">
         <button class="btn danger" id="tgResetBtn" style="display:none;">Desconectar Telegram</button>
@@ -232,7 +245,7 @@
     <div class="main-col">
       <div class="card" style="background:#171a21; border:1px solid #262b36; border-radius:12px; padding:16px;">
         <h3 style="margin-top:0">ℹ️ Sobre la integración</h3>
-        <p style="color:#aab3c5; line-height:1.6">Telegram es el canal más robusto para recibir notificaciones push en tiempo real. Cuando configuras tu Bot Token y Chat ID, el bot enviará reportes y alertas críticas hacia tu cuenta de Telegram sin los problemas de silenciamiento del self-chat de WhatsApp.</p>
+        <p style="color:#aab3c5; line-height:1.6">Telegram es el canal más robusto para recibir notificaciones push en tiempo real y comandos de administración desde tu cuenta. Al guardar el token, el bot conecta al instante sin reiniciar el gateway. Si revocas o cambias el token en BotFather, guárdalo aquí de nuevo y listo.</p>
       </div>
     </div>
   </div>

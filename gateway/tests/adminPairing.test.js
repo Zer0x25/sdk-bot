@@ -27,7 +27,7 @@ const { withTempDbPaths } = require('./helpers/tmpPaths');
 
 const t = withTempDbPaths();
 
-const { startInternalBus, setSock, clearSock, handleConnectionUpdate, resetInProgressForTests, setQrTtlForTests, resetQrForTests } = require('../services/internalBus');
+const { startInternalBus, setSock, clearSock, handleConnectionUpdate, resetInProgressForTests, setQrTtlForTests, resetQrForTests, setPairingCodeRequester, setPairingCodeTimeoutForTests } = require('../services/internalBus');
 
 // Socket fake con las piezas que usa el panel (setSock/requestPairingCode)
 const fakeSock = {
@@ -183,6 +183,68 @@ test('POST /pairing pide el código de enlace al socket', async () => {
     assert.strictEqual(d.success, true);
     assert.strictEqual(d.code, '12345678');
     assert.strictEqual(fakeSock.receivedPhone, '56912345678');
+});
+
+test('el código de enlace expone issuedAt/expired en /pairing/status', async () => {
+    resetQrForTests();
+    setSock(fakeSock);
+    const d = await (await fetch(`http://127.0.0.1:${port}/pairing`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ phone: '56912345678' })
+    })).json();
+    assert.strictEqual(d.success, true);
+    assert.ok(d.issuedAt > 0, 'issuedAt presente en la respuesta');
+    assert.ok(d.expiresAt > d.issuedAt, 'expiresAt posterior a issuedAt');
+
+    const st = await (await fetch(`http://127.0.0.1:${port}/pairing/status`)).json();
+    assert.strictEqual(st.active, true);
+    assert.strictEqual(st.method, 'code');
+    assert.strictEqual(st.code, '12345678');
+    assert.strictEqual(st.expired, false);
+    resetQrForTests();
+});
+
+test('código con Baileys colgado: timeout con mensaje claro (sin deadlock)', async () => {
+    resetQrForTests();
+    setSock(fakeSock);
+    // Requester que nunca resuelve (Baileys colgado tras recrear socket)
+    setPairingCodeRequester(() => new Promise(() => {}));
+    setPairingCodeTimeoutForTests(120);
+    const d = await (await fetch(`http://127.0.0.1:${port}/pairing`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ phone: '56912345678' })
+    })).json();
+    assert.strictEqual(d.success, false);
+    assert.match(d.message, /no respondió/);
+
+    // El estado NO queda pegado: restaurado el requester, se puede pedir otro
+    setPairingCodeRequester(null);
+    setPairingCodeTimeoutForTests(20000);
+    const retry = await (await fetch(`http://127.0.0.1:${port}/pairing`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ phone: '56912345678' })
+    })).json();
+    assert.strictEqual(retry.success, true);
+    assert.strictEqual(retry.code, '12345678');
+    resetQrForTests();
+});
+
+test('bloqueo cruzado código↔QR informa los segundos restantes', async () => {
+    resetQrForTests();
+    setSock(fakeSock);
+    handleConnectionUpdate({ qr: '2@vigente-segundos' });
+    const d = await (await fetch(`http://127.0.0.1:${port}/pairing`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ phone: '56912345678' })
+    })).json();
+    assert.strictEqual(d.success, false);
+    assert.match(d.message, /QR vigente/);
+    assert.match(d.message, /\d+s restantes/);
+    resetQrForTests();
 });
 
 test('POST /pairing valida el número y lanza el gateway sin socket', async () => {

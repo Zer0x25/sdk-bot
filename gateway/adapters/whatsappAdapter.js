@@ -110,11 +110,14 @@ class WhatsappAdapter extends ChannelAdapter {
             // defecto internamente si no se especifica.
         });
 
+        // Captura local del socket de ESTA conexión: los eventos de un socket
+        // viejo (tras reconnect o freshQr) deben ignorarse.
+        const sock = this.sock;
         // Eventos Baileys
-        this.sock.ev.on('creds.update', saveCreds);
+        sock.ev.on('creds.update', saveCreds);
 
-        this.sock.ev.on('connection.update', (update) => {
-            if (this.sock !== this.sock) return; // Ignore old socket events
+        sock.ev.on('connection.update', (update) => {
+            if (this.sock !== sock) return; // Ignora eventos de un socket reemplazado
             
             const { connection, lastDisconnect, qr } = update;
             
@@ -172,8 +175,10 @@ class WhatsappAdapter extends ChannelAdapter {
                     this.setStatus('reconnecting');
                     this.scheduleReconnect();
                 } else {
-                    this.setStatus('standby');
-                    log.warn(`ℹ️ Gateway WhatsApp en STANDBY. Razón: ${reason}`);
+                    // Sin sesión o revocada desde el teléfono: no reconectar en
+                    // bucle (evita baneos); el admin debe volver a vincular.
+                    this.setStatus('standby', reason);
+                    log.warn(`ℹ️ Gateway WhatsApp en STANDBY. Razón: ${reason}. Vincula de nuevo desde el panel (QR o código).`);
                 }
             } else if (connection === 'open') {
                 this.reconnectAttempt = 0;
@@ -182,9 +187,9 @@ class WhatsappAdapter extends ChannelAdapter {
                 
                 let adminPhone = '';
                 let adminLid = '';
-                if (this.sock.user) {
-                    adminPhone = this.sock.user.id ? this.sock.user.id.split(':')[0].split('@')[0] : '';
-                    adminLid = this.sock.user.lid ? this.sock.user.lid.split(':')[0].split('@')[0] : '';
+                if (sock.user) {
+                    adminPhone = sock.user.id ? sock.user.id.split(':')[0].split('@')[0] : '';
+                    adminLid = sock.user.lid ? sock.user.lid.split(':')[0].split('@')[0] : '';
                 }
 
                 // Anti-cambio de numero (Opción B: permitir y empezar de cero):

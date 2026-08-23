@@ -123,9 +123,11 @@ async function startGateway() {
         log.info(`👑 ADMIN WA DETECTADO -> Teléfono: ${state.ADMIN_PHONE} | LID: ${state.ADMIN_LID}`);
     });
 
-    whatsapp.on('connection', ({ status }) => {
+    whatsapp.on('connection', ({ status, detail }) => {
         channels.whatsapp.connection = status;
         channels.whatsapp.reconnectAttempt = whatsapp.reconnectAttempt || 0;
+        // 'sin_sesion' | 'logged_out' en standby; null al abrir/reconectar
+        channels.whatsapp.lastDisconnectReason = detail || null;
         if (status === 'open') {
             channels.whatsapp.lastConnectAt = new Date().toISOString();
         }
@@ -165,8 +167,10 @@ async function startGateway() {
         await handleIncomingMessage(stdMsg);
     });
     
-    telegram.on('connection', ({ status }) => {
+    telegram.on('connection', ({ status, detail }) => {
         channels.telegram.connection = status;
+        // 'token_invalido' en standby; null al conectar bien
+        channels.telegram.lastDisconnectReason = detail || null;
         if (status === 'open') {
             channels.telegram.lastConnectAt = new Date().toISOString();
         }
@@ -204,6 +208,14 @@ async function startGateway() {
             whatsapp.connect();
         }
         return await whatsapp.requestPairingCode(number);
+    });
+
+    // Guardar/cambiar el token de Telegram desde el panel reconecta el
+    // adaptador en caliente, sin reiniciar el gateway.
+    internalBus.setTelegramReloader(async () => {
+        log.info('🔌 [BUS] Config de Telegram cambiada: reconectando adaptador…');
+        await telegram.disconnect();
+        await telegram.connect();
     });
 
     // Colas WA Sync

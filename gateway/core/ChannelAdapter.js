@@ -53,10 +53,12 @@ class ChannelAdapter extends EventEmitter {
 
     /**
      * Setter estandarizado del estado interno.
+     * @param {string} status
+     * @param {string} [detail] motivo opcional (ej: 'sin_sesion', 'logged_out', 'token_invalido')
      */
-    setStatus(status) {
+    setStatus(status, detail) {
         this.status = status;
-        this.emit('connection', { status, channel: this.channelName });
+        this.emit('connection', { status, channel: this.channelName, detail: detail || null });
     }
 }
 

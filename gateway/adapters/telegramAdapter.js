@@ -2,6 +2,7 @@ const ChannelAdapter = require('../core/ChannelAdapter');
 const StandardMessage = require('../core/StandardMessage');
 const https = require('https');
 const { getSettingsDB } = require('../services/db');
+const { TELEGRAM_MENU_COMMANDS, classifyPollResponse } = require('../services/telegramService');
 const { cat } = require('../services/logger');
 
 const log = cat('TELEGRAM');
@@ -13,27 +14,24 @@ class TelegramAdapter extends ChannelAdapter {
         this.lastUpdateId = 0;
         this.token = null;
         this.adminChatId = null;
-        // Commands that can be configured in Telegram UI for the bot
-        this.MENU_COMMANDS = [
-            { command: "estado", description: "Ver estado y panel principal" },
-            { command: "ia", description: "Dar el control del chat a la IA" },
-            { command: "humano", description: "Tomar control manual (Pausar IA)" },
-            { command: "limpiar", description: "Borrar la memoria de este chat" },
-            { command: "contactos", description: "Ver agenda de contactos" },
-            { command: "broadcast", description: "Enviar mensaje masivo" },
-            { command: "pausar", description: "Apagar globalmente el bot" },
-            { command: "reanudar", description: "Encender globalmente el bot" }
-        ];
+        // Generación del loop de polling: al reconectar (ej: token nuevo
+        // guardado desde el panel) la generación cambia y el loop viejo
+        // termina solo, sin dejar dos loops compitiendo por getUpdates.
+        this.pollGeneration = 0;
     }
 
     async connect() {
+        // Detener cualquier loop previo antes de releer la configuración.
+        this.pollerActive = false;
+        const gen = ++this.pollGeneration;
+
         const settings = getSettingsDB();
         this.token = settings.telegramToken;
-        this.adminChatId = String(settings.telegramChatId);
+        this.adminChatId = String(settings.telegramChatId || '');
 
         if (!this.token) {
-            log.warn('⚠️ No hay token de Telegram configurado. Adaptador inactivo.');
-            this.setStatus('standby');
+            log.warn('⚠️ No hay token de Telegram configurado. Adaptador en standby (configúralo en el panel).');
+            this.setStatus('standby', 'sin_token');
             return;
         }
 
@@ -44,7 +42,7 @@ class TelegramAdapter extends ChannelAdapter {
         this.updateMenu().catch(e => log.error('Error actualizando menú: ' + e.message));
         
         log.info('✅ Conectado a Telegram (Polling activo)');
-        this.poll();
+        this.poll(gen);
     }
 
     async disconnect() {
@@ -53,7 +51,7 @@ class TelegramAdapter extends ChannelAdapter {
     }
 
     async updateMenu() {
-        const data = JSON.stringify({ commands: this.MENU_COMMANDS });
+        const data = JSON.stringify({ commands: TELEGRAM_MENU_COMMANDS });
         return new Promise((resolve, reject) => {
             const req = https.request({
                 hostname: 'api.telegram.org',
@@ -75,8 +73,8 @@ class TelegramAdapter extends ChannelAdapter {
         });
     }
 
-    async poll() {
-        if (!this.pollerActive) return;
+    async poll(gen = this.pollGeneration) {
+        if (!this.pollerActive || gen !== this.pollGeneration) return;
 
         try {
             const updates = await new Promise((resolve, reject) => {
@@ -91,6 +89,8 @@ class TelegramAdapter extends ChannelAdapter {
                 req.on('error', reject);
                 req.setTimeout(35000, () => { req.destroy(); resolve({ ok: true, result: [] }); });
             });
+
+            if (!this.pollerActive || gen !== this.pollGeneration) return;
 
             if (updates.ok && updates.result) {
                 for (const u of updates.result) {
@@ -127,6 +127,13 @@ class TelegramAdapter extends ChannelAdapter {
                         this.emit('message', stdMsg);
                     }
                 }
+            } else if (classifyPollResponse(updates) === 'auth') {
+                // Token inválido o revocado: parar el loop y dejarlo visible en
+                // el panel (standby + motivo). Se reactiva al guardar token nuevo.
+                log.error('🚫 Token de Telegram inválido o revocado. Genera uno nuevo con @BotFather y guárdalo en el panel.');
+                this.pollerActive = false;
+                this.setStatus('standby', 'token_invalido');
+                return;
             }
         } catch (e) {
             if (e.message !== 'socket hang up') {
@@ -135,8 +142,8 @@ class TelegramAdapter extends ChannelAdapter {
             await new Promise(r => setTimeout(r, 5000));
         }
 
-        if (this.pollerActive) {
-            setImmediate(() => this.poll());
+        if (this.pollerActive && gen === this.pollGeneration) {
+            setImmediate(() => this.poll(gen));
         }
     }
 

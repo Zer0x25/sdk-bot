@@ -180,6 +180,8 @@ const qrClients = new Set();
 let qrRefreshCb = null;
 /** @type {any} Callback que el gateway inyecta para pedir código de pairing por número. */
 let pairingCodeRequester = null;
+/** @type {any} Callback que el gateway inyecta para reconectar Telegram tras cambiar la config. */
+let telegramReloader = null;
 /** Estado compartido para que el panel pueda restaurar el método pendiente. */
 /** @type {'qr'|'code'|null} */
 let pairingMethod = null;
@@ -188,7 +190,15 @@ let pairingCodeValue = null;
 /** @type {string|null} */
 let pairingPhone = null;
 let pairingCodeRequestInProgress = false;
+let pairingCodeIssuedAt = 0;
 const QR_TTL_MS = num('GATEWAY_QR_TTL_MS', 140000);
+// El código de 8 caracteres no tiene TTL en Baileys, pero rota al poco de
+// emitirse: tras esta ventana el panel avisa de que conviene pedir otro.
+const PAIRING_CODE_TTL_MS = num('GATEWAY_PAIRING_CODE_TTL_MS', 180000);
+// Techo para la promesa del código: si Baileys no responde (socket
+// recreándose, red caída) no dejar el flujo bloqueado para siempre.
+const PAIRING_CODE_TIMEOUT_MS = num('GATEWAY_PAIRING_CODE_TIMEOUT_MS', 20000);
+let pairingCodeTimeoutMs = PAIRING_CODE_TIMEOUT_MS;
 let qrExpiresAt = 0;
 let qrTtlMs = QR_TTL_MS;
 /** @type {any} */
@@ -275,14 +285,29 @@ function hasActiveSession() {
 }
 
 function pairingStatus() {
+    if (pairingMethod === 'code') {
+        const issuedAt = pairingCodeIssuedAt || null;
+        const expiresAt = pairingCodeIssuedAt ? pairingCodeIssuedAt + PAIRING_CODE_TTL_MS : null;
+        return {
+            active: true,
+            method: 'code',
+            busy: pairingCodeRequestInProgress,
+            code: pairingCodeValue,
+            phone: pairingPhone,
+            issuedAt,
+            expiresAt,
+            expired: !!(expiresAt && Date.now() >= expiresAt)
+        };
+    }
     return {
         active: pairingMethod !== null,
         method: pairingMethod,
-        busy: pairingMethod === 'qr' ? qrRefreshInProgress : pairingCodeRequestInProgress,
-        code: pairingMethod === 'code' ? pairingCodeValue : null,
-        phone: pairingMethod === 'code' ? pairingPhone : null,
+        busy: pairingMethod === 'qr' ? qrRefreshInProgress : false,
+        code: null,
+        phone: null,
         issuedAt: pairingMethod === 'qr' ? qrIssuedAt || null : null,
-        expiresAt: pairingMethod === 'qr' ? qrExpiresAt || null : null
+        expiresAt: pairingMethod === 'qr' ? qrExpiresAt || null : null,
+        expired: false
     };
 }
 
@@ -291,6 +316,7 @@ function clearPairingState() {
     pairingCodeValue = null;
     pairingPhone = null;
     pairingCodeRequestInProgress = false;
+    pairingCodeIssuedAt = 0;
 }
 
 function qrPayload() {
@@ -432,7 +458,24 @@ function setQrRefresh(cb) {
 
 /** El gateway inyecta un callback para pedir código de pairing por número. */
 function setPairingCodeRequester(cb) {
-    if (typeof cb === 'function') pairingCodeRequester = cb;
+    pairingCodeRequester = typeof cb === 'function' ? cb : null;
+}
+
+/** El gateway inyecta un callback para (re)conectar Telegram al cambiar la config sin reiniciar. */
+function setTelegramReloader(cb) {
+    telegramReloader = typeof cb === 'function' ? cb : null;
+}
+
+/** Reconnecta el adaptador de Telegram si el gateway registró el reload. */
+async function reloadTelegramAdapter() {
+    if (typeof telegramReloader !== 'function') return false;
+    try {
+        await telegramReloader();
+        return true;
+    } catch (e) {
+        logError.error(`🔌 [BUS] Error reconectando Telegram: ${errMsg(e)}`);
+        return false;
+    }
 }
 
 /**
@@ -459,6 +502,19 @@ function startBrainProcess() {
     }
 }
 
+/** Rechaza si la promesa no resuelve en ms (evita bloquear el flujo de pairing). */
+function withTimeout(promise, ms, message) {
+    /** @type {any} */
+    let timer = null;
+    return Promise.race([
+        Promise.resolve(promise),
+        new Promise((_resolve, reject) => {
+            timer = setTimeout(() => reject(new Error(message)), ms);
+            if (timer && timer.unref) timer.unref();
+        })
+    ]).finally(() => { if (timer) clearTimeout(timer); });
+}
+
 async function requestPairing(phone) {
     const clean = String(phone || '').replace(/[^0-9]/g, '');
     const brainUp = !!(getBrainHealth() && getBrainHealth().status === 'ok');
@@ -472,6 +528,7 @@ async function requestPairing(phone) {
     // que devolvería "el QR llegará" y nunca pediría el código.
     if (clean.length >= 9) {
         if (qrPending) {
+            const s = qrExpiresAt > Date.now() ? Math.ceil((qrExpiresAt - Date.now()) / 1000) : 0;
             return {
                 success: false,
                 brainUp,
@@ -479,7 +536,9 @@ async function requestPairing(phone) {
                 busy: qrRefreshInProgress,
                 issuedAt: qrIssuedAt || null,
                 expiresAt: qrExpiresAt || null,
-                message: 'Hay una solicitud de QR vigente: escanéala o espera a que termine antes de pedir un código.'
+                message: s > 0
+                    ? `Hay un QR vigente: escanéalo (${s}s restantes) o espera a que expire para pedir un código.`
+                    : 'Hay una solicitud de QR en curso: espera a que aparezca antes de pedir un código.'
             };
         }
         if (pairingCodeRequestInProgress) {
@@ -488,20 +547,27 @@ async function requestPairing(phone) {
         pairingMethod = 'code';
         pairingCodeValue = null;
         pairingPhone = clean;
+        pairingCodeIssuedAt = 0;
         pairingCodeRequestInProgress = true;
         try {
+            let codePromise;
             if (typeof pairingCodeRequester === 'function') {
-                const code = await pairingCodeRequester(clean);
-                pairingCodeValue = String(code);
-                return { success: true, brainUp, code: pairingCodeValue };
+                codePromise = Promise.resolve(pairingCodeRequester(clean));
+            } else {
+                if (!activeSock) {
+                    clearPairingState();
+                    return { success: false, brainUp, message: 'No hay socket activo para pedir el código.' };
+                }
+                codePromise = Promise.resolve(activeSock.requestPairingCode(clean));
             }
-            if (!activeSock) {
-                clearPairingState();
-                return { success: false, brainUp, message: 'No hay socket activo para pedir el código.' };
-            }
-            const code = await activeSock.requestPairingCode(clean);
+            const code = await withTimeout(
+                codePromise,
+                pairingCodeTimeoutMs,
+                `WhatsApp no respondió al pedir el código (${Math.round(pairingCodeTimeoutMs / 1000)}s). Revisa la conexión e inténtalo de nuevo.`
+            );
             pairingCodeValue = String(code);
-            return { success: true, brainUp, code: pairingCodeValue };
+            pairingCodeIssuedAt = Date.now();
+            return { success: true, brainUp, code: pairingCodeValue, issuedAt: pairingCodeIssuedAt, expiresAt: pairingCodeIssuedAt + PAIRING_CODE_TTL_MS };
         } catch (e) {
             clearPairingState();
             return { success: false, brainUp, message: `No se pudo pedir el código de enlace: ${errMsg(e)}` };
@@ -816,12 +882,31 @@ function routeApi(req, res, pathname, params) {
         return;
     }
     if (pathname === '/telegram/settings' && req.method === 'POST') {
-        readBody(req).then((b) => {
+        readBody(req).then(async (b) => {
+            const token = String(b.token || '').trim();
+            const chatId = String(b.chatId || '').trim();
             const s = getSettingsDB();
-            s.telegramToken = b.token || '';
-            s.telegramChatId = b.chatId || '';
+            const hadToken = !!s.telegramToken;
+            s.telegramToken = token;
+            s.telegramChatId = chatId;
             saveSettingsDB(s);
-            sendJson(res, 200, { success: true });
+            if (!token) {
+                // Desconectar: soltar el adaptador y avisar en el mensaje.
+                await reloadTelegramAdapter();
+                sendJson(res, 200, { success: true, connected: false, message: 'Telegram desconectado: se borró la configuración del bot.' });
+                return;
+            }
+            // Guardar token = conectar al instante (sin reiniciar el gateway).
+            const reloaded = await reloadTelegramAdapter();
+            sendJson(res, 200, {
+                success: true,
+                connected: true,
+                reloaded,
+                chatId,
+                message: reloaded
+                    ? 'Configuración guardada: el bot de Telegram se está conectando… Si no llega el test, envía /start a tu bot y reintenta.'
+                    : `Configuración guardada. ${hadToken ? 'Reinicia el gateway para aplicarla.' : 'El poller la tomará automáticamente; reinicia el gateway si no responde.'}`
+            });
         }).catch(e => sendJson(res, 500, { success: false, message: errMsg(e) }));
         return;
     }
@@ -1001,8 +1086,8 @@ function startInternalBus(opts = {}) {
 
 module.exports = {
     startInternalBus, setSock, clearSock, handleConnectionUpdate, setQrRefresh, setPairingCodeRequester,
-    requestPairing, runAdminCommand, performReset, performRestart, wsReadyState,
-    qrPayload, resetInProgressForTests, setQrTtlForTests, resetQrForTests,
+    setTelegramReloader, requestPairing, runAdminCommand, performReset, performRestart, wsReadyState,
+    qrPayload, resetInProgressForTests, setQrTtlForTests, resetQrForTests, setPairingCodeTimeoutForTests,
     isQrWindowOpen: () => qrWindowOpen && !!lastQrDataUrl && Date.now() < qrExpiresAt,
     notifyAdmin
 };
@@ -1013,6 +1098,9 @@ function resetInProgressForTests() {
 }
 function setQrTtlForTests(ms) {
     qrTtlMs = ms;
+}
+function setPairingCodeTimeoutForTests(ms) {
+    pairingCodeTimeoutMs = ms;
 }
 function resetQrForTests() {
     qrWindowOpen = true;

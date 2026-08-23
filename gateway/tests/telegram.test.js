@@ -5,6 +5,7 @@ withTempDbPaths();
 
 const { startInternalBus } = require('../services/internalBus');
 const { saveSettingsDB, getSettingsDB } = require('../services/db');
+const telegramService = require('../services/telegramService');
 
 // Mockear https para no pegar a Telegram real
 const https = require('https');
@@ -107,4 +108,70 @@ test('POST /telegram/test - funciona con mock de Telegram', async () => {
     const parsedBody = JSON.parse(sendMessageBody);
     assert.strictEqual(parsedBody.chat_id, 112233);
     assert.ok(parsedBody.text.includes('Test de notificaciones'));
+});
+
+test('TELEGRAM_MENU_COMMANDS es la única fuente del menú del bot', () => {
+    const menu = telegramService.TELEGRAM_MENU_COMMANDS;
+    assert.ok(Array.isArray(menu) && menu.length >= 10, 'menú con comandos suficientes');
+    const names = menu.map(c => c.command);
+    for (const cmd of ['estado', 'pausar', 'reanudar', 'broadcast']) {
+        assert.ok(names.includes(cmd), `comando ${cmd} en el menú`);
+    }
+    // El adaptador reutiliza la misma lista (sin duplicado propio)
+    const TelegramAdapter = require('../adapters/telegramAdapter');
+    const adapter = new TelegramAdapter();
+    assert.strictEqual(adapter.MENU_COMMANDS, undefined, 'el adaptador no define su propio menú');
+});
+
+test('classifyPollResponse distingue ok / auth (401/404) / error', () => {
+    assert.strictEqual(telegramService.classifyPollResponse({ ok: true, result: [] }), 'ok');
+    assert.strictEqual(telegramService.classifyPollResponse({ ok: false, error_code: 401 }), 'auth');
+    assert.strictEqual(telegramService.classifyPollResponse({ ok: false, error_code: 404, description: 'Not Found' }), 'auth');
+    assert.strictEqual(telegramService.classifyPollResponse({ ok: false, error_code: 500 }), 'error');
+    assert.strictEqual(telegramService.classifyPollResponse(null), 'error');
+});
+
+test('POST /telegram/settings informa conexión en caliente y desconexión clara', async () => {
+    const r = await fetch(`${API_BASE}/telegram/settings`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ token: '12345:ABC', chatId: '98765' })
+    });
+    const j = await r.json();
+    assert.strictEqual(j.success, true);
+    assert.strictEqual(j.connected, true);
+    // Sin gateway real registrado como reloader en tests → false pero informado
+    assert.strictEqual(j.reloaded, false);
+    assert.ok(typeof j.message === 'string' && j.message.length > 0);
+
+    // Desconectar borra la config y responde con mensaje claro
+    const off = await (await fetch(`${API_BASE}/telegram/settings`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ token: '', chatId: '' })
+    })).json();
+    assert.strictEqual(off.success, true);
+    assert.strictEqual(off.connected, false);
+    assert.match(off.message, /desconectado/i);
+});
+
+test('TelegramAdapter sin token arranca en standby con motivo sin_token y reconecta sin dejar loops', async () => {
+    saveSettingsDB({});
+    const TelegramAdapter = require('../adapters/telegramAdapter');
+    const adapter = new TelegramAdapter();
+    /** @type {any[]} */
+    const events = [];
+    adapter.on('connection', ev => events.push(ev));
+
+    await adapter.connect();
+    assert.strictEqual(adapter.status, 'standby');
+    assert.strictEqual(adapter.pollerActive, false, 'sin token no hay polling ni red');
+    assert.strictEqual(events.length, 1);
+    assert.strictEqual(events[0].detail, 'sin_token');
+
+    // Reconectar (hot-reload de settings) avanza la generación: el loop viejo
+    // queda invalidado aunque no hubiera token con el que arrancar.
+    await adapter.connect();
+    assert.strictEqual(adapter.status, 'standby');
+    assert.strictEqual(adapter.pollGeneration, 2);
 });

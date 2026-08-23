@@ -82,6 +82,11 @@ function testAndGetChatId(token) {
     });
 }
 
+/**
+ * Menú de comandos del bot (única fuente de verdad).
+ * El adaptador de Telegram lo reutiliza para que el menú que ve el usuario
+ * en la app no dependa de qué proceso registró setMyCommands al final.
+ */
 const TELEGRAM_MENU_COMMANDS = [
     { command: "estado", description: "Ver estado y panel principal" },
     { command: "ia", description: "Dar el control del chat a la IA" },
@@ -99,6 +104,15 @@ const TELEGRAM_MENU_COMMANDS = [
     { command: "pausar", description: "Apagar globalmente el bot" },
     { command: "reanudar", description: "Encender globalmente el bot" }
 ];
+
+/** Clasifica la respuesta de getUpdates para decidir reacción y backoff. */
+function classifyPollResponse(payload) {
+    if (payload && payload.ok) return 'ok';
+    const code = payload && payload.error_code;
+    // 401 Unauthorized: token inválido/revocado. 404 Not Found: token malformado.
+    if (code === 401 || code === 404) return 'auth';
+    return 'error';
+}
 
 function updateTelegramMenu(token) {
     return new Promise((resolve, reject) => {
@@ -128,18 +142,22 @@ let lastUpdateId = 0;
 let commandCallback = null;
 let currentPollReq = null;
 let currentPollTimer = null;
+// Racha de errores de autenticación: loguear solo la primera vez (sin spam).
+let authErrorStreak = 0;
 
 function setTelegramCommandCallback(cb) {
     commandCallback = cb;
 }
 
+const sleep = (ms) => new Promise(r => { const t = setTimeout(r, ms); if (t.unref) t.unref(); });
+
 async function pollTelegram() {
     if (!pollerActive) return;
     const settings = getSettingsDB();
     const token = settings.telegramToken;
-    const chatId = String(settings.telegramChatId);
+    const chatId = String(settings.telegramChatId || '');
 
-    if (!token || !chatId) {
+    if (!token || !chatId || chatId === 'undefined') {
         currentPollTimer = setTimeout(pollTelegram, 5000);
         currentPollTimer.unref();
         return;
@@ -161,8 +179,10 @@ async function pollTelegram() {
         });
         currentPollReq = null;
 
-        if (updates.ok && updates.result) {
-            for (const u of updates.result) {
+        const kind = classifyPollResponse(updates);
+        if (kind === 'ok') {
+            authErrorStreak = 0;
+            for (const u of (updates.result || [])) {
                 lastUpdateId = Math.max(lastUpdateId, u.update_id);
                 if (u.message && u.message.text && String(u.message.chat.id) === chatId) {
                     if (commandCallback) {
@@ -181,6 +201,19 @@ async function pollTelegram() {
                     }
                 }
             }
+        } else if (kind === 'auth') {
+            // Token inválido o revocado: avisar claro y esperar (el poller
+            // relee settings cada vuelta, así que se recupera solo al guardar
+            // un token nuevo desde el panel).
+            authErrorStreak += 1;
+            if (authErrorStreak === 1) {
+                log.error(`🚫 Token de Telegram inválido o revocado (HTTP ${updates.error_code}). Genera uno nuevo con @BotFather y guárdalo en el panel.`);
+            }
+            await sleep(30000);
+        } else {
+            authErrorStreak = 0;
+            log.error('Error en poller de telegram: ' + ((updates && updates.description) || 'respuesta no válida'));
+            await new Promise(r => setTimeout(r, 5000));
         }
     } catch (e) {
         if (e.message !== 'socket hang up') {
@@ -222,5 +255,7 @@ module.exports = {
     startTelegramPoller,
     stopTelegramPoller,
     sendTelegramMessage,
-    testAndGetChatId
+    testAndGetChatId,
+    TELEGRAM_MENU_COMMANDS,
+    classifyPollResponse
 };

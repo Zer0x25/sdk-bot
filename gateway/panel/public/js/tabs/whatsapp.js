@@ -14,6 +14,7 @@ const pairphone = /** @type {HTMLInputElement} */ ($('#pairphone'));
 const pairbtn = /** @type {HTMLButtonElement} */ ($('#pairbtn'));
 const pairmsg2 = $('#pairmsg2');
 const paircodecard = $('#paircodecard'), paircode = $('#paircode');
+const paircodeage = $('#paircodeage');
 const copycode = /** @type {HTMLButtonElement} */ ($('#copycode'));
 const genqrbtn = /** @type {HTMLButtonElement} */ ($('#genqrbtn'));
 const pairmsg = $('#pairmsg');
@@ -34,6 +35,9 @@ let pairingInProgress = false;
 let qrFeedStarted = false;
 let qrEs = null;
 let sessionNumber = '';
+// Antigüedad del código de enlace (rotación aproximada informada por el bus)
+let codeExpiresAt = 0;
+let codeAgeTimer = null;
 
 export function setSession(open, number) {
   if (number) sessionNumber = number;
@@ -72,7 +76,7 @@ export async function refreshPairingState() {
     } else if (d.method === 'code') {
       showPairMode('num', true);
       if (d.code) {
-        renderPairingCode(d.code);
+        renderPairingCode(d.code, d.issuedAt, d.expiresAt);
       } else {
         pairingInProgress = true;
         pairbtn.disabled = true;
@@ -163,7 +167,7 @@ async function refreshQrFromServer() {
     } else {
       if (d.method === 'code') {
         showPairMode('num', true);
-        if (d.code) renderPairingCode(d.code);
+        if (d.code) renderPairingCode(d.code, d.issuedAt, d.expiresAt);
         return;
       }
       pairmsg.className = 'err';
@@ -190,14 +194,17 @@ async function refreshQrFromServer() {
       genqrbtn.textContent = '🔄 Generar QR';
     }
   }
+  // Fallback por si el SSE no llega (el backend mantiene el bloqueo real
+  // ~10s mientras recrea el socket; dar un margen extra antes de rendir).
   setTimeout(() => {
     if (pairingInProgress && !(qrExpiresAt > Date.now())) {
       pairingInProgress = false;
       genqrbtn.disabled = false;
       genqrbtn.textContent = '🔄 Generar QR';
       renderQrState({ qr: null, expired: false });
+      qrst.textContent = 'Sigue sin aparecer el QR: revisa la conexión y genera otro.';
     }
-  }, 8000);
+  }, 12000);
 }
 
 function startQrFeed() {
@@ -214,14 +221,46 @@ function startQrFeed() {
   qrEs.onerror = () => { /* el EventSource reintenta solo */ };
 }
 
-function renderPairingCode(code) {
+function renderPairingCode(code, issuedAt, expiresAt) {
   paircode.textContent = String(code).trim();
   paircodecard.hidden = false;
   pairmsg2.className = 'ok';
-  pairmsg2.textContent = '✅ Código listo. Ingresa el valor de la ficha en WhatsApp para vincular este dispositivo.';
+  pairmsg2.textContent = '✅ Código listo. Ábrelo en WhatsApp (Dispositivos vinculados > Vincular con número de teléfono) e ingresa la ficha que te muestre aquí.';
   pairingInProgress = false;
   pairbtn.disabled = false;
   pairbtn.textContent = '🔄 Solicitar otro código';
+  // Antigüedad del código: WhatsApp rota estos códigos al poco de emitirlos;
+  // avisamos para que el admin sepa cuándo pedir otro sin adivinar.
+  codeExpiresAt = Number(expiresAt) || (Number(issuedAt) ? Number(issuedAt) + 180000 : 0);
+  startCodeAgeTicker();
+}
+
+function startCodeAgeTicker() {
+  stopCodeAgeTicker();
+  updateCodeAge();
+  codeAgeTimer = setInterval(updateCodeAge, 1000);
+}
+
+function stopCodeAgeTicker() {
+  if (codeAgeTimer) { clearInterval(codeAgeTimer); codeAgeTimer = null; }
+}
+
+function updateCodeAge() {
+  if (!paircodeage) return;
+  if (!codeExpiresAt || paircodecard.hidden) {
+    paircodeage.hidden = true;
+    stopCodeAgeTicker();
+    return;
+  }
+  const remain = Math.ceil((codeExpiresAt - Date.now()) / 1000);
+  paircodeage.hidden = false;
+  if (remain > 0) {
+    paircodeage.style.color = '';
+    paircodeage.textContent = '⏱️ Si el código es rechazado, solicita otro (rotación en ~' + Math.max(remain, 0) + 's).';
+  } else {
+    paircodeage.style.color = '#facc15';
+    paircodeage.textContent = '⚠️ Este código probablemente ya expiró: pulsa «Solicitar otro código».';
+  }
 }
 
 // 🧨 F7: Modal de reset de fábrica
@@ -322,7 +361,7 @@ export function initWhatsAppTab() {
       const d = await requestPairingCode(phone);
       if (d.success) {
         if (d.code) {
-          renderPairingCode(d.code);
+          renderPairingCode(d.code, d.issuedAt, d.expiresAt);
         } else {
           pairmsg2.className = 'ok';
           pairmsg2.textContent = '✅ ' + (d.message || 'Pairing iniciado.');
