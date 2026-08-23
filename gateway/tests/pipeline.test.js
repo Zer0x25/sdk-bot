@@ -126,7 +126,23 @@ test('decideReconnect: SIN sesión NO reconecta (anti-loop QR, F6-P4)', () => {
     assert.deepStrictEqual(decideReconnect({ hasSession: false, loggedOut: false }), { reconnect: false, reason: 'sin_sesion' });
 });
 
+test('decideReconnect: identidad a medias (QR escaneado, restartRequired 515) SÍ reconecta', () => {
+    // El teléfono aceptó el vínculo (creds.me persistido) pero `registered`
+    // aún no se consolida: WhatsApp cierra el stream y exige reconexión para
+    // completar el pairing. Tratarlo como terminal mataba el vínculo a medio
+    // camino aunque el celular ya lo hubiera aceptado.
+    assert.deepStrictEqual(
+        decideReconnect({ hasSession: false, loggedOut: false, hasPairedIdentity: true }),
+        { reconnect: true, reason: 'normal' }
+    );
+});
+
 test('decideReconnect: loggedOut (sesión revocada) NO reconecta', () => {
     assert.deepStrictEqual(decideReconnect({ hasSession: true, loggedOut: true }), { reconnect: false, reason: 'logged_out' });
     assert.deepStrictEqual(decideReconnect({ hasSession: false, loggedOut: true }), { reconnect: false, reason: 'logged_out' });
+    // Revocada gana aunque queden restos de identidad a medias
+    assert.deepStrictEqual(
+        decideReconnect({ hasSession: false, loggedOut: true, hasPairedIdentity: true }),
+        { reconnect: false, reason: 'logged_out' }
+    );
 });

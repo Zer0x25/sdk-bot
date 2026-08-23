@@ -7,7 +7,7 @@ const path = require('path');
 const { cat } = require('../services/logger');
 const { isJunkJid } = require('../services/contactsRepository');
 const { extractUserMetadata } = require('../services/metadataService');
-const { extractTextMessage } = require('../services/pipeline'); // Actually we might need to extract this WA logic somewhere else, but for now we import it.
+const { extractTextMessage, decideReconnect } = require('../services/pipeline');
 const { isBotSentMessage } = require('../config');
 const internalBus = require('../services/internalBus');
 const { getSettingsDB, saveSettingsDB } = require('../services/db');
@@ -50,6 +50,23 @@ class WhatsappAdapter extends ChannelAdapter {
             if (!fs.existsSync(credsPath)) return false;
             const creds = JSON.parse(fs.readFileSync(credsPath, 'utf8'));
             return Boolean(creds && creds.registered);
+        } catch (e) {
+            return false;
+        }
+    }
+
+    /**
+     * ¿Hay una identidad de emparejamiento a medias? Baileys persiste `me`
+     * cuando el teléfono aceptó el QR/código, pero `registered` recién se
+     * consolida tras la reconexión que WhatsApp exige (restartRequired/515).
+     * Ver ADR-003/004: ese cierre es transitorio, no terminal.
+     */
+    hasPairedIdentity() {
+        try {
+            const credsPath = path.join(AUTH_DIR, 'creds.json');
+            if (!fs.existsSync(credsPath)) return false;
+            const creds = JSON.parse(fs.readFileSync(credsPath, 'utf8'));
+            return Boolean(creds && creds.me && creds.me.id);
         } catch (e) {
             return false;
         }
@@ -127,58 +144,44 @@ class WhatsappAdapter extends ChannelAdapter {
             
             if (connection === 'close') {
                 this.sock = null;
-                const dc = /** @type {any} */ (lastDisconnect);
-                const dcErr = dc?.error;
-                const dcStatus = dcErr?.output?.statusCode;
-                const loggedOut = dcStatus === DisconnectReason.loggedOut;
+                const statusCode = (lastDisconnect?.error)?.output?.statusCode;
+                const closeDetail = (lastDisconnect?.error)?.message || 'sin detalle';
+                const loggedOut = statusCode === DisconnectReason.loggedOut;
                 // Loguea la razon real del cierre (el logger de Baileys esta en silent,
                 // asi que sin esto el pairing fallido queda ciego: statusCode 401/403/409/500
                 // o "Stream Errored" indican el motivo de fondo).
-                log.warn(`🔌 [WHATSAPP] connection.close statusCode=${dcStatus ?? 'n/a'} loggedOut=${loggedOut} err=${dcErr?.message || (dcErr ? String(dcErr) : 'n/a')}`);
+                log.warn(`🔌 [WHATSAPP] connection.close statusCode=${statusCode ?? 'n/a'} loggedOut=${loggedOut} err=${closeDetail}`);
 
-                let shouldReconnect = false;
-                let reason = '';
+                // [main] Logout real de WhatsApp (el cliente revoco la sesion desde
+                // su movil: Dispositivos vinculados). NO borramos las creds: si
+                // revincula el MISMO numero solo genera un QR nuevo y sigue igual.
+                // Avisar al admin y resetear el numero conocido para detectar cambios
+                // de numero (Opcion B) en el futuro.
                 if (loggedOut) {
-                    // Logout real de WhatsApp (el cliente revoco la sesion desde
-                    // su movil: Dispositivos vinculados). No reintentar. Avisar al
-                    // admin (panel/log + Telegram si esta activo). NO borramos las
-                    // creds: si el cliente lo hizo por error y revincula el MISMO
-                    // numero, solo debe generar un QR nuevo y todo sigue igual
-                    // (no perdemos nada). Si revincula OTRO numero, la logica de
-                    // cambio de numero (Opción B) ya borra y re-pairea limpio.
-                    reason = 'logged_out';
                     const msg = '🚪 El cliente DESVINCULÓ el bot desde su móvil (WhatsApp > Dispositivos vinculados). El bot quedó en standby (no se borró nada). Si revincula el mismo número, solo genera un QR nuevo y sigue igual; si usa otro número, se reinicia el pairing desde cero.';
                     log.warn(msg);
                     if (internalBus && internalBus.notifyAdmin) internalBus.notifyAdmin(msg);
-                    // Reset del numero conocido en settings: asi un futuro re-pair
-                    // con otro numero sera detectado como cambio (Opción B).
                     this.setKnownAdminPhone('');
-                } else if (this.isSessionRegistered()) {
-                    // Sesion registrada cayo: reconexion normal con backoff.
-                    shouldReconnect = true;
-                } else {
-                    // Sin sesion: el primer intento de pairing SIEMPRE falla
-                    // (515 Stream Errored / 401 transitorio de WhatsApp) y el
-                    // segundo completa en ~5s. Reconectar para dar ese segundo
-                    // intento, con tope para no caer en loop infinito si el
-                    // usuario nunca escanea.
-                    const MAX_PAIRING_RETRIES = 8;
-                    if (this.reconnectAttempt < MAX_PAIRING_RETRIES) {
-                        shouldReconnect = true;
-                    } else {
-                        shouldReconnect = false;
-                        reason = 'sin_sesion (reintentos de pairing agotados)';
-                    }
                 }
 
-                if (shouldReconnect) {
+                // Decisión PURA centralizada en pipeline.decideReconnect
+                // (idéntica regla para el adapter y para los tests).
+                const decision = decideReconnect({
+                    hasSession: this.isSessionRegistered(),
+                    hasPairedIdentity: this.hasPairedIdentity(),
+                    loggedOut
+                });
+
+                if (decision.reconnect) {
                     this.setStatus('reconnecting');
+                    log.warn(`↻ WhatsApp cerró la conexión (statusCode=${statusCode}, ${closeDetail}). Reconectando en breve…`);
                     this.scheduleReconnect();
                 } else {
-                    // Sin sesión o revocada desde el teléfono: no reconectar en
-                    // bucle (evita baneos); el admin debe volver a vincular.
-                    this.setStatus('standby', reason);
-                    log.warn(`ℹ️ Gateway WhatsApp en STANDBY. Razón: ${reason}. Vincula de nuevo desde el panel (QR o código).`);
+                    // Sin sesión ni identidad a medias, o revocada desde el
+                    // teléfono: no reconectar en bucle (evita baneos); el
+                    // admin debe volver a vincular.
+                    this.setStatus('standby', decision.reason);
+                    log.warn(`ℹ️ Gateway WhatsApp en STANDBY. Razón: ${decision.reason} (statusCode=${statusCode}, ${closeDetail}). Vincula de nuevo desde el panel (QR o código).`);
                 }
             } else if (connection === 'open') {
                 this.reconnectAttempt = 0;

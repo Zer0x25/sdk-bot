@@ -222,16 +222,22 @@ function decideMessageFlow({ textMessage, metadata, contactRecord, isSelf, isFro
  * Reglas de reconexión automática tras `connection === 'close'`:
  *   - loggedOut (sesión revocada/cerrada en el teléfono): NO reconectar,
  *     el admin debe escanear un QR nuevo a propósito.
- *   - Sin sesión guardada (creds.json no existe): NO reconectar en loop —
- *     WhatsApp espera un QR/pairing y el loop solo martillea al servidor
- *     (riesgo de baneo). El QR nuevo lo dispara el admin (panel o reset).
+ *   - Sin sesión guardada Y sin identidad de emparejamiento: NO reconectar
+ *     en loop — WhatsApp espera un QR/pairing y el loop solo martillea al
+ *     servidor (riesgo de baneo). El QR nuevo lo dispara el admin.
+ *   - Con identidad de emparejamiento a medias (`hasPairedIdentity`: creds
+ *     con `me` pero `registered` aún false): SÍ reconectar — es el baile
+ *     normal de WhatsApp tras escanear el QR o usar un código (cierra el
+ *     stream con restartRequired/515 y exige reconexión para terminar el
+ *     vínculo). Tratarlo como "sin_sesion" dejaba el pairing muerto a medio
+ *     camino aunque el teléfono ya lo hubiera aceptado.
  *   - Con sesión válida: reconectar con backoff (caso normal).
- * @param {{hasSession: boolean, loggedOut: boolean}} ctx
+ * @param {{hasSession: boolean, loggedOut: boolean, hasPairedIdentity?: boolean}} ctx
  * @returns {{reconnect: boolean, reason: string}}
  */
-function decideReconnect({ hasSession, loggedOut }) {
+function decideReconnect({ hasSession, loggedOut, hasPairedIdentity }) {
     if (loggedOut) return { reconnect: false, reason: 'logged_out' };
-    if (!hasSession) return { reconnect: false, reason: 'sin_sesion' };
+    if (!hasSession && !hasPairedIdentity) return { reconnect: false, reason: 'sin_sesion' };
     return { reconnect: true, reason: 'normal' };
 }
 
