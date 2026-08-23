@@ -125,3 +125,71 @@ test('sin parámetro history usa el default (100 líneas)', async () => {
     const lines = await got;
     assert.ok(lines.some(l => l.includes('default-hist')), 'default (100) envía el historial');
 });
+
+function requestBus(method, pathname) {
+    return new Promise((resolve, reject) => {
+        const req = http.request({
+            host: '127.0.0.1',
+            port,
+            path: pathname,
+            method
+        }, res => {
+            let data = '';
+            res.setEncoding('utf8');
+            res.on('data', chunk => { data += chunk; });
+            res.on('end', () => {
+                try {
+                    resolve({ status: res.statusCode, body: JSON.parse(data || '{}') });
+                } catch {
+                    resolve({ status: res.statusCode, body: data });
+                }
+            });
+        });
+        req.on('error', reject);
+        req.end();
+    });
+}
+
+test('DELETE /logs con formato pino-roll (gateway.1.log) borra y trunca sin error 500', async () => {
+    const pinoRollFile = path.join(fakeLogs, 'gateway.1.log');
+    fs.writeFileSync(pinoRollFile, '{"level":30,"time":1111,"msg":"linea pino-roll","cat":"AI"}\n');
+
+    const res = await requestBus('DELETE', '/logs?component=gateway');
+    assert.strictEqual(res.status, 200);
+    assert.strictEqual(res.body.success, true);
+    assert.strictEqual(res.body.component, 'gateway');
+
+    const content = fs.readFileSync(pinoRollFile, 'utf8');
+    assert.ok(content.includes('Logs borrados correctamente desde el panel web.'));
+    assert.ok(!content.includes('linea pino-roll'), 'contenido anterior fue truncado');
+});
+
+test('DELETE /logs con component=brain trunca el log del brain correctamente', async () => {
+    const brainLog = path.join(fakeLogs, 'brain.log');
+    fs.writeFileSync(brainLog, '2026-08-11 12:00:01 INFO [brain.main] log del cerebro\n');
+
+    const res = await requestBus('DELETE', '/logs?component=brain');
+    assert.strictEqual(res.status, 200);
+    assert.strictEqual(res.body.success, true);
+    assert.strictEqual(res.body.component, 'brain');
+
+    const content = fs.readFileSync(brainLog, 'utf8');
+    assert.ok(content.includes('Logs borrados correctamente desde el panel web.'));
+    assert.ok(!content.includes('log del cerebro'), 'contenido anterior fue truncado');
+});
+
+test('DELETE /logs sin archivos previos crea el archivo con el aviso de reseteo', async () => {
+    const emptyLogsDir = fs.mkdtempSync(path.join(os.tmpdir(), 'sdkbot-empty-logs-'));
+    process.env.SDK_ADMIN_WEB_LOG_GATEWAY = emptyLogsDir;
+
+    const res = await requestBus('DELETE', '/logs?component=gateway');
+    assert.strictEqual(res.status, 200);
+    assert.strictEqual(res.body.success, true);
+
+    const createdFile = path.join(emptyLogsDir, 'gateway.log');
+    assert.ok(fs.existsSync(createdFile));
+    assert.ok(fs.readFileSync(createdFile, 'utf8').includes('Logs borrados correctamente'));
+
+    fs.rmSync(emptyLogsDir, { recursive: true, force: true });
+    process.env.SDK_ADMIN_WEB_LOG_GATEWAY = fakeLogs;
+});

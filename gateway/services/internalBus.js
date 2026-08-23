@@ -162,8 +162,8 @@ function makeVirtualSock(replies) {
 
 // Rutas de logs con override por env (tests con archivos fake, nunca tocar los reales)
 const LOG_DIRS = {
-    gateway: process.env.SDK_ADMIN_WEB_LOG_GATEWAY || path.join(__dirname, '..', 'logs'),
-    brain: process.env.SDK_ADMIN_WEB_LOG_BRAIN || path.join(__dirname, '..', '..', 'brain', 'logs')
+    get gateway() { return process.env.SDK_ADMIN_WEB_LOG_GATEWAY || path.join(__dirname, '..', 'logs'); },
+    get brain() { return process.env.SDK_ADMIN_WEB_LOG_BRAIN || path.join(__dirname, '..', '..', 'brain', 'logs'); }
 };
 const LOG_PATTERNS = { gateway: /^gateway(\.\d+)?\.log(\.\d+)?$/, brain: /^brain(\.\d+)?\.log(\.\d+)?$/ };
 const LINE_CAP = 8192;
@@ -576,6 +576,32 @@ async function performRestart() {
     return { success: true, message: 'Lanzando gateway…' };
 }
 
+/**
+ * Encuentra la ruta del archivo de log activo más reciente para un componente.
+ * @param {'gateway'|'brain'} component
+ * @returns {string|null}
+ */
+function findActiveLogFile(component) {
+    const dir = LOG_DIRS[component];
+    const pattern = LOG_PATTERNS[component];
+    /** @type {string|null} */
+    let best = null;
+    let bestMtime = -1;
+    let files;
+    try { files = fs.readdirSync(dir); } catch { return null; }
+    for (const f of files) {
+        if (!pattern.test(f)) continue;
+        const p = path.join(dir, f);
+        let st;
+        try { st = fs.statSync(p); } catch { continue; }
+        if (st.mtimeMs > bestMtime) {
+            bestMtime = st.mtimeMs;
+            best = p;
+        }
+    }
+    return best;
+}
+
 // --- SSE de logs (lee el archivo de log en vivo y difunde JSON { component, line }) ---
 /**
  * @param {http.IncomingMessage} req
@@ -614,20 +640,10 @@ function streamLogs(req, res, params) {
      * Lee las últimas N líneas del archivo más reciente como historial.
      */
     function sendHistory() {
-        /** @type {string|null} */
-        let best = null;
-        let bestMtime = 0;
-        let files;
-        try { files = fs.readdirSync(dir); } catch { return; }
-        for (const f of files) {
-            if (!pattern.test(f)) continue;
-            const p = path.join(dir, f);
-            let st;
-            try { st = fs.statSync(p); } catch (e) { continue; }
-            if (st.mtimeMs > bestMtime) { bestMtime = st.mtimeMs; best = p; }
-        }
+        const best = findActiveLogFile(component);
         if (!best) return;
-        const st = fs.statSync(best);
+        let st;
+        try { st = fs.statSync(best); } catch { return; }
         const chunk = Math.max(0, st.size - 64 * 1024);
         const fd = fs.openSync(best, 'r');
         const buf = Buffer.alloc(st.size - chunk);
@@ -698,10 +714,15 @@ function routeApi(req, res, pathname, params) {
     if (pathname === '/logs' && req.method === 'GET') { streamLogs(req, res, params); return; }
     if (pathname === '/logs' && req.method === 'DELETE') {
         const component = params.get('component') === 'brain' ? 'brain' : 'gateway';
-        const p = path.join(LOG_DIRS[component], component === 'brain' ? 'brain.log' : 'gateway.log');
+        const dir = LOG_DIRS[component];
         try {
-            fs.truncateSync(p, 0);
-            fs.appendFileSync(p, `Logs borrados correctamente desde el panel web.\n`, 'utf8');
+            fs.mkdirSync(dir, { recursive: true });
+            const active = findActiveLogFile(component);
+            const target = active || path.join(dir, component === 'brain' ? 'brain.log' : 'gateway.log');
+            if (fs.existsSync(target)) {
+                fs.truncateSync(target, 0);
+            }
+            fs.writeFileSync(target, 'Logs borrados correctamente desde el panel web.\n', 'utf8');
             sendJson(res, 200, { success: true, component });
         } catch (e) { sendJson(res, 500, { success: false, message: errMsg(e) }); }
         return;

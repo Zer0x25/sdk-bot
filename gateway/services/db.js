@@ -128,6 +128,7 @@ function saveSettingsDB(settings) {
             logError.error("Error al guardar settings_db.json de forma asíncrona: " + errMsg(e));
         }
     }, SAVE_DELAY_MS);
+    saveSettingsTimer.unref?.();
     return true;
 }
 
@@ -154,6 +155,7 @@ function saveContactsDB(db) {
             logError.error("Error al guardar contacts_db.json de forma asíncrona: " + errMsg(e));
         }
     }, SAVE_DELAY_MS);
+    saveContactsTimer.unref?.();
     return true;
 }
 

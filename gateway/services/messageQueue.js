@@ -170,6 +170,7 @@ function scheduleFlush() {
             .catch(e => logError.error('📥 [COLA] Error en flush: ' + errMsg(e)))
             .finally(() => { flushInProgress = false; });
     }, 3000);
+    flushTimer.unref?.();
 }
 
 /** Para tests: estado interno y limpieza. */
