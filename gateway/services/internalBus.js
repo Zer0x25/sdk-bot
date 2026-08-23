@@ -328,17 +328,25 @@ function openQrWindow() {
 }
 
 /** El gateway entrega el socket activo de Baileys al bus. */
-/** @param {any} sock */
-function setSock(sock) {
-    activeSock = sock;
-    socketGeneration += 1;
+/** Reinicia el estado de la ventana del QR (sin tocar pairing por código). */
+function resetQrWindowState() {
     qrSequence = 0;
     lastQrDataUrl = null;
     qrIssuedAt = 0;
+    // Reabrir la ventana es OBLIGATORIO: si un QR anterior expiró dejó
+    // qrWindowOpen=false y el guard de handleConnectionUpdate descartaría
+    // para siempre todo QR nuevo ("Generar QR" no produciría imagen nunca).
     qrWindowOpen = true;
     qrExpiresAt = 0;
     if (qrExpiryTimer) clearTimeout(qrExpiryTimer);
     qrExpiryTimer = null;
+}
+
+/** @param {any} sock */
+function setSock(sock) {
+    activeSock = sock;
+    socketGeneration += 1;
+    resetQrWindowState();
     broadcastQrState();
 }
 
@@ -348,13 +356,7 @@ function clearSock(sock = null) {
     if (sock && sock !== activeSock) return;
     activeSock = null;
     socketGeneration += 1;
-    qrSequence = 0;
-    lastQrDataUrl = null;
-    qrIssuedAt = 0;
-    qrWindowOpen = true;
-    qrExpiresAt = 0;
-    if (qrExpiryTimer) clearTimeout(qrExpiryTimer);
-    qrExpiryTimer = null;
+    resetQrWindowState();
     if (qrRefreshTimer) clearTimeout(qrRefreshTimer);
     qrRefreshTimer = null;
     qrRefreshInProgress = false;
@@ -793,10 +795,14 @@ function routeApi(req, res, pathname, params) {
             return;
         }
         if (typeof qrRefreshCb === 'function') {
+            // Pedir un QR fresco REABRE la ventana: venía de un click explícito
+            // y el guard de handleConnectionUpdate exige qrWindowOpen=true.
+            resetQrWindowState();
             pairingMethod = 'qr';
             pairingCodeValue = null;
             pairingPhone = null;
             pairingCodeRequestInProgress = false;
+            broadcastQrState();
             qrRefreshInProgress = true;
             // Reabre la ventana QR: tras expirar la ráfaga inicial del arranque
             // (standby por sin_sesion), qrWindowOpen queda en false y la guarda

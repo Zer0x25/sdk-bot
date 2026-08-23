@@ -27,7 +27,7 @@ const { withTempDbPaths } = require('./helpers/tmpPaths');
 
 const t = withTempDbPaths();
 
-const { startInternalBus, setSock, clearSock, handleConnectionUpdate, resetInProgressForTests, setQrTtlForTests, resetQrForTests, setPairingCodeRequester, setPairingCodeTimeoutForTests } = require('../services/internalBus');
+const { startInternalBus, setSock, clearSock, handleConnectionUpdate, resetInProgressForTests, setQrTtlForTests, resetQrForTests, setPairingCodeRequester, setPairingCodeTimeoutForTests, setQrRefresh } = require('../services/internalBus');
 
 // Socket fake con las piezas que usa el panel (setSock/requestPairingCode)
 const fakeSock = {
@@ -344,6 +344,40 @@ test('el QR expira solo y el panel vuelve a "no disponible"', async () => {
 
     reader.cancel();
     setQrTtlForTests(60000);
+    resetQrForTests();
+});
+
+test('regresión: "Generar QR" tras una expiración SÍ produce un QR nuevo', async () => {
+    // Bug: al expirar el QR quedaba qrWindowOpen=false; la ruta /qr/refresh
+    // no la reabría y el guard de handleConnectionUpdate descartaba todo QR
+    // nuevo en silencio (el panel mostraba "Regenerando…" sin imagen nunca).
+    resetQrForTests();
+    setQrTtlForTests(60); // ventana de 60ms: expira casi al instante
+
+    const res1 = await fetch(`http://127.0.0.1:${port}/qr`);
+    handleConnectionUpdate({ qr: '2@primero' });
+    const { hit: expirado, reader: r1 } = await readSse(res1, ev => ev.expired === true, 3000);
+    assert.ok(expirado, 'primer QR expiró (ventana cerrada)');
+    r1.cancel();
+
+    // Click en "Generar QR" (lo que hace el botón del panel)
+    let refreshCalls = 0;
+    setQrRefresh(() => { refreshCalls += 1; });
+    const d = await (await fetch(`http://127.0.0.1:${port}/qr/refresh`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({})
+    })).json();
+    assert.strictEqual(d.success, true);
+    assert.strictEqual(refreshCalls, 1, 'callback de refresh invocado');
+
+    // El QR del socket recreado DEBE llegar por SSE (antes se descartaba)
+    setQrTtlForTests(60000);
+    const res2 = await fetch(`http://127.0.0.1:${port}/qr`);
+    handleConnectionUpdate({ qr: '2@segundo' });
+    const { hit: nuevoQr, reader: r2 } = await readSse(res2, ev => ev.qr && ev.qr.startsWith('data:image/png;base64,'), 5000);
+    assert.ok(nuevoQr, 'QR regenerado visible tras expiración previa');
+    r2.cancel();
     resetQrForTests();
 });
 
