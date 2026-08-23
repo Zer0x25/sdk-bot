@@ -6,7 +6,7 @@
  * Ahora es su propio proceso: se comunica con el gateway EXCLUSIVAMENTE
  * por el bus interno HTTP (GATEWAY_INTERNAL_URL, default 127.0.0.1:5400).
  *
- * El front (admin-web/index.html) sigue llamando a /api/*; este server las
+ * El front (public/index.html) sigue llamando a /api/*; este server las
  * proxy al bus interno. Si el gateway cae, el panel sigue vivo y el front
  * se reconecta solo cuando el gateway (y su bus) vuelve.
  *
@@ -33,7 +33,7 @@ if (fs.existsSync(DOTENV)) {
     }
 }
 
-const WEB_DIR = path.join(__dirname, '..', 'admin-web');
+const WEB_DIR = path.join(__dirname, 'public');
 
 // Si se define, el redirect_uri de OAuth SIEMPRE usa esta URL canónica
 // (evita que entrar por IP/Tailscale genere un redirect_uri no autorizado en Google).

@@ -46,8 +46,8 @@ SDK-Bot/
 │   ├── config.js                 # Estado global, URLs y registro anti-bucle
 │   ├── tuning.js                 # Variables de afinación y rendimiento
 │   ├── panel/                    # Panel Web — 3er proceso independiente (puerto 5201)
-│   │   └── index.js              # Servidor HTTP proxy hacia el bus interno (:5400) y estáticos
-│   ├── admin-web/                # Frontend web estático (dashboard, pairing WA, telegram, contactos, etc.)
+│   │   ├── index.js              # Servidor HTTP proxy hacia el bus interno (:5400) y estáticos
+│   │   └── public/               # Frontend web estático modular (dashboard, pairing WA, telegram, contactos, etc.)
 │   ├── store/
 │   │   └── chatStore.js          # Store RAM de mensajes de Baileys (precarga web-like)
 │   ├── services/

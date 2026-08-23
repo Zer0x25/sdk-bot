@@ -19,5 +19,5 @@
     "verbatimModuleSyntax": false
   },
   "include": ["**/*.js"],
-  "exclude": ["node_modules", "logs", "auth_info_baileys"]
+  "exclude": ["node_modules", "logs", "auth_info_baileys", "panel/public"]
 }

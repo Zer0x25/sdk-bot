@@ -1,0 +1,141 @@
+// @ts-check
+/**
+ * 📡 Capa de API HTTP centralizada para el panel
+ */
+
+async function fetchJson(url, options = {}) {
+  const r = await fetch(url, options);
+  return r.json();
+}
+
+export async function getStatus() {
+  return fetchJson('/api/status');
+}
+
+export async function sendCommand(command) {
+  return fetchJson('/api/command', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ command })
+  });
+}
+
+export async function startBrain() {
+  return fetchJson('/api/brain/start', { method: 'POST' });
+}
+
+export async function getPairingStatus() {
+  return fetchJson('/api/pairing/status');
+}
+
+export async function refreshQr() {
+  return fetchJson('/api/qr/refresh', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: '{}'
+  });
+}
+
+export async function requestPairingCode(phone) {
+  return fetchJson('/api/pairing', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ phone })
+  });
+}
+
+export async function resetSession() {
+  return fetchJson('/api/reset', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ confirm: true })
+  });
+}
+
+export async function resetCleanFactory() {
+  return fetchJson('/api/reset', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ confirm: true, clean: true })
+  });
+}
+
+export async function getContacts({ q = '', estado = '', page = 1, limit = 50 }) {
+  const url = `/api/contacts?q=${encodeURIComponent(q)}&estado=${encodeURIComponent(estado)}&page=${page}&limit=${limit}`;
+  return fetchJson(url);
+}
+
+export async function setContactState(key, estado) {
+  return fetchJson(`/api/contacts/${encodeURIComponent(key)}/estado`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ estado })
+  });
+}
+
+export async function setContactProfile(key, perfil) {
+  return fetchJson(`/api/contacts/${encodeURIComponent(key)}/perfil`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ perfil })
+  });
+}
+
+export async function getProfiles() {
+  return fetchJson('/api/profiles');
+}
+
+export async function getProfileDetail(key) {
+  const r = await fetch(`/api/profiles/${encodeURIComponent(key)}`);
+  if (!r.ok) throw new Error('perfil no encontrado');
+  return r.json();
+}
+
+export async function getProfileFile(key) {
+  const r = await fetch(`/api/profiles/${encodeURIComponent(key)}/file`);
+  if (!r.ok) throw new Error('perfil no encontrado');
+  return r.json();
+}
+
+export async function reloadProfiles() {
+  return fetchJson('/api/profiles/reload', { method: 'POST' });
+}
+
+export async function saveProfile(key, content) {
+  return fetchJson('/api/profiles/import', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ key, content })
+  });
+}
+
+export async function deleteProfile(key) {
+  return fetchJson(`/api/profiles/${encodeURIComponent(key)}`, { method: 'DELETE' });
+}
+
+export async function clearLogs(component) {
+  const r = await fetch(`/api/logs?component=${encodeURIComponent(component)}`, { method: 'DELETE' });
+  return r.json().catch(() => ({}));
+}
+
+export async function getTelegramSettings() {
+  const r = await fetch('/api/telegram/settings');
+  if (!r.ok) throw new Error('Error al cargar configuración de Telegram');
+  return r.json();
+}
+
+export async function testTelegramToken(token) {
+  return fetchJson('/api/telegram/test', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ token })
+  });
+}
+
+export async function saveTelegramSettings(token, chatId) {
+  return fetchJson('/api/telegram/settings', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ token, chatId })
+  });
+}

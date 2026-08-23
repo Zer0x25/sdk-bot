@@ -1,0 +1,243 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>SDK-Bot · Panel</title>
+<link rel="stylesheet" href="/css/styles.css">
+</head>
+<body>
+<header class="topbar">
+  <h1>🖥️ SDK-Bot · Panel de administración</h1>
+  <nav class="nav">
+    <button class="tab" data-page="dashboard">📊 Dashboard</button>
+    <button class="tab" data-page="pairing"><svg viewBox="0 0 24 24" width="16" height="16" fill="#25D366" style="vertical-align: -3px; margin-right: 4px;"><path d="M17.472 14.382c-.297-.149-1.758-.867-2.03-.967-.273-.099-.471-.148-.67.15-.197.297-.767.966-.94 1.164-.173.199-.347.223-.644.075-.297-.15-1.255-.463-2.39-1.475-.883-.788-1.48-1.761-1.653-2.059-.173-.297-.018-.458.13-.606.134-.133.298-.347.446-.52.149-.174.198-.298.298-.497.099-.198.05-.371-.025-.52-.075-.149-.669-1.612-.916-2.207-.242-.579-.487-.5-.669-.51-.173-.008-.371-.01-.57-.01-.198 0-.52.074-.792.372-.272.297-1.04 1.016-1.04 2.479 0 1.462 1.065 2.875 1.213 3.074.149.198 2.096 3.2 5.077 4.487.709.306 1.262.489 1.694.625.712.227 1.36.195 1.871.118.571-.085 1.758-.719 2.006-1.413.248-.694.248-1.289.173-1.413-.074-.124-.272-.198-.57-.347m-5.421 7.403h-.004a9.87 9.87 0 01-5.031-1.378l-.361-.214-3.741.982.998-3.648-.235-.374a9.86 9.86 0 01-1.51-5.26c.001-5.45 4.436-9.884 9.888-9.884 2.64 0 5.122 1.03 6.988 2.898a9.825 9.825 0 012.893 6.994c-.003 5.45-4.437 9.884-9.885 9.884m8.413-18.297A11.815 11.815 0 0012.05 0C5.495 0 .16 5.335.157 11.892c0 2.096.547 4.142 1.588 5.945L.057 24l6.305-1.654a11.882 11.882 0 005.683 1.448h.005c6.554 0 11.89-5.335 11.893-11.893a11.821 11.821 0 00-3.48-8.413Z"/></svg>WhatsApp</button>
+    <button class="tab" data-page="integrations"><svg viewBox="0 0 24 24" width="16" height="16" fill="#2AABEE" style="vertical-align: -3px; margin-right: 4px;"><path d="M11.944 0A12 12 0 0 0 0 12a12 12 0 0 0 12 12 12 12 0 0 0 12-12A12 12 0 0 0 12 0a12 12 0 0 0-.056 0zm4.962 7.224c.1-.002.321.023.465.14a.506.506 0 0 1 .171.325c.016.093.036.306.02.472-.18 1.898-.962 6.502-1.36 8.627-.168.9-.499 1.201-.82 1.23-.696.065-1.225-.46-1.9-.902-1.056-.693-1.653-1.124-2.678-1.8-1.185-.78-.417-1.21.258-1.91.177-.184 3.247-2.977 3.307-3.23.007-.032.014-.15-.056-.212s-.174-.041-.249-.024c-.106.024-1.793 1.14-5.061 3.345-.48.33-.913.49-1.302.48-.428-.008-1.252-.241-1.865-.44-.752-.245-1.349-.374-1.297-.789.027-.216.325-.437.893-.663 3.498-1.524 5.83-2.529 6.998-3.014 3.332-1.386 4.025-1.627 4.476-1.635z"/></svg>Telegram</button>
+    <button class="tab" data-page="contactos">📇 Contactos</button>
+    <button class="tab" data-page="perfiles">🧠 Perfiles</button>
+    <button class="tab" data-page="logs">📜 Logs</button>
+  </nav>
+  <div class="live" id="live"><span class="dot" id="livedot"></span><span id="livetext">en vivo</span></div>
+</header>
+
+<section id="page-dashboard" class="page">
+  <div class="grid" id="cards"></div>
+  <section>
+    <h2>🛠️ Terminal de comandos</h2>
+    <div id="terminal">
+      <input id="cmd" placeholder="Comando admin, ej: /estado  o  /pausar" autocomplete="off">
+      <button id="run">Ejecutar</button>
+    </div>
+    <div id="out"><i>La terminal ejecuta los mismos comandos del self-chat (vía commandHandler).</i></div>
+  </section>
+</section>
+
+<section id="page-pairing" class="page" hidden>
+  <h2><svg viewBox="0 0 24 24" width="18" height="18" fill="#25D366" style="vertical-align: -3px; margin-right: 6px;"><path d="M17.472 14.382c-.297-.149-1.758-.867-2.03-.967-.273-.099-.471-.148-.67.15-.197.297-.767.966-.94 1.164-.173.199-.347.223-.644.075-.297-.15-1.255-.463-2.39-1.475-.883-.788-1.48-1.761-1.653-2.059-.173-.297-.018-.458.13-.606.134-.133.298-.347.446-.52.149-.174.198-.298.298-.497.099-.198.05-.371-.025-.52-.075-.149-.669-1.612-.916-2.207-.242-.579-.487-.5-.669-.51-.173-.008-.371-.01-.57-.01-.198 0-.52.074-.792.372-.272.297-1.04 1.016-1.04 2.479 0 1.462 1.065 2.875 1.213 3.074.149.198 2.096 3.2 5.077 4.487.709.306 1.262.489 1.694.625.712.227 1.36.195 1.871.118.571-.085 1.758-.719 2.006-1.413.248-.694.248-1.289.173-1.413-.074-.124-.272-.198-.57-.347m-5.421 7.403h-.004a9.87 9.87 0 01-5.031-1.378l-.361-.214-3.741.982.998-3.648-.235-.374a9.86 9.86 0 01-1.51-5.26c.001-5.45 4.436-9.884 9.888-9.884 2.64 0 5.122 1.03 6.988 2.898a9.825 9.825 0 012.893 6.994c-.003 5.45-4.437 9.884-9.885 9.884m8.413-18.297A11.815 11.815 0 0012.05 0C5.495 0 .16 5.335.157 11.892c0 2.096.547 4.142 1.588 5.945L.057 24l6.305-1.654a11.882 11.882 0 005.683 1.448h.005c6.554 0 11.89-5.335 11.893-11.893a11.821 11.821 0 00-3.48-8.413Z"/></svg>WhatsApp</h2>
+
+  <!-- VISTA: sin sesión de WhatsApp — elegir método de vinculación -->
+  <div class="con" id="noview">
+    <div class="side">
+      <div class="row"><span class="warn">● Sin sesión de WhatsApp activa</span></div>
+      <div class="row" id="pair-choice">
+        <button class="btn choice" id="qrchoice">🔳 Pair con QR</button>
+        <button class="btn choice" id="numchoice">📞 Pair con número</button>
+      </div>
+      <div class="row" id="method-back" hidden>
+        <button class="btn ghost" id="backchoice">← Elegir otro método</button>
+      </div>
+      <div id="pairmode-qr" hidden>
+        <div class="row"><div id="qrbox"><div class="empty">Esperando QR…</div></div></div>
+        <div class="row"><span id="qrst"></span></div>
+        <div class="row">
+          <button class="btn" id="genqrbtn">🔄 Generar QR</button>
+        </div>
+        <div id="pairmsg">El QR generado vale 2 min 20 s: escanéalo con WhatsApp > Dispositivos vinculados > Vincular dispositivo antes de que expire.</div>
+      </div>
+      <div id="pairmode-num" hidden>
+        <div class="row">
+          <input type="tel" id="pairphone" placeholder="Número con código de país (ej: 56912345678)" autocomplete="off">
+          <button class="btn" id="pairbtn">📲 Obtener código de 8 caracteres</button>
+        </div>
+        <!-- Baileys puede devolver letras y números; se muestra separado del texto para evitar errores al copiarlo. -->
+        <div class="pair-code-card" id="paircodecard" hidden>
+          <div class="pair-code-label">Código de enlace</div>
+          <div class="pair-code-value" id="paircode">—</div>
+          <div class="pair-code-actions">
+            <span class="pair-code-help">WhatsApp &gt; Dispositivos vinculados &gt; Vincular con número de teléfono</span>
+            <button class="btn ghost" id="copycode" type="button">📋 Copiar código</button>
+          </div>
+        </div>
+        <div id="pairmsg2">Recibirás un código de enlace de 8 caracteres en WhatsApp (Dispositivos vinculados &gt; Vincular con número de teléfono). Si el gateway está apagado, se lanza solo con el primer intento.</div>
+      </div>
+    </div>
+  </div>
+
+  <!-- VISTA: sesión activa — solo reset (desvincular) -->
+  <div class="con" id="connview" hidden>
+    <div class="side">
+      <div class="row"><span class="ok">● Conectado como <b id="connnum">—</b></span></div>
+      <div class="row"><span class="hint" style="align-self:flex-start">El bot ya está vinculado a WhatsApp. Para vincular otro número tendrás que resetear la sesión.</span></div>
+      <div class="row" style="margin-top:12px">
+        <button class="btn danger" id="resetbtn">🔄 Resetear sesión (QR nuevo)</button>
+      </div>
+      <div id="resetmsg">Resetear: borra la sesión guardada y reinicia el gateway. Después tendrás que volver a vincular con QR o con número.</div>
+      <div class="row" style="margin-top:12px">
+        <button class="btn danger" id="cleanbtn">🧨 Reset limpio (fábrica)</button>
+      </div>
+      <div id="cleanmsg">Reset limpio (F7): borra TODO el estado de runtime — sesión, agenda de contactos, configuración, broadcasts y cola, memoria del brain y logs — y reinicia. La app queda como recién instalada. Los perfiles SOUL se conservan. Doble confirmación con timer de lectura y escritura de la palabra.</div>
+    </div>
+  </div>
+</section>
+
+<!-- 🧨 F7: modal de doble confirmación del reset limpio (timers de lectura + escritura) -->
+<div id="cleanmodal" hidden>
+  <div class="modal-back">
+    <div class="modal-card">
+      <h3>🧨 RESET LIMPIO (FÁBRICA)</h3>
+      <p class="hint">Se borrará <b>TODO</b> el estado de runtime:</p>
+      <ul class="modal-list">
+        <li>• Sesión de WhatsApp actual (habrá que vincular de nuevo)</li>
+        <li>• Agenda de contactos (contacts_db.json)</li>
+        <li>• Configuración (estados, perfil global)</li>
+        <li>• Broadcasts y cola de mensajes</li>
+        <li>• Memoria del brain (memory.db)</li>
+        <li>• Logs de gateway y brain</li>
+      </ul>
+      <p class="hint">✅ Los <b>perfiles SOUL</b> se conservan. La app quedará como recién instalada (default <b>ignored_all</b>).</p>
+      <div id="cleanread">⏳ <b>Timer de lectura:</b> lee el aviso completo… podrás escribir en <b id="cleanreadn">10</b>s</div>
+      <div id="cleanwrite" hidden>
+        <div class="row"><span class="hint">✍️ <b>Timer de escritura:</b> <span id="cleanwriten">60</span>s restantes para escribir la palabra.</span></div>
+        <div class="row">
+          <input type="text" id="cleanword" placeholder="Escribe BORRAR-TODO" autocomplete="off" disabled>
+          <button class="btn danger" id="cleanok" disabled>🧨 Ejecutar</button>
+        </div>
+        <div id="cleanerr"></div>
+      </div>
+      <div id="cleanfinal" hidden></div>
+      <div class="row" style="margin-top:12px">
+        <button class="btn ghost" id="cleancancel">✖️ Cancelar</button>
+      </div>
+    </div>
+  </div>
+</div>
+
+<section id="page-contactos" class="page" hidden>
+  <h2>📇 Agenda de contactos</h2>
+  <div class="toolbar">
+    <div class="searchbox">
+      <input id="cq" placeholder="Buscar (nombre, teléfono, LID)… búsqueda en vivo" autocomplete="off">
+      <button id="cclear" hidden aria-label="Limpiar búsqueda">✕</button>
+    </div>
+    <select id="ce">
+      <option value="">Todos los estados</option>
+      <option value="neutro">Neutro</option>
+      <option value="permitido">Permitido</option>
+      <option value="ignorado">Ignorado</option>
+      <option value="handoff">Handoff</option>
+    </select>
+    <span id="ctotal" class="hint"><b id="ctotal-num">0</b><span id="ctotal-label"> contacto(s)</span></span>
+  </div>
+  <div id="cList">
+    <table id="contacts">
+      <thead><tr><th>Nombre</th><th>Teléfono</th><th class="col-lid">LID</th><th>Estado</th><th>Perfil</th><th>Acciones</th></tr></thead>
+      <tbody></tbody>
+    </table>
+    <div id="csentry">Cargando…</div>
+  </div>
+</section>
+
+<section id="page-perfiles" class="page" hidden>
+  <h2>🧠 Perfiles SOUL</h2>
+  <div class="toolbar">
+    <select id="pselect">
+      <option value="">— Seleccionar perfil —</option>
+    </select>
+    <button class="btn primary" id="pnew">➕ Nuevo</button>
+    <span class="toolgroup">
+      <button class="btn ghost" id="preload">🔄 Recargar</button>
+      <button class="btn ghost" id="pimport">📥 Importar .md</button>
+    </span>
+    <input type="file" id="pfile" accept=".md,.txt" hidden>
+    <span id="pstate" class="hint"></span>
+  </div>
+  <div class="editor">
+    <div class="row">
+      <label>Clave (nombre del .md)</label>
+      <input type="text" id="pkey" placeholder="ej: ventas" autocomplete="off">
+      <span class="hint" id="pstate"></span>
+    </div>
+    <textarea id="pcontent" spellcheck="false" placeholder="Contenido del perfil en Markdown:&#10;# nombre&#10;descripción&#10;## Personalidad&#10;## Reglas&#10;## Formato&#10;## Ejemplos&#10;**Cliente:** …&#10;**Asistente:** …"></textarea>
+    <div class="row">
+      <button class="btn primary" id="psave">💾 Guardar</button>
+      <button class="btn ghost" id="pexport">⬇️ Exportar .md</button>
+      <button class="btn ghost" id="pprompt">📄 Ver prompt compilado</button>
+      <button class="btn danger" id="pdel">🗑️ Eliminar</button>
+      <span id="pmsg"></span>
+    </div>
+  </div>
+  <div id="ppromptview" hidden></div>
+</section>
+
+<section id="page-logs" class="page" hidden>
+  <h2>📜 Logs en vivo</h2>
+  <div class="toolbar">
+    <div class="tabs">
+      <button id="ltg" class="tab on">Gateway</button>
+      <button id="lbr" class="tab">Brain</button>
+    </div>
+    <select id="lvl">
+      <option value="all">Todos los niveles</option>
+      <option value="info">Info+</option>
+      <option value="warn">Warn+</option>
+      <option value="error">Solo errores</option>
+    </select>
+    <button id="lplay" class="btn ghost">⏸️ Pausar</button>
+    <button id="lclear" class="btn ghost">🗑️ Limpiar</button>
+    <span id="lstatus" class="hint"></span>
+  </div>
+  <div id="logbox"></div>
+</section>
+
+<section id="page-integrations" class="page" hidden>
+  <h2><svg viewBox="0 0 24 24" width="18" height="18" fill="#2AABEE" style="vertical-align: -3px; margin-right: 6px;"><path d="M11.944 0A12 12 0 0 0 0 12a12 12 0 0 0 12 12 12 12 0 0 0 12-12A12 12 0 0 0 12 0a12 12 0 0 0-.056 0zm4.962 7.224c.1-.002.321.023.465.14a.506.506 0 0 1 .171.325c.016.093.036.306.02.472-.18 1.898-.962 6.502-1.36 8.627-.168.9-.499 1.201-.82 1.23-.696.065-1.225-.46-1.9-.902-1.056-.693-1.653-1.124-2.678-1.8-1.185-.78-.417-1.21.258-1.91.177-.184 3.247-2.977 3.307-3.23.007-.032.014-.15-.056-.212s-.174-.041-.249-.024c-.106.024-1.793 1.14-5.061 3.345-.48.33-.913.49-1.302.48-.428-.008-1.252-.241-1.865-.44-.752-.245-1.349-.374-1.297-.789.027-.216.325-.437.893-.663 3.498-1.524 5.83-2.529 6.998-3.014 3.332-1.386 4.025-1.627 4.476-1.635z"/></svg>Telegram</h2>
+  <div class="con">
+    <div class="side">
+      <div class="row">
+        <span class="hint">Instrucciones:</span>
+      </div>
+      <div class="row">
+        <span class="hint">1. Crea un bot hablando con @BotFather en Telegram.</span>
+      </div>
+      <div class="row">
+        <span class="hint">2. Envía un comando /start a tu nuevo bot.</span>
+      </div>
+      <div class="row" style="margin-top:12px">
+        <input type="text" id="tgToken" placeholder="Telegram Bot Token" style="background:#0f1115;border:1px solid #262b36;color:#e6e6e6;border-radius:8px;padding:8px;width:100%;" autocomplete="off">
+      </div>
+      <div class="row" style="margin-top:12px">
+        <button class="btn primary" id="tgTestBtn">Testear y Obtener Chat ID</button>
+      </div>
+      <div class="row" style="margin-top:12px">
+        <input type="text" id="tgChatId" placeholder="Chat ID (automático o manual)" style="background:#0f1115;border:1px solid #262b36;color:#e6e6e6;border-radius:8px;padding:8px;width:100%;" autocomplete="off">
+      </div>
+      <div class="row" style="margin-top:12px">
+        <button class="btn primary" id="tgSaveBtn">Guardar Configuración</button>
+      </div>
+      <div class="row" style="margin-top:12px">
+        <button class="btn danger" id="tgResetBtn" style="display:none;">Desconectar Telegram</button>
+      </div>
+      <div id="tgMsg" style="margin-top:12px;font-size:12px;"></div>
+    </div>
+    <div class="main-col">
+      <div class="card" style="background:#171a21; border:1px solid #262b36; border-radius:12px; padding:16px;">
+        <h3 style="margin-top:0">ℹ️ Sobre la integración</h3>
+        <p style="color:#aab3c5; line-height:1.6">Telegram es el canal más robusto para recibir notificaciones push en tiempo real. Cuando configuras tu Bot Token y Chat ID, el bot enviará reportes y alertas críticas hacia tu cuenta de Telegram sin los problemas de silenciamiento del self-chat de WhatsApp.</p>
+      </div>
+    </div>
+  </div>
+</section>
+
+<script type="module" src="/js/app.js"></script>
+</body>
+</html>
