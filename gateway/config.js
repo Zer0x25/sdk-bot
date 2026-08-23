@@ -52,7 +52,8 @@ function registerSentMessage(sentMsg) {
     if (sentMsg && sentMsg.key && sentMsg.key.id) {
         botSentMessageIds.add(sentMsg.key.id);
         counters.sentMessages += 1;
-        setTimeout(() => botSentMessageIds.delete(sentMsg.key.id), 60000);
+        const timer = setTimeout(() => botSentMessageIds.delete(sentMsg.key.id), 60000);
+        timer.unref?.();
     }
 }
 

@@ -14,7 +14,7 @@ class ChannelAdapter extends EventEmitter {
     /**
      * Inicia la conexión del canal.
      */
-    async connect(options = {}) {
+    async connect(_options = {}) {
         throw new Error('Not implemented');
     }
 
@@ -27,27 +27,27 @@ class ChannelAdapter extends EventEmitter {
 
     /**
      * Envia un mensaje de texto.
-     * @param {string} normalizedJid - ID estandarizado (ej 'whatsapp:123', 'telegram:456')
-     * @param {string} text
+     * @param {string} _normalizedJid - ID estandarizado (ej 'whatsapp:123', 'telegram:456')
+     * @param {string} _text
      * @returns {Promise<any>} Objeto resultado de envío para registrar
      */
-    async sendMessage(normalizedJid, text) {
+    async sendMessage(_normalizedJid, _text) {
         throw new Error('Not implemented');
     }
 
     /**
      * Actualiza el estado de presencia ('composing', 'paused', 'available').
-     * @param {string} status 
-     * @param {string} [normalizedJid]
+     * @param {string} _status 
+     * @param {string} [_normalizedJid]
      */
-    async sendPresenceUpdate(status, normalizedJid) {
+    async sendPresenceUpdate(_status, _normalizedJid) {
         throw new Error('Not implemented');
     }
 
     /**
      * Solicita código de emparejamiento manual (principalmente para WhatsApp)
      */
-    async requestPairingCode(number) {
+    async requestPairingCode(_number) {
         throw new Error('Not supported by this channel');
     }
 

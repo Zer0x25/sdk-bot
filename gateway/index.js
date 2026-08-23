@@ -136,7 +136,7 @@ async function startGateway() {
         await handleIncomingMessage(stdMsg);
     });
 
-    whatsapp.on('raw_message', async ({ m, sock }) => {
+    whatsapp.on('raw_message', async () => {
         // Temporarily handling raw Baileys messages if needed
     });
 
@@ -253,7 +253,7 @@ setInterval(() => { broadcastService.tick(); }, 10 * 1000).unref();
 
 function handleExit() {
     log.info('\n🛑 Señal de apagado recibida. Cerrando de forma segura...');
-    for (const [name, adapter] of adapters.entries()) {
+    for (const [, adapter] of adapters.entries()) {
         adapter.disconnect().catch(() => {});
     }
     if (!isWiping()) flushToDisk();

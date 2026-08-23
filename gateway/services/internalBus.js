@@ -141,7 +141,7 @@ function setContactPerfil(key, perfil) {
 function makeVirtualSock(replies) {
     return {
         /** @param {any} text */
-        async sendMessage(_jid, text, options) {
+        async sendMessage(_jid, text, _options) {
             if (typeof text === 'string') {
                 replies.push({ type: 'text', text: text });
             } else if (text && text.document) {
