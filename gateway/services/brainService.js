@@ -1,8 +1,24 @@
 // @ts-check
+/**
+ * 🧠 CLIENTE DEL BRAIN (HTTP) + ORQUESTACIÓN DE RESPUESTA IA.
+ *
+ * Responsabilidades (una sola dirección de dependencia: gateway → brain):
+ *   1. Cliente REST hacia brain/main.py con timeouts y clasificación de
+ *      errores 4xx (bug, no reintentar) vs 5xx/red (transitorio).
+ *   2. Política de resiliencia: reintento 1x, cola en disco ante caída,
+ *      alerta al admin con throttle.
+ *   3. Simulación humana al entregar la respuesta (delegada a humanSim.js,
+ *      funciones puras).
+ * Aquí NO hay API keys de proveedores ni memoria conversacional: eso vive
+ * en el proceso Python del brain.
+ */
 const { BRAIN_API_BASE, BRAIN_API_URL, BRAIN_API_KEY, state, registerSentMessage } = require('../config');
 const { cat, errMsg } = require("../services/logger");
 const { num } = require('../tuning');
 const { enqueue, scheduleFlush } = require("./messageQueue");
+const {
+    splitIntoHumanBubbles, calculateReadDelay, calculateTypingDelay, calculatePauseBetweenBubbles
+} = require('./humanSim');
 const log = cat("AI");
 const logError = cat("ERROR");
 
@@ -40,82 +56,6 @@ function getBrainStats() {
     let ok = null;
     if (lastOk) ok = lastErr && lastErr > lastOk ? false : true;
     return { ...brainStats, ok };
-}
-
-/**
- * 🧩 Dividir respuestas largas de la IA en globos de chat naturales (Multi-Bubble)
- * Divide párrafos largos por oraciones (. ! ?) si superan los ~220 caracteres.
- */
-function splitIntoHumanBubbles(text) {
-    if (!text || typeof text !== 'string') return [text];
-    const trimmed = text.trim();
-    if (trimmed.length <= 220) return [trimmed];
-
-    // 1. Separar por párrafos / saltos de línea
-    const rawBlocks = trimmed.split(/\n+/).map(b => b.trim()).filter(Boolean);
-    let chunks = [];
-
-    for (const block of rawBlocks) {
-        if (block.length <= 250) {
-            chunks.push(block);
-        } else {
-            // Si el bloque es muy largo (>250 chars) sin saltos de línea, dividir por oraciones (. ! ?)
-            const sentences = block.split(/(?<=[.!?])\s+/).map(s => s.trim()).filter(Boolean);
-            let currentChunk = '';
-
-            for (const s of sentences) {
-                if (!currentChunk) {
-                    currentChunk = s;
-                } else if ((currentChunk.length + s.length + 1) <= 220) {
-                    currentChunk += ' ' + s;
-                } else {
-                    chunks.push(currentChunk);
-                    currentChunk = s;
-                }
-            }
-            if (currentChunk) chunks.push(currentChunk);
-        }
-    }
-
-    // 2. Reagrupar fragmentos manteniendo un tamaño cómodo por globo (~220 chars máx)
-    const finalBubbles = [];
-    let currentBubble = '';
-
-    for (const chunk of chunks) {
-        if (!currentBubble) {
-            currentBubble = chunk;
-        } else if ((currentBubble.length + chunk.length + 1) <= 220) {
-            currentBubble += ' ' + chunk;
-        } else {
-            finalBubbles.push(currentBubble);
-            currentBubble = chunk;
-        }
-    }
-    if (currentBubble) finalBubbles.push(currentBubble);
-
-    return finalBubbles.length > 0 ? finalBubbles : [trimmed];
-}
-
-/**
- * 🧠 Calcular tiempo de lectura/pensamiento inicial antes de empezar a teclear
- */
-function calculateReadDelay(incomingText) {
-    const len = (incomingText || '').length;
-    const baseReadMs = Math.min(Math.max(len * 15, 1000), 3000);
-    const readJitter = (Math.random() - 0.5) * 600; // ±300ms de varianza
-    return Math.max(Math.round(baseReadMs + readJitter), 800);
-}
-
-/**
- * ⌨️ Calcular tiempo de tecleo ultra-realista con ruido estocástico (Jitter)
- * Basado en velocidad rápida de teclado móvil: ~7 a 10 caracteres por segundo (100ms a 135ms por carácter)
- */
-function calculateTypingDelay(bubbleText) {
-    const len = (bubbleText || '').length;
-    const msPerChar = 100 + Math.random() * 35; // 100ms a 135ms por carácter (7 - 10 char/s)
-    const baseTypingMs = len * msPerChar;
-    const typingJitter = (Math.random() - 0.5) * 1000; // ±500ms de ruido estocástico
-    return Math.min(Math.max(Math.round(baseTypingMs + typingJitter), 1500), 16000);
 }
 
 /**
@@ -274,7 +214,7 @@ async function processAIChat(textMessage, remoteJid, metadata, adapter, opts = {
                 // ☕ Pausa humana entre globos consecutivos
                 if (i < bubbles.length - 1) {
                     await adapter.sendPresenceUpdate('paused', remoteJid).catch(() => {});
-                    const pauseBetweenBubbles = 1000 + Math.floor(Math.random() * 1200); // 1.0s a 2.2s
+                    const pauseBetweenBubbles = calculatePauseBetweenBubbles();
                     log.info(`[SIMULACIÓN HUMANA] ☕ Pausa entre globos de ${(pauseBetweenBubbles / 1000).toFixed(2)}s...`);
                     await new Promise(r => setTimeout(r, pauseBetweenBubbles));
                 }
@@ -345,6 +285,7 @@ async function clearAIMemory(userJid) {
         const response = await fetch(`${BRAIN_API_BASE}/reset-memory`, {
             method: 'POST',
             headers: authHeaders({ 'Content-Type': 'application/json' }),
+            signal: AbortSignal.timeout(5000), // comando admin: nunca colgar el handler
             body: JSON.stringify({ user_id: userJid, bot_id: state.ADMIN_PHONE || state.ADMIN_LID || 'single' })
         });
         const data = /** @type {any} */ (await response.json());
@@ -600,9 +541,11 @@ module.exports = {
     importProfileFile,
     deleteProfileFile,
     reloadProfiles,
+    // Simulación humana: re-exportada por compatibilidad; fuente canónica en services/humanSim.js
     splitIntoHumanBubbles,
     calculateReadDelay,
     calculateTypingDelay,
+    calculatePauseBetweenBubbles,
     getBrainStats,
     getBrainHealth,
     getBrainState,

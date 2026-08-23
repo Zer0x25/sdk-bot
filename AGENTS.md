@@ -8,6 +8,8 @@
 - El launcher local canonico es `bash deploy/linux/dev.sh manual todos` (o el objetivo individual `brain`, `gateway` o `panel`); arranca brain antes de gateway/panel. En dev usa brain `:5100`, bus `:5400`, status `:5300` y panel `:5201`.
 - Cada canal normaliza a `StandardMessage` y las IDs remotas llevan prefijo (`whatsapp:<id>` o `telegram:<chat_id>`); la logica comun no debe depender de JIDs nativos.
 - Las decisiones puras estan en `gateway/services/pipeline.js`; buffers y efectos secundarios estan en `gateway/handlers/messageHandler.js`. Los comandos se agregan como modulos en `gateway/handlers/commands/` y se registran en `commandHandler.js`.
+- Las decisiones de arquitectura viven en `docs/adr/`: 001 hub multi-canal, 002 procesos y planos (datos/control), 003 dueno unico del transporte por canal, 004 resiliencia de la interaccion. Leelas antes de refactors grandes; cualquier cambio que rompa esos contratos exige una ADR nueva.
+- Todo `fetch` saliente lleva `AbortSignal.timeout(ms)` explicito y clasificacion 4xx (no reintentar) vs transitorio (1 reintento); ver ADR-004.
 - Usa `syntaxError()`/`COMMAND_USAGE` para errores de comandos y `sanitizeMarkdown()` para texto de usuario interpolado en respuestas Markdown.
 - El router ejecutable del brain es Groq -> OpenRouter -> Gemini (`brain/providers.py`); los perfiles son Markdown en `brain/profiles/`, se recargan en caliente y `default` es el fallback.
 

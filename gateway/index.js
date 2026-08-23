@@ -25,7 +25,29 @@ chatStore.configure({
 chatStore.startCleanup(Number(process.env.GATEWAY_PRELOAD_CLEANUP_MS) || 10 * 60 * 1000);
 
 const log = cat('CORE');
+const logError = cat('ERROR');
 const logInstancia = cat('INSTANCIA');
+
+// 🛡️ GUARDAS DE PROCESO (ADR-004): un rechazo no manejado en un poller,
+// cola o handler NO debe tumbar todos los canales de golpe. Se registra y
+// se sigue vivo. Solo si el proceso queda visiblemente corrupto (≥4 fallos
+// en <60s) se sale con código 1 para que el supervisor (systemd/Docker)
+// levante un proceso sano desde el inicio.
+let faultStreak = 0;
+let lastFaultAt = 0;
+/** @param {string} kind @param {any} err */
+function noteFault(kind, err) {
+    const now = Date.now();
+    faultStreak = (now - lastFaultAt < 60000) ? faultStreak + 1 : 1;
+    lastFaultAt = now;
+    logError.error(`🛡️ [${kind}] #${faultStreak}: ${err && (err.stack || err.message || err)}`);
+    if (kind === 'uncaughtException' && faultStreak >= 4) {
+        logError.error('🛡️ Estado posiblemente corrupto: saliendo para reinicio limpio.');
+        process.exit(1);
+    }
+}
+process.on('unhandledRejection', (err) => noteFault('unhandledRejection', err));
+process.on('uncaughtException', (err) => noteFault('uncaughtException', err));
 
 const GATEWAY_LOCK_FILE = path.join(__dirname, '.gateway.lock');
 

@@ -1,6 +1,9 @@
 const { test } = require('node:test');
 const assert = require('node:assert');
-const { splitIntoHumanBubbles, calculateReadDelay, calculateTypingDelay } = require('../services/brainService');
+// Fuente canónica de la simulación humana (brainService solo re-exporta)
+const {
+    splitIntoHumanBubbles, calculateReadDelay, calculateTypingDelay, calculatePauseBetweenBubbles
+} = require('../services/humanSim');
 
 test('splitIntoHumanBubbles: texto corto queda en un solo globo', () => {
     assert.deepStrictEqual(splitIntoHumanBubbles('Hola'), ['Hola']);
@@ -50,5 +53,13 @@ test('calculateTypingDelay: acotado entre 1500ms y 16000ms', () => {
     for (const len of [0, 10, 100, 500, 5000]) {
         const d = calculateTypingDelay('x'.repeat(len));
         assert.ok(d >= 1500 && d <= 16000, `typingDelay fuera de rango para len=${len}: ${d}`);
+    }
+});
+
+test('calculatePauseBetweenBubbles: pausa humana entre 1.0s y 2.2s', () => {
+    for (let i = 0; i < 200; i++) {
+        const p = calculatePauseBetweenBubbles();
+        assert.ok(p >= 1000 && p <= 2200, `pausa fuera de rango: ${p}`);
+        assert.ok(Number.isInteger(p), 'pausa entera en ms');
     }
 });
