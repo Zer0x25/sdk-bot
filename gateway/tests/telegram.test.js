@@ -29,7 +29,6 @@ after(() => {
     https.request = originalRequest;
     https.get = originalGet;
     if (busServer) busServer.close();
-    require("../services/telegramService").stopTelegramPoller();
 });
 
 test('GET /telegram/settings - devuelve config vacía inicialmente', async () => {
@@ -131,6 +130,14 @@ test('classifyPollResponse distingue ok / auth (401/404) / error', () => {
     assert.strictEqual(telegramService.classifyPollResponse(null), 'error');
 });
 
+test('el polling de getUpdates tiene un único dueño: el adaptador (sin poller en el bus)', () => {
+    // Regresión: dos loops competían por getUpdates y cada update caía en
+    // uno u otro según carrera. El bus ya no expone maquinaria de polling.
+    for (const fn of ['startTelegramPoller', 'stopTelegramPoller', 'setTelegramCommandCallback', 'pollTelegram']) {
+        assert.strictEqual(telegramService[fn], undefined, `telegramService.${fn} eliminado`);
+    }
+});
+
 test('POST /telegram/settings informa conexión en caliente y desconexión clara', async () => {
     const r = await fetch(`${API_BASE}/telegram/settings`, {
         method: 'POST',
@@ -174,4 +181,73 @@ test('TelegramAdapter sin token arranca en standby con motivo sin_token y recone
     await adapter.connect();
     assert.strictEqual(adapter.status, 'standby');
     assert.strictEqual(adapter.pollGeneration, 2);
+});
+
+test('TelegramAdapter es el único dueño de getUpdates y emite el mensaje del admin', async () => {
+    // Config con token+chatId; el update llega del chat admin
+    saveSettingsDB({ globalMode: 'ignored_all', telegramToken: 'mockTok', telegramChatId: '555' });
+    const TelegramAdapter = require('../adapters/telegramAdapter');
+    const adapter = new TelegramAdapter();
+    /** @type {any[]} */
+    const seen = [];
+    adapter.on('message', m => seen.push(m));
+
+    // Mock: https.get SOLO lo usa getUpdates en el adaptador; la primera
+    // llamada entrega un update del admin, las siguientes quedan vacías.
+    const gets = [];
+    let pollCalls = 0;
+    https.get = (opts, cb) => {
+        gets.push(opts.path);
+        pollCalls += 1;
+        const res = new EventEmitter();
+        res.statusCode = 200;
+        process.nextTick(() => {
+            if (pollCalls === 1) {
+                res.emit('data', JSON.stringify({ ok: true, result: [
+                    { update_id: 7, message: { text: '/estado', chat: { id: 555 }, from: { first_name: 'Admin' } } }
+                ] }));
+            } else {
+                res.emit('data', JSON.stringify({ ok: true, result: [] }));
+            }
+            res.emit('end');
+        });
+        if (cb) cb(res);
+        // El poller llama req.setTimeout(35s) y req.on('error')
+        return { on: () => {}, setTimeout: () => {} };
+    };
+    // setMyCommands (menú al conectar)
+    https.request = (opts, cb) => {
+        const req = new EventEmitter();
+        req.write = () => {};
+        req.end = () => {
+            const r = new EventEmitter();
+            if (cb) cb(r);
+            process.nextTick(() => { r.emit('data', '{}'); r.emit('end'); });
+        };
+        return req;
+    };
+
+    try {
+        await adapter.connect();
+        const deadline = Date.now() + 2000;
+        while (seen.length === 0 && Date.now() < deadline) {
+            await new Promise(r => setTimeout(r, 10));
+        }
+    } finally {
+        adapter.disconnect(); // corta el loop por generación/pollerActive
+        https.get = originalGet;
+        https.request = originalRequest;
+    }
+
+    assert.strictEqual(seen.length, 1, 'un solo StandardMessage emitido');
+    assert.strictEqual(seen[0].channel, 'telegram');
+    assert.strictEqual(seen[0].remoteId, 'telegram:555');
+    assert.strictEqual(seen[0].text, '/estado');
+    assert.strictEqual(seen[0].metadata.isAdminChannel, true);
+
+    // Un único loop: offsets consecutivos sobre la MISMA fuente de updates
+    const gu = gets.filter(p => p.includes('getUpdates'));
+    assert.ok(gu.length >= 2, `hubo polling (${gu.length} llamadas)`);
+    assert.match(gu[0], /offset=1&/);
+    assert.match(gu[1], /offset=8&/, 'offset = update_id + 1 consumido por el dueño único');
 });

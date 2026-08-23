@@ -2,7 +2,7 @@ const ChannelAdapter = require('../core/ChannelAdapter');
 const StandardMessage = require('../core/StandardMessage');
 const https = require('https');
 const { getSettingsDB } = require('../services/db');
-const { TELEGRAM_MENU_COMMANDS, classifyPollResponse } = require('../services/telegramService');
+const { updateTelegramMenu, classifyPollResponse } = require('../services/telegramService');
 const { cat } = require('../services/logger');
 
 const log = cat('TELEGRAM');
@@ -39,7 +39,7 @@ class TelegramAdapter extends ChannelAdapter {
         this.pollerActive = true;
         this.emit('ready', { adminLid: this.adminChatId });
 
-        this.updateMenu().catch(e => log.error('Error actualizando menú: ' + e.message));
+        updateTelegramMenu(this.token).catch(e => log.error('Error actualizando menú: ' + e.message));
         
         log.info('✅ Conectado a Telegram (Polling activo)');
         this.poll(gen);
@@ -48,29 +48,6 @@ class TelegramAdapter extends ChannelAdapter {
     async disconnect() {
         this.pollerActive = false;
         this.setStatus('disconnected');
-    }
-
-    async updateMenu() {
-        const data = JSON.stringify({ commands: TELEGRAM_MENU_COMMANDS });
-        return new Promise((resolve, reject) => {
-            const req = https.request({
-                hostname: 'api.telegram.org',
-                family: 4,
-                port: 443,
-                path: `/bot${this.token}/setMyCommands`,
-                method: 'POST',
-                headers: {
-                    'Content-Type': 'application/json',
-                    'Content-Length': Buffer.byteLength(data)
-                }
-            }, (res) => {
-                res.on('data', () => {});
-                res.on('end', resolve);
-            });
-            req.on('error', reject);
-            req.write(data);
-            req.end();
-        });
     }
 
     async poll(gen = this.pollGeneration) {

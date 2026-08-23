@@ -235,7 +235,11 @@ async function handleIncomingMessage(stdMsg) {
         enrichContactExtraData(adapter.sock, stdMsg.rawId, metadata);
     }
 
-    const isSelf = isSelfChat(remoteJid, isFromMe);
+    // Self-chat de WhatsApp (JID propio) o canal admin de Telegram: ambos son
+    // "el admin hablando consigo mismo" y comparten SCENARIO 1 del pipeline
+    // (comandos '/' + Asistente Personal IA + confirmaciones broadcast/F7).
+    const isSelf = isSelfChat(remoteJid, isFromMe)
+        || (stdMsg.channel === 'telegram' && !!(metadata && metadata.isAdminChannel));
     const displayName = savedName ? `${savedName} (Agenda)` : pushName;
 
     logAI.info(`\n🔍 [DEBUG CHAT] JID: ${remoteJid} | Phone: ${phoneNumber || 'N/A'} | LID: ${lid || 'N/A'} | From: "${displayName}" | isSelf: ${isSelf} | Texto: "${textMessage}"`);

@@ -164,6 +164,9 @@ async function startGateway() {
     });
 
     telegram.on('message', async stdMsg => {
+        // ÚNICO dueño de getUpdates: este adaptador. Todo (comandos del admin
+        // y conversaciones) entra al pipeline; messageHandler trata el chat
+        // del admin de Telegram como self-chat (mismas reglas que WhatsApp).
         await handleIncomingMessage(stdMsg);
     });
     

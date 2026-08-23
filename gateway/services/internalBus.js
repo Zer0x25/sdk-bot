@@ -29,14 +29,14 @@ const path = require('path');
 const { URL } = require('url');
 const { spawn } = require('child_process');
 const QRCode = require('qrcode');
-const { handleAdminCommand } = require('../handlers/commandHandler');
 const { buildStatus } = require('./statusServer');
 const {
     getBrainHealth, getAvailableProfiles, getProfileDetail, exportProfileFile,
     importProfileFile, deleteProfileFile, reloadProfiles
 } = require('./brainService');
 const { getContactsDB, getSettingsDB, saveSettingsDB } = require('./db');
-const { sendTelegramMessage, testAndGetChatId, setTelegramCommandCallback, startTelegramPoller, stopTelegramPoller } = require('./telegramService');
+const { sendTelegramMessage, testAndGetChatId } = require('./telegramService');
+const { runAdminCommand } = require('./adminCommandRunner');
 const { findKeyByDigits } = require('./contactsRepository');
 const { setNumberState, setContactProfile } = require('./stateService');
 const { num } = require('../tuning');
@@ -47,8 +47,6 @@ const { cat, errMsg } = require('./logger');
 
 const log = cat('CORE');
 const logError = cat('ERROR');
-
-const ADMIN_JID = 'admin-web@web';
 
 /** Mapea el valor de estado de ContactRecord o acción UI al stateType de setNumberState */
 const ESTADO_TO_TYPE = {
@@ -133,31 +131,6 @@ function setContactPerfil(key, perfil) {
         return { success: false, message: 'Perfil no válido' };
     }
     return setContactProfile(key, perfil);
-}
-
-/**
- * @param {Array<{type: string, text?: string, fileName?: string, caption?: string, base64?: string}>} replies
- */
-function makeVirtualSock(replies) {
-    return {
-        /** @param {any} text */
-        async sendMessage(_jid, text, _options) {
-            if (typeof text === 'string') {
-                replies.push({ type: 'text', text: text });
-            } else if (text && text.document) {
-                const buf = Buffer.isBuffer(text.document) ? text.document : Buffer.from(text.document);
-                replies.push({
-                    type: 'document',
-                    fileName: text.fileName || 'archivo',
-                    caption: text.caption || '',
-                    base64: buf.toString('base64')
-                });
-            } else {
-                replies.push({ type: 'other', text: JSON.stringify(text).slice(0, 500) });
-            }
-            return null;
-        }
-    };
 }
 
 // Rutas de logs con override por env (tests con archivos fake, nunca tocar los reales)
@@ -595,18 +568,6 @@ async function requestPairing(phone) {
     return { success: true, brainUp, message: 'QR generado — escanéalo antes de que expire (2 min 20 s).' };
 }
 
-async function runAdminCommand(input) {
-    const text = String(input || '').trim();
-    if (!text) return { ok: false, replies: [{ type: 'text', text: '⚠️ Comando vacío.' }] };
-    const replies = [];
-    const commandLine = text.startsWith('/') ? text : `/${text}`;
-    try {
-        await handleAdminCommand(commandLine, ADMIN_JID, makeVirtualSock(replies), /** @type {any} */ ({}));
-        return { ok: true, replies };
-    } catch (e) {
-        return { ok: false, replies: [{ type: 'text', text: `⚠️ Error al ejecutar comando: ${errMsg(e)}` }] };
-    }
-}
 
 async function performReset(clean = false) {
     if (resetInProgress) return { success: false, message: 'Reset ya en curso…' };
@@ -1071,15 +1032,7 @@ function startInternalBus(opts = {}) {
     server.on('error', (e) => logError.error(`🔌 [BUS] Error en bus interno: ${e && e.message}`));
     server.listen(port, host, () => {
         log.info(`🔌 [BUS] Bus interno en http://${host}:${port} (panel web lo consume aquí)`);
-        setTelegramCommandCallback(runAdminCommand);
-        startTelegramPoller();
     });
-    
-    const originalClose = server.close.bind(server);
-    server.close = function(cb) {
-        stopTelegramPoller();
-        return originalClose(cb);
-    };
     
     return server;
 }
