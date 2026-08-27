@@ -53,7 +53,7 @@ class WhatsappAdapter extends ChannelAdapter {
 
     async connect(options = {}) {
         const freshQr = options.freshQr === true;
-        
+
         if (this.sock) {
             const old = this.sock;
             this.sock = null;
@@ -61,7 +61,7 @@ class WhatsappAdapter extends ChannelAdapter {
         }
 
         const { state: authState, saveCreds } = await useMultiFileAuthState(AUTH_DIR);
-        
+
         if (freshQr && !authState.creds.registered && (authState.creds.me || authState.creds.pairingCode)) {
             delete authState.creds.me;
             delete authState.creds.pairingCode;
@@ -73,8 +73,12 @@ class WhatsappAdapter extends ChannelAdapter {
             printQRInTerminal: false,
             auth: authState,
             logger: pino({ level: 'silent' }),
-            syncFullHistory: true,
-            markOnlineOnConnect: true
+            // syncFullHistory:true saturaba el handshake con numeros con historia
+            // y WhatsApp cerraba el stream con 515 "restart required" antes de open.
+            syncFullHistory: false,
+            markOnlineOnConnect: true,
+            browser: ['SDK-Bot', 'Chrome', '124.0.0.0'],
+            version: [2, 3000, 0]
         });
 
         // Eventos Baileys

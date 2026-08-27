@@ -182,6 +182,15 @@ async function startGateway() {
     internalBus.setSock(whatsapp); // Needs refactor
     
     internalBus.setQrRefresh(() => {
+        // No recrear el socket si ya hay un QR vigente o un pairing en curso:
+        // connect({freshQr:true}) destruye el socket actual y eso cortaba el
+        // stream justo cuando WhatsApp iba a abrir la sesion -> 515 "restart required".
+        // El bus ya bloquea esto en /qr/refresh, pero el adapter tambien debe
+        // protegerse si se llama por otra via.
+        if (internalBus.isQrWindowOpen && internalBus.isQrWindowOpen()) {
+            log.info('🔌 [BUS] Refresh ignorado: ya hay una ventana QR vigente (pairing en curso).');
+            return Promise.resolve();
+        }
         log.info('🔌 [BUS] Refresco de QR pedido desde el panel: recreando socket de pairing…');
         whatsapp.connect({ freshQr: true });
     });

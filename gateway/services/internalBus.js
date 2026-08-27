@@ -929,7 +929,8 @@ function startInternalBus(opts = {}) {
 module.exports = {
     startInternalBus, setSock, clearSock, handleConnectionUpdate, setQrRefresh, setPairingCodeRequester,
     requestPairing, runAdminCommand, performReset, performRestart, wsReadyState,
-    qrPayload, resetInProgressForTests, setQrTtlForTests, resetQrForTests
+    qrPayload, resetInProgressForTests, setQrTtlForTests, resetQrForTests,
+    isQrWindowOpen: () => qrWindowOpen && !!lastQrDataUrl && Date.now() < qrExpiresAt
 };
 
 // --- Test Helpers ---
