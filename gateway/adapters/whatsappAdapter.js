@@ -69,11 +69,15 @@ class WhatsappAdapter extends ChannelAdapter {
 
         const { state: authState, saveCreds } = await useMultiFileAuthState(AUTH_DIR);
 
-        if (freshQr && !authState.creds.registered && (authState.creds.me || authState.creds.pairingCode)) {
+        // Si hay creds con identidad (me) pero sin sesion registrada, son
+        // pairing a medias de un intento anterior que WhatsApp rechaza con
+        // 401 loggedOut. Limpiarlos para arrancar el pairing desde cero en
+        // lugar de reconectar una sesion stale (aplica en arranque normal y refresh).
+        if (!authState.creds.registered && (authState.creds.me || authState.creds.pairingCode)) {
             delete authState.creds.me;
             delete authState.creds.pairingCode;
             await saveCreds();
-            log.info('🔌 [WHATSAPP] Pairing incompleto descartado antes de generar QR fresco.');
+            log.info('🔌 [WHATSAPP] Sesion a medias descartada al conectar (registered=false): pairing desde cero.');
         }
 
         this.sock = makeWASocket({
