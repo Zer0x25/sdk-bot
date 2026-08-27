@@ -698,6 +698,11 @@ function routeApi(req, res, pathname, params) {
             pairingPhone = null;
             pairingCodeRequestInProgress = false;
             qrRefreshInProgress = true;
+            // Reabre la ventana QR: tras expirar la ráfaga inicial del arranque
+            // (standby por sin_sesion), qrWindowOpen queda en false y la guarda
+            // de handleConnectionUpdate descarta el QR fresco del refresh. Sin
+            // esto el panel nunca recibe el QR aunque Baileys lo emita.
+            openQrWindow();
             if (qrRefreshTimer) clearTimeout(qrRefreshTimer);
             qrRefreshTimer = setTimeout(() => {
                 qrRefreshInProgress = false;
