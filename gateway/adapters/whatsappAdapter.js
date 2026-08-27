@@ -69,15 +69,15 @@ class WhatsappAdapter extends ChannelAdapter {
 
         const { state: authState, saveCreds } = await useMultiFileAuthState(AUTH_DIR);
 
-        // Si hay creds con identidad (me) pero sin sesion registrada, son
-        // pairing a medias de un intento anterior que WhatsApp rechaza con
-        // 401 loggedOut. Limpiarlos para arrancar el pairing desde cero en
-        // lugar de reconectar una sesion stale (aplica en arranque normal y refresh).
-        if (!authState.creds.registered && (authState.creds.me || authState.creds.pairingCode)) {
+        // Limpiar sesion a medias SOLO cuando el panel pide QR fresco
+        // (freshQr). En un reconnect normal NO se borra 'me': Baileys necesita
+        // esa identidad parcial para completar el pairing en el segundo intento
+        // (el primero siempre cae con 515/401 transitorio de WhatsApp).
+        if (freshQr && !authState.creds.registered && (authState.creds.me || authState.creds.pairingCode)) {
             delete authState.creds.me;
             delete authState.creds.pairingCode;
             await saveCreds();
-            log.info('🔌 [WHATSAPP] Sesion a medias descartada al conectar (registered=false): pairing desde cero.');
+            log.info('🔌 [WHATSAPP] Pairing fresco: sesion a medias descartada (registered=false).');
         }
 
         this.sock = makeWASocket({
@@ -121,12 +121,26 @@ class WhatsappAdapter extends ChannelAdapter {
 
                 let shouldReconnect = true;
                 let reason = '';
-                if (!this.isSessionRegistered()) {
-                    shouldReconnect = false;
-                    reason = 'sin_sesion';
-                } else if (loggedOut) {
+                if (loggedOut) {
+                    // Logout real de WhatsApp: no reintentar, queda en standby.
                     shouldReconnect = false;
                     reason = 'logged_out';
+                } else if (this.isSessionRegistered()) {
+                    // Sesion registrada cayo: reconexion normal con backoff.
+                    shouldReconnect = true;
+                } else {
+                    // Sin sesion: el primer intento de pairing SIEMPRE falla
+                    // (515 Stream Errored / 401 transitorio de WhatsApp) y el
+                    // segundo completa en ~5s. Reconectar para dar ese segundo
+                    // intento, con tope para no caer en loop infinito si el
+                    // usuario nunca escanea.
+                    const MAX_PAIRING_RETRIES = 8;
+                    if (this.reconnectAttempt < MAX_PAIRING_RETRIES) {
+                        shouldReconnect = true;
+                    } else {
+                        shouldReconnect = false;
+                        reason = 'sin_sesion (reintentos de pairing agotados)';
+                    }
                 }
 
                 if (shouldReconnect) {
