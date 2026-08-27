@@ -91,8 +91,15 @@ class WhatsappAdapter extends ChannelAdapter {
             
             if (connection === 'close') {
                 this.sock = null;
-                const loggedOut = (lastDisconnect?.error)?.output?.statusCode === DisconnectReason.loggedOut;
-                
+                const dc = /** @type {any} */ (lastDisconnect);
+                const dcErr = dc?.error;
+                const dcStatus = dcErr?.output?.statusCode;
+                const loggedOut = dcStatus === DisconnectReason.loggedOut;
+                // Loguea la razon real del cierre (el logger de Baileys esta en silent,
+                // asi que sin esto el pairing fallido queda ciego: statusCode 401/403/409/500
+                // o "Stream Errored" indican el motivo de fondo).
+                log.warn(`🔌 [WHATSAPP] connection.close statusCode=${dcStatus ?? 'n/a'} loggedOut=${loggedOut} err=${dcErr?.message || (dcErr ? String(dcErr) : 'n/a')}`);
+
                 let shouldReconnect = true;
                 let reason = '';
                 if (!this.isSessionRegistered()) {
