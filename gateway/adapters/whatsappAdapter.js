@@ -10,6 +10,7 @@ const { extractUserMetadata } = require('../services/metadataService');
 const { extractTextMessage } = require('../services/pipeline'); // Actually we might need to extract this WA logic somewhere else, but for now we import it.
 const { isBotSentMessage } = require('../config');
 const internalBus = require('../services/internalBus');
+const { getSettingsDB, saveSettingsDB } = require('../services/db');
 
 const log = cat('WHATSAPP');
 const logError = cat('ERROR');
@@ -23,8 +24,19 @@ class WhatsappAdapter extends ChannelAdapter {
         this.reconnectAttempt = 0;
         this.reconnectTimer = null;
         this.RECONNECT_BACKOFF_MS = [2000, 5000, 15000, 60000];
-        /** @type {string} Ultimo numero admin conocido (para detectar cambio de numero). */
-        this.lastKnownAdminPhone = '';
+    }
+
+    /** Lee el ultimo numero admin conocido desde settings DB (sobrevive reinicios). */
+    getKnownAdminPhone() {
+        try { return getSettingsDB().lastKnownAdminPhone || ''; } catch (e) { return ''; }
+    }
+    /** Persiste el numero admin conocido en settings DB. */
+    setKnownAdminPhone(phone) {
+        try {
+            const s = getSettingsDB();
+            s.lastKnownAdminPhone = phone;
+            saveSettingsDB(s);
+        } catch (e) { /* settings no disponible */ }
     }
 
     getReconnectDelay() {
@@ -138,7 +150,7 @@ class WhatsappAdapter extends ChannelAdapter {
                     } catch (e) {
                         logError.error(`🔌 [WHATSAPP] No se pudo borrar auth_info_baileys: ${e.message}`);
                     }
-                    this.lastKnownAdminPhone = '';
+                    this.setKnownAdminPhone('');
                 } else if (this.isSessionRegistered()) {
                     // Sesion registrada cayo: reconexion normal con backoff.
                     shouldReconnect = true;
@@ -176,16 +188,31 @@ class WhatsappAdapter extends ChannelAdapter {
                     adminLid = this.sock.user.lid ? this.sock.user.lid.split(':')[0].split('@')[0] : '';
                 }
 
-                // Anti-cambio de numero: si el numero vinculado cambia respecto
-                // al ultimo conocido, el admin se entera (politica multi-cliente:
-                // se acepta cualquier numero, pero se alerta si cambia).
-                if (adminPhone && this.lastKnownAdminPhone && adminPhone !== this.lastKnownAdminPhone) {
-                    const msg = `⚠️ Número de WhatsApp del bot CAMBIÓ: antes '${this.lastKnownAdminPhone}', ahora '${adminPhone}'.`;
+                // Anti-cambio de numero (Opción B: permitir y empezar de cero):
+                // el numero conocido se persiste en settings DB para sobrevivir
+                // reinicios. Si el numero vinculado cambia respecto al conocido,
+                // se avisa al admin, se borra auth_info_baileys y se reconecta
+                // para re-pair limpio (el panel mostrara un QR nuevo). Si coincide
+                // o es el primero, solo se persiste para futuras comparaciones.
+                const knownPhone = this.getKnownAdminPhone();
+                if (adminPhone && knownPhone && adminPhone !== knownPhone) {
+                    const msg = `⚠️ Número de WhatsApp del bot CAMBIÓ: antes '${knownPhone}', ahora '${adminPhone}'. Se borra la sesión y se reinicia el pairing desde cero.`;
                     log.warn(msg);
                     if (internalBus && internalBus.notifyAdmin) internalBus.notifyAdmin(msg);
+                    this.setKnownAdminPhone(adminPhone);
+                    try {
+                        fs.rmSync(AUTH_DIR, { recursive: true, force: true });
+                        log.info('🔌 [WHATSAPP] auth_info_baileys borrado por cambio de número.');
+                    } catch (e) {
+                        logError.error(`🔌 [WHATSAPP] No se pudo borrar auth_info_baileys: ${e.message}`);
+                    }
+                    // Reconnect limpio: el socket actual se cierra y el nuevo
+                    // lee creds vacíos -> emite QR nuevo para re-pairing.
+                    this.connect();
+                    return;
                 }
-                if (adminPhone) this.lastKnownAdminPhone = adminPhone;
-                
+                if (adminPhone) this.setKnownAdminPhone(adminPhone);
+
                 log.info(`✅ ¡Conectado a WhatsApp con éxito!`);
                 this.emit('ready', { adminPhone, adminLid });
                 
