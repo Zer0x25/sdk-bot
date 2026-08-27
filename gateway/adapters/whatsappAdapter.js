@@ -119,11 +119,10 @@ class WhatsappAdapter extends ChannelAdapter {
                 // o "Stream Errored" indican el motivo de fondo).
                 log.warn(`🔌 [WHATSAPP] connection.close statusCode=${dcStatus ?? 'n/a'} loggedOut=${loggedOut} err=${dcErr?.message || (dcErr ? String(dcErr) : 'n/a')}`);
 
-                let shouldReconnect = true;
+                let shouldReconnect = false;
                 let reason = '';
                 if (loggedOut) {
                     // Logout real de WhatsApp: no reintentar, queda en standby.
-                    shouldReconnect = false;
                     reason = 'logged_out';
                 } else if (this.isSessionRegistered()) {
                     // Sesion registrada cayo: reconexion normal con backoff.
