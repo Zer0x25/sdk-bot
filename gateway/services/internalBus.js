@@ -201,6 +201,49 @@ let qrSequence = 0;
 let qrIssuedAt = 0;
 let qrRefreshInProgress = false;
 
+// --- Anti-abuso de pairing (rate-limit por IP en /qr/refresh) ---
+// Evita que un cliente pulso "Generar QR" docenas de veces seguidas (golpea a
+// WhatsApp y puede provocar baneo). Ventana deslizante: max N intentos por
+// ventana; al exceder, 429 hasta que expire el más viejo.
+const PAIRING_RATE_LIMIT_MAX = Number(process.env.PAIRING_RATE_LIMIT_MAX || 5);
+const PAIRING_RATE_LIMIT_WINDOW_MS = Number(process.env.PAIRING_RATE_LIMIT_WINDOW_MS || 10 * 60 * 1000);
+/** @type {Map<string, number[]>} ip -> timestamps de intentos */
+const pairingAttempts = new Map();
+function getClientIp(req) {
+    const xff = (req.headers && req.headers['x-forwarded-for']);
+    const raw = Array.isArray(xff) ? xff[0] : (xff || '');
+    const ip = raw.split(',')[0].trim() || (req.socket && req.socket.remoteAddress) || 'unknown';
+    return ip;
+}
+function checkPairingRateLimit(ip) {
+    const now = Date.now();
+    const hits = (pairingAttempts.get(ip) || []).filter(t => now - t < PAIRING_RATE_LIMIT_WINDOW_MS);
+    if (hits.length >= PAIRING_RATE_LIMIT_MAX) {
+        pairingAttempts.set(ip, hits);
+        const oldest = hits[0];
+        const retryAfterSec = Math.ceil((PAIRING_RATE_LIMIT_WINDOW_MS - (now - oldest)) / 1000);
+        return { allowed: false, retryAfterSec };
+    }
+    hits.push(now);
+    pairingAttempts.set(ip, hits);
+    return { allowed: true, retryAfterSec: 0 };
+}
+
+// --- Notificación al admin (panel/log + Telegram si está configurado) ---
+function notifyAdmin(message) {
+    log.warn(`🔔 [ADMIN] ${message}`);
+    try {
+        const s = getSettingsDB();
+        if (s.telegramToken && s.telegramChatId) {
+            // sendTelegramMessage lee token/chatId de settings si no se pasan overrides.
+            sendTelegramMessage(`🔔 *SDK-Bot*\n\n${message}`)
+                .catch((/** @type {any} */ e) => logError.error(`🔔 [ADMIN] No se pudo avisar por Telegram: ${e && e.message ? e.message : e}`));
+        }
+    } catch (/** @type {any} */ e) {
+        logError.error(`🔔 [ADMIN] Error leyendo settings para notificar: ${e && e.message ? e.message : e}`);
+    }
+}
+
 function wsReadyState(sock) {
     if (!sock) return null;
     if (typeof sock.readyState !== 'undefined') return sock.readyState;
@@ -677,6 +720,15 @@ function routeApi(req, res, pathname, params) {
         return;
     }
     if (pathname === '/qr/refresh' && req.method === 'POST') {
+        // Anti-abuso: rate-limit por IP. Un cliente que pulsa "Generar QR"
+        // docenas de veces seguidas golpea a WhatsApp y puede provocar baneo.
+        const clientIp = getClientIp(req);
+        const rl = checkPairingRateLimit(clientIp);
+        if (!rl.allowed) {
+            res.writeHead(429, { 'Content-Type': 'application/json', 'Retry-After': String(rl.retryAfterSec) });
+            res.end(JSON.stringify({ success: false, rateLimited: true, retryAfterSec: rl.retryAfterSec, message: `Demasiados intentos de pairing. Espera ${rl.retryAfterSec}s antes de volver a generar un QR.` }));
+            return;
+        }
         // No repetir el comando mientras hay un QR válido o una tanda en curso.
         // El bloqueo vive en el bus, no solo en el botón del navegador.
         if (pairingCodeRequestInProgress || pairingMethod === 'code') {
@@ -930,7 +982,8 @@ module.exports = {
     startInternalBus, setSock, clearSock, handleConnectionUpdate, setQrRefresh, setPairingCodeRequester,
     requestPairing, runAdminCommand, performReset, performRestart, wsReadyState,
     qrPayload, resetInProgressForTests, setQrTtlForTests, resetQrForTests,
-    isQrWindowOpen: () => qrWindowOpen && !!lastQrDataUrl && Date.now() < qrExpiresAt
+    isQrWindowOpen: () => qrWindowOpen && !!lastQrDataUrl && Date.now() < qrExpiresAt,
+    notifyAdmin
 };
 
 // --- Test Helpers ---

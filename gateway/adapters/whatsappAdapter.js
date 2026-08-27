@@ -23,6 +23,8 @@ class WhatsappAdapter extends ChannelAdapter {
         this.reconnectAttempt = 0;
         this.reconnectTimer = null;
         this.RECONNECT_BACKOFF_MS = [2000, 5000, 15000, 60000];
+        /** @type {string} Ultimo numero admin conocido (para detectar cambio de numero). */
+        this.lastKnownAdminPhone = '';
     }
 
     getReconnectDelay() {
@@ -122,8 +124,21 @@ class WhatsappAdapter extends ChannelAdapter {
                 let shouldReconnect = false;
                 let reason = '';
                 if (loggedOut) {
-                    // Logout real de WhatsApp: no reintentar, queda en standby.
+                    // Logout real de WhatsApp (el cliente revoco la sesion desde
+                    // su movil: Dispositivos vinculados). No reintentar. Avisar al
+                    // admin (panel/log + Telegram si esta activo) y borrar los creds
+                    // para que el proximo repair empiece limpio (como numero nuevo).
                     reason = 'logged_out';
+                    const msg = '🚪 El cliente DESVINCULÓ el bot desde su móvil (WhatsApp > Dispositivos vinculados). El bot quedó en standby y borró las creds; el próximo pairing será desde cero.';
+                    log.warn(msg);
+                    if (internalBus && internalBus.notifyAdmin) internalBus.notifyAdmin(msg);
+                    try {
+                        fs.rmSync(AUTH_DIR, { recursive: true, force: true });
+                        log.info('🔌 [WHATSAPP] auth_info_baileys borrado tras logout del cliente.');
+                    } catch (e) {
+                        logError.error(`🔌 [WHATSAPP] No se pudo borrar auth_info_baileys: ${e.message}`);
+                    }
+                    this.lastKnownAdminPhone = '';
                 } else if (this.isSessionRegistered()) {
                     // Sesion registrada cayo: reconexion normal con backoff.
                     shouldReconnect = true;
@@ -160,6 +175,16 @@ class WhatsappAdapter extends ChannelAdapter {
                     adminPhone = this.sock.user.id ? this.sock.user.id.split(':')[0].split('@')[0] : '';
                     adminLid = this.sock.user.lid ? this.sock.user.lid.split(':')[0].split('@')[0] : '';
                 }
+
+                // Anti-cambio de numero: si el numero vinculado cambia respecto
+                // al ultimo conocido, el admin se entera (politica multi-cliente:
+                // se acepta cualquier numero, pero se alerta si cambia).
+                if (adminPhone && this.lastKnownAdminPhone && adminPhone !== this.lastKnownAdminPhone) {
+                    const msg = `⚠️ Número de WhatsApp del bot CAMBIÓ: antes '${this.lastKnownAdminPhone}', ahora '${adminPhone}'.`;
+                    log.warn(msg);
+                    if (internalBus && internalBus.notifyAdmin) internalBus.notifyAdmin(msg);
+                }
+                if (adminPhone) this.lastKnownAdminPhone = adminPhone;
                 
                 log.info(`✅ ¡Conectado a WhatsApp con éxito!`);
                 this.emit('ready', { adminPhone, adminLid });
