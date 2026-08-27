@@ -77,8 +77,12 @@ class WhatsappAdapter extends ChannelAdapter {
             // y WhatsApp cerraba el stream con 515 "restart required" antes de open.
             syncFullHistory: false,
             markOnlineOnConnect: true,
-            browser: ['SDK-Bot', 'Chrome', '124.0.0.0'],
-            version: [2, 3000, 0]
+            browser: ['SDK-Bot', 'Chrome', '124.0.0.0']
+            // NOTA: no pasar 'version' con un array inventado. Baileys rc14 no
+            // exporta DEFAULT_VERSION y una version invalida hace que el handshake
+            // HTTP con WhatsApp Web sea rechazado con 405 (Connection Failure) y el
+            // gateway cae a standby sin emitir QR. Baileys resuelve su version por
+            // defecto internamente si no se especifica.
         });
 
         // Eventos Baileys
