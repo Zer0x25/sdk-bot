@@ -138,18 +138,17 @@ class WhatsappAdapter extends ChannelAdapter {
                 if (loggedOut) {
                     // Logout real de WhatsApp (el cliente revoco la sesion desde
                     // su movil: Dispositivos vinculados). No reintentar. Avisar al
-                    // admin (panel/log + Telegram si esta activo) y borrar los creds
-                    // para que el proximo repair empiece limpio (como numero nuevo).
+                    // admin (panel/log + Telegram si esta activo). NO borramos las
+                    // creds: si el cliente lo hizo por error y revincula el MISMO
+                    // numero, solo debe generar un QR nuevo y todo sigue igual
+                    // (no perdemos nada). Si revincula OTRO numero, la logica de
+                    // cambio de numero (Opción B) ya borra y re-pairea limpio.
                     reason = 'logged_out';
-                    const msg = '🚪 El cliente DESVINCULÓ el bot desde su móvil (WhatsApp > Dispositivos vinculados). El bot quedó en standby y borró las creds; el próximo pairing será desde cero.';
+                    const msg = '🚪 El cliente DESVINCULÓ el bot desde su móvil (WhatsApp > Dispositivos vinculados). El bot quedó en standby (no se borró nada). Si revincula el mismo número, solo genera un QR nuevo y sigue igual; si usa otro número, se reinicia el pairing desde cero.';
                     log.warn(msg);
                     if (internalBus && internalBus.notifyAdmin) internalBus.notifyAdmin(msg);
-                    try {
-                        fs.rmSync(AUTH_DIR, { recursive: true, force: true });
-                        log.info('🔌 [WHATSAPP] auth_info_baileys borrado tras logout del cliente.');
-                    } catch (e) {
-                        logError.error(`🔌 [WHATSAPP] No se pudo borrar auth_info_baileys: ${e.message}`);
-                    }
+                    // Reset del numero conocido en settings: asi un futuro re-pair
+                    // con otro numero sera detectado como cambio (Opción B).
                     this.setKnownAdminPhone('');
                 } else if (this.isSessionRegistered()) {
                     // Sesion registrada cayo: reconexion normal con backoff.
