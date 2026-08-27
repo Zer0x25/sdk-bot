@@ -9,6 +9,7 @@ const { isJunkJid } = require('../services/contactsRepository');
 const { extractUserMetadata } = require('../services/metadataService');
 const { extractTextMessage } = require('../services/pipeline'); // Actually we might need to extract this WA logic somewhere else, but for now we import it.
 const { isBotSentMessage } = require('../config');
+const internalBus = require('../services/internalBus');
 
 const log = cat('WHATSAPP');
 const logError = cat('ERROR');
@@ -54,7 +55,13 @@ class WhatsappAdapter extends ChannelAdapter {
     async connect(options = {}) {
         const freshQr = options.freshQr === true;
 
-        if (this.sock) {
+        // No destruir el socket si ya hay un QR vigente o pairing en curso:
+        // connect({freshQr:true}) hace old.end() y eso cortaba el stream justo
+        // cuando WhatsApp iba a abrir la sesion -> 515 "restart required".
+        // El bus ya bloquea el refresh si hay ventana abierta, pero el adapter
+        // tambien se protege (el refresh puede venir por otras vias).
+        const pairingInFlight = this.sock && internalBus.isQrWindowOpen && internalBus.isQrWindowOpen();
+        if (this.sock && !pairingInFlight) {
             const old = this.sock;
             this.sock = null;
             try { old.end(new Error('Reconnect por nueva conexión')); } catch (e) { /* ya cerrado */ }
@@ -73,9 +80,9 @@ class WhatsappAdapter extends ChannelAdapter {
             printQRInTerminal: false,
             auth: authState,
             logger: pino({ level: 'silent' }),
-            // syncFullHistory:true saturaba el handshake con numeros con historia
-            // y WhatsApp cerraba el stream con 515 "restart required" antes de open.
-            syncFullHistory: false,
+            // syncFullHistory:true restaurado: WhatsApp envia el historial por
+            // chunks y el stream se estabiliza. El 515 no era por esto.
+            syncFullHistory: true,
             markOnlineOnConnect: true,
             browser: ['SDK-Bot', 'Chrome', '124.0.0.0']
             // NOTA: no pasar 'version' con un array inventado. Baileys rc14 no
