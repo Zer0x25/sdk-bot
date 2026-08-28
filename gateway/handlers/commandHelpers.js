@@ -129,5 +129,4 @@ module.exports = {
     syntaxError,
     chunkAdminText,
     extractPhoneFromQuoted,
-    ADMIN_MSG_MAX_CHARS
 };

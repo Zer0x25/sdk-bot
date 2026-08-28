@@ -204,7 +204,7 @@ function decideMessageFlow({ textMessage, metadata, contactRecord, isSelf, isFro
 
     if (estado !== 'permitido') {
         // Evaluar Modo Global (solo para no-permitidos: neutro y otros)
-        const globalMode = state.GLOBAL_MODE || settings.globalMode || 'allowed_all';
+        const globalMode = state.GLOBAL_MODE || settings.globalMode;
         if (globalMode === 'ignored_all') {
             return { type: 'ignore', reason: 'modo_global_estricto' };
         }

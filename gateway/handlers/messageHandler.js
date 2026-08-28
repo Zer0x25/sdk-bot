@@ -238,7 +238,7 @@ async function handleIncomingMessage(stdMsg) {
     // Self-chat de WhatsApp (JID propio) o canal admin de Telegram: ambos son
     // "el admin hablando consigo mismo" y comparten SCENARIO 1 del pipeline
     // (comandos '/' + Asistente Personal IA + confirmaciones broadcast/F7).
-    const isSelf = isSelfChat(remoteJid, isFromMe)
+    const isSelf = isSelfChat(remoteJid)
         || (stdMsg.channel === 'telegram' && !!(metadata && metadata.isAdminChannel));
     const displayName = savedName ? `${savedName} (Agenda)` : pushName;
 

@@ -72,7 +72,7 @@ function runListas() {
     const dbListas = getContactsDB();
     const settings = getSettingsDB();
 
-    const globalMode = state.GLOBAL_MODE || settings.globalMode || 'allowed_all';
+    const globalMode = state.GLOBAL_MODE || settings.globalMode;
     let modeStr = "🌐 *Permitir a Todos por Defecto* (Atención Libre)";
     if (globalMode === 'ignored_all') modeStr = "🔒 *Ignorar a Todos por Defecto* (Modo Estricto / Whitelist)";
 

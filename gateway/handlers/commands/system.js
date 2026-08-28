@@ -68,7 +68,7 @@ function runEstado() {
  */
 function runResetClean(ctx) {
     if (ctx.queryParam) return syntaxError('reset-clean', 'Este comando no acepta argumentos.');
-    return requestCleanReset(ctx.sock, ctx.remoteJid);
+    return requestCleanReset(ctx.adapter, ctx.remoteJid);
 }
 
 function runInit() {

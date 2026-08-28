@@ -21,7 +21,6 @@ const { getContactsDB, saveContactsDB, onContactsCacheUpdate } = require('./db')
  * @property {string} [firstSeen]
  * @property {string} [lastSeen]
  * @property {number} [totalMessages]
- * @property {boolean} [handoff]
  * @property {string|null} [handoffAt]
  * @property {string|null} [perfil]
  */
@@ -189,7 +188,6 @@ function cleanContactsDB() {
                 if (item.pushName && !target.pushName) target.pushName = item.pushName;
                 if (item.profilePicUrl && !target.profilePicUrl) target.profilePicUrl = item.profilePicUrl;
                 if (item.bio && !target.bio) target.bio = item.bio;
-                if (item.handoff !== undefined) target.handoff = item.handoff;
                 delete db[k];
                 updated = true;
             }
@@ -341,8 +339,6 @@ function bulkUpsertContactsMetadata(contactsList) {
         let existingKey = findExistingKey(phoneNumber, lid);
 
         let targetKey = phoneNumber || (existingKey && db[existingKey].phone ? db[existingKey].phone : lid);
-        // Podríamos pasar remoteId desde bulkUpsert, pero como viene de syncs legacy (WA agenda), phoneNumber o lid es seguro por ahora para WA.
-        // Convertiremos los syncs a formato "whatsapp:PHONE" cuando el adapter lo haga.
         if (phoneNumber) targetKey = `whatsapp:${phoneNumber}`;
         else if (lid) targetKey = `whatsapp:${lid}`;
 

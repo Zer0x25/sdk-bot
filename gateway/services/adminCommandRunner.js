@@ -61,4 +61,4 @@ async function runAdminCommand(input) {
 // messageHandler marca isSelf para el canal admin de Telegram y
 // decideMessageFlow separa '/comando' del texto del Asistente Personal.
 
-module.exports = { ADMIN_JID, makeVirtualSock, runAdminCommand };
+module.exports = { ADMIN_JID, runAdminCommand };
