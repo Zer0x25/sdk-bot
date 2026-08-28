@@ -151,6 +151,7 @@ async def generate_ai_response(system_instruction: str, message: str, memory_his
             last_err = err
             safe_log(f"\n⚠️ {name} falló: {err}. Probando siguiente proveedor...")
 
-    raise Exception(f"Todos los proveedores fallaron en la cascada. " + " | ".join(
-        f"{n}: {e}" for (n, _, _), e in zip(order, [last_err] * len(order))
-    )) from None
+    raise Exception(
+        "Todos los proveedores fallaron en la cascada. "
+        + " | ".join(f"{n}: {last_err}" for (n, _, _) in order)
+    ) from None
