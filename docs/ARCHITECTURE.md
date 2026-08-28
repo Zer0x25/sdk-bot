@@ -53,7 +53,7 @@ SDK-Bot/
 │   ├── main.py                   # Aplicación FastAPI modularizada (/chat, /reset-memory, /profiles, :5100)
 │   ├── config.py                 # API Keys y modelos (Groq, OpenRouter, Gemini)
 │   ├── memory.py                 # Gestor de memoria persistente SQLite (brain/memory.db)
-│   ├── providers.py              # Router multi-proveedor (Groq 25s → OpenRouter 25s → Gemini 40s)
+│   ├── providers.py              # Router multi-proveedor (orden y timeouts TUNABLES vía .env.tuning: BRAIN_PRIMARY_MODEL)
 │   ├── profiles.py               # Motor de perfiles SOUL en caliente
 │   ├── profiles/                 # Perfiles SOUL editables en Markdown (default, lucia, mateo, cobranzas, recepcion)
 │   ├── .env                      # API Keys (gitignored)
@@ -86,14 +86,15 @@ SDK-Bot/
 ### 3. 🛡️ Simulación Humana & Anti-Ban Rate Limiter
 - **Lectura / Pensamiento Inicial:** Simula tiempo de lectura (800ms - 3.3s) antes de encender el estado de tecleo.
 - **Typing Delay Adaptativo (1.5s - 16s):** Simula velocidad humana de 7 a 10 caracteres por segundo (100ms - 135ms por carácter) con ruido estocástico (jitter), acotado entre 1.5s y 16.0s por globo.
-- **Multi-Bubble (Globos Secuenciales):** Divide respuestas extensas en fragmentos de **~220 caracteres máximo** con pausas inter-globo de 1.0s a 2.2s.
+- **Multi-Bubble (Globos Secuenciales):** Divide respuestas extensas en fragmentos (máx `GATEWAY_BUBBLE_MAX_CHARS`, default ~220 chars) con pausas inter-globo tunables (`GATEWAY_PAUSE_BETWEEN_BUBBLES_MIN/MAX_MS`, default 1.0s–2.2s). Todo en `.env.tuning` (`gateway/services/humanSim.js`).
 
-### 4. ⚡ Router Multi-Proveedor de IA & Resiliencia (Cascada de 90s)
-- **Cascada Automatizada de Respaldo:**
-  1. **Groq** (`llama-3.3-70b-versatile`): Principal (Timeout de 25s).
-  2. **OpenRouter** (`openrouter/free`): Primer Respaldo (Timeout de 25s).
-  3. **Google Gemini** (`gemini-flash-lite-latest`): Segundo Respaldo (Timeout de 40s).
-- **Alertas Silenciosas de Error:** Si la IA falla o se agota el timeout de 90s, el error **nunca se muestra al cliente**. Se envía una alerta privada al Self-Chat del Admin con el diagnóstico exacto.
+### 4. ⚡ Router Multi-Proveedor de IA & Resiliencia
+- **Cascada Automatizada de Respaldo** (orden TUNABLE vía `BRAIN_PRIMARY_MODEL` en `.env.tuning`; default **Gemini primary**):
+  1. **Google Gemini** (`gemini-3.1-flash-lite`, default primary): Timeout tunable (`BRAIN_TIMEOUT_GEMINI`, default 40s).
+  2. **Groq** (`llama-3.3-70b-versatile`): Respaldo 1 (Timeout `BRAIN_TIMEOUT_GROQ`, default 25s).
+  3. **OpenRouter** (`openrouter/free`): Respaldo 2 (Timeout `BRAIN_TIMEOUT_OPENROUTER`, default 25s).
+- Los timeouts, temperatura/top_p/max_tokens y el estilo global de "voz" son tunables en `.env.tuning` (ver `brain/config.py`).
+- **Alertas Silenciosas de Error:** Si la IA falla o se agota el timeout, el error **nunca se muestra al cliente**. Se envía una alerta privada al Self-Chat del Admin con el diagnóstico exacto.
 
 ### 5. 🗂️ Motor de Estados Centralizado (`contacts_db.json` & `settings_db.json`)
 - **Gestión Unificada de Estados:** Reemplaza listas externas obsoletas por el campo `estado` (`permitido`, `ignorado`, `handoff`, `neutro`) en `contacts_db.json` y `globalMode` (`allowed_all` / `ignored_all`) en `settings_db.json`.

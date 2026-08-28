@@ -9,7 +9,7 @@ El sistema son **tres procesos** con responsabilidades exclusivas y dependencia 
 | Proceso | Puerto | Responsabilidad única |
 |---|---|---|
 | **gateway** (`gateway/index.js`) | bus 5400 · status 5300 | Dueño de TODOS los canales (adapters), del pipeline de mensajes, del estado persistente (contacts/settings DB) y de los comandos admin. Es el ÚNICO proceso que habla con redes de mensajería |
-| **brain** (`brain/main.py`) | 5100 | Inteligencia pura: proveedores IA (Groq→OpenRouter→Gemini), memoria conversacional (memory.db), perfiles SOUL. No sabe qué es WhatsApp ni Telegram |
+| **brain** (`brain/main.py`) | 5100 | Inteligencia pura: proveedores IA (Gemini primary → Groq → OpenRouter, orden tunable), memoria conversacional (memory.db), perfiles SOUL. No sabe qué es WhatsApp ni Telegram |
 | **panel** (`gateway/panel/index.js`) | 5201 | Plano de control: sirve UI estática y proxifica `/api/*` al bus interno del gateway. No tiene acceso directo a ningún canal |
 
 Reglas de dependencia (nunca se invierten):
@@ -30,7 +30,7 @@ Baileys NO es un proceso: es una librería encapsulada dentro de `whatsappAdapte
 ### Positivas
 - El panel puede caerse/reiniciarse sin tocar sesiones de mensajería; lo mismo aplica entre gateway y brain.
 - Superficie de seguridad clara: solo loopback local; las API keys viven únicamente en `brain/.env`.
-- Cada proceso escala y reinicia de forma independiente (systemd/Docker por unidad).
+- Cada proceso escala y reinicia de forma independiente (Docker por unidad; en dev `deploy/linux/dev.sh up|down|status`). El systemd legacy (`deploy/linux/*.service` + `install.sh`) fue eliminado.
 - Tests: el contrato HTTP entre procesos permite mockear cualquiera de los lados.
 
 ### Negativas / Trade-offs
