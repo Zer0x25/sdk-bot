@@ -151,11 +151,11 @@ test('POST /contacts/<key>/perfil asigna un perfil por contacto', async () => {
     const res = await fetch(`http://127.0.0.1:${port}/contacts/56922222222/perfil`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ perfil: 'ventas' })
+        body: JSON.stringify({ perfil: 'lucia' })
     });
     assert.strictEqual(res.status, 200);
     assert.strictEqual((await res.json()).success, true);
 
     const detail = await (await fetch(`http://127.0.0.1:${port}/contacts/56922222222`)).json();
-    assert.strictEqual(detail.perfil, 'ventas');
+    assert.strictEqual(detail.perfil, 'lucia');
 });
