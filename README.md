@@ -226,22 +226,14 @@ cd ~/playground/sdk-bot
 bash deploy/linux/dev.sh up all        # levanta brain + gateway + panel en background
 bash deploy/linux/dev.sh status        # health de los 3 puertos
 bash deploy/linux/dev.sh down          # mata todo y libera los locks
-# Por componente:
+# Por componente (varios a la vez):
 bash deploy/linux/dev.sh up brain
-bash deploy/linux/dev.sh up gateway
-bash deploy/linux/dev.sh up panel
+bash deploy/linux/dev.sh up gateway panel   # gateway + panel, sin brain
 ```
 
-Para lanzar un solo proceso en foreground (debug paso a paso) queda el modo
-legacy `manual`:
-
-```bash
-bash deploy/linux/dev.sh manual brain     # toma la terminal
-bash deploy/linux/dev.sh manual gateway
-bash deploy/linux/dev.sh manual panel
-```
-
-`NODE_ENV=development` identifica estos lanzamientos, pero la aplicación no
+`up` es idempotente: si ya hay procesos vivos en esos puertos, los mata y
+relanza (no deja duplicados ni `EADDRINUSE`). `NODE_ENV=development` identifica
+estos lanzamientos, pero la aplicación no
 usa esa variable como interruptor de comportamiento. No ejecutes a la vez una
 instancia manual y los contenedores de producción sobre la misma sesión.
 

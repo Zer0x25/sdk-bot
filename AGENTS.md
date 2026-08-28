@@ -5,7 +5,7 @@
 - No hay workspace ni manifest de paquete en la raiz: el paquete Node vive en `gateway/` y la aplicacion Python en `brain/`. Sus entradas son `gateway/index.js` y `brain/main.py`.
 - `gateway/index.js` es dueño de WhatsApp/Baileys, Telegram, el bus interno y el status server. `gateway/panel/index.js` es un tercer proceso: sirve `panel/public/` sin build y proxifica `/api/*` al bus.
 - En Docker el panel debe ejecutar `node panel/index.js`, nunca `node index.js`: lo segundo iniciaria un gateway adicional y puede provocar una segunda sesion de WhatsApp.
-- El launcher local canonico es `bash deploy/linux/dev.sh manual todos` (o el objetivo individual `brain`, `gateway` o `panel`); arranca brain antes de gateway/panel. En dev usa brain `:5100`, bus `:5400`, status `:5300` y panel `:5201`.
+- El launcher local canonico es `bash deploy/linux/dev.sh up all` (o por componente `up brain`, `up gateway panel`, etc.); es idempotente y arranca brain antes de gateway/panel. En dev usa brain `:5100`, bus `:5400`, status `:5300` y panel `:5201`. `down` mata todo y libera locks; `status` hace health de los 3 puertos.
 - Cada canal normaliza a `StandardMessage` y las IDs remotas llevan prefijo (`whatsapp:<id>` o `telegram:<chat_id>`); la logica comun no debe depender de JIDs nativos.
 - Las decisiones puras estan en `gateway/services/pipeline.js`; buffers y efectos secundarios estan en `gateway/handlers/messageHandler.js`. Los comandos se agregan como modulos en `gateway/handlers/commands/` y se registran en `commandHandler.js`.
 - Las decisiones de arquitectura viven en `docs/adr/`: 001 hub multi-canal, 002 procesos y planos (datos/control), 003 dueno unico del transporte por canal, 004 resiliencia de la interaccion. Leelas antes de refactors grandes; cualquier cambio que rompa esos contratos exige una ADR nueva.
@@ -24,7 +24,7 @@ npm ci
 
 - `cd gateway && npm run check` es el check completo y su orden es `lint -> typecheck -> npm test`.
 - `cd brain && venv/bin/ruff check . && venv/bin/python -m pytest tests/ -q` es el check completo del brain. CI usa Node 22 y Python 3.12.
-- CI tambien ejecuta `cd gateway && bash ../deploy/linux/tests/install-smoke.sh` despues de las pruebas.
+- CI tambien ejecuta `cd gateway && bash ../deploy/linux/tests/dev-smoke.sh` despues de las pruebas.
 - Tests enfocados: `cd gateway && node --test tests/pipeline.test.js`; `cd gateway && node --test tests/telegram.test.js`; `cd gateway && node --test tests/adminPairing.test.js`; brain: `cd brain && venv/bin/python -m pytest tests/test_memory.py -q`.
 - `npm test` define `SDK_BOT_TEST=1` y escribe los logs tecnicos en `/tmp/sdk-bot-test-<pid>.log`, no en `gateway/logs/` ni en stdout operativo.
 - Los tests que cargan rutas desde env deben definirlas antes de hacer `require`: usa temporales para `SDK_CONTACTS_DB_PATH`, `SDK_SETTINGS_DB_PATH`, `SDK_BROADCAST_DB_PATH`, `SDK_MESSAGE_QUEUE_PATH`, `SDK_AUTH_DIR`, `BRAIN_MEMORY_DB`, logs y locks. Nunca apuntes a estado de produccion.

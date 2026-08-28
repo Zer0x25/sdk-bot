@@ -33,5 +33,5 @@ explícitamente el bind del puerto del panel y protégelo en la red.
 - `docker compose down -v` es destructivo: borra el estado persistente y exige
   volver a vincular WhatsApp.
 
-El modo desarrollo no usa Compose: arranca brain, gateway y panel manualmente
-con `bash deploy/linux/dev.sh manual ...`.
+El modo desarrollo no usa Compose: arranca brain, gateway y panel con
+`bash deploy/linux/dev.sh up all` (o por componente `up brain`, `up gateway panel`).
