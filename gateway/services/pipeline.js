@@ -3,7 +3,24 @@ const { state } = require('../config');
 const { getSettingsDB, getContactsDB } = require('./db');
 const { isHandoffActive } = require('./contactsRepository');
 const { cat } = require('./logger');
+const { num } = require('../tuning');
 const log = cat('DEBOUNCE');
+
+// 🎲 Distracción/Ocupación humana (AFK) — TUNABLE vía .env.tuning.
+// Capa 1: ~AFK_PROB de estar "muy ocupado/AFK" (espera AFK_MIN..AFK_MAX).
+// Capa 2: ~BUSY_PROB de estar "ocupado breve" (espera BUSY_MIN..BUSY_MAX).
+// Capa 3 (resto): adaptativo normal según longitud del mensaje.
+const AFK_PROB = num('GATEWAY_AFK_PROB', 0.05);
+const AFK_MIN_MS = num('GATEWAY_AFK_MIN_MS', 180000);
+const AFK_MAX_MS = num('GATEWAY_AFK_MAX_MS', 240000);
+const BUSY_PROB = num('GATEWAY_BUSY_PROB', 0.12);
+const BUSY_MIN_MS = num('GATEWAY_BUSY_MIN_MS', 60000);
+const BUSY_MAX_MS = num('GATEWAY_BUSY_MAX_MS', 120000);
+const NORMAL_SHORT_MIN_MS = num('GATEWAY_NORMAL_SHORT_MIN_MS', 5000);
+const NORMAL_SHORT_MAX_MS = num('GATEWAY_NORMAL_SHORT_MAX_MS', 7000);
+const NORMAL_SHORT_MAX_LEN = num('GATEWAY_NORMAL_SHORT_MAX_LEN', 20);
+const NORMAL_LONG_MIN_MS = num('GATEWAY_NORMAL_LONG_MIN_MS', 7500);
+const NORMAL_LONG_MAX_MS = num('GATEWAY_NORMAL_LONG_MAX_MS', 12000);
 
 /**
  * 🧠 PIPELINE DE DECISIÓN DE MENSAJES (F3-P3)
@@ -34,32 +51,32 @@ const log = cat('DEBOUNCE');
 function getAdaptiveDebounceMs(messagesArray = [], rng = Math.random) {
     const roll = rng(); // 0.0 a 1.0
 
-    // 1. Probabilidad del 5% de estar muy ocupado / AFK (3 - 4 min)
-    if (roll < 0.05) {
-        const afkMs = Math.floor(180000 + rng() * 60000); // 180s a 240s
+    // 1. Probabilidad de estar muy ocupado / AFK (GATEWAY_AFK_MIN_MS - GATEWAY_AFK_MAX_MS)
+    if (roll < AFK_PROB) {
+        const afkMs = Math.floor(AFK_MIN_MS + rng() * (AFK_MAX_MS - AFK_MIN_MS));
         log.info(`🎲 [HUMAN RANDOM] Roll ${(roll * 100).toFixed(1)}%: Bot ocupado/distraído (AFK). Esperando ${(afkMs / 1000).toFixed(0)}s (${(afkMs / 60000).toFixed(1)}m)...`);
         return afkMs;
     }
 
-    // 2. Probabilidad del 12% de estar medianamente ocupado (1 - 2 min)
-    if (roll < 0.17) { // 0.05 + 0.12 = 0.17
-        const busyMs = Math.floor(60000 + rng() * 60000); // 60s a 120s
+    // 2. Probabilidad de estar medianamente ocupado (GATEWAY_BUSY_MIN_MS - GATEWAY_BUSY_MAX_MS)
+    if (roll < AFK_PROB + BUSY_PROB) {
+        const busyMs = Math.floor(BUSY_MIN_MS + rng() * (BUSY_MAX_MS - BUSY_MIN_MS));
         log.info(`🎲 [HUMAN RANDOM] Roll ${(roll * 100).toFixed(1)}%: Bot ocupado brevemente. Esperando ${(busyMs / 1000).toFixed(0)}s (${(busyMs / 60000).toFixed(1)}m)...`);
         return busyMs;
     }
 
-    // 3. Adaptativo Normal (~83% restante)
+    // 3. Adaptativo Normal (~restante)
     const msgs = Array.isArray(messagesArray) ? messagesArray : [];
     const totalLength = msgs.join(' ').length;
     const msgCount = msgs.length;
 
     let normalMs;
-    if (msgCount === 1 && totalLength < 20) {
-        // Mensaje único y corto ("Hola", "Precio", etc.) -> 5s a 7s
-        normalMs = Math.floor(5000 + rng() * 2000);
+    if (msgCount === 1 && totalLength < NORMAL_SHORT_MAX_LEN) {
+        // Mensaje único y corto ("Hola", "Precio", etc.) -> NORMAL_SHORT_MIN..MAX
+        normalMs = Math.floor(NORMAL_SHORT_MIN_MS + rng() * (NORMAL_SHORT_MAX_MS - NORMAL_SHORT_MIN_MS));
     } else {
-        // Mensajes largos o múltiples -> 7.5s a 12s
-        normalMs = Math.floor(7500 + rng() * 4500);
+        // Mensajes largos o múltiples -> NORMAL_LONG_MIN..MAX
+        normalMs = Math.floor(NORMAL_LONG_MIN_MS + rng() * (NORMAL_LONG_MAX_MS - NORMAL_LONG_MIN_MS));
     }
 
     return normalMs;
