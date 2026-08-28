@@ -2,6 +2,7 @@
 const { state } = require('../config');
 const { getSettingsDB, saveSettingsDB, getContactsDB, saveContactsDB } = require('./db');
 const { findKeyByDigits } = require('./contactsRepository');
+const { summarizeListCounts } = require('../handlers/commandHelpers');
 
 /**
  * 🔄 GESTIÓN DE ESTADOS EN CONTACTS_DB (ignorado ↔ permitido ↔ handoff ↔ neutro)
@@ -129,7 +130,7 @@ function ignoreAllAgendaContacts() {
         saveContactsDB(db);
     }
 
-    const totalIgnored = Object.values(db).filter(c => c.estado === 'ignorado').length;
+    const totalIgnored = summarizeListCounts(db).ignored;
     return { addedCount, totalIgnored };
 }
 

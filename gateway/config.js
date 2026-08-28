@@ -60,10 +60,12 @@ const botSentMessageIds = new Set();
 const counters = { sentMessages: 0 };
 
 function registerSentMessage(sentMsg) {
-    if (sentMsg && sentMsg.key && sentMsg.key.id) {
-        botSentMessageIds.add(sentMsg.key.id);
+    // Acepta tanto formato WhatsApp (sentMsg.key.id) como Telegram (sentMsg.message_id)
+    const id = (sentMsg && (sentMsg.key && sentMsg.key.id)) || (sentMsg && sentMsg.message_id);
+    if (id) {
+        botSentMessageIds.add(id);
         counters.sentMessages += 1;
-        const timer = setTimeout(() => botSentMessageIds.delete(sentMsg.key.id), 60000);
+        const timer = setTimeout(() => botSentMessageIds.delete(id), 60000);
         timer.unref?.();
     }
 }

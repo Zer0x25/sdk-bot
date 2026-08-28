@@ -70,11 +70,21 @@ def _parse_md(content: str, profile_key: str) -> dict:
                 secciones[seccion_actual] = "\n".join(buffer).strip()
             seccion_actual = stripped[3:].strip().lower()
             buffer = []
+            # Las secciones "tono: <nombre>" se acumulan en un dict de tonos
+            if seccion_actual.startswith("tono:"):
+                tono_nombre = seccion_actual.split(":", 1)[1].strip()
+                secciones.setdefault("_tonos", {})[tono_nombre] = ""
+                seccion_actual = f"_tono_buf:{tono_nombre}"
             continue
 
         if seccion_actual is None:
             if stripped and not descripcion:
                 descripcion = stripped
+            continue
+
+        if seccion_actual.startswith("_tono_buf:"):
+            tono_nombre = seccion_actual.split(":", 1)[1]
+            secciones["_tonos"][tono_nombre] += (stripped + "\n")
             continue
 
         buffer.append(stripped)
@@ -102,7 +112,8 @@ def _parse_md(content: str, profile_key: str) -> dict:
         "personalidad": secciones.get("personalidad", ""),
         "reglas": reglas,
         "formato": secciones.get("formato", ""),
-        "ejemplos": ejemplos
+        "ejemplos": ejemplos,
+        "tonos": secciones.get("_tonos", {})
     }
 
 
@@ -181,6 +192,50 @@ def refresh_profiles() -> None:
     get_profiles()
 
 
+def tono_texto_a_dict(texto: str) -> dict:
+    """Parsea una sección '## Tono: x' (texto libre) a partes reutilizables.
+
+    Formato esperado:
+        <descripción (1ª línea)>
+        - viñetas de personalidad
+        Reglas: ...
+        Formato: ...
+    """
+    lineas = [ln.strip() for ln in (texto or "").splitlines() if ln.strip()]
+    desc = lineas[0] if lineas else ""
+    personalidad_parts = []
+    reglas = []
+    formato = ""
+    modo = "personalidad"
+    for ln in lineas[1:]:
+        low = ln.lower()
+        if low.startswith("reglas:"):
+            modo = "reglas"
+            rest = ln[len("reglas:"):].strip()
+            if rest:
+                reglas.append(rest)
+            continue
+        if low.startswith("formato:"):
+            modo = "formato"
+            formato = ln[len("formato:"):].strip()
+            continue
+        if modo == "personalidad":
+            personalidad_parts.append(ln)
+        elif modo == "reglas":
+            if ln.startswith("- ") or ln.startswith("* "):
+                reglas.append(ln[2:].strip())
+            else:
+                reglas.append(ln)
+        elif modo == "formato":
+            formato = (formato + " " + ln).strip()
+    return {
+        "desc": desc,
+        "personalidad": " ".join(personalidad_parts),
+        "reglas": reglas,
+        "formato": formato
+    }
+
+
 def build_system_prompt(profile_key: str) -> str:
     """Compila un perfil SOUL a un system prompt completo para los proveedores."""
     profile = get_profiles().get(profile_key)
@@ -190,22 +245,38 @@ def build_system_prompt(profile_key: str) -> str:
         return "Eres un asistente virtual amigable y profesional."
     profile = profile[1]  # (mtime, dict)
 
+    # Tonos fusionados: si pidieron recepcion/mateo/cobranzas, usar ese tono
+    # del perfil default como personalidad/reglas efectivas (sin romper fallback).
+    tonos = profile.get("tonos", {})
+    efectivo = profile
+    if profile_key in tonos:
+        tono_texto = tono_texto_a_dict(tonos[profile_key])
+        efectivo = {
+            "nombre": profile["nombre"],
+            "descripcion": tono_texto.get("desc", profile["descripcion"]),
+            "personalidad": tono_texto.get("personalidad", profile["personalidad"]),
+            "reglas": tono_texto.get("reglas", profile["reglas"]),
+            "formato": tono_texto.get("formato", profile["formato"]),
+            "ejemplos": profile["ejemplos"],
+            "tonos": tonos
+        }
+
     lines = [
-        f"Eres {profile['nombre']}. {profile['descripcion']}",
+        f"Eres {efectivo['nombre']}. {efectivo['descripcion']}",
         "",
-        f"Personalidad: {profile['personalidad']}",
+        f"Personalidad: {efectivo['personalidad']}",
         "",
         "Reglas de comportamiento:"
     ]
-    lines.extend(f"- {regla}" for regla in profile["reglas"])
+    lines.extend(f"- {regla}" for regla in efectivo["reglas"])
 
     lines.extend([
         "",
-        f"Formato de respuesta: {profile['formato']}",
+        f"Formato de respuesta: {efectivo['formato']}",
         "",
         "Ejemplos:"
     ])
-    for ejemplo in profile["ejemplos"]:
+    for ejemplo in efectivo["ejemplos"]:
         lines.append(f"Cliente: \"{ejemplo['cliente']}\"")
         lines.append(f"Asistente: \"{ejemplo['asistente']}\"")
 

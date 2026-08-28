@@ -3,6 +3,7 @@ const StandardMessage = require('../core/StandardMessage');
 const https = require('https');
 const { getSettingsDB } = require('../services/db');
 const { updateTelegramMenu, classifyPollResponse } = require('../services/telegramService');
+const { registerSentMessage, isBotSentMessage } = require('../config');
 const { transcribeAudio } = require('../services/stt');
 const { num } = require('../tuning');
 const { cat, logError } = require('../services/logger');
@@ -77,6 +78,11 @@ class TelegramAdapter extends ChannelAdapter {
                     const msg = u.message;
                     if (!msg) continue;
 
+                    // 🛑 ANTI-BUCLE (simétrico a WhatsApp): ignorar los mensajes
+                    // que el propio bot envió (evita reprocesar respuestas del
+                    // bot como si fueran del admin/cliente).
+                    if (msg.message_id && isBotSentMessage(msg.message_id)) continue;
+
                     // 🎤 STT local: audio de voz (voice) o audio adjunto.
                     if ((msg.voice || msg.audio) && num('AUDIO_STT_ENABLED', 0) === 1) {
                         await this._maybeHandleAudio(u, msg).catch(e =>
@@ -86,6 +92,7 @@ class TelegramAdapter extends ChannelAdapter {
 
                     if (msg.text) {
                         const tgChatId = String(msg.chat.id);
+
                         
                         // Determinar si es el administrador principal de Telegram
                         const isAdmin = (tgChatId === this.adminChatId);
@@ -161,7 +168,12 @@ class TelegramAdapter extends ChannelAdapter {
                 res.on('data', chunk => body += chunk);
                 res.on('end', () => {
                     if (res.statusCode === 200) {
-                        resolve(JSON.parse(body));
+                        const bodyJson = JSON.parse(body);
+                        // 🛑 Registrar el message_id para el anti-bucle del poller
+                        if (bodyJson && bodyJson.result && bodyJson.result.message_id) {
+                            registerSentMessage({ message_id: bodyJson.result.message_id });
+                        }
+                        resolve(bodyJson);
                     } else if (useMarkdown && res.statusCode === 400 && body.includes("can't parse entities")) {
                         // Retry without markdown
                         this.sendMessage(normalizedJid, text, { ...options, useMarkdown: false })

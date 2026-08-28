@@ -1,4 +1,7 @@
 // @ts-check
+const { state } = require('../config');
+const { getSettingsDB } = require('../services/db');
+
 /**
  * 🧹 Helpers compartidos de comandos admin: sanitización, parseo de targets,
  * ayuda contextual (COMMAND_USAGE / usageOf / syntaxError) y particionado
@@ -57,7 +60,19 @@ const COMMAND_USAGE = {
     buscar:  '/buscar <nombre_tel_o_lid> —\n\n*Ejemplos copiables:*\n```/s Pedro```\n```/s +56 9 4252 3669```',
     nombre:  '/nombre <numero_o_lid> <nombre_agenda> —\n\n*Ejemplo copiable:*\n```/n +56 9 4252 3669 Pedro Pizzería```',
     update:  'cita un archivo `.md` y escribe `/update` (o envíalo con caption `/update`).\n\n*Exportar un perfil para editar:* `/perfil exportar <key>`',
-    'reset-clean': '/reset-clean — reset limpio (fábrica): borra TODO el estado (sesión, agenda, configuración, colas, memoria y logs) y reinicia; la app queda recién instalada (perfiles SOUL se conservan). Confirma escribiendo la palabra mágica tras el timer de lectura.'
+    'reset-clean': '/reset-clean — reset limpio (fábrica): borra TODO el estado (sesión, agenda, configuración, colas, memoria y logs) y reinicia; la app queda recién instalada (perfiles SOUL se conservan). Confirma escribiendo la palabra mágica tras el timer de lectura.',
+    broadcast: '/broadcast <texto> — envía un mensaje a la agenda (excepto ignorados/handoff).\n• `/broadcast on` activa • `/broadcast off` desactiva • `/broadcast cancelar` • `/broadcast estado`',
+    programar: '/programar <HH:MM> <texto> — programa un broadcast (ej: `/programar 20:30 Recordatorio de mañana`). Requiere `/broadcast on`.',
+    perfil:  '/perfil <key> (global) | /perfil <key> <num> (contacto) | /perfil ver <key> | /perfil exportar <key> | /perfil eliminar <key>',
+    sincronizar: '/sincronizar — re-lee la agenda de WhatsApp y actualiza la base de contactos (delta, con caché 24h).',
+    contactos: '/contactos — muestra el total de contactos registrados, en agenda y en handoff.',
+    listas:  '/listas — muestra el Modo Global y las listas de Ignorados/Permitidos.',
+    pausar:  '/pausar — pausa la IA para TODOS los clientes ( kill-switch global). Usa /reanudar para volver.',
+    reanudar: '/reanudar — reanuda la IA para todos los clientes (tras /pausar).',
+    info:    '/info — muestra el estado del gateway, canales y métricas.',
+    estado:  '/estado — resumen de canales, listas y modo global.',
+    init:    '/init — guía rápida de inicio para el admin.',
+    exportar: '/exportar — exporta la libreta de contactos (estado por contacto).'
 };
 
 /**
@@ -120,14 +135,76 @@ function extractPhoneFromQuoted(rawMsg) {
     return phoneMatch ? parsePhoneOrLid(phoneMatch[0]) : "";
 }
 
+/**
+ * 🎯 Resolver y validar el target de un comando a partir de queryParam.
+ * Centraliza el patrón repetido en comandos de listas/control:
+ *   if (!queryParam) return usageOf(cmd);
+ *   const targetId = parsePhoneOrLid(queryParam);
+ *   if (!isValidTargetId(targetId)) return syntaxError(cmd, ...);
+ * Devuelve { ok:true, targetId } o { ok:false, error } (respuesta lista para enviar).
+ */
+function resolveTarget(queryParam, cmd) {
+    if (!queryParam) return { ok: false, error: usageOf(cmd) };
+    const targetId = parsePhoneOrLid(queryParam);
+    if (!isValidTargetId(targetId)) {
+        return { ok: false, error: syntaxError(cmd, `ID/Número no válido: *"${sanitizeMarkdown(queryParam)}"*.`) };
+    }
+    return { ok: true, targetId };
+}
+
+/**
+ * 🌐 Devuelve el Modo Global actual del bot.
+ * Centraliza la expresión `state.GLOBAL_MODE || settings.globalMode` (Fase 2).
+ * `state.GLOBAL_MODE` siempre es un string no vacío (default 'ignored_all' en
+ * config.js:36), por lo que NO hay default 'allowed_all'. No lanza si la DB de
+ * settings aún no está lista: cae a `state.GLOBAL_MODE` (o undefined si no hay state).
+ */
+function getGlobalMode() {
+    // getSettingsDB() carga la DB si aún no está lista y nunca lanza
+    // (db.js atrapa errores internamente), por lo que esto es seguro.
+    const settings = getSettingsDB() || {};
+    return state.GLOBAL_MODE || settings.globalMode;
+}
+
+/**
+ * 📊 Cuenta contactos por estado en la DB de contactos.
+ * Centraliza el conteo `Object.values(db).filter(c => c.estado === X).length`.
+ * @param {import('../services/db').ContactsDB} db
+ * @returns {{ ignored: number, allowed: number, handoff: number, total: number }}
+ */
+function summarizeListCounts(db) {
+    const all = db ? Object.values(db) : [];
+    const ignored = all.filter(c => c.estado === 'ignorado').length;
+    const allowed = all.filter(c => c.estado === 'permitido').length;
+    const handoff = all.filter(c => c.estado === 'handoff').length;
+    return { ignored, allowed, handoff, total: all.length };
+}
+
+/**
+ * 📋 Construye el menú de comandos del admin a partir de COMMAND_USAGE.
+ * Una sola fuente de verdad: si se añade un comando a COMMAND_USAGE, aparece
+ * aquí automáticamente (evita el menú hand-rolled que se desincronizaba).
+ * @param {string[]} [only] filtrar a estas claves (ej. ['ia','humano'])
+ */
+function buildMenu(only) {
+    const keys = only || Object.keys(COMMAND_USAGE);
+    return keys
+        .filter(k => COMMAND_USAGE[k])
+        .map(k => `• \`/${k}\` -> ${COMMAND_USAGE[k].split('\n')[0]}`)
+        .join('\n');
+}
+
 module.exports = {
     sanitizeMarkdown,
     parsePhoneOrLid,
     isValidTargetId,
+    resolveTarget,
+    getGlobalMode,
+    summarizeListCounts,
+    buildMenu,
     COMMAND_USAGE,
     usageOf,
     syntaxError,
     chunkAdminText,
     extractPhoneFromQuoted,
-    ADMIN_MSG_MAX_CHARS
 };

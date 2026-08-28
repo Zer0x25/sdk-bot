@@ -224,7 +224,7 @@ async function enrichContactExtraData(sock, jid, metadata, forceRefresh = false)
     }
 }
 
-function isSelfChat(remoteJid, _isFromMe) {
+function isSelfChat(remoteJid) {
     if (!remoteJid) return false;
     
     const cleanTarget = (remoteJid.match(/\d+/) || [''])[0];

@@ -1,6 +1,6 @@
 const { state, registerSentMessage } = require('../config');
 const { enrichContactExtraData, isSelfChat } = require('../services/metadataService');
-const { upsertContactMetadata } = require('../services/contactsRepository');
+const { upsertContactMetadata, isHandoffActive } = require('../services/contactsRepository');
 const { setNumberState } = require('../services/stateService');
 const { processAIChat } = require('../services/brainService');
 const { enqueueAI, poolStats } = require('../services/aiQueue');
@@ -238,7 +238,7 @@ async function handleIncomingMessage(stdMsg) {
     // Self-chat de WhatsApp (JID propio) o canal admin de Telegram: ambos son
     // "el admin hablando consigo mismo" y comparten SCENARIO 1 del pipeline
     // (comandos '/' + Asistente Personal IA + confirmaciones broadcast/F7).
-    const isSelf = isSelfChat(remoteJid, isFromMe)
+    const isSelf = isSelfChat(remoteJid)
         || (stdMsg.channel === 'telegram' && !!(metadata && metadata.isAdminChannel));
     const displayName = savedName ? `${savedName} (Agenda)` : pushName;
 
@@ -248,6 +248,11 @@ async function handleIncomingMessage(stdMsg) {
     const decision = decideMessageFlow({ textMessage, metadata, contactRecord, isSelf, isFromMe });
     if (decision.type === 'respond') {
         runtimeStats.aiMessages += 1;
+        // 🧹 Handoff expirado: el decisor ya lo trató como neutro; persistimos
+        // el reset para que no "reviva" tras reiniciar (el decisor no muta BD).
+        if (contactRecord && contactRecord.estado === 'handoff' && !isHandoffActive(contactRecord)) {
+            setNumberState(phoneNumber || lid, 'neutral');
+        }
     }
 
     switch (decision.type) {

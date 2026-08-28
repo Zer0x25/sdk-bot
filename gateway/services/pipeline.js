@@ -1,6 +1,7 @@
 // @ts-check
 const { state } = require('../config');
-const { getSettingsDB, getContactsDB } = require('./db');
+const { getContactsDB } = require('./db');
+const { getGlobalMode } = require('../handlers/commandHelpers');
 const { isHandoffActive } = require('./contactsRepository');
 const { cat } = require('./logger');
 const { num } = require('../tuning');
@@ -182,7 +183,6 @@ function decideMessageFlow({ textMessage, metadata, contactRecord, isSelf, isFro
     }
 
     // 🛡️ REGLAS DE ESTADOS EN BASE DE DATOS (ContactsDB)
-    const settings = getSettingsDB();
     let estado = (contactRecord && contactRecord.estado) || 'neutro';
 
     // ⏳ Verificación de expiración de Handoff (24 horas -> vuelve a neutro)
@@ -190,12 +190,10 @@ function decideMessageFlow({ textMessage, metadata, contactRecord, isSelf, isFro
         if (isHandoffActive(contactRecord, nowMs, handoffTtlMs)) {
             return { type: 'ignore', reason: 'handoff_activo' };
         }
-        // Handoff expirado: transiciona a neutro
+        // Handoff expirado: para esta decisión cuenta como neutro.
+        // El reset PERSISTENTE en la DB lo hace el efecto (messageHandler),
+        // no el decisor puro (ADR-003 §3).
         estado = 'neutro';
-        if (contactRecord) {
-            contactRecord.estado = 'neutro';
-            contactRecord.handoffAt = null;
-        }
     }
 
     if (estado === 'ignorado') {
@@ -204,7 +202,7 @@ function decideMessageFlow({ textMessage, metadata, contactRecord, isSelf, isFro
 
     if (estado !== 'permitido') {
         // Evaluar Modo Global (solo para no-permitidos: neutro y otros)
-        const globalMode = state.GLOBAL_MODE || settings.globalMode || 'allowed_all';
+        const globalMode = getGlobalMode();
         if (globalMode === 'ignored_all') {
             return { type: 'ignore', reason: 'modo_global_estricto' };
         }

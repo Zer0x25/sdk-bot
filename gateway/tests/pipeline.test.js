@@ -59,12 +59,13 @@ test('pipeline: handoff expira a las 24 horas y vuelve a neutro', () => {
     const recentHandoff = { estado: 'handoff', handoffAt: new Date(now - 3600 * 1000).toISOString() };
     assert.deepStrictEqual(decideMessageFlow(ctx({ contactRecord: recentHandoff, nowMs: now })), { type: 'ignore', reason: 'handoff_activo' });
 
-    // Handoff viejo (hace 25 horas) -> expiró, vuelve a neutro y responde (en allowed_all)
+    // Handoff viejo (hace 25 horas) -> expiró, el decisor lo trata como neutro
+    // y responde (en allowed_all). El decisor es PURO: NO muta el record
+    // (la persistencia del reset la hace el efecto en messageHandler).
     const oldHandoff = { estado: 'handoff', handoffAt: new Date(now - 25 * 3600 * 1000).toISOString() };
     const res = decideMessageFlow(ctx({ contactRecord: oldHandoff, nowMs: now }));
     assert.strictEqual(res.type, 'respond');
-    assert.strictEqual(oldHandoff.estado, 'neutro');
-    assert.strictEqual(oldHandoff.handoffAt, null);
+    assert.strictEqual(oldHandoff.estado, 'handoff'); // el decisor NO muta el record
 });
 
 test('pipeline: modo global estricto solo deja pasar permitidos', () => {
