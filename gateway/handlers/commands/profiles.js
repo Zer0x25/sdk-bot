@@ -6,7 +6,7 @@ const { cat } = require("../../services/logger");
 const { downloadMediaMessage } = require('@whiskeysockets/baileys');
 const { setCurrentProfile, setContactProfile } = require('../../services/stateService');
 const { getAvailableProfiles, getProfileDetail, exportProfileFile, importProfileFile, deleteProfileFile } = require('../../services/brainService');
-const { parsePhoneOrLid, usageOf } = require('../commandHelpers');
+const { parsePhoneOrLid, usageOf, syntaxError, extractPhoneFromQuoted } = require('../commandHelpers');
 
 const log = cat("COMANDO");
 const logError = cat("ERROR");
@@ -70,33 +70,33 @@ async function runPerfil({ adapter, remoteJid, queryParam, rawMsg }) {
     const profileList = profiles.map(p => `• \`${p.key}\` - *${p.nombre}*: ${p.descripcion}`).join('\n');
 
     if (!queryParam) {
-        return `⚠️ *Uso:* \`/perfil <perfil>\` (global) | \`/perfil <perfil> <num>\` (contacto) | \`/perfil ver <perfil>\` | \`/perfil exportar <perfil>\` | \`/perfil eliminar <perfil>\`\nPerfil actual: *${state.CURRENT_PROFILE}*\n\n*Perfiles disponibles:*\n${profileList || "No se pudieron cargar (¿brain encendido?)"}`;
+        return usageOf('perfil');
     }
 
     // 📄 /perfil ver <key> → muestra el system prompt compilado
     if (queryParam.toLowerCase().startsWith('ver ')) {
         const keyToShow = queryParam.split(/\s+/).slice(1).join(' ').trim().toLowerCase();
         if (!keyToShow) {
-            return `⚠️ Uso: \`/perfil ver <perfil>\`. Disponibles: ${profiles.map(p => `\`${p.key}\``).join(', ') || 'no cargados'}.`;
+            return usageOf('perfil');
         }
         const detail = await getProfileDetail(keyToShow);
         if (detail && detail.prompt) {
             return `📄 *Perfil ${detail.nombre} (\`${detail.key}\`)*\n━━━━━━━━━━━━━━━━━━━━━━\n${detail.prompt}`;
         }
-        return `⚠️ Perfil *"${keyToShow}"* no encontrado o brain apagado. Disponibles: ${profiles.map(p => `\`${p.key}\``).join(', ')}.`;
+        return syntaxError('perfil', `Perfil *"${keyToShow}"* no encontrado o brain apagado. Disponibles: ${profiles.map(p => `\`${p.key}\``).join(', ')}.`);
     }
 
     // 🗑️ /perfil eliminar <key> → borra el .md del perfil en el brain
     if (['eliminar', 'borrar', 'delete', 'del', 'rm'].includes(queryParam.toLowerCase().split(/\s+/)[0])) {
         const keyToDelete = queryParam.toLowerCase().split(/\s+/).slice(1).join(' ').trim();
         if (!keyToDelete) {
-            return `⚠️ Uso: \`/perfil eliminar <perfil>\`. Disponibles: ${profiles.map(p => `\`${p.key}\``).join(', ') || 'no cargados'}.`;
+            return usageOf('perfil');
         }
         const delResult = await deleteProfileFile(keyToDelete);
         if (delResult && delResult.success) {
             return `🗑️ *Perfil \`${keyToDelete}\` eliminado.*\n\nRecuerda: si un contacto tenía ese perfil asignado, el brain caerá a \`default\`.`;
         }
-        return `⚠️ No pude borrar *"${keyToDelete}"*: ${(delResult && delResult.detail) || 'no encontrado o brain apagado'}.`;
+        return syntaxError('perfil', `No pude borrar *"${keyToDelete}"*: ${(delResult && delResult.detail) || 'no encontrado o brain apagado'}.`);
     }
 
     // 📤 /perfil exportar <key> → envía el .md al self-chat para editar
@@ -105,11 +105,11 @@ async function runPerfil({ adapter, remoteJid, queryParam, rawMsg }) {
             ? queryParam.split(/\s+/).slice(1).join(' ').trim().toLowerCase()
             : '';
         if (!keyToExport) {
-            return `⚠️ Uso: \`/perfil exportar <perfil>\`. Disponibles: ${profiles.map(p => `\`${p.key}\``).join(', ') || 'no cargados'}.`;
+            return usageOf('perfil');
         }
         const exported = await exportProfileFile(keyToExport);
         if (!exported) {
-            return `⚠️ Perfil *"${keyToExport}"* no encontrado o brain apagado.`;
+            return syntaxError('perfil', `Perfil *"${keyToExport}"* no encontrado o brain apagado.`);
         }
         try {
             await adapter.sendMessage(remoteJid, {
@@ -129,20 +129,16 @@ async function runPerfil({ adapter, remoteJid, queryParam, rawMsg }) {
     const valid = profiles.find(p => p.key === profileKey);
 
     if (!valid) {
-        return `⚠️ Perfil *"${profileKey}"* no encontrado. Disponibles: ${profiles.map(p => `\`${p.key}\``).join(', ') || 'no hay perfiles cargados'}.`;
+        return syntaxError('perfil', `Perfil *"${profileKey}"* no encontrado. Disponibles: ${profiles.map(p => `\`${p.key}\``).join(', ') || 'no hay perfiles cargados'}.`);
     }
 
     // 🎯 Asignación por contacto: /perfil <key> <num/lid> o cita con número
     let contactTarget = argsParts.slice(1).join(' ').trim();
 
     // Si no hay target explícito pero el admin cita un mensaje con teléfono → per-contacto
-    if (!contactTarget && rawMsg?.message?.extendedTextMessage?.contextInfo?.quotedMessage) {
-        const context = rawMsg.message.extendedTextMessage.contextInfo;
-        const quotedText = context.quotedMessage?.conversation ||
-                           context.quotedMessage?.extendedTextMessage?.text ||
-                           "";
-        const phoneMatch = quotedText.match(/(?:\+?\d[\d\s-]{6,20}\d|\b\d{7,16}\b)/);
-        if (phoneMatch) contactTarget = parsePhoneOrLid(phoneMatch[0]);
+    if (!contactTarget) {
+        const quoted = extractPhoneFromQuoted(rawMsg);
+        if (quoted) contactTarget = quoted;
     }
 
     if (contactTarget) {

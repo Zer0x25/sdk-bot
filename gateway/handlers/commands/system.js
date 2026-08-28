@@ -5,7 +5,7 @@ const { state } = require('../../config');
 const { getContactsDB } = require('../../services/db');
 const { getCountryFromPhone } = require('../../services/metadataService');
 const { requestCleanReset } = require('../../services/resetCleanFlow');
-const { syntaxError } = require('../commandHelpers');
+const { syntaxError, summarizeListCounts, buildMenu } = require('../commandHelpers');
 
 function runPausar() {
     state.IS_BOT_PAUSED = true;
@@ -28,37 +28,15 @@ function runInfo({ remoteJid }) {
 
 function runEstado() {
     const stateDb = getContactsDB();
+    const counts = summarizeListCounts(stateDb);
     return `🤖 *Estado del SDK-Bot:*\n` +
         `• *Estado Bot Global:* ${state.IS_BOT_PAUSED ? '⏸️ Pausado' : '▶️ Activo'}\n` +
         `• *Perfil IA:* ${state.CURRENT_PROFILE}\n` +
-        `• *Permitidos (Allowed):* ${Object.values(stateDb).filter(c => c.estado === 'permitido').length} usuario(s)\n` +
-        `• *Lista Negra (Ignorados):* ${Object.values(stateDb).filter(c => c.estado === 'ignorado').length} usuario(s)\n` +
-        `• *Base de Contactos:* ${Object.keys(stateDb).length} registrado(s)\n\n` +
+        `• *Permitidos (Allowed):* ${counts.allowed} usuario(s)\n` +
+        `• *Lista Negra (Ignorados):* ${counts.ignored} usuario(s)\n` +
+        `• *Base de Contactos:* ${counts.total} registrado(s)\n\n` +
         `📌 *MENÚ DE COMANDOS:*\n\n` +
-        `🤖 *Control Individual (Chat):*\n` +
-        `• \`/a <num>\` -> Activar IA\n` +
-        `• \`/h <num>\` -> Atención Humana (Pausar IA)\n` +
-        `• \`/c <num>\` -> Limpiar Memoria de IA\n\n` +
-        `🛡️ *Modos y Reglas (Listas):*\n` +
-        `• \`/i <num|agenda|*>\` -> Ignorar (Lista Negra)\n` +
-        `• \`/p <num|*>\` -> Permitir (Lista Blanca)\n` +
-        `• \`/q <num|*>\` -> Quitar de listas (Neutro)\n` +
-        `• \`/l\` -> Ver listas de reglas actuales\n\n` +
-        `📇 *Contactos y Agenda:*\n` +
-        `• \`/s <texto>\` -> Buscar contacto\n` +
-        `• \`/n <num> <nombre>\` -> Guardar nombre\n` +
-        `• \`/lc\` -> Resumen de libreta\n` +
-        `• \`/sync\` -> Sincronizar memoria RAM\n` +
-        `• \`/export\` -> Exportar toda la libreta\n\n` +
-        `⚙️ *Sistema y Config:*\n` +
-        `• \`/pg\` / \`/ag\` -> Pausar/Arrancar bot globalmente\n` +
-        `• \`/pf <perfil>\` -> Cambiar prompt IA\n` +
-        `• \`/pf exportar <perfil>\` -> Enviar .md del perfil a editar\n` +
-        `• \`/pf eliminar <perfil>\` -> Borrar un perfil (default protegido)\n` +
-        `• \`/update\` (citando un .md) -> Importar perfil editado\n` +
-        `• \`/info\` -> Datos de depuración\n` +
-        `• \`/init\` -> 📚 Leer guía rápida de inicio\n` +
-        `• \`/reset-clean\` -> 🧨 Reset limpio (fábrica): borra TODO y deja la app recién instalada (doble confirmación con timers)`;
+        buildMenu();
 }
 
 /**
