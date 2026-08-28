@@ -1,6 +1,6 @@
 const { state, registerSentMessage } = require('../config');
 const { enrichContactExtraData, isSelfChat } = require('../services/metadataService');
-const { upsertContactMetadata } = require('../services/contactsRepository');
+const { upsertContactMetadata, isHandoffActive } = require('../services/contactsRepository');
 const { setNumberState } = require('../services/stateService');
 const { processAIChat } = require('../services/brainService');
 const { enqueueAI, poolStats } = require('../services/aiQueue');
@@ -248,6 +248,11 @@ async function handleIncomingMessage(stdMsg) {
     const decision = decideMessageFlow({ textMessage, metadata, contactRecord, isSelf, isFromMe });
     if (decision.type === 'respond') {
         runtimeStats.aiMessages += 1;
+        // 🧹 Handoff expirado: el decisor ya lo trató como neutro; persistimos
+        // el reset para que no "reviva" tras reiniciar (el decisor no muta BD).
+        if (contactRecord && contactRecord.estado === 'handoff' && !isHandoffActive(contactRecord)) {
+            setNumberState(phoneNumber || lid, 'neutral');
+        }
     }
 
     switch (decision.type) {

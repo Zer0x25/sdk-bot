@@ -237,7 +237,20 @@ function cleanContactsDB() {
  * @param {string} [remoteId] - ID compuesto (ej: whatsapp:123, telegram:456)
  * @returns {ContactRecord|null}
  */
-function upsertContactMetadata(metadata, remoteId = undefined) {
+/**
+ * 🏗️ Construye o actualiza un ContactRecord a partir de metadata normalizada.
+ * Fuente única de verdad compartida por upsertContactMetadata y
+ * bulkUpsertContactsMetadata (evita el duplicado de ~70 líneas).
+ * NO guarda la DB ni maneja índices: eso lo hace el llamador.
+ * @param {object} db - contacts DB en memoria
+ * @param {ContactMetadataInput} metadata
+ * @param {object} opts
+ * @param {string} [opts.remoteId] - ID compuesto (ej: whatsapp:123, telegram:456)
+ * @param {boolean} [opts.forceWhatsappKey] - bulkUpsert fuerza clave `whatsapp:<num>`
+ * @param {boolean} [opts.incrementMessages] - upsert individual incrementa totalMessages
+ * @returns {{ targetKey: string, record: ContactRecord } | null}
+ */
+function buildOrUpdateContactRecord(db, metadata, opts = {}) {
     const { phoneNumber, lid, savedName, pushName, verifiedName, country, language, isContact, bio, profilePicUrl, isBusiness, lastEnrichedAt } = metadata;
 
     if (phoneNumber && isJunkJid(phoneNumber)) return null;
@@ -247,18 +260,16 @@ function upsertContactMetadata(metadata, remoteId = undefined) {
     const hasAnyIdentity = phoneNumber || lid || (savedName && savedName.trim()) || (pushName && pushName !== 'Desconocido' && pushName.trim()) || verifiedName || profilePicUrl;
     if (!hasAnyIdentity) return null;
 
-    const db = getContactsDB();
-
-    // ⚡ Índice RAM: O(1) en vez de Object.keys().find() (y SIN el
-    // cleanContactsDB() por llamada: mantenimiento aparte, solo arranque)
     let existingKey = findExistingKey(phoneNumber, lid);
 
-    let targetKey = remoteId || phoneNumber || (existingKey && db[existingKey].phone ? db[existingKey].phone : lid);
-
+    let targetKey = opts.remoteId || phoneNumber || (existingKey && db[existingKey].phone ? db[existingKey].phone : lid);
+    if (opts.forceWhatsappKey) {
+        if (phoneNumber) targetKey = `whatsapp:${phoneNumber}`;
+        else if (lid) targetKey = `whatsapp:${lid}`;
+    }
     if (!targetKey) return null;
 
     if (existingKey && existingKey !== targetKey) {
-        // Migramos los datos al nuevo remoteId compuesto
         const oldData = db[existingKey];
         delete db[existingKey];
         indexRemove(existingKey, oldData);
@@ -299,13 +310,22 @@ function upsertContactMetadata(metadata, remoteId = undefined) {
     if (lastEnrichedAt) record.lastEnrichedAt = lastEnrichedAt;
 
     record.lastSeen = now;
-    record.totalMessages = (record.totalMessages || 0) + 1;
+    if (opts.incrementMessages) record.totalMessages = (record.totalMessages || 0) + 1;
 
-    db[targetKey] = record;
-    indexAdd(targetKey, record);
+    return { targetKey, record };
+}
+
+function upsertContactMetadata(metadata, remoteId = undefined) {
+    if (!metadata) return null;
+    const db = getContactsDB();
+    const built = buildOrUpdateContactRecord(db, metadata, { remoteId, incrementMessages: true });
+    if (!built) return null;
+
+    db[built.targetKey] = built.record;
+    indexAdd(built.targetKey, built.record);
     saveContactsDB(db);
 
-    return record;
+    return built.record;
 }
 
 /**
@@ -326,65 +346,11 @@ function bulkUpsertContactsMetadata(contactsList) {
     const now = new Date().toISOString();
 
     contactsList.forEach(metadata => {
-        const { phoneNumber, lid, savedName, pushName, verifiedName, country, isContact, bio, profilePicUrl, isBusiness, lastEnrichedAt } = metadata;
+        const built = buildOrUpdateContactRecord(db, metadata, { forceWhatsappKey: true });
+        if (!built) return;
 
-        if (phoneNumber && isJunkJid(phoneNumber)) return;
-        if (lid && isJunkJid(lid)) return;
-        if (!phoneNumber && !lid) return;
-
-        const hasAnyIdentity = phoneNumber || lid || (savedName && savedName.trim()) || (pushName && pushName !== 'Desconocido' && pushName.trim()) || verifiedName || profilePicUrl;
-        if (!hasAnyIdentity) return;
-
-        // ⚡ Índice RAM: O(1) en vez de Object.keys().find()
-        let existingKey = findExistingKey(phoneNumber, lid);
-
-        let targetKey = phoneNumber || (existingKey && db[existingKey].phone ? db[existingKey].phone : lid);
-        if (phoneNumber) targetKey = `whatsapp:${phoneNumber}`;
-        else if (lid) targetKey = `whatsapp:${lid}`;
-
-        if (!targetKey) return;
-
-        if (existingKey && existingKey !== targetKey) {
-            const oldData = db[existingKey];
-            delete db[existingKey];
-            indexRemove(existingKey, oldData);
-            db[targetKey] = oldData;
-        }
-
-        const record = db[targetKey] || {
-            phone: phoneNumber || null,
-            lid: lid || null,
-            savedName: (savedName && savedName.trim()) ? savedName.trim() : null,
-            pushName: (pushName && pushName !== 'Desconocido' && pushName.trim()) ? pushName.trim() : null,
-            verifiedName: (verifiedName && verifiedName.trim()) ? verifiedName.trim() : null,
-            country: country || "Desconocido",
-            profilePicUrl: profilePicUrl || null,
-            bio: bio || null,
-            isBusiness: isBusiness || false,
-            isContact: isContact || false,
-            estado: "neutro", // Estado por defecto
-            lastEnrichedAt: lastEnrichedAt || null,
-            firstSeen: now,
-            lastSeen: now,
-            totalMessages: 0
-        };
-
-        if (phoneNumber) record.phone = phoneNumber;
-        if (lid) record.lid = lid;
-        if (savedName && savedName.trim()) record.savedName = savedName.trim();
-        if (pushName && pushName !== 'Desconocido' && pushName.trim()) record.pushName = pushName.trim();
-        if (verifiedName && verifiedName.trim()) record.verifiedName = verifiedName.trim();
-        if (country && country !== 'Desconocido') record.country = country;
-        if (profilePicUrl) record.profilePicUrl = profilePicUrl;
-        if (bio && typeof bio === 'string') record.bio = bio;
-        if (isBusiness !== undefined) record.isBusiness = isBusiness;
-        if (isContact) record.isContact = true;
-        if (lastEnrichedAt) record.lastEnrichedAt = lastEnrichedAt;
-
-        record.lastSeen = now;
-
-        db[targetKey] = record;
-        indexAdd(targetKey, record);
+        db[built.targetKey] = built.record;
+        indexAdd(built.targetKey, built.record);
         count++;
     });
 

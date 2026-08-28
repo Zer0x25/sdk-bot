@@ -190,12 +190,10 @@ function decideMessageFlow({ textMessage, metadata, contactRecord, isSelf, isFro
         if (isHandoffActive(contactRecord, nowMs, handoffTtlMs)) {
             return { type: 'ignore', reason: 'handoff_activo' };
         }
-        // Handoff expirado: transiciona a neutro
+        // Handoff expirado: para esta decisión cuenta como neutro.
+        // El reset PERSISTENTE en la DB lo hace el efecto (messageHandler),
+        // no el decisor puro (ADR-003 §3).
         estado = 'neutro';
-        if (contactRecord) {
-            contactRecord.estado = 'neutro';
-            contactRecord.handoffAt = null;
-        }
     }
 
     if (estado === 'ignorado') {
