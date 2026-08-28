@@ -3,7 +3,9 @@ const StandardMessage = require('../core/StandardMessage');
 const https = require('https');
 const { getSettingsDB } = require('../services/db');
 const { updateTelegramMenu, classifyPollResponse } = require('../services/telegramService');
-const { cat } = require('../services/logger');
+const { transcribeAudio } = require('../services/stt');
+const { num } = require('../tuning');
+const { cat, logError } = require('../services/logger');
 
 const log = cat('TELEGRAM');
 
@@ -72,22 +74,32 @@ class TelegramAdapter extends ChannelAdapter {
             if (updates.ok && updates.result) {
                 for (const u of updates.result) {
                     this.lastUpdateId = Math.max(this.lastUpdateId, u.update_id);
-                    if (u.message && u.message.text) {
-                        const tgChatId = String(u.message.chat.id);
+                    const msg = u.message;
+                    if (!msg) continue;
+
+                    // 🎤 STT local: audio de voz (voice) o audio adjunto.
+                    if ((msg.voice || msg.audio) && num('AUDIO_STT_ENABLED', 0) === 1) {
+                        await this._maybeHandleAudio(u, msg).catch(e =>
+                            logError.error('🎤 Error STT Telegram: ' + e.message));
+                        continue;
+                    }
+
+                    if (msg.text) {
+                        const tgChatId = String(msg.chat.id);
                         
                         // Determinar si es el administrador principal de Telegram
                         const isAdmin = (tgChatId === this.adminChatId);
                         
                         // Parse name
-                        const pushName = u.message.from?.first_name || 'Desconocido';
-                        const username = u.message.from?.username;
+                        const pushName = msg.from?.first_name || 'Desconocido';
+                        const username = msg.from?.username;
                         const fullName = username ? `${pushName} (@${username})` : pushName;
 
                         const stdMsg = new StandardMessage({
                             channel: 'telegram',
                             remoteId: `telegram:${tgChatId}`,
                             rawId: tgChatId,
-                            text: u.message.text,
+                            text: msg.text,
                             metadata: {
                                 pushName: fullName,
                                 savedName: null,
@@ -98,7 +110,7 @@ class TelegramAdapter extends ChannelAdapter {
                                 isFromMe: false,
                                 isAdminChannel: isAdmin
                             },
-                            raw: u.message
+                            raw: msg
                         });
 
                         this.emit('message', stdMsg);
@@ -199,6 +211,100 @@ class TelegramAdapter extends ChannelAdapter {
     async requestPairingCode() {
         throw new Error('Telegram no soporta requestPairingCode');
     }
+
+    /**
+     * 🎤 STT local (Telegram): descarga el audio (voice/audio) vía getFile,
+     * lo transcribe y emite un StandardMessage con el texto normalizado.
+     * @param {object} update - update completo de Telegram (tiene .message.chat.id)
+     * @param {object} msg - update.message (con .voice o .audio y .from)
+     */
+    async _maybeHandleAudio(update, msg) {
+        if (!this.token) return;
+        const voiceOrAudio = msg.voice || msg.audio;
+        if (!voiceOrAudio) return;
+
+        const tgChatId = String(msg.chat.id);
+        const isAdmin = (tgChatId === this.adminChatId);
+        const pushName = msg.from?.first_name || 'Desconocido';
+        const username = msg.from?.username;
+        const fullName = username ? `${pushName} (@${username})` : pushName;
+
+        // Tope de duración (Telegram da `duration` en segundos).
+        const seconds = Number(voiceOrAudio.duration) || 0;
+        const maxSeconds = num('STT_MAX_SECONDS', 120);
+        if (seconds > maxSeconds) {
+            log.warn(`🎤 Audio TG de ${seconds}s excede tope (${maxSeconds}s). Ignorado.`);
+            await this.sendMessage(`telegram:${tgChatId}`,
+                `🎤 Audio muy largo (${seconds}s). Máximo ${maxSeconds}s por ahora.`).catch(() => {});
+            return;
+        }
+
+        try {
+            await this.sendPresenceUpdate('composing', `telegram:${tgChatId}`).catch(() => {});
+
+            // 1) getFile -> file_path
+            const fileId = voiceOrAudio.file_id;
+            const getFileUrl = `https://api.telegram.org/bot${this.token}/getFile?file_id=${encodeURIComponent(fileId)}`;
+            const info = await fetchJson(getFileUrl);
+            if (!info || !info.ok || !info.result || !info.result.file_path) {
+                log.warn('🎤 TG getFile falló: ' + JSON.stringify(info));
+                return;
+            }
+            // 2) descargar el binario
+            const dlUrl = `https://api.telegram.org/file/bot${this.token}/${info.result.file_path}`;
+            const buffer = await downloadBytes(dlUrl);
+            if (!buffer || buffer.length === 0) {
+                log.warn('🎤 TG no se pudo descargar el audio.');
+                return;
+            }
+
+            const ext = (info.result.file_path.split('.').pop() || 'oga').toLowerCase();
+            const transcript = await transcribeAudio(buffer, `tg-audio.${ext}`, { language: 'es' });
+            if (!transcript) {
+                log.warn('🎤 STT TG no devolvió transcripción.');
+                return;
+            }
+
+            log.info(`🎤 [AUDIO TG TRANSCRITO] ${tgChatId}: "${transcript}"`);
+            const stdMsg = new StandardMessage({
+                channel: 'telegram',
+                remoteId: `telegram:${tgChatId}`,
+                rawId: tgChatId,
+                text: transcript,
+                transcript: transcript,
+                isAudio: true,
+                metadata: {
+                    pushName: fullName,
+                    savedName: null,
+                    phoneNumber: null,
+                    lid: tgChatId,
+                    isBusiness: false,
+                    country: 'Desconocido',
+                    isFromMe: false,
+                    isAdminChannel: isAdmin
+                },
+                raw: msg
+            });
+            this.emit('message', stdMsg);
+        } catch (err) {
+            logError.error('🎤 Error en STT de Telegram: ' + (err && err.message));
+        }
+    }
 }
 
 module.exports = TelegramAdapter;
+
+/** GET JSON con timeout explícito (ADR-004). */
+async function fetchJson(url) {
+    const res = await fetch(url, { signal: AbortSignal.timeout(10000) });
+    if (!res.ok) return null;
+    return res.json();
+}
+
+/** Descarga bytes con timeout explícito (ADR-004). */
+async function downloadBytes(url) {
+    const res = await fetch(url, { signal: AbortSignal.timeout(30000) });
+    if (!res.ok) return null;
+    const ab = await res.arrayBuffer();
+    return Buffer.from(ab);
+}

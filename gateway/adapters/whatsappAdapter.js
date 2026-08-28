@@ -1,6 +1,6 @@
 const ChannelAdapter = require('../core/ChannelAdapter');
 const StandardMessage = require('../core/StandardMessage');
-const { default: makeWASocket, useMultiFileAuthState, DisconnectReason } = require('@whiskeysockets/baileys');
+const { default: makeWASocket, useMultiFileAuthState, DisconnectReason, downloadMediaMessage } = require('@whiskeysockets/baileys');
 const pino = require('pino');
 const fs = require('fs');
 const path = require('path');
@@ -11,6 +11,8 @@ const { extractTextMessage, decideReconnect } = require('../services/pipeline');
 const { isBotSentMessage } = require('../config');
 const internalBus = require('../services/internalBus');
 const { getSettingsDB, saveSettingsDB } = require('../services/db');
+const { transcribeAudio } = require('../services/stt');
+const { num } = require('../tuning');
 
 const log = cat('WHATSAPP');
 const logError = cat('ERROR');
@@ -239,9 +241,15 @@ class WhatsappAdapter extends ChannelAdapter {
             if (msg.key.id && isBotSentMessage(msg.key.id)) return;
 
             const text = extractTextMessage(msg);
-            if (!text) return; // Ignore non-text for now
-
             const metadata = extractUserMetadata(msg);
+
+            if (!text) {
+                // 🎤 STT local: si es un audio de voz (ptt), transcribirlo y
+                // usar el texto como si fuera un mensaje de texto normal.
+                await this._maybeHandleAudio(msg, metadata);
+                return;
+            }
+
             const remoteJid = metadata.remoteJid;
 
             const stdMsg = new StandardMessage({
@@ -287,6 +295,89 @@ class WhatsappAdapter extends ChannelAdapter {
             this.sock = null;
         }
         this.setStatus('disconnected');
+    }
+
+    /**
+     * 🎤 STT local: si el mensaje es un audio de voz (ptt), lo descarga,
+     * lo transcribe con el servicio faster-whisper y emite un StandardMessage
+     * con el texto ya normalizado (igual que un texto). Si el STT está
+     * desactivado o falla, el audio se descarta sin romper el canal.
+     * @param {object} msg - mensaje Baileys (msg.message.audioMessage)
+     * @param {object} metadata - metadata ya extraída del usuario
+     */
+    async _maybeHandleAudio(msg, metadata) {
+        const audioMsg = msg?.message?.audioMessage;
+        if (!audioMsg) return; // no es audio: ignorar (imagen/doc/etc.) como antes
+
+        const enabled = num('AUDIO_STT_ENABLED', 0) === 1;
+        if (!enabled) {
+            log.info('🎤 STT desactivado (AUDIO_STT_ENABLED=0): audio ignorado.');
+            return;
+        }
+
+        // Tope de duración por el campo `seconds` que Baileys expone.
+        const seconds = Number(audioMsg.seconds) || 0;
+        const maxSeconds = num('STT_MAX_SECONDS', 120);
+        if (seconds > maxSeconds) {
+            log.warn(`🎤 Audio de ${seconds}s excede el tope (${maxSeconds}s). Se ignora.`);
+            // Avisar al usuario con un globo corto vía el adapter si está conectado.
+            const remoteJid = metadata?.remoteJid || msg.key?.remoteJid;
+            if (remoteJid && this.sock) {
+                await this.sendMessage(`whatsapp:${remoteJid}`,
+                    `🎤 Audio muy largo (${seconds}s). Máximo ${maxSeconds}s por ahora.`)
+                    .catch(() => {});
+            }
+            return;
+        }
+
+        try {
+            // Indicar "grabando/transcribiendo" para feedback humano.
+            const remoteJid = metadata?.remoteJid || msg.key?.remoteJid;
+            if (remoteJid && this.sock) {
+                await this.sendPresenceUpdate('recording', `whatsapp:${remoteJid}`).catch(() => {});
+            }
+
+            // downloadMediaMessage(msg, 'buffer', options, ctx) — igual que profiles.js.
+            const buffer = await downloadMediaMessage(msg, 'buffer', {}, {
+                logger: log,
+                reuploadRequest: async (m) => m
+            });
+            if (!buffer || buffer.length === 0) {
+                log.warn('🎤 No se pudo descargar el audio (buffer vacío).');
+                return;
+            }
+
+            const ext = (audioMsg.mimetype || 'audio/ogg').includes('ogg') ? 'ogg'
+                : (audioMsg.mimetype || '').includes('mp4') ? 'm4a' : 'ogg';
+            const transcript = await transcribeAudio(buffer, `wa-audio.${ext}`, { language: 'es' });
+            if (!transcript) {
+                log.warn('🎤 STT no devolvió transcripción (audio ignorado).');
+                return;
+            }
+
+            log.info(`🎤 [AUDIO TRANSCRITO] ${remoteJid}: "${transcript}"`);
+            const stdMsg = new StandardMessage({
+                channel: 'whatsapp',
+                remoteId: `whatsapp:${remoteJid}`,
+                rawId: remoteJid,
+                text: transcript,
+                transcript: transcript,
+                isAudio: true,
+                metadata: {
+                    ...metadata,
+                    isFromMe: msg.key.fromMe
+                },
+                raw: msg
+            });
+            this.emit('message', stdMsg);
+        } catch (err) {
+            logError.error('🎤 Error en STT de WhatsApp: ' + (err && err.message));
+        } finally {
+            const remoteJid = metadata?.remoteJid || msg.key?.remoteJid;
+            if (remoteJid && this.sock) {
+                await this.sendPresenceUpdate('paused', `whatsapp:${remoteJid}`).catch(() => {});
+            }
+        }
     }
 
     async sendMessage(normalizedJid, text, options = {}) {

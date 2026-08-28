@@ -1,0 +1,8 @@
+# SDK-BOT STT service — local speech-to-text (faster-whisper, CPU int8)
+# Mantener versiones fijas para reproducibilidad en producción.
+faster-whisper==1.0.3
+ctranslate2==4.5.0
+fastapi==0.115.6
+uvicorn[standard]==0.34.0
+python-multipart==0.0.20
+requests==2.32.3

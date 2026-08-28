@@ -1,12 +1,23 @@
 // @ts-check
 const path = require('path');
 const fs = require('fs');
+const { num } = require('./tuning');
 
 // URL de la API del Cerebro (FastAPI).
 // Lee BRAIN_API_BASE por env; fallback a :5100 (estándar dev playground).
 // Dev (playground): se setea BRAIN_API_BASE=http://127.0.0.1:5100 (rango dev).
 const BRAIN_API_BASE = process.env.BRAIN_API_BASE || 'http://127.0.0.1:5100';
 const BRAIN_API_URL = `${BRAIN_API_BASE}/chat`;
+
+// 🎤 STT (speech-to-text) local — servicio faster-whisper del repo (stt/).
+// En Docker apunta a http://stt:9000 (service en compose.yml); en dev local
+// a http://127.0.0.1:9000. Detrás de red interna, sin exposición a internet.
+const STT_API_URL = process.env.STT_API_URL || (process.env.NODE_ENV === 'production'
+    ? 'http://stt:9000'
+    : 'http://127.0.0.1:9000');
+// Tope de espera por audio (ADR-004: todo fetch lleva timeout explícito).
+// La transcripción en CPU puede tardar; 60s cubre audios cortos en base int8.
+const STT_TIMEOUT_MS = num('STT_TIMEOUT_MS', 60000);
 
 // 🔐 S1 — API key del brain. El gateway la toma de process.env o, por defecto,
 // de brain/.env (misma fuente que el brain; se pega UNA sola vez, gitignored).
@@ -65,6 +76,8 @@ module.exports = {
     BRAIN_API_URL,
     BRAIN_API_BASE,
     BRAIN_API_KEY: getBrainApiKey(),
+    STT_API_URL,
+    STT_TIMEOUT_MS,
     CONTACTS_FILE_PATH,
     SETTINGS_FILE_PATH,
     state,

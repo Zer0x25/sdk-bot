@@ -28,6 +28,39 @@ services:
       retries: 6
       start_period: 10s
 
+  # 🎤 STT local (faster-whisper). Expone /v1/audio/transcriptions en la red
+  # Docker interna (stt:9000). NO se publica en el host: el gateway es el único
+  # cliente y corre en la misma red. El modelo se cachea en el volumen
+  # sdk_bot_stt_models para no re-descargarlo en cada reinicio.
+  stt:
+    build:
+      context: ../..
+      dockerfile: deploy/docker/stt.Dockerfile
+    environment:
+      NODE_ENV: production
+      STT_MODEL: base            # base | small (small = mejor accuracy, más CPU)
+      STT_DEVICE: cpu
+      STT_COMPUTE_TYPE: int8
+      STT_CACHE: /var/lib/sdk-bot-stt/models
+      STT_PORT: 9000
+      STT_LANGUAGE: es           # forzar español acelera y mejora accuracy
+      STT_MAX_UPLOAD_BYTES: 5242880
+    volumes:
+      - sdk_bot_stt_models:/var/lib/sdk-bot-stt/models
+    restart: unless-stopped
+    healthcheck:
+      test:
+        - CMD
+        - python
+        - -c
+        - >-
+          import urllib.request;
+          urllib.request.urlopen('http://127.0.0.1:9000/health', timeout=3)
+      interval: 10s
+      timeout: 5s
+      retries: 6
+      start_period: 20s
+
   gateway:
     build:
       context: ../..
@@ -130,3 +163,5 @@ volumes:
     name: sdk-bot-production-gateway-logs
   sdk_bot_brain_logs:
     name: sdk-bot-production-brain-logs
+  sdk_bot_stt_models:
+    name: sdk-bot-production-stt-models
