@@ -4,7 +4,7 @@
 const { getContactsDB } = require('../../services/db');
 const { clearAIMemory } = require('../../services/brainService');
 const { setNumberState } = require('../../services/stateService');
-const { resolveTarget, syntaxError } = require('../commandHelpers');
+const { resolveTarget, getGlobalMode, syntaxError } = require('../commandHelpers');
 
 function runIa({ queryParam }) {
     const t = resolveTarget(queryParam, 'ia');
@@ -19,6 +19,11 @@ function runIa({ queryParam }) {
 function runHumano({ queryParam }) {
     const t = resolveTarget(queryParam, 'humano');
     if (!t.ok) return t.error;
+    // Coherencia con el pipeline: en Modo Global estricto (ignored_all) el bot
+    // no atiende clientes salvo whitelist, así que /humano tampoco aplica.
+    if (getGlobalMode() === 'ignored_all') {
+        return syntaxError('humano', 'El bot está en *Modo Global Estricto* (Ignorar a Todos). Reactívalo con `/permitir *` antes de pausar la IA por cliente.');
+    }
     const res = setNumberState(t.targetId, 'handoff');
     if (res.success) {
         return `🤝 *Atención Humana activada para:*\n\`${res.target}\`.\nLa IA permanecerá en silencio durante 24 horas (volverá a estado neutro automáticamente, o reactiva antes con \`/ia ${res.target}\`).`;

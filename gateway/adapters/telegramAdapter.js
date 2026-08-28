@@ -3,6 +3,7 @@ const StandardMessage = require('../core/StandardMessage');
 const https = require('https');
 const { getSettingsDB } = require('../services/db');
 const { updateTelegramMenu, classifyPollResponse } = require('../services/telegramService');
+const { registerSentMessage, isBotSentMessage } = require('../config');
 const { cat } = require('../services/logger');
 
 const log = cat('TELEGRAM');
@@ -73,6 +74,11 @@ class TelegramAdapter extends ChannelAdapter {
                 for (const u of updates.result) {
                     this.lastUpdateId = Math.max(this.lastUpdateId, u.update_id);
                     if (u.message && u.message.text) {
+                        // 🛑 ANTI-BUCLE (simétrico a WhatsApp): ignorar los
+                        // mensajes que el propio bot envió (evita reprocesar
+                        // respuestas del bot como si fueran del admin/cliente).
+                        if (u.message.message_id && isBotSentMessage(u.message.message_id)) continue;
+
                         const tgChatId = String(u.message.chat.id);
                         
                         // Determinar si es el administrador principal de Telegram
@@ -149,7 +155,12 @@ class TelegramAdapter extends ChannelAdapter {
                 res.on('data', chunk => body += chunk);
                 res.on('end', () => {
                     if (res.statusCode === 200) {
-                        resolve(JSON.parse(body));
+                        const bodyJson = JSON.parse(body);
+                        // 🛑 Registrar el message_id para el anti-bucle del poller
+                        if (bodyJson && bodyJson.result && bodyJson.result.message_id) {
+                            registerSentMessage({ message_id: bodyJson.result.message_id });
+                        }
+                        resolve(bodyJson);
                     } else if (useMarkdown && res.statusCode === 400 && body.includes("can't parse entities")) {
                         // Retry without markdown
                         this.sendMessage(normalizedJid, text, { ...options, useMarkdown: false })
