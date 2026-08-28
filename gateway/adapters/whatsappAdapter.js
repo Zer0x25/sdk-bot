@@ -23,7 +23,7 @@ class WhatsappAdapter extends ChannelAdapter {
         this.sock = null;
         this.reconnectAttempt = 0;
         this.reconnectTimer = null;
-        this.RECONNECT_BACKOFF_MS = [2000, 5000, 15000, 60000];
+        this.RECONNECT_BACKOFF_MS = [1000, 5000, 15000, 60000];
     }
 
     /** Lee el ultimo numero admin conocido desde settings DB (sobrevive reinicios). */
@@ -40,7 +40,10 @@ class WhatsappAdapter extends ChannelAdapter {
     }
 
     getReconnectDelay() {
-        const idx = Math.min(this.reconnectAttempt, this.RECONNECT_BACKOFF_MS.length - 1);
+        // reconnectAttempt ya fue incrementado en scheduleReconnect (queda en 1
+        // en el primer reconnect), así que el delay del primer intento usa el
+        // índice 0 del array. Sin el -1 el índice 0 quedaría muerto.
+        const idx = Math.max(0, Math.min(this.reconnectAttempt - 1, this.RECONNECT_BACKOFF_MS.length - 1));
         return this.RECONNECT_BACKOFF_MS[idx];
     }
 

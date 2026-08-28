@@ -151,6 +151,8 @@ let lastQrDataUrl = null;
 const qrClients = new Set();
 /** @type {any} Callback que el gateway inyecta para forzar re-emisión de QR (refresh). */
 let qrRefreshCb = null;
+/** @type {any} Callback que el gateway inyecta para re-hacer el pairing tras un reset de sesión (no clean). */
+let resetReconnectCb = null;
 /** @type {any} Callback que el gateway inyecta para pedir código de pairing por número. */
 let pairingCodeRequester = null;
 /** @type {any} Callback que el gateway inyecta para reconectar Telegram tras cambiar la config. */
@@ -431,6 +433,17 @@ function setQrRefresh(cb) {
     if (typeof cb === 'function') qrRefreshCb = cb;
 }
 
+/**
+ * El gateway inyecta un callback para re-hacer el pairing tras un reset de
+ * sesión (no clean) disparado desde el panel. En vez de matar el proceso
+ * (process.exit) — que en dev/dejaría el gateway muerto sin supervisor —,
+ * reconecta el adaptador de WhatsApp en caliente y emite un QR nuevo. El
+ * panel (producto final) queda usable sin consola.
+ */
+function setResetReconnect(cb) {
+    if (typeof cb === 'function') resetReconnectCb = cb;
+}
+
 /** El gateway inyecta un callback para pedir código de pairing por número. */
 function setPairingCodeRequester(cb) {
     pairingCodeRequester = typeof cb === 'function' ? cb : null;
@@ -593,6 +606,18 @@ async function performReset(clean = false) {
     } catch (e) {
         resetInProgress = false;
         return { success: false, message: `No se pudo borrar la sesión: ${errMsg(e)}` };
+    }
+    // Reset de pairing (no clean): reconectar WhatsApp en caliente y emitir
+    // QR nuevo, SIN matar el gateway. El panel (producto final) queda usable
+    // sin consola. Si no hay callback inyectado (raro), cae al restart clásico.
+    if (typeof resetReconnectCb === 'function') {
+        try {
+            await resetReconnectCb();
+        } catch (e) {
+            logError.error(`🧹 reset-reconnect falló: ${errMsg(e)} — haciendo restart clásico`);
+            scheduleRestart();
+        }
+        return { success: true, message: `Sesión ${deleted ? 'eliminada' : 'ya borrada'}; escanea el QR nuevo en el panel.` };
     }
     scheduleRestart();
     return { success: true, message: `Sesión ${deleted ? 'eliminada' : 'ya borrada'}; reiniciando gateway…` };
@@ -1045,7 +1070,7 @@ function startInternalBus(opts = {}) {
 
 module.exports = {
     startInternalBus, setSock, clearSock, handleConnectionUpdate, setQrRefresh, setPairingCodeRequester,
-    setTelegramReloader, requestPairing, runAdminCommand, performReset, performRestart, wsReadyState,
+    setResetReconnect, setTelegramReloader, requestPairing, runAdminCommand, performReset, performRestart, wsReadyState,
     qrPayload, resetInProgressForTests, setQrTtlForTests, resetQrForTests, setPairingCodeTimeoutForTests,
     isQrWindowOpen: () => qrWindowOpen && !!lastQrDataUrl && Date.now() < qrExpiresAt,
     notifyAdmin

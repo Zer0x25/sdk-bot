@@ -215,14 +215,28 @@ cd gateway\panel && node index.js # terminal 3
 
 ### 5. Desarrollo en Linux — lanzamiento manual:
 
-El desarrollo no usa systemd ni Docker Compose. Abre terminales separadas y
-arranca manualmente; siempre inicia el brain antes del gateway.
+El desarrollo no usa systemd ni Docker Compose. La forma recomendada es
+`deploy/linux/dev.sh`, que lanza los 3 procesos en background (brain :5100,
+gateway :5400/:5300, panel :5201), crea el venv del brain y las devDeps del
+gateway si faltan (con `NODE_ENV=development` forzado para no omitir eslint/tsc),
+y deja logs en `/tmp/sdk-bot-{brain,gateway,panel}.log`.
 
 ```bash
 cd ~/playground/sdk-bot
-bash deploy/linux/dev.sh manual todos      # imprime los comandos para 3 terminales
-# En terminales separadas:
-bash deploy/linux/dev.sh manual brain
+bash deploy/linux/dev.sh up all        # levanta brain + gateway + panel en background
+bash deploy/linux/dev.sh status        # health de los 3 puertos
+bash deploy/linux/dev.sh down          # mata todo y libera los locks
+# Por componente:
+bash deploy/linux/dev.sh up brain
+bash deploy/linux/dev.sh up gateway
+bash deploy/linux/dev.sh up panel
+```
+
+Para lanzar un solo proceso en foreground (debug paso a paso) queda el modo
+legacy `manual`:
+
+```bash
+bash deploy/linux/dev.sh manual brain     # toma la terminal
 bash deploy/linux/dev.sh manual gateway
 bash deploy/linux/dev.sh manual panel
 ```
@@ -237,9 +251,10 @@ instancia manual y los contenedores de producción sobre la misma sesión.
 ### 6. Re-sincronizar Libreta Completa de Contactos (Fresh QR):
 ```bash
 cd gateway
-npm run reset
+npm run reset          # interactivo: pide confirmación y luego genera QR
+npm run reset -- --yes # no interactivo: borra la sesión y sale (el gateway ya corriendo regenera el QR)
 ```
-*(O usa `npm run clean` para un reset limpio de fábrica F7)*
+*(O usa `npm run clean -- --yes` para un reset limpio de fábrica F7 — borra TODO el estado de runtime excepto `brain/profiles/`)*
 
 ---
 

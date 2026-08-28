@@ -70,6 +70,12 @@ function spawnBrain() {
     console.log(`🧠 Brain relanzado (${py} main.py) en :${env.BRAIN_PORT} — espera unos segundos antes de preguntarle al gateway.`);
 }
 
+// Modo no interactivo: `npm run clean -- --yes` (o SDK_CLEAN_NONINTERACTIVE=1).
+// Borra TODO el estado de runtime y SALE (no relanza nada: el gateway ya
+// corriendo regenera el QR; dev.sh up es quien levanta). Antes el script
+// relanzaba procesos y quedaba colgado como daemon.
+const NONINTERACTIVE = process.argv.includes('--yes') || process.env.SDK_CLEAN_NONINTERACTIVE === '1';
+
 function askConfirmation(question) {
     const rl = readline.createInterface({ input: process.stdin, output: process.stdout });
     return new Promise(resolve => {
@@ -90,16 +96,20 @@ async function main() {
     }
     console.log('\n⚠️  Los perfiles SOUL (brain/profiles/*.md) se CONSERVAN (versionados en git).\n');
 
-    const first = await askConfirmation('¿Continuar? [y/N]: ');
-    if (!['y', 'yes', 's', 'si', 'sí'].includes(first)) {
-        console.log('❌ Operación cancelada. Nada fue borrado.');
-        process.exit(0);
-    }
+    if (NONINTERACTIVE) {
+        console.log('🤖 Modo no interactivo (--yes): sin confirmaciones.\n');
+    } else {
+        const first = await askConfirmation('¿Continuar? [y/N]: ');
+        if (!['y', 'yes', 's', 'si', 'sí'].includes(first)) {
+            console.log('❌ Operación cancelada. Nada fue borrado.');
+            process.exit(0);
+        }
 
-    const magic = await askConfirmation('⚠️  CONFIRMACIÓN FINAL: escribe BORRAR-TODO para continuar: ');
-    if (magic !== 'borrar-todo') {
-        console.log('❌ Confirmación incorrecta. Nada fue borrado.');
-        process.exit(0);
+        const magic = await askConfirmation('⚠️  CONFIRMACIÓN FINAL: escribe BORRAR-TODO para continuar: ');
+        if (magic !== 'borrar-todo') {
+            console.log('❌ Confirmación incorrecta. Nada fue borrado.');
+            process.exit(0);
+        }
     }
 
     // 1) Parar instancias (el lock de instancia única protege auth_info_baileys)
@@ -123,7 +133,15 @@ async function main() {
     }
     console.log(`\n✅ Reset limpio completado (${report.deleted.length} borrados).`);
 
-    // 3) Relanzar lo que estaba corriendo (systemd ya lo hace solo)
+    // 3) Relanzar lo que estaba corriendo (systemd ya lo hace solo).
+    // En modo no interactivo NO relanzamos: dejamos que dev.sh up / el gateway
+    // ya corriendo regeneren el QR. Salimos limpio para automatización.
+    if (NONINTERACTIVE) {
+        console.log('\n🎉 Reset limpio completado (modo --yes). La app quedó en estado 0.');
+        console.log('   Levanta con: bash deploy/linux/dev.sh up  (o el gateway ya corriendo regenera el QR).');
+        process.exit(0);
+    }
+
     if (brainPid && !brainSystemd) spawnBrain();
     if (gwPid && !gwSystemd) {
         console.log('🚀 Lanzando gateway para generar el QR nuevo (igual que `npm run reset`)...');

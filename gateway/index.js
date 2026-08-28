@@ -223,6 +223,14 @@ async function startGateway() {
         log.info('🔌 [BUS] Refresco de QR pedido desde el panel: recreando socket de pairing…');
         whatsapp.connect({ freshQr: true });
     });
+
+    // Reset de pairing desde el panel: reconectar WhatsApp en caliente (nuevo
+    // QR) sin matar el gateway. En dev no hay systemd que lo reviva, y el panel
+    // es el producto final -> debe quedar usable sin consola.
+    internalBus.setResetReconnect(() => {
+        log.info('🔌 [BUS] Reset de pairing desde el panel: rehaciendo sesión de WhatsApp (QR nuevo)...');
+        return whatsapp.connect({ freshQr: true });
+    });
     
     internalBus.setPairingCodeRequester(async (number) => {
         if (whatsapp.isSessionRegistered()) {
