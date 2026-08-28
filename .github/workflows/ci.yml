@@ -23,7 +23,7 @@ jobs:
       - run: npm run lint
       - run: npm run typecheck
       - run: npm test
-      - run: bash ../deploy/linux/tests/install-smoke.sh
+      - run: bash ../deploy/linux/tests/dev-smoke.sh
 
   brain:
     name: Brain (ruff + pytest)

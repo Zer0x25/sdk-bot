@@ -50,8 +50,10 @@ launch_brain() {
     ensure_brain_deps
     wait_port_free "$BRAIN_PORT"
     cd "$REPO/brain"
-    NODE_ENV=development BRAIN_PORT="$BRAIN_PORT" BRAIN_HOST=0.0.0.0 \
-        nohup "$REPO/brain/venv/bin/python" main.py > /tmp/sdk-bot-brain.log 2>&1 &
+    # setsid desacopla el proceso de la sesión del script: al terminar dev.sh
+    # los hijos no reciben SIGHUP y siguen vivos (más robusto que nohup).
+    setsid env NODE_ENV=development BRAIN_PORT="$BRAIN_PORT" BRAIN_HOST=0.0.0.0 \
+        "$REPO/brain/venv/bin/python" main.py > /tmp/sdk-bot-brain.log 2>&1 &
     echo $! > "$PID_DIR/brain.pid"
     log "🧠 brain -> pid $(cat "$PID_DIR/brain.pid") (log: /tmp/sdk-bot-brain.log)"
 }
@@ -61,9 +63,9 @@ launch_gateway() {
     wait_port_free "$STATUS_PORT"
     wait_port_free 5400
     cd "$REPO/gateway"
-    NODE_ENV=development SDK_ADMIN_WEB_ENABLED=0 ADMIN_WEB_PORT="$ADMIN_WEB_PORT" STATUS_PORT="$STATUS_PORT" \
+    setsid env NODE_ENV=development SDK_ADMIN_WEB_ENABLED=0 ADMIN_WEB_PORT="$ADMIN_WEB_PORT" STATUS_PORT="$STATUS_PORT" \
         BRAIN_API_BASE="http://127.0.0.1:$BRAIN_PORT" ADMIN_WEB_HOST=0.0.0.0 STATUS_HOST=0.0.0.0 \
-        nohup npm start > /tmp/sdk-bot-gateway.log 2>&1 &
+        npm start > /tmp/sdk-bot-gateway.log 2>&1 &
     echo $! > "$PID_DIR/gateway.pid"
     log "🌐 gateway -> pid $(cat "$PID_DIR/gateway.pid") (log: /tmp/sdk-bot-gateway.log)"
 }
@@ -72,10 +74,10 @@ launch_panel() {
     ensure_gateway_deps
     wait_port_free "$ADMIN_WEB_PORT"
     cd "$REPO/gateway/panel"
-    NODE_ENV=development ADMIN_WEB_PORT="$ADMIN_WEB_PORT" ADMIN_WEB_HOST=0.0.0.0 \
+    setsid env NODE_ENV=development ADMIN_WEB_PORT="$ADMIN_WEB_PORT" ADMIN_WEB_HOST=0.0.0.0 \
         GATEWAY_INTERNAL_URL="http://127.0.0.1:5400" \
         NODE_PATH="$REPO/gateway/node_modules" \
-        nohup node index.js > /tmp/sdk-bot-panel.log 2>&1 &
+        node index.js > /tmp/sdk-bot-panel.log 2>&1 &
     echo $! > "$PID_DIR/panel.pid"
     log "🖥️ panel -> pid $(cat "$PID_DIR/panel.pid") (log: /tmp/sdk-bot-panel.log)"
 }
@@ -84,16 +86,20 @@ cmd_up() {
     # Idempotente: mata lo que ya corra (PID file o puerto) antes de relanzar,
     # para no dejar instancias zombie duplicadas ni conflictos de puerto.
     cmd_down >/dev/null
-    local target="${1:-all}"
-    case "$target" in
-        brain)   launch_brain ;;
-        gateway) launch_gateway ;;
-        panel)   launch_panel ;;
-        all)     launch_brain; sleep 1; launch_gateway; launch_panel ;;
-        *) usage >&2; exit 1 ;;
-    esac
-    log ""
-    log "Espera ~6s y corre: bash deploy/linux/dev.sh status"
+    if [ "${1:-}" = "all" ] || [ $# -eq 0 ]; then
+        launch_brain; sleep 1; launch_gateway; launch_panel
+        return
+    fi
+    local launched=0
+    for target in "$@"; do
+        case "$target" in
+            brain)   launch_brain; launched=1 ;;
+            gateway) launch_gateway; launched=1 ;;
+            panel)   launch_panel; launched=1 ;;
+            *) log "Componente desconocido: $target (ignorado)";;
+        esac
+    done
+    if [ "$launched" -eq 0 ]; then usage >&2; exit 1; fi
 }
 
 # Espera a que el puerto quede libre (el proceso matado puede tardar en
@@ -209,7 +215,7 @@ cmd_manual() {
 }
 
 case "${1:-}" in
-    up)     cmd_up "${2:-all}" ;;
+    up)     cmd_up "${@:2}" ;;
     down)   cmd_down ;;
     status) cmd_status ;;
     manual) cmd_manual "$@" ;;
