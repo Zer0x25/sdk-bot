@@ -33,6 +33,11 @@ BRAIN_HOST = os.getenv("BRAIN_HOST", "127.0.0.1")
 # Modelos recomendados y estables
 OPENROUTER_MODEL = "openrouter/free"
 GROQ_MODEL = "llama-3.3-70b-versatile"
+# Primary por defecto del bot (tunable vía .env.tuning -> BRAIN_PRIMARY_MODEL).
+# Gemini 3.1 Flash Lite: barato, rápido, buen español. Groq/OpenRouter quedan
+# como respaldo en la cascada de providers.py.
+GEMINI_MODEL = os.getenv("GEMINI_MODEL", "gemini-3.1-flash-lite")
+BRAIN_PRIMARY_MODEL = os.getenv("BRAIN_PRIMARY_MODEL", "gemini")
 
 # 🧠 Memoria de conversación (brain/memory.py) — tunables vía .env.tuning
 # Valores por defecto (se sobreescriben si están en .env.tuning):

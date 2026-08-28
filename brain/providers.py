@@ -11,7 +11,9 @@ except ImportError:
     genai = None
     types = None
 from config import (
+    BRAIN_PRIMARY_MODEL,
     GEMINI_API_KEY,
+    GEMINI_MODEL,
     GROQ_API_KEY,
     GROQ_MODEL,
     OPENROUTER_API_KEY,
@@ -46,94 +48,94 @@ if genai is not None and GEMINI_API_KEY:
 log = make_logger("brain.ai")
 
 
+def _call_groq(messages_for_openai):
+    if not groq_client:
+        raise Exception("No hay API Key de Groq configurada")
+    completion = groq_client.chat.completions.create(
+        model=GROQ_MODEL,
+        messages=messages_for_openai,
+        timeout=25.0,
+    )
+    return completion.choices[0].message.content
+
+
+def _call_openrouter(messages_for_openai):
+    if not openrouter_client:
+        raise Exception("No hay API Key de OpenRouter configurada")
+    completion = openrouter_client.chat.completions.create(
+        model=OPENROUTER_MODEL,
+        messages=messages_for_openai,
+        timeout=25.0,
+    )
+    return completion.choices[0].message.content
+
+
+def _call_gemini(system_instruction, message, memory_history):
+    if not gemini_client:
+        raise Exception("No hay API Key de Gemini configurada")
+    gemini_history = []
+    for msg in memory_history:
+        role = "user" if msg["role"] == "user" else "model"
+        gemini_history.append({"role": role, "parts": [{"text": msg["content"]}]})
+    chat = gemini_client.chats.create(
+        model=GEMINI_MODEL,
+        config=types.GenerateContentConfig(
+            system_instruction=system_instruction,
+            http_options=types.HttpOptions(timeout=40000),
+        ),
+        history=gemini_history,
+    )
+    response = chat.send_message(message)
+    return response.text
+
+
 def safe_log(msg: str):
     try:
         log.info(msg)
     except Exception:
         pass
 
+
 async def generate_ai_response(system_instruction: str, message: str, memory_history: list, user_id: str):
     respuesta_texto = None
-    provider_used = f"Groq ({GROQ_MODEL})"
-    
+
     # Preparamos el historial para OpenAI/Groq
     messages_for_openai = [{"role": "system", "content": system_instruction}]
     messages_for_openai.extend(memory_history)
     messages_for_openai.append({"role": "user", "content": message})
 
-    # 🟢 INTENTO 1: Groq (Llama 3.3 70B Versatile) - PRINCIPAL (Max 25s)
-    try:
-        if not groq_client:
-            raise Exception("No hay API Key de Groq configurada")
+    # Orden de la cascada. El primary por defecto es Gemini (barato/rápido, buen
+    # español); Groq y OpenRouter quedan como respaldo. Se puede sobreescribir
+    # con BRAIN_PRIMARY_MODEL=groq|openrouter|gemini en .env.tuning.
+    primary = (BRAIN_PRIMARY_MODEL or "gemini").lower()
+    if primary == "groq":
+        order = [("Groq", _call_groq, lambda: GROQ_MODEL),
+                 ("OpenRouter", _call_openrouter, lambda: OPENROUTER_MODEL),
+                 ("Gemini", lambda: _call_gemini(system_instruction, message, memory_history), lambda: GEMINI_MODEL)]
+    elif primary == "openrouter":
+        order = [("OpenRouter", _call_openrouter, lambda: OPENROUTER_MODEL),
+                 ("Groq", _call_groq, lambda: GROQ_MODEL),
+                 ("Gemini", lambda: _call_gemini(system_instruction, message, memory_history), lambda: GEMINI_MODEL)]
+    else:  # gemini (default)
+        order = [("Gemini", lambda: _call_gemini(system_instruction, message, memory_history), lambda: GEMINI_MODEL),
+                 ("Groq", _call_groq, lambda: GROQ_MODEL),
+                 ("OpenRouter", _call_openrouter, lambda: OPENROUTER_MODEL)]
 
-        completion = groq_client.chat.completions.create(
-            model=GROQ_MODEL,
-            messages=messages_for_openai,
-            timeout=25.0
-        )
-        respuesta_texto = completion.choices[0].message.content
-        
-        new_history = [
-            *memory_history,
-            {"role": "user", "content": message},
-            {"role": "assistant", "content": respuesta_texto}
-        ]
-        return respuesta_texto, provider_used, new_history
-
-    except Exception as groq_err:
-        safe_log(f"\n⚠️ Groq saturado/timeout (25s: {groq_err}). Cambiando a Fallback 1 (OpenRouter)...")
-        
-        # 🟡 INTENTO 2: OpenRouter (openrouter/free) - SEGUNDO RESPALDO (Max 25s)
+    last_err = None
+    for name, fn, model_label in order:
         try:
-            if not openrouter_client:
-                raise Exception("No hay API Key de OpenRouter configurada")
-
-            completion = openrouter_client.chat.completions.create(
-                model=OPENROUTER_MODEL,
-                messages=messages_for_openai,
-                timeout=25.0
-            )
-            respuesta_texto = completion.choices[0].message.content
-            provider_used = f"OpenRouter ({OPENROUTER_MODEL})"
-            
+            respuesta_texto = fn()
+            provider_used = f"{name} ({model_label()})"
             new_history = [
                 *memory_history,
                 {"role": "user", "content": message},
-                {"role": "assistant", "content": respuesta_texto}
+                {"role": "assistant", "content": respuesta_texto},
             ]
             return respuesta_texto, provider_used, new_history
-            
-        except Exception as openrouter_err:
-            safe_log(f"\n⚠️ OpenRouter fallo (25s: {openrouter_err}). Cambiando a Fallback 2 (Gemini Flash Lite)...")
-            
-            # 🔴 INTENTO 3: Google Gemini Flash Lite - TERCER RESPALDO (Max 40s para completar 90s total)
-            try:
-                if not gemini_client:
-                    raise Exception("No hay API Key de Gemini configurada")
+        except Exception as err:
+            last_err = err
+            safe_log(f"\n⚠️ {name} falló: {err}. Probando siguiente proveedor...")
 
-                # Convertimos el historial OpenAI-style a Gemini-style
-                gemini_history = []
-                for msg in memory_history:
-                    role = "user" if msg["role"] == "user" else "model"
-                    gemini_history.append({"role": role, "parts": [{"text": msg["content"]}]})
-                
-                chat = gemini_client.chats.create(
-                    model="gemini-flash-lite-latest",
-                    config=types.GenerateContentConfig(
-                        system_instruction=system_instruction,
-                        http_options=types.HttpOptions(timeout=40000)
-                    ),
-                    history=gemini_history
-                )
-                response = chat.send_message(message)
-                respuesta_texto = response.text
-                provider_used = "Google Gemini Flash Lite"
-                
-                new_history = [
-                    *memory_history,
-                    {"role": "user", "content": message},
-                    {"role": "assistant", "content": respuesta_texto}
-                ]
-                return respuesta_texto, provider_used, new_history
-            except Exception as gemini_err:
-                raise Exception(f"Todos los proveedores fallaron en la cascada de 90s. Groq: {groq_err} | OpenRouter: {openrouter_err} | Gemini: {gemini_err}") from None
+    raise Exception(f"Todos los proveedores fallaron en la cascada. " + " | ".join(
+        f"{n}: {e}" for (n, _, _), e in zip(order, [last_err] * len(order))
+    )) from None

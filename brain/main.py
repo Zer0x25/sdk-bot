@@ -10,7 +10,14 @@ from fastapi import FastAPI, HTTPException, Request
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel
 
-from config import BRAIN_API_KEY, BRAIN_HOST, GROQ_MODEL, OPENROUTER_MODEL
+from config import (
+    BRAIN_API_KEY,
+    BRAIN_HOST,
+    BRAIN_PRIMARY_MODEL,
+    GEMINI_MODEL,
+    GROQ_MODEL,
+    OPENROUTER_MODEL,
+)
 from logging_setup import make_logger
 from memory import append_exchange, clear_history, get_db_stats, get_history
 from profiles import (
@@ -190,8 +197,8 @@ def history_endpoint(user_id: str, bot_id: str | None = None,
 def health_check():
     return {
         "status": "ok",
-        "primary": f"Groq ({GROQ_MODEL})",
-        "fallbacks": [f"OpenRouter ({OPENROUTER_MODEL})", "Gemini (gemini-flash-lite-latest)"]
+        "primary": f"Gemini ({GEMINI_MODEL})" if (BRAIN_PRIMARY_MODEL or "gemini").lower() == "gemini" else f"Groq ({GROQ_MODEL})",
+        "fallbacks": [f"Groq ({GROQ_MODEL})", f"OpenRouter ({OPENROUTER_MODEL})"]
     }
 
 @app.get("/health")
@@ -201,8 +208,8 @@ def health_endpoint():
         "status": "ok",
         "uptime_seconds": round(time.time() - START_TIME),
         "providers": {
-            "primary": f"Groq ({GROQ_MODEL})",
-            "fallbacks": [f"OpenRouter ({OPENROUTER_MODEL})", "Gemini (gemini-flash-lite-latest)"],
+            "primary": f"Gemini ({GEMINI_MODEL})" if (BRAIN_PRIMARY_MODEL or "gemini").lower() == "gemini" else f"Groq ({GROQ_MODEL})",
+            "fallbacks": [f"Groq ({GROQ_MODEL})", f"OpenRouter ({OPENROUTER_MODEL})"],
         },
         "rate_limit": {
             "enabled": RATE_LIMIT_ENABLED,
