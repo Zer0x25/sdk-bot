@@ -11,7 +11,13 @@ except ImportError:
     genai = None
     types = None
 from config import (
+    BRAIN_MAX_OUTPUT_TOKENS,
     BRAIN_PRIMARY_MODEL,
+    BRAIN_TEMPERATURE,
+    BRAIN_TIMEOUT_GEMINI,
+    BRAIN_TIMEOUT_GROQ,
+    BRAIN_TIMEOUT_OPENROUTER,
+    BRAIN_TOP_P,
     GEMINI_API_KEY,
     GEMINI_MODEL,
     GROQ_API_KEY,
@@ -28,7 +34,7 @@ if GROQ_API_KEY:
     groq_client = OpenAI(
         base_url="https://api.groq.com/openai/v1",
         api_key=GROQ_API_KEY,
-        timeout=25.0 # Timeout de 25s para Groq
+        timeout=BRAIN_TIMEOUT_GROQ,
     )
 
 # 2. Cliente OpenRouter
@@ -37,7 +43,7 @@ if OPENROUTER_API_KEY:
     openrouter_client = OpenAI(
         base_url="https://openrouter.ai/api/v1",
         api_key=OPENROUTER_API_KEY,
-        timeout=25.0 # Timeout de 25s para OpenRouter (permite generación de textos largos)
+        timeout=BRAIN_TIMEOUT_OPENROUTER,
     )
 
 # 3. Cliente Gemini (solo si el módulo está disponible)
@@ -54,7 +60,10 @@ def _call_groq(messages_for_openai):
     completion = groq_client.chat.completions.create(
         model=GROQ_MODEL,
         messages=messages_for_openai,
-        timeout=25.0,
+        temperature=BRAIN_TEMPERATURE,
+        top_p=BRAIN_TOP_P,
+        timeout=BRAIN_TIMEOUT_GROQ,
+        **({"max_tokens": BRAIN_MAX_OUTPUT_TOKENS} if BRAIN_MAX_OUTPUT_TOKENS > 0 else {}),
     )
     return completion.choices[0].message.content
 
@@ -65,7 +74,10 @@ def _call_openrouter(messages_for_openai):
     completion = openrouter_client.chat.completions.create(
         model=OPENROUTER_MODEL,
         messages=messages_for_openai,
-        timeout=25.0,
+        temperature=BRAIN_TEMPERATURE,
+        top_p=BRAIN_TOP_P,
+        timeout=BRAIN_TIMEOUT_OPENROUTER,
+        **({"max_tokens": BRAIN_MAX_OUTPUT_TOKENS} if BRAIN_MAX_OUTPUT_TOKENS > 0 else {}),
     )
     return completion.choices[0].message.content
 
@@ -81,7 +93,10 @@ def _call_gemini(system_instruction, message, memory_history):
         model=GEMINI_MODEL,
         config=types.GenerateContentConfig(
             system_instruction=system_instruction,
-            http_options=types.HttpOptions(timeout=40000),
+            temperature=BRAIN_TEMPERATURE,
+            top_p=BRAIN_TOP_P,
+            **({"max_output_tokens": BRAIN_MAX_OUTPUT_TOKENS} if BRAIN_MAX_OUTPUT_TOKENS > 0 else {}),
+            http_options=types.HttpOptions(timeout=int(BRAIN_TIMEOUT_GEMINI * 1000)),
         ),
         history=gemini_history,
     )
@@ -109,17 +124,17 @@ async def generate_ai_response(system_instruction: str, message: str, memory_his
     # con BRAIN_PRIMARY_MODEL=groq|openrouter|gemini en .env.tuning.
     primary = (BRAIN_PRIMARY_MODEL or "gemini").lower()
     if primary == "groq":
-        order = [("Groq", _call_groq, lambda: GROQ_MODEL),
-                 ("OpenRouter", _call_openrouter, lambda: OPENROUTER_MODEL),
+        order = [("Groq", lambda: _call_groq(messages_for_openai), lambda: GROQ_MODEL),
+                 ("OpenRouter", lambda: _call_openrouter(messages_for_openai), lambda: OPENROUTER_MODEL),
                  ("Gemini", lambda: _call_gemini(system_instruction, message, memory_history), lambda: GEMINI_MODEL)]
     elif primary == "openrouter":
-        order = [("OpenRouter", _call_openrouter, lambda: OPENROUTER_MODEL),
-                 ("Groq", _call_groq, lambda: GROQ_MODEL),
+        order = [("OpenRouter", lambda: _call_openrouter(messages_for_openai), lambda: OPENROUTER_MODEL),
+                 ("Groq", lambda: _call_groq(messages_for_openai), lambda: GROQ_MODEL),
                  ("Gemini", lambda: _call_gemini(system_instruction, message, memory_history), lambda: GEMINI_MODEL)]
     else:  # gemini (default)
         order = [("Gemini", lambda: _call_gemini(system_instruction, message, memory_history), lambda: GEMINI_MODEL),
-                 ("Groq", _call_groq, lambda: GROQ_MODEL),
-                 ("OpenRouter", _call_openrouter, lambda: OPENROUTER_MODEL)]
+                 ("Groq", lambda: _call_groq(messages_for_openai), lambda: GROQ_MODEL),
+                 ("OpenRouter", lambda: _call_openrouter(messages_for_openai), lambda: OPENROUTER_MODEL)]
 
     last_err = None
     for name, fn, model_label in order:

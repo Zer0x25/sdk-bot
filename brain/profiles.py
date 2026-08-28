@@ -32,6 +32,7 @@ así se pueden editar en caliente sin reiniciar.
 import os
 import re
 
+from config import BRAIN_STYLE_GLOBAL
 from logging_setup import make_logger
 
 log = make_logger("brain.perfiles")
@@ -207,6 +208,15 @@ def build_system_prompt(profile_key: str) -> str:
     for ejemplo in profile["ejemplos"]:
         lines.append(f"Cliente: \"{ejemplo['cliente']}\"")
         lines.append(f"Asistente: \"{ejemplo['asistente']}\"")
+
+    # Estilo global de "imitación humana": se inyecta SIEMPRE, encima del rol
+    # del perfil, para que la voz sea consistente en todos los bots/clientes.
+    if BRAIN_STYLE_GLOBAL.strip():
+        lines.extend([
+            "",
+            "Estilo de comunicación (aplica siempre):",
+            BRAIN_STYLE_GLOBAL.strip(),
+        ])
 
     return "\n".join(lines)
 

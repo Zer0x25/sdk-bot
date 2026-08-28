@@ -50,10 +50,11 @@ launch_brain() {
     ensure_brain_deps
     wait_port_free "$BRAIN_PORT"
     cd "$REPO/brain"
-    # setsid desacopla el proceso de la sesión del script: al terminar dev.sh
-    # los hijos no reciben SIGHUP y siguen vivos (más robusto que nohup).
-    setsid env NODE_ENV=development BRAIN_PORT="$BRAIN_PORT" BRAIN_HOST=0.0.0.0 \
-        "$REPO/brain/venv/bin/python" main.py > /tmp/sdk-bot-brain.log 2>&1 &
+    # nohup + & deja el listener como job del script; cmd_up hace `disown`
+    # para que al terminar dev.sh no reciban SIGHUP. El PID escrito es el
+    # listener real (nohup no hace doble fork), así cmd_down lo mata bien.
+    NODE_ENV=development BRAIN_PORT="$BRAIN_PORT" BRAIN_HOST=0.0.0.0 \
+        nohup "$REPO/brain/venv/bin/python" main.py > /tmp/sdk-bot-brain.log 2>&1 &
     echo $! > "$PID_DIR/brain.pid"
     log "🧠 brain -> pid $(cat "$PID_DIR/brain.pid") (log: /tmp/sdk-bot-brain.log)"
 }
@@ -63,9 +64,9 @@ launch_gateway() {
     wait_port_free "$STATUS_PORT"
     wait_port_free 5400
     cd "$REPO/gateway"
-    setsid env NODE_ENV=development SDK_ADMIN_WEB_ENABLED=0 ADMIN_WEB_PORT="$ADMIN_WEB_PORT" STATUS_PORT="$STATUS_PORT" \
+    NODE_ENV=development SDK_ADMIN_WEB_ENABLED=0 ADMIN_WEB_PORT="$ADMIN_WEB_PORT" STATUS_PORT="$STATUS_PORT" \
         BRAIN_API_BASE="http://127.0.0.1:$BRAIN_PORT" ADMIN_WEB_HOST=0.0.0.0 STATUS_HOST=0.0.0.0 \
-        npm start > /tmp/sdk-bot-gateway.log 2>&1 &
+        nohup npm start > /tmp/sdk-bot-gateway.log 2>&1 &
     echo $! > "$PID_DIR/gateway.pid"
     log "🌐 gateway -> pid $(cat "$PID_DIR/gateway.pid") (log: /tmp/sdk-bot-gateway.log)"
 }
@@ -74,10 +75,10 @@ launch_panel() {
     ensure_gateway_deps
     wait_port_free "$ADMIN_WEB_PORT"
     cd "$REPO/gateway/panel"
-    setsid env NODE_ENV=development ADMIN_WEB_PORT="$ADMIN_WEB_PORT" ADMIN_WEB_HOST=0.0.0.0 \
+    NODE_ENV=development ADMIN_WEB_PORT="$ADMIN_WEB_PORT" ADMIN_WEB_HOST=0.0.0.0 \
         GATEWAY_INTERNAL_URL="http://127.0.0.1:5400" \
         NODE_PATH="$REPO/gateway/node_modules" \
-        node index.js > /tmp/sdk-bot-panel.log 2>&1 &
+        nohup node index.js > /tmp/sdk-bot-panel.log 2>&1 &
     echo $! > "$PID_DIR/panel.pid"
     log "🖥️ panel -> pid $(cat "$PID_DIR/panel.pid") (log: /tmp/sdk-bot-panel.log)"
 }
@@ -88,6 +89,7 @@ cmd_up() {
     cmd_down >/dev/null
     if [ "${1:-}" = "all" ] || [ $# -eq 0 ]; then
         launch_brain; sleep 1; launch_gateway; launch_panel
+        disown -a 2>/dev/null || true
         return
     fi
     local launched=0
@@ -100,6 +102,9 @@ cmd_up() {
         esac
     done
     if [ "$launched" -eq 0 ]; then usage >&2; exit 1; fi
+    # Desacopla los jobs del script: al terminar dev.sh no reciben SIGHUP y
+    # siguen vivos en segundo plano.
+    disown -a 2>/dev/null || true
 }
 
 # Espera a que el puerto quede libre (el proceso matado puede tardar en

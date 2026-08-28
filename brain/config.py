@@ -39,6 +39,28 @@ GROQ_MODEL = "llama-3.3-70b-versatile"
 GEMINI_MODEL = os.getenv("GEMINI_MODEL", "gemini-3.1-flash-lite")
 BRAIN_PRIMARY_MODEL = os.getenv("BRAIN_PRIMARY_MODEL", "gemini")
 
+# Timeouts por proveedor (segundos). Antes hardcodeados en providers.py.
+BRAIN_TIMEOUT_GROQ = float(os.getenv("BRAIN_TIMEOUT_GROQ", "25"))
+BRAIN_TIMEOUT_OPENROUTER = float(os.getenv("BRAIN_TIMEOUT_OPENROUTER", "25"))
+BRAIN_TIMEOUT_GEMINI = float(os.getenv("BRAIN_TIMEOUT_GEMINI", "40"))
+
+# Ventana del rate-limit (segundos). Antes hardcodeada en 60.0 en main.py.
+BRAIN_RATE_LIMIT_WINDOW = float(os.getenv("BRAIN_RATE_LIMIT_WINDOW", "60"))
+
+# Muestreo / "voz" del bot (capa de humanización). 0 = sin tope de salida.
+BRAIN_TEMPERATURE = float(os.getenv("BRAIN_TEMPERATURE", "0.7"))
+BRAIN_TOP_P = float(os.getenv("BRAIN_TOP_P", "0.9"))
+BRAIN_MAX_OUTPUT_TOKENS = int(os.getenv("BRAIN_MAX_OUTPUT_TOKENS", "0"))
+
+# Estilo global de "imitación humana" inyectado en TODOS los perfiles (rol
+# aparte). Reglas de voz consistentes sin repetirlas en cada .md. Tunable.
+BRAIN_STYLE_GLOBAL = os.getenv(
+    "BRAIN_STYLE_GLOBAL",
+    "Hablar como un humano real por WhatsApp: mensajes cortos y cálidos, un solo "
+    "emoji como mucho por globo, saltos de línea para separar ideas, y sin sonar "
+    "robótico ni como manual de instrucciones. Responder en el idioma del cliente.",
+)
+
 # 🧠 Memoria de conversación (brain/memory.py) — tunables vía .env.tuning
 # Valores por defecto (se sobreescriben si están en .env.tuning):
 #   WINDOW 24h, MAX_MESSAGES 15, MAX_TOKENS 2000, SWEEP cada 50 escrituras.

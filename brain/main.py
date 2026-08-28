@@ -14,6 +14,7 @@ from config import (
     BRAIN_API_KEY,
     BRAIN_HOST,
     BRAIN_PRIMARY_MODEL,
+    BRAIN_RATE_LIMIT_WINDOW,
     GEMINI_MODEL,
     GROQ_MODEL,
     OPENROUTER_MODEL,
@@ -221,11 +222,10 @@ def health_endpoint():
 
 
 # -------------------------------------------------------------
-# ⏱️ S2 — Rate limit por user_id en /chat (ventana deslizante de 60s)
-# -------------------------------------------------------------
+# ⏱️ S2 — Rate limit por user_id en /chat (ventana deslizante, tunable)
 RATE_LIMIT_ENABLED = os.getenv("BRAIN_RATE_LIMIT_ENABLED", "1") == "1"
 RATE_LIMIT_MAX = int(os.getenv("BRAIN_RATE_LIMIT_PER_MIN", "10"))
-RATE_LIMIT_WINDOW = 60.0
+RATE_LIMIT_WINDOW = BRAIN_RATE_LIMIT_WINDOW
 _rate_hits = {}  # user_id -> [timestamps]
 
 def _is_rate_limited(user_id: str) -> bool:
