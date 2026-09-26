@@ -306,6 +306,19 @@ function getBroadcastStats() {
  * Resume-safe: el cursor se persiste tras cada envío. No hace nada si los
  * broadcasts están desactivados.
  */
+async function sendMessageSafe(targetJid, text) {
+    if (!sock) return null;
+    // Si sock es un ChannelAdapter que espera (normalizedJid, text)
+    if (typeof sock.channelName === 'string') {
+        const normalized = targetJid.startsWith('whatsapp:') || targetJid.startsWith('telegram:')
+            ? targetJid
+            : `whatsapp:${targetJid}`;
+        return await sock.sendMessage(normalized, text);
+    }
+    // Socket raw de Baileys o mock de test
+    return await sock.sendMessage(targetJid, { text });
+}
+
 let tickRunning = false;
 
 async function tickUnsafe() {
@@ -354,8 +367,8 @@ async function tickUnsafe() {
     }
 
     try {
-        const sentMsg = await sock.sendMessage(target.jid, { text: active.text });
-        registerSentMessage(sentMsg);
+        const sentMsg = await sendMessageSafe(target.jid, active.text);
+        if (sentMsg) registerSentMessage(sentMsg);
         active.sent += 1;
         markSent(target.phone, db.dailySends);
         log.info(`📢 [BROADCAST] (${active.sent}/${active.eligible}) → ${target.jid}`);
@@ -385,11 +398,11 @@ async function tick() {
 
 async function notifyAdmin(text) {
     if (!sock) return;
-    const adminJid = state.ADMIN_PHONE ? `${state.ADMIN_PHONE}@s.whatsapp.net` : `${state.ADMIN_LID}@lid`;
+    const adminJid = state.ADMIN_PHONE ? `${state.ADMIN_PHONE}@s.whatsapp.net` : (state.ADMIN_LID ? `${state.ADMIN_LID}@lid` : null);
     if (!adminJid) return;
     try {
-        const sent = await sock.sendMessage(adminJid, { text });
-        registerSentMessage(sent);
+        const sent = await sendMessageSafe(adminJid, text);
+        if (sent) registerSentMessage(sent);
     } catch (e) {
         logError.error('📢 [BROADCAST] No se pudo notificar al admin: ' + errMsg(e));
     }

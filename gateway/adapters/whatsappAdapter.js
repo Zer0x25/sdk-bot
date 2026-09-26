@@ -383,7 +383,8 @@ class WhatsappAdapter extends ChannelAdapter {
     async sendMessage(normalizedJid, text, options = {}) {
         if (!this.sock) throw new Error('WhatsApp no conectado');
         const waJid = normalizedJid.replace('whatsapp:', '');
-        return await this.sock.sendMessage(waJid, { text, ...options });
+        const content = (text && typeof text === 'object') ? { ...text, ...options } : { text, ...options };
+        return await this.sock.sendMessage(waJid, content);
     }
 
     async sendPresenceUpdate(status, normalizedJid) {

@@ -205,10 +205,11 @@ async function startGateway() {
     await whatsapp.connect();
     await telegram.connect();
 
-    // Compatibilidad Inyectar socket a colas para compatibilidad temporal
-    messageQueue.setSock(whatsapp); // Needs refactor to use adapter
-    broadcastService.setSock(whatsapp); // Needs refactor
-    internalBus.setSock(whatsapp); // Needs refactor
+    // Inyectar adaptadores y resolutores multi-canal
+    messageQueue.setSock(whatsapp);
+    messageQueue.setAdapterResolver(getAdapter);
+    broadcastService.setSock(whatsapp);
+    internalBus.setSock(whatsapp);
     
     internalBus.setQrRefresh(() => {
         // No recrear el socket si ya hay un QR vigente o un pairing en curso:

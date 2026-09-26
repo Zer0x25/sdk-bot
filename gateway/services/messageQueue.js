@@ -147,6 +147,27 @@ function setFlushHandler(handler) {
     flushHandler = handler;
 }
 
+/** @type {((channel: string) => any) | null} */
+let adapterResolver = null;
+
+function setAdapterResolver(resolver) {
+    adapterResolver = resolver;
+}
+
+/**
+ * Resuelve el adaptador adecuado para el JID (ej. 'telegram:...' -> TelegramAdapter).
+ * Si no hay resolver registrado o no encuentra canal, hace fallback a `sock`.
+ * @param {string} [jid]
+ */
+function resolveAdapter(jid) {
+    if (jid && adapterResolver) {
+        const channel = jid.includes(':') ? jid.split(':')[0] : 'whatsapp';
+        const found = adapterResolver(channel);
+        if (found) return found;
+    }
+    return sock;
+}
+
 /** index.js lo llama con el socket activo para poder responder. */
 function setSock(activeSock) {
     sock = activeSock;
@@ -192,6 +213,8 @@ module.exports = {
     setFlushHandler,
     setSock,
     getSock,
+    setAdapterResolver,
+    resolveAdapter,
     scheduleFlush,
     __debugState,
     clearQueueForTest,
