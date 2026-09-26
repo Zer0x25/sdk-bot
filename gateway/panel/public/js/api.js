@@ -3,8 +3,27 @@
  * 📡 Capa de API HTTP centralizada para el panel
  */
 
+export function getStatusToken() {
+  return typeof window !== 'undefined' ? (window.localStorage?.getItem('sdkbot_status_token') || '') : '';
+}
+
+export function setStatusToken(token) {
+  if (typeof window !== 'undefined') {
+    if (token) window.localStorage?.setItem('sdkbot_status_token', token);
+    else window.localStorage?.removeItem('sdkbot_status_token');
+  }
+}
+
+function defaultHeaders(extra = {}) {
+  const headers = { ...extra };
+  const token = getStatusToken();
+  if (token) headers['X-Status-Token'] = token;
+  return headers;
+}
+
 async function fetchJson(url, options = {}) {
-  const r = await fetch(url, options);
+  const opts = { ...options, headers: defaultHeaders(options.headers || {}) };
+  const r = await fetch(url, opts);
   return r.json();
 }
 
@@ -114,7 +133,10 @@ export async function deleteProfile(key) {
 }
 
 export async function clearLogs(component) {
-  const r = await fetch(`/api/logs?component=${encodeURIComponent(component)}`, { method: 'DELETE' });
+  const r = await fetch(`/api/logs?component=${encodeURIComponent(component)}`, {
+    method: 'DELETE',
+    headers: defaultHeaders()
+  });
   return r.json().catch(() => ({}));
 }
 

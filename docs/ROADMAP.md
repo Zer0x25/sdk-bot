@@ -16,7 +16,7 @@ El hito más reciente fue la transición hacia la arquitectura **Adapter Hub**, 
 
 ### Deuda técnica / refactor pendientes
 - **R1. Optimización en storage:** `bulkUpsertContactsMetadata` es ineficiente con +5000 contactos. Necesita índices estables (Map phone→key, Map lid→key) para evitar búsquedas O(n).
-- **R2. Seguridad del Panel Web:** Falta implementar el token opcional `STATUS_TOKEN` para operaciones de escritura en el API del dashboard y validación de CORS estricta.
+- ~~**R2. Seguridad del Panel Web:**~~ [COMPLETADO] Implementado token opcional `STATUS_TOKEN` para escrituras (`X-Status-Token`) y validación de `Origin`/`sec-fetch-site`.
 - **R3. Verificación en Vivo del Wipe Total:** Validar completamente `npm run clean` en vivo con un teléfono secundario para confirmar el comportamiento post-reset con la agenda.
 
 ---
@@ -25,7 +25,7 @@ El hito más reciente fue la transición hacia la arquitectura **Adapter Hub**, 
 
 Objetivo: Refinar la resiliencia del sistema de adaptadores múltiples y blindar el Webpanel.
 
-- [ ] **Seguridad del Panel** — Token opcional `STATUS_TOKEN` para escrituras (header `X-Status-Token`) + validación de `Origin`; acceso remoto seguro documentado vía Tailscale / túnel SSH.
+- [x] **Seguridad del Panel** — Token opcional `STATUS_TOKEN` para escrituras (header `X-Status-Token`) + validación de `Origin`; acceso remoto seguro documentado vía Tailscale / túnel SSH.
 - [ ] **Caché y RAM Optimizada** — Aplicar índices incrementales `Map` en la DB de contactos para reducir los picos de memoria durante el sync del historial de WhatsApp.
 - [ ] **Sincronización Completa de Contactos** — Cola por chunks + índices incrementales. Requiere re-vincular (QR fresco) para confirmar que la agenda baja completa sin saturar RAM.
 - [ ] **Reconexión con Backoff en medio del diálogo** — Validar en vivo el comportamiento cuando el teléfono del bot se queda sin internet en mitad de un procesamiento de IA y cómo se maneja el reenvío de mensajes (pendientes de la antigua Fase 1).

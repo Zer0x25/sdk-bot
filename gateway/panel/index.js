@@ -59,6 +59,57 @@ const ALLOWED_EMAILS = (process.env.PANEL_ALLOWED_EMAILS || '')
 const COOKIE_NAME = 'sdkbot_session';
 const SESSION_TTL_MS = 1000 * 60 * 60 * 12; // 12 horas
 
+// --- Seguridad de panel: STATUS_TOKEN y Validación de Origin (Fase 9) ---
+const STATUS_TOKEN = process.env.STATUS_TOKEN || process.env.PANEL_STATUS_TOKEN || '';
+
+/**
+ * Valida si una petición de mutación (POST/PUT/DELETE/PATCH) está autorizada:
+ * 1. Si STATUS_TOKEN está configurado, header X-Status-Token válido autoriza.
+ * 2. Si Sec-Fetch-Site es 'cross-site', se rechaza.
+ * 3. Si hay Origin o Referer, debe coincidir con el Host o PUBLIC_URL.
+ * 4. Si STATUS_TOKEN está configurado y no se envió token, exige sesión válida.
+ * @param {http.IncomingMessage} req
+ * @returns {boolean}
+ */
+function isWriteAuthorized(req) {
+    const headerToken = req.headers['x-status-token'];
+    if (STATUS_TOKEN && typeof headerToken === 'string' && headerToken === STATUS_TOKEN) {
+        return true;
+    }
+
+    const secFetchSite = req.headers['sec-fetch-site'];
+    if (secFetchSite === 'cross-site') {
+        return false;
+    }
+
+    const originHeader = req.headers.origin;
+    const refererHeader = req.headers.referer;
+    const origin = typeof originHeader === 'string' ? originHeader : (typeof refererHeader === 'string' ? new URL(refererHeader).origin : null);
+    if (origin) {
+        try {
+            const originUrl = new URL(origin);
+            const reqHost = req.headers.host || '';
+            const matchesHost = originUrl.host === reqHost;
+            let matchesPublic = false;
+            if (PUBLIC_URL) {
+                matchesPublic = originUrl.origin === new URL(PUBLIC_URL).origin;
+            }
+            if (!matchesHost && !matchesPublic) {
+                return false;
+            }
+        } catch {
+            return false;
+        }
+    }
+
+    if (STATUS_TOKEN) {
+        const session = parseSession(req);
+        if (!session) return false;
+    }
+
+    return true;
+}
+
 const MIME = {
     '.html': 'text/html; charset=utf-8',
     '.js': 'text/javascript; charset=utf-8',
@@ -304,6 +355,15 @@ const server = http.createServer(async (req, res) => {
         if (pathname === '/auth/logout') return handleLogout(req, res);
     }
 
+    // Seguridad de escrituras en API (Fase 9: Origin check + STATUS_TOKEN)
+    if (pathname.startsWith('/api/') && ['POST', 'PUT', 'DELETE', 'PATCH'].includes(req.method || '')) {
+        if (!isWriteAuthorized(req)) {
+            res.writeHead(403, { 'Content-Type': 'application/json' });
+            res.end(JSON.stringify({ error: 'Acceso de escritura rechazado: Origin no autorizado o STATUS_TOKEN inválido' }));
+            return;
+        }
+    }
+
     // Legacy: OAuth deshabilitado => comportamiento original (panel abierto).
     if (!OAUTH_ENABLED) {
         if (pathname.startsWith('/api/')) {
@@ -341,11 +401,15 @@ const server = http.createServer(async (req, res) => {
     return serveStatic(req, res, pathname);
 });
 
-server.listen(PORT, HOST, () => {
-    if (OAUTH_ENABLED) {
-        const restrict = ALLOWED_EMAILS.length ? `solo: ${ALLOWED_EMAILS.join(', ')}` : 'cualquier cuenta Google';
-        console.log(`🖥️ [PANEL] Panel web en http://${HOST}:${PORT} (OAuth Google ACTIVO, ${restrict}; bus interno ${INTERNAL})`);
-    } else {
-        console.log(`🖥️ [PANEL] Panel web en http://${HOST}:${PORT} (OAuth DESHABILITADO — panel abierto; bus interno ${INTERNAL})`);
-    }
-});
+if (require.main === module) {
+    server.listen(PORT, HOST, () => {
+        if (OAUTH_ENABLED) {
+            const restrict = ALLOWED_EMAILS.length ? `solo: ${ALLOWED_EMAILS.join(', ')}` : 'cualquier cuenta Google';
+            console.log(`🖥️ [PANEL] Panel web en http://${HOST}:${PORT} (OAuth Google ACTIVO, ${restrict}; bus interno ${INTERNAL})`);
+        } else {
+            console.log(`🖥️ [PANEL] Panel web en http://${HOST}:${PORT} (OAuth DESHABILITADO — panel abierto; bus interno ${INTERNAL})`);
+        }
+    });
+}
+
+module.exports = { server, isWriteAuthorized, parseSession };
