@@ -1,3 +1,4 @@
+// @ts-check
 const ChannelAdapter = require('../core/ChannelAdapter');
 const StandardMessage = require('../core/StandardMessage');
 const https = require('https');
@@ -6,9 +7,10 @@ const { updateTelegramMenu, classifyPollResponse } = require('../services/telegr
 const { registerSentMessage, isBotSentMessage } = require('../config');
 const { transcribeAudio } = require('../services/stt');
 const { num } = require('../tuning');
-const { cat, logError } = require('../services/logger');
+const { cat } = require('../services/logger');
 
 const log = cat('TELEGRAM');
+const logError = cat('ERROR');
 
 class TelegramAdapter extends ChannelAdapter {
     constructor() {
@@ -132,8 +134,9 @@ class TelegramAdapter extends ChannelAdapter {
                 return;
             }
         } catch (e) {
-            if (e.message !== 'socket hang up') {
-                log.error('Error en poller de telegram: ' + e.message);
+            const err = /** @type {any} */ (e);
+            if (err?.message !== 'socket hang up') {
+                log.error('Error en poller de telegram: ' + (err?.message || err));
             }
             await new Promise(r => setTimeout(r, 5000));
         }
@@ -227,8 +230,8 @@ class TelegramAdapter extends ChannelAdapter {
     /**
      * 🎤 STT local (Telegram): descarga el audio (voice/audio) vía getFile,
      * lo transcribe y emite un StandardMessage con el texto normalizado.
-     * @param {object} update - update completo de Telegram (tiene .message.chat.id)
-     * @param {object} msg - update.message (con .voice o .audio y .from)
+     * @param {any} update - update completo de Telegram (tiene .message.chat.id)
+     * @param {any} msg - update.message (con .voice o .audio y .from)
      */
     async _maybeHandleAudio(update, msg) {
         if (!this.token) return;
@@ -257,7 +260,7 @@ class TelegramAdapter extends ChannelAdapter {
             // 1) getFile -> file_path
             const fileId = voiceOrAudio.file_id;
             const getFileUrl = `https://api.telegram.org/bot${this.token}/getFile?file_id=${encodeURIComponent(fileId)}`;
-            const info = await fetchJson(getFileUrl);
+            const info = /** @type {any} */ (await fetchJson(getFileUrl));
             if (!info || !info.ok || !info.result || !info.result.file_path) {
                 log.warn('🎤 TG getFile falló: ' + JSON.stringify(info));
                 return;
@@ -299,7 +302,8 @@ class TelegramAdapter extends ChannelAdapter {
             });
             this.emit('message', stdMsg);
         } catch (err) {
-            logError.error('🎤 Error en STT de Telegram: ' + (err && err.message));
+            const e = /** @type {any} */ (err);
+            logError.error('🎤 Error en STT de Telegram: ' + (e && e.message));
         }
     }
 }

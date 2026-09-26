@@ -1,12 +1,12 @@
 /**
  * 🎭 PERFILES SOUL (/perfil, /update, /import) + subida de .md desde WhatsApp
  */
-const { state, registerSentMessage } = require('../../config');
+const { registerSentMessage } = require('../../config');
 const { cat } = require("../../services/logger");
 const { downloadMediaMessage } = require('@whiskeysockets/baileys');
 const { setCurrentProfile, setContactProfile } = require('../../services/stateService');
 const { getAvailableProfiles, getProfileDetail, exportProfileFile, importProfileFile, deleteProfileFile } = require('../../services/brainService');
-const { parsePhoneOrLid, usageOf, syntaxError, extractPhoneFromQuoted } = require('../commandHelpers');
+const { usageOf, syntaxError, extractPhoneFromQuoted } = require('../commandHelpers');
 
 const log = cat("COMANDO");
 const logError = cat("ERROR");
@@ -67,7 +67,6 @@ async function handleProfileUpload(adapter, remoteJid, docMessage, msgKey) {
 
 async function runPerfil({ adapter, remoteJid, queryParam, rawMsg }) {
     const profiles = await getAvailableProfiles();
-    const profileList = profiles.map(p => `• \`${p.key}\` - *${p.nombre}*: ${p.descripcion}`).join('\n');
 
     if (!queryParam) {
         return usageOf('perfil');

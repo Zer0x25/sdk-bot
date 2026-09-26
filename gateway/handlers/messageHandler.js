@@ -11,7 +11,7 @@ const { tryConfirm } = require('../services/broadcastService');
 const { tryCleanConfirm } = require('../services/resetCleanFlow');
 const { cat } = require('../services/logger');
 const chatStore = require('../store/chatStore'); // Opción C: store RAM de mensajes de Baileys (precarga web-like)
-const { num } = require('../tuning');
+const { num, str } = require('../tuning');
 const { getChatHistory } = require('../services/brainService');
 
 // 📢 Logging por categoría ([AI], [DEBOUNCE], [PRESENCIA], [COMANDO], [ERROR])
@@ -39,7 +39,7 @@ const TYPING_TTL_MS = num('GATEWAY_TYPING_TTL_MS', 5000);           // 5.0 segun
 const PRELOAD_ENABLED = num('GATEWAY_PRELOAD_ENABLED', 0) === 1;
 const PRELOAD_TTL_MS = num('GATEWAY_PRELOAD_TTL_MS', 180000);       // 3 min: el precargo caliente dura esto antes de refrescar (tunable vía .env.tuning)
 const PRELOAD_ONLY_DIRECT = num('GATEWAY_PRELOAD_ONLY_DIRECT', 1) === 1; // solo chats 1-a-1 (no grupos) por defecto
-const PRELOAD_SOURCE = (num('GATEWAY_PRELOAD_SOURCE', 'baileys') || 'baileys').toString().toLowerCase(); // 'baileys' | 'brain'
+const PRELOAD_SOURCE = (str('GATEWAY_PRELOAD_SOURCE', 'baileys') || 'baileys').toLowerCase(); // 'baileys' | 'brain'
 // Límites de la "primera página" de la precarga (etapa 1, web-like). Son MENORES
 // que los de respuesta: la precarga es solo señal de intervención
 // (el bot "ya sabe de qué va" al abrir el chat) y NO se usa para contestar.
@@ -52,8 +52,13 @@ const PRELOAD_MAX_TOKENS = num('GATEWAY_PRELOAD_MAX_TOKENS', 0);
 /** @type {Map<string, { history: Array<any>, cachedAt: number }>} */
 const preloadCache = new Map();
 
-/** JID es 1-a-1 (termina en @s.whatsapp.net / @lid) vs grupo (@g.us). */
+/** JID es 1-a-1 (WhatsApp: @s.whatsapp.net / @lid, Telegram: sin prefijo - de grupo) vs grupo. */
 function isDirectJid(jid) {
+    if (!jid) return false;
+    if (jid.startsWith('telegram:')) {
+        const id = jid.slice(9);
+        return !id.startsWith('-');
+    }
     return jid.endsWith('@s.whatsapp.net') || jid.endsWith('@lid');
 }
 
@@ -472,8 +477,9 @@ const MAX_QUEUE_ATTEMPTS = 5; // un mensaje encolado se intenta hasta 5 veces an
 async function flushQueuedMessages() {
     while (true) {
         const item = messageQueue.peek();
-        const adapter = messageQueue.getSock(); // Fallback for old name, will need adapter!
-        if (!item || !adapter) return;
+        if (!item) return;
+        const adapter = messageQueue.resolveAdapter(item.jid);
+        if (!adapter) return;
 
         // No pisar un chat con IA en curso (buffer timer activo)
         if (chatInFlight.has(item.jid)) return;

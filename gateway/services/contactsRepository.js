@@ -343,7 +343,6 @@ function bulkUpsertContactsMetadata(contactsList) {
     // los índices RAM de forma incremental (O(1)).
     const db = getContactsDB();
     let count = 0;
-    const now = new Date().toISOString();
 
     contactsList.forEach(metadata => {
         const built = buildOrUpdateContactRecord(db, metadata, { forceWhatsappKey: true });

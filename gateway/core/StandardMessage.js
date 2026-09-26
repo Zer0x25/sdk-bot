@@ -13,11 +13,15 @@ class StandardMessage {
      *        (debounce/presencia/brain/humanSim) lo trate como texto normal.
      * @param {boolean} [params.isAudio] - true si el mensaje original fue audio/voice.
      * @param {Object} [params.metadata] - Metadatos adicionales opcionales
-     * @param {string} [params.metadata.pushName] - Nombre público
-     * @param {string} [params.metadata.savedName] - Nombre en agenda
-     * @param {string} [params.metadata.phoneNumber] - Número de teléfono limpio
-     * @param {string} [params.metadata.lid] - ID de plataforma secundario
+     * @param {string|null} [params.metadata.pushName] - Nombre público
+     * @param {string|null} [params.metadata.savedName] - Nombre en agenda
+     * @param {string|null} [params.metadata.phoneNumber] - Número de teléfono limpio
+     * @param {string|null} [params.metadata.lid] - ID de plataforma secundario
      * @param {boolean} [params.metadata.isGroup] - Si viene de un grupo
+     * @param {boolean} [params.metadata.isBusiness] - Si es cuenta business
+     * @param {string} [params.metadata.country] - País detectado
+     * @param {boolean} [params.metadata.isFromMe] - Si el mensaje fue enviado por el bot
+     * @param {boolean} [params.metadata.isAdminChannel] - Si el chat corresponde al canal del admin
      * @param {any} params.raw - Objeto crudo del canal (solo para casos de escape / media no estandarizada)
      */
     constructor({ channel, remoteId, rawId, text, transcript, isAudio, metadata = {}, raw }) {
