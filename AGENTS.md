@@ -24,7 +24,7 @@
 ```bash
 # Brain:
 cd brain
-uv venv venv && uv pip install -r requirements-dev.txt || (python3 -m venv venv && venv/bin/pip install -r requirements-dev.txt)
+uv venv venv && uv pip install -r requirements-dev.txt --python venv/bin/python || (python3 -m venv venv && venv/bin/pip install -r requirements-dev.txt)
 # Gateway:
 cd ../gateway
 npm ci

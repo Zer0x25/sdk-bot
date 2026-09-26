@@ -22,6 +22,7 @@ re-descargarlo en cada reinicio.
 """
 from __future__ import annotations
 
+import asyncio
 import os
 import time
 import logging
@@ -123,18 +124,21 @@ async def transcribe(
     tmp.write_bytes(data)
 
     try:
-        whisper = get_model()
-        lang = language or DEFAULT_LANGUAGE
-        segments, _info = whisper.transcribe(
-            str(tmp),
-            language=lang or None,
-            temperature=temperature,
-            # beam_size pequeño: base es rápido y suficiente para voz casual.
-            beam_size=5,
-            vad_filter=True,          # recorta silencios => menos basura
-            vad_parameters=dict(min_silence_duration_ms=500),
-        )
-        text = "".join(seg.text for seg in segments).strip()
+        def _do_transcribe():
+            whisper = get_model()
+            lang = language or DEFAULT_LANGUAGE
+            segments, _info = whisper.transcribe(
+                str(tmp),
+                language=lang or None,
+                temperature=temperature,
+                # beam_size pequeño: base es rápido y suficiente para voz casual.
+                beam_size=5,
+                vad_filter=True,          # recorta silencios => menos basura
+                vad_parameters=dict(min_silence_duration_ms=500),
+            )
+            return "".join(seg.text for seg in segments).strip()
+
+        text = await asyncio.to_thread(_do_transcribe)
         return JSONResponse({"text": text})
     except HTTPException:
         raise

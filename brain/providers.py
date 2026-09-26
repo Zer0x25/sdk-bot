@@ -1,3 +1,5 @@
+import asyncio
+
 from openai import OpenAI
 
 from logging_setup import make_logger
@@ -136,10 +138,10 @@ async def generate_ai_response(system_instruction: str, message: str, memory_his
                  ("Groq", lambda: _call_groq(messages_for_openai), lambda: GROQ_MODEL),
                  ("OpenRouter", lambda: _call_openrouter(messages_for_openai), lambda: OPENROUTER_MODEL)]
 
-    last_err = None
+    errors = []
     for name, fn, model_label in order:
         try:
-            respuesta_texto = fn()
+            respuesta_texto = await asyncio.to_thread(fn)
             provider_used = f"{name} ({model_label()})"
             new_history = [
                 *memory_history,
@@ -148,10 +150,10 @@ async def generate_ai_response(system_instruction: str, message: str, memory_his
             ]
             return respuesta_texto, provider_used, new_history
         except Exception as err:
-            last_err = err
+            errors.append(f"{name}: {err}")
             safe_log(f"\n⚠️ {name} falló: {err}. Probando siguiente proveedor...")
 
     raise Exception(
         "Todos los proveedores fallaron en la cascada. "
-        + " | ".join(f"{n}: {last_err}" for (n, _, _) in order)
+        + " | ".join(errors)
     ) from None

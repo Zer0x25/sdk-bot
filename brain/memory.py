@@ -37,26 +37,29 @@ _writes_since_global_sweep = 0
 
 def _connect():
     global _conn
-    if _conn is None:
-        _conn = sqlite3.connect(DB_PATH, check_same_thread=False)
-        _conn.row_factory = sqlite3.Row
-        _conn.execute(
-            """
-            CREATE TABLE IF NOT EXISTS messages (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                bot_id TEXT NOT NULL,
-                user_id TEXT NOT NULL,
-                role TEXT NOT NULL CHECK (role IN ('user', 'assistant')),
-                content TEXT NOT NULL,
-                created_at REAL NOT NULL
+    with _lock:
+        if _conn is None:
+            _conn = sqlite3.connect(DB_PATH, check_same_thread=False)
+            _conn.row_factory = sqlite3.Row
+            _conn.execute("PRAGMA journal_mode = WAL")
+            _conn.execute("PRAGMA synchronous = NORMAL")
+            _conn.execute(
+                """
+                CREATE TABLE IF NOT EXISTS messages (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    bot_id TEXT NOT NULL,
+                    user_id TEXT NOT NULL,
+                    role TEXT NOT NULL CHECK (role IN ('user', 'assistant')),
+                    content TEXT NOT NULL,
+                    created_at REAL NOT NULL
+                )
+                """
             )
-            """
-        )
-        _conn.execute(
-            "CREATE INDEX IF NOT EXISTS idx_bot_user_time ON messages(bot_id, user_id, created_at)"
-        )
-        _conn.commit()
-    return _conn
+            _conn.execute(
+                "CREATE INDEX IF NOT EXISTS idx_bot_user_time ON messages(bot_id, user_id, created_at)"
+            )
+            _conn.commit()
+        return _conn
 
 
 def _sweep_chat(conn, bot_id, user_id):
@@ -85,11 +88,12 @@ def get_history(bot_id: str, user_id: str, max_messages: int = 0, max_tokens: in
     """
     conn = _connect()
     cutoff = time.time() - WINDOW_SECONDS
-    rows = conn.execute(
-        "SELECT role, content FROM messages WHERE bot_id = ? AND user_id = ? AND created_at >= ? "
-        "ORDER BY id ASC",  # id = orden de inserción (los timestamps float pueden colisionar en un mismo tick)
-        (bot_id, user_id, cutoff),
-    ).fetchall()
+    with _lock:
+        rows = conn.execute(
+            "SELECT role, content FROM messages WHERE bot_id = ? AND user_id = ? AND created_at >= ? "
+            "ORDER BY id ASC",  # id = orden de inserción (los timestamps float pueden colisionar en un mismo tick)
+            (bot_id, user_id, cutoff),
+        ).fetchall()
     msgs = [{"role": r["role"], "content": r["content"]} for r in rows]
 
     # 1) Truncado por cantidad de mensajes (0 = sin límite)
@@ -142,10 +146,11 @@ def clear_history(bot_id: str, user_id: str):
 def get_db_stats():
     """Métricas de la DB para GET /health (F4-P3)."""
     conn = _connect()
-    message_count = conn.execute("SELECT count(*) FROM messages").fetchone()[0]
-    user_count = conn.execute(
-        "SELECT count(*) FROM (SELECT 1 FROM messages GROUP BY bot_id, user_id)"
-    ).fetchone()[0]
+    with _lock:
+        message_count = conn.execute("SELECT count(*) FROM messages").fetchone()[0]
+        user_count = conn.execute(
+            "SELECT count(*) FROM (SELECT 1 FROM messages GROUP BY bot_id, user_id)"
+        ).fetchone()[0]
     try:
         size_bytes = os.path.getsize(DB_PATH)
     except OSError:
