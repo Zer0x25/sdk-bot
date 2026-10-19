@@ -9,8 +9,8 @@
 - Para contratos/identidad/control/migración usa `docs/SPEC-OPERATIVA-V1.md` y
   `docs/VALIDACION-V1.md`. Los escenarios JSON son expectativas, no tests runtime
   aprobados; la deduplicación usa identidad canónica y expectedVersion es controlVersion.
-- La estructura `apps/` + `packages/`, React, SQLite operativo y API v1 son
-  **arquitectura de destino**; no suponer que están implementados. Las rutas y
+- `packages/contracts` y workspace raíz existen desde F1A. `apps/`, React, SQLite
+  operativo y API v1 siguen como **arquitectura de destino**. Las rutas y
   comandos de las secciones siguientes describen la estructura actual.
 - Una unidad revisable por sesión. Actualiza estado y evidencia al cerrar;
   marca solo tareas demostradas. Conserva los límites de ADR-001/002/003.
@@ -25,7 +25,7 @@
 
 ## Limites y arquitectura
 
-- No hay workspace ni manifest de paquete en la raiz: el paquete Node vive en `gateway/`, la aplicacion Python del cerebro en `brain/` y el servicio de transcripcion local en `stt/`. Sus entradas son `gateway/index.js`, `brain/main.py` y `stt/server.py`.
+- El workspace raíz contiene `packages/*`; `packages/contracts` tiene schemas OpenAPI/JSON Schema, validadores y tipos generados. Gateway sigue independiente, con su propio manifest/lock en `gateway/`; Python en `brain/` y `stt/` mantiene requirements. Entradas: `gateway/index.js`, `brain/main.py`, `stt/server.py`. No importar paquetes del workspace en runtime sin actualizar instalación/Docker/launchers. Ver `packages/contracts/README.md`.
 - `gateway/index.js` es dueño de WhatsApp/Baileys, Telegram, el bus interno y el status server. `gateway/panel/index.js` es el proceso de UI/control: sirve `panel/public/` sin build y proxifica `/api/*` al bus. `stt/server.py` expone un endpoint OpenAI-compatible (`POST /v1/audio/transcriptions`) con `faster-whisper` en CPU int8 para normalizar audios a texto sin tocar el cerebro; si STT cae o falla, el gateway descarta el audio con aviso y no tumba el canal.
 - En Docker el panel debe ejecutar `node panel/index.js`, nunca `node index.js`: lo segundo iniciaria un gateway adicional y puede provocar una segunda sesion de WhatsApp.
 - Mapeo de puertos y procesos (dev vs produccion Docker):
@@ -45,6 +45,8 @@
 ## Setup y verificacion
 
 ```bash
+# Contratos (raíz):
+npm ci && npm run check
 # Brain:
 cd brain
 uv venv venv && uv pip install -r requirements-dev.txt --python venv/bin/python || (python3 -m venv venv && venv/bin/pip install -r requirements-dev.txt)
@@ -54,6 +56,9 @@ npm ci
 ```
 
 - En distros Linux con PEP 668 se recomienda `uv` para crear el venv del brain (`uv venv venv && uv pip install ...`).
+- Para cambiar DTOs: editar schema.json/OpenAPI, `npm run contracts:generate` y
+  `npm run check` desde raíz. No editar generated.d.ts manualmente. No confundir
+  validación de forma con autorización o servicio implementado.
 - `cd gateway && npm run check` es el check completo y su orden es `lint -> typecheck -> npm test`.
 - `cd gateway && npm run spike:sqlite` verifica F0.2 con fixtures temporales y worker,
   sin iniciar canales. Requiere Node >=22.13.0 sin flags; Linux probado, Windows y

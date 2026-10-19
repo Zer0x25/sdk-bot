@@ -42,10 +42,11 @@ salvo indicación contraria. La evidencia detallada y líneas están en la basel
 
 ## Clasificación para la unidad activa
 
-F0.3 define semántica y aceptación, sin activar adapters, handlers o migraciones.
-BUG-001 a BUG-014 siguen abiertos con sus puertas de implementación. BUG-008 se
-aborda en la especificación pero no queda reparado en runtime por describirlo.
-BUG-016 sí bloqueaba la coherencia de F0.3 y se corrigió en el diseño antes de cerrar.
+F1A implementa contratos sin activar adapters, handlers ni migraciones.
+BUG-001 a BUG-014 siguen abiertos. BUG-008 tiene formatos exactos y pruebas de
+signo/precisión, pero la resolución y los índices runtime siguen pendientes F2/F5.
+BUG-010 (frontera proxy) y BUG-013 deben resolverse en F1B. BUG-017 bloqueó la
+coherencia schema/tipos de F1A y se reparó antes del cierre.
 
 ## Cerrados
 
@@ -64,6 +65,23 @@ BUG-016 sí bloqueaba la coherencia de F0.3 y se corrigió en el diseño antes d
   DEDUP-01 revisado (clave vieja distinta, clave canónica idéntica). No es una
   reparación de DB runtime: F2 debe ejecutar el caso contra captura/repositorio.
   Commit: cierre F0.3, identificado por `git log --grep=BUG-016`.
+
+- **BUG-017 — cerrado (P2, F1A):** openapi-typescript convertía propiedades
+  opcionales con default (overrideOwner/resumePolicy/limit) en obligatorias, mientras
+  AJV aceptaba omitirlas. Reproducido con compilación de `{expectedVersion:'2'}`
+  como ReleaseRequest. Reparación: defaultNonNullable=false; schema es autoridad,
+  sin aplicar defaults ni mutar input. Regresión TS positiva de omisión y pruebas
+  runtime con objetos congelados. Se ensayó reactivar la opción: typecheck falla;
+  también se comprobó que --check rechaza un artefacto alterado. Evidencia:
+  [CONTRATOS-V1.md](CONTRATOS-V1.md). Commit F1A: `git log --grep=BUG-017`.
+
+- **BUG-018 — cerrado (P2, F1A):** el validador compartido de bytes dependía del
+  global Buffer de Node y fallaba al faltar ese global, lo que impediría consumirlo
+  en el frontend previsto. Reproducido: OutgoingText lanza TypeError en vez de
+  validar. Reparación: TextEncoder estándar. Regresión sin Buffer acepta el límite
+  Unicode y rechaza exceso UTF8. Es simulación del global ausente en Node, no prueba
+  de bundle/navegador; esa integración sigue en F4. Evidencia:
+  [CONTRATOS-V1.md](CONTRATOS-V1.md). Commit F1A: `git log --grep=BUG-018`.
 
 Los bugs BUG-001 a BUG-014 siguen abiertos. Checks actuales en verde no demuestran
 los escenarios pendientes.

@@ -1,0 +1,32 @@
+{
+  "name": "@sdk-bot/contracts",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Contratos v1; fuente wire compartida sin transporte ni persistencia",
+  "main": "index.js",
+  "types": "index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./index.d.ts",
+      "default": "./index.js"
+    },
+    "./schema.json": "./schema.json",
+    "./openapi.json": "./openapi.json"
+  },
+  "scripts": {
+    "generate": "node scripts/generate.mjs",
+    "check:generated": "node scripts/generate.mjs --check",
+    "typecheck": "tsc -p tsconfig.json",
+    "test": "node --test tests/contracts.test.js",
+    "check": "npm run check:generated && npm run typecheck && npm test"
+  },
+  "dependencies": {
+    "ajv": "8.20.0",
+    "ajv-formats": "3.0.1"
+  },
+  "devDependencies": {
+    "@apidevtools/swagger-parser": "13.1.0",
+    "openapi-typescript": "7.13.0",
+    "typescript": "5.9.3"
+  }
+}

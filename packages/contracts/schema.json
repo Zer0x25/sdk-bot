@@ -1,0 +1,1664 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://sdk-bot.local/contracts/v1/schema.json",
+  "title": "SDK-Bot v1 wire contracts",
+  "$defs": {
+    "Id": {
+      "type": "string",
+      "format": "uuid",
+      "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$",
+      "description": "UUID interno canónico en minúsculas; nunca ID numérico de proveedor."
+    },
+    "Sequence": {
+      "type": "string",
+      "pattern": "^(0|[1-9][0-9]*)$",
+      "description": "Decimal canónico como texto; sin Number. Secuencia 0 es watermark inicial."
+    },
+    "Version": {
+      "type": "string",
+      "pattern": "^[1-9][0-9]*$",
+      "description": "Versión positiva decimal como texto. No intercambiar controlVersion con aggregateVersion."
+    },
+    "Timestamp": {
+      "type": "string",
+      "format": "date-time",
+      "pattern": "Z$",
+      "description": "RFC3339 UTC con Z."
+    },
+    "Channel": {
+      "type": "string",
+      "enum": [
+        "whatsapp",
+        "telegram"
+      ]
+    },
+    "AccessPolicy": {
+      "type": "string",
+      "enum": [
+        "allowed",
+        "ignored",
+        "neutral"
+      ]
+    },
+    "AutomationMode": {
+      "type": "string",
+      "enum": [
+        "ai",
+        "human",
+        "off"
+      ]
+    },
+    "Lifecycle": {
+      "type": "string",
+      "enum": [
+        "open",
+        "resolved"
+      ]
+    },
+    "TelegramChatId": {
+      "type": "string",
+      "pattern": "^-?[1-9][0-9]*$",
+      "description": "ID exacto con signo y precisión arbitraria; validar tipo private en adapter, no por signo."
+    },
+    "ProviderMessageId": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 512
+    },
+    "PageCursor": {
+      "type": "string",
+      "pattern": "^[A-Za-z0-9_-]+$",
+      "minLength": 1,
+      "maxLength": 2048,
+      "description": "Opaco, ligado a epoch/ámbito/filtros/orden. Su contenido se valida en servidor."
+    },
+    "PageLimit": {
+      "type": "integer",
+      "minimum": 1,
+      "maximum": 100,
+      "default": 50
+    },
+    "IdempotencyKey": {
+      "type": "string",
+      "pattern": "^[A-Za-z0-9_-]{16,128}$",
+      "description": "Intención única por actor/cuenta/chat; no contiene secretos ni cuerpo."
+    },
+    "Capability": {
+      "type": "string",
+      "enum": [
+        "conversations:read",
+        "messages:send",
+        "control:write",
+        "control:override",
+        "conversations:write"
+      ]
+    },
+    "Actor": {
+      "type": "object",
+      "properties": {
+        "id": {
+          "$ref": "#/$defs/Id"
+        },
+        "displayName": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 200,
+          "format": "unicode-text"
+        },
+        "capabilities": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/Capability"
+          },
+          "uniqueItems": true
+        }
+      },
+      "required": [
+        "id",
+        "displayName",
+        "capabilities"
+      ],
+      "additionalProperties": false
+    },
+    "ChannelCapabilities": {
+      "type": "object",
+      "properties": {
+        "historySync": {
+          "type": "boolean"
+        },
+        "attachments": {
+          "type": "boolean"
+        },
+        "reply": {
+          "type": "boolean"
+        },
+        "edit": {
+          "type": "boolean"
+        },
+        "deliveryReceipt": {
+          "type": "boolean"
+        },
+        "readReceipt": {
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "historySync",
+        "attachments",
+        "reply",
+        "edit",
+        "deliveryReceipt",
+        "readReceipt"
+      ],
+      "additionalProperties": false
+    },
+    "Account": {
+      "type": "object",
+      "properties": {
+        "id": {
+          "$ref": "#/$defs/Id"
+        },
+        "channel": {
+          "$ref": "#/$defs/Channel"
+        },
+        "displayName": {
+          "type": "string",
+          "maxLength": 200,
+          "format": "unicode-text"
+        },
+        "status": {
+          "$ref": "#/$defs/AccountStatus"
+        },
+        "capabilities": {
+          "$ref": "#/$defs/ChannelCapabilities"
+        }
+      },
+      "required": [
+        "id",
+        "channel",
+        "displayName",
+        "status",
+        "capabilities"
+      ],
+      "additionalProperties": false
+    },
+    "IdentityKey": {
+      "oneOf": [
+        {
+          "type": "object",
+          "properties": {
+            "accountId": {
+              "$ref": "#/$defs/Id"
+            },
+            "channel": {
+              "const": "telegram",
+              "type": "string"
+            },
+            "kind": {
+              "const": "telegram_chat_id",
+              "type": "string"
+            },
+            "exactValue": {
+              "$ref": "#/$defs/TelegramChatId"
+            }
+          },
+          "required": [
+            "accountId",
+            "channel",
+            "kind",
+            "exactValue"
+          ],
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "properties": {
+            "accountId": {
+              "$ref": "#/$defs/Id"
+            },
+            "channel": {
+              "const": "whatsapp",
+              "type": "string"
+            },
+            "kind": {
+              "const": "whatsapp_jid",
+              "type": "string"
+            },
+            "exactValue": {
+              "type": "string",
+              "pattern": "^[0-9]+@s\\.whatsapp\\.net$",
+              "maxLength": 256
+            }
+          },
+          "required": [
+            "accountId",
+            "channel",
+            "kind",
+            "exactValue"
+          ],
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "properties": {
+            "accountId": {
+              "$ref": "#/$defs/Id"
+            },
+            "channel": {
+              "const": "whatsapp",
+              "type": "string"
+            },
+            "kind": {
+              "const": "whatsapp_lid",
+              "type": "string"
+            },
+            "exactValue": {
+              "type": "string",
+              "pattern": "^[0-9]+@lid$",
+              "maxLength": 256
+            }
+          },
+          "required": [
+            "accountId",
+            "channel",
+            "kind",
+            "exactValue"
+          ],
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "properties": {
+            "accountId": {
+              "$ref": "#/$defs/Id"
+            },
+            "channel": {
+              "const": "whatsapp",
+              "type": "string"
+            },
+            "kind": {
+              "const": "phone",
+              "type": "string"
+            },
+            "exactValue": {
+              "type": "string",
+              "pattern": "^\\+[1-9][0-9]{1,14}$"
+            }
+          },
+          "required": [
+            "accountId",
+            "channel",
+            "kind",
+            "exactValue"
+          ],
+          "additionalProperties": false
+        }
+      ],
+      "description": "Unicidad exacta (accountId,kind,exactValue). Ningún matcher parcial."
+    },
+    "Identity": {
+      "type": "object",
+      "properties": {
+        "id": {
+          "$ref": "#/$defs/Id"
+        },
+        "contactId": {
+          "$ref": "#/$defs/Id"
+        },
+        "canonicalIdentityId": {
+          "$ref": "#/$defs/Id"
+        },
+        "key": {
+          "$ref": "#/$defs/IdentityKey"
+        },
+        "verification": {
+          "type": "string",
+          "enum": [
+            "adapter",
+            "admin_review"
+          ]
+        },
+        "resolution": {
+          "type": "string",
+          "enum": [
+            "resolved",
+            "conflict",
+            "requires_review"
+          ]
+        }
+      },
+      "required": [
+        "id",
+        "contactId",
+        "canonicalIdentityId",
+        "key",
+        "verification",
+        "resolution"
+      ],
+      "additionalProperties": false
+    },
+    "Contact": {
+      "type": "object",
+      "properties": {
+        "id": {
+          "$ref": "#/$defs/Id"
+        },
+        "displayName": {
+          "anyOf": [
+            {
+              "type": "string",
+              "maxLength": 200,
+              "format": "unicode-text"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "identities": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/Identity"
+          },
+          "minItems": 1
+        }
+      },
+      "required": [
+        "id",
+        "displayName",
+        "identities"
+      ],
+      "additionalProperties": false
+    },
+    "DeduplicationKey": {
+      "type": "object",
+      "properties": {
+        "accountId": {
+          "$ref": "#/$defs/Id"
+        },
+        "canonicalIdentityId": {
+          "$ref": "#/$defs/Id"
+        },
+        "providerMessageId": {
+          "$ref": "#/$defs/ProviderMessageId"
+        }
+      },
+      "required": [
+        "accountId",
+        "canonicalIdentityId",
+        "providerMessageId"
+      ],
+      "additionalProperties": false,
+      "description": "Solo con providerMessageId conocido; rawChatId es procedencia, no clave. La unión verificada reindexa en transacción."
+    },
+    "HistoryCoverage": {
+      "type": "object",
+      "properties": {
+        "kind": {
+          "type": "string",
+          "enum": [
+            "capturing_since",
+            "partial_import",
+            "provider_sync_observed"
+          ]
+        },
+        "capturingSince": {
+          "$ref": "#/$defs/Timestamp"
+        }
+      },
+      "required": [
+        "kind",
+        "capturingSince"
+      ],
+      "additionalProperties": false,
+      "description": "Nunca certifica historial completo del proveedor."
+    },
+    "ConversationControl": {
+      "type": "object",
+      "properties": {
+        "accessPolicy": {
+          "$ref": "#/$defs/AccessPolicy"
+        },
+        "automationMode": {
+          "$ref": "#/$defs/AutomationMode"
+        },
+        "lifecycle": {
+          "$ref": "#/$defs/Lifecycle"
+        },
+        "ownerId": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/Id"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "controlVersion": {
+          "$ref": "#/$defs/Version"
+        },
+        "contextVersion": {
+          "$ref": "#/$defs/Version"
+        },
+        "status": {
+          "type": "string",
+          "enum": [
+            "confirmed",
+            "taking_control"
+          ]
+        },
+        "takenAt": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/Timestamp"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "handoffReason": {
+          "anyOf": [
+            {
+              "type": "string",
+              "enum": [
+                "operator",
+                "customer_request",
+                "external_self",
+                "legacy_import",
+                "identity_conflict"
+              ]
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      },
+      "required": [
+        "accessPolicy",
+        "automationMode",
+        "lifecycle",
+        "ownerId",
+        "controlVersion",
+        "contextVersion",
+        "status",
+        "takenAt",
+        "handoffReason"
+      ],
+      "additionalProperties": false,
+      "description": "Forma de proyección; elegibilidad/cancelación/barrera se verifican en servicio de dominio F5."
+    },
+    "Conversation": {
+      "type": "object",
+      "properties": {
+        "id": {
+          "$ref": "#/$defs/Id"
+        },
+        "accountId": {
+          "$ref": "#/$defs/Id"
+        },
+        "contactId": {
+          "$ref": "#/$defs/Id"
+        },
+        "canonicalIdentityId": {
+          "$ref": "#/$defs/Id"
+        },
+        "control": {
+          "$ref": "#/$defs/ConversationControl"
+        },
+        "aggregateVersion": {
+          "$ref": "#/$defs/Version"
+        },
+        "lastActivityAt": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/Timestamp"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "historyCoverage": {
+          "$ref": "#/$defs/HistoryCoverage"
+        },
+        "unreadCount": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 9007199254740991
+        },
+        "requiresReview": {
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "id",
+        "accountId",
+        "contactId",
+        "canonicalIdentityId",
+        "control",
+        "aggregateVersion",
+        "lastActivityAt",
+        "historyCoverage",
+        "unreadCount",
+        "requiresReview"
+      ],
+      "additionalProperties": false
+    },
+    "GlobalPolicy": {
+      "type": "object",
+      "properties": {
+        "globalMode": {
+          "type": "string",
+          "enum": [
+            "allowed_all",
+            "ignored_all"
+          ]
+        },
+        "globalPaused": {
+          "type": "boolean"
+        },
+        "policyVersion": {
+          "$ref": "#/$defs/Version"
+        }
+      },
+      "required": [
+        "globalMode",
+        "globalPaused",
+        "policyVersion"
+      ],
+      "additionalProperties": false
+    },
+    "EventCursor": {
+      "type": "object",
+      "properties": {
+        "dataEpoch": {
+          "$ref": "#/$defs/Id"
+        },
+        "seq": {
+          "$ref": "#/$defs/Sequence"
+        }
+      },
+      "required": [
+        "dataEpoch",
+        "seq"
+      ],
+      "additionalProperties": false,
+      "description": "Secuencia global no necesariamente consecutiva. Epoch distinto requiere snapshot nuevo."
+    },
+    "EventId": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}:(0|[1-9][0-9]*)$",
+      "description": "SSE id y Last-Event-ID: dataEpoch:seq."
+    },
+    "OutgoingText": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 4096,
+      "pattern": "\\S",
+      "format": "unicode-text",
+      "x-maxUtf8Bytes": 16384,
+      "description": "Texto literal; puntos de código Unicode, no unidades UTF16. No comandos/Markdown implícitos."
+    },
+    "StoredText": {
+      "type": "string",
+      "maxLength": 65536,
+      "format": "unicode-text",
+      "x-maxUtf8Bytes": 65536
+    },
+    "MessageContent": {
+      "oneOf": [
+        {
+          "type": "object",
+          "properties": {
+            "type": {
+              "const": "text",
+              "type": "string"
+            },
+            "text": {
+              "$ref": "#/$defs/StoredText"
+            }
+          },
+          "required": [
+            "type",
+            "text"
+          ],
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "properties": {
+            "type": {
+              "type": "string",
+              "enum": [
+                "audio",
+                "image",
+                "video",
+                "document",
+                "unsupported"
+              ]
+            },
+            "availability": {
+              "type": "string",
+              "enum": [
+                "not_stored",
+                "available",
+                "expired",
+                "failed"
+              ]
+            },
+            "transcript": {
+              "anyOf": [
+                {
+                  "$ref": "#/$defs/StoredText"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "transcriptionStatus": {
+              "type": "string",
+              "enum": [
+                "not_requested",
+                "pending",
+                "completed",
+                "failed"
+              ]
+            }
+          },
+          "required": [
+            "type",
+            "availability",
+            "transcript",
+            "transcriptionStatus"
+          ],
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "properties": {
+            "type": {
+              "const": "oversized",
+              "type": "string"
+            },
+            "originalBytes": {
+              "type": "integer",
+              "minimum": 65537,
+              "maximum": 9007199254740991
+            },
+            "reason": {
+              "const": "text_limit",
+              "type": "string"
+            }
+          },
+          "required": [
+            "type",
+            "originalBytes",
+            "reason"
+          ],
+          "additionalProperties": false
+        }
+      ]
+    },
+    "DeliveryStatus": {
+      "type": "string",
+      "enum": [
+        "received",
+        "queued",
+        "sending",
+        "sent",
+        "delivered",
+        "read",
+        "failed",
+        "delivery_unknown",
+        "cancelled"
+      ]
+    },
+    "Message": {
+      "type": "object",
+      "properties": {
+        "id": {
+          "$ref": "#/$defs/Id"
+        },
+        "conversationId": {
+          "$ref": "#/$defs/Id"
+        },
+        "providerMessageId": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/ProviderMessageId"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "clientMessageId": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/Id"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "inboundSeq": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/Sequence"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "direction": {
+          "type": "string",
+          "enum": [
+            "inbound",
+            "outbound"
+          ]
+        },
+        "authorKind": {
+          "type": "string",
+          "enum": [
+            "customer",
+            "ai",
+            "operator",
+            "external_self",
+            "system",
+            "unknown"
+          ]
+        },
+        "actorId": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/Id"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "content": {
+          "$ref": "#/$defs/MessageContent"
+        },
+        "occurredAt": {
+          "$ref": "#/$defs/Timestamp"
+        },
+        "ingestedAt": {
+          "$ref": "#/$defs/Timestamp"
+        },
+        "deliveryStatus": {
+          "$ref": "#/$defs/DeliveryStatus"
+        },
+        "replyToId": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/Id"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "source": {
+          "type": "string",
+          "enum": [
+            "live",
+            "history",
+            "panel",
+            "automation",
+            "command",
+            "import"
+          ]
+        },
+        "deduplicationQuality": {
+          "type": "string",
+          "enum": [
+            "provider_id",
+            "unknown"
+          ]
+        }
+      },
+      "required": [
+        "id",
+        "conversationId",
+        "providerMessageId",
+        "clientMessageId",
+        "inboundSeq",
+        "direction",
+        "authorKind",
+        "actorId",
+        "content",
+        "occurredAt",
+        "ingestedAt",
+        "deliveryStatus",
+        "replyToId",
+        "source",
+        "deduplicationQuality"
+      ],
+      "additionalProperties": false
+    },
+    "ConversationsQuery": {
+      "type": "object",
+      "properties": {
+        "cursor": {
+          "$ref": "#/$defs/PageCursor"
+        },
+        "limit": {
+          "$ref": "#/$defs/PageLimit"
+        },
+        "channel": {
+          "$ref": "#/$defs/Channel"
+        },
+        "accountId": {
+          "$ref": "#/$defs/Id"
+        },
+        "automationMode": {
+          "$ref": "#/$defs/AutomationMode"
+        },
+        "lifecycle": {
+          "$ref": "#/$defs/Lifecycle"
+        },
+        "unreadOnly": {
+          "type": "boolean"
+        },
+        "search": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 200,
+          "format": "unicode-text"
+        }
+      },
+      "required": [],
+      "additionalProperties": false
+    },
+    "MessagesQuery": {
+      "type": "object",
+      "properties": {
+        "cursor": {
+          "$ref": "#/$defs/PageCursor"
+        },
+        "limit": {
+          "$ref": "#/$defs/PageLimit"
+        }
+      },
+      "required": [],
+      "additionalProperties": false
+    },
+    "SessionResponse": {
+      "type": "object",
+      "properties": {
+        "actor": {
+          "$ref": "#/$defs/Actor"
+        },
+        "policy": {
+          "$ref": "#/$defs/GlobalPolicy"
+        },
+        "snapshot": {
+          "$ref": "#/$defs/EventCursor"
+        }
+      },
+      "required": [
+        "actor",
+        "policy",
+        "snapshot"
+      ],
+      "additionalProperties": false
+    },
+    "AccountsResponse": {
+      "type": "object",
+      "properties": {
+        "items": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/Account"
+          }
+        }
+      },
+      "required": [
+        "items"
+      ],
+      "additionalProperties": false
+    },
+    "ConversationsResponse": {
+      "type": "object",
+      "properties": {
+        "items": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/Conversation"
+          },
+          "maxItems": 100
+        },
+        "nextCursor": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/PageCursor"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "snapshot": {
+          "$ref": "#/$defs/EventCursor"
+        }
+      },
+      "required": [
+        "items",
+        "nextCursor",
+        "snapshot"
+      ],
+      "additionalProperties": false
+    },
+    "ConversationResponse": {
+      "type": "object",
+      "properties": {
+        "conversation": {
+          "$ref": "#/$defs/Conversation"
+        },
+        "snapshot": {
+          "$ref": "#/$defs/EventCursor"
+        }
+      },
+      "required": [
+        "conversation",
+        "snapshot"
+      ],
+      "additionalProperties": false
+    },
+    "MessagesResponse": {
+      "type": "object",
+      "properties": {
+        "items": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/Message"
+          },
+          "maxItems": 100
+        },
+        "nextCursor": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/PageCursor"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "snapshot": {
+          "$ref": "#/$defs/EventCursor"
+        }
+      },
+      "required": [
+        "items",
+        "nextCursor",
+        "snapshot"
+      ],
+      "additionalProperties": false,
+      "description": "Página en orden cronológico estable (occurredAt,id), retención por ingestedAt."
+    },
+    "TakeoverRequest": {
+      "type": "object",
+      "properties": {
+        "expectedVersion": {
+          "$ref": "#/$defs/Version"
+        },
+        "overrideOwner": {
+          "type": "boolean",
+          "default": false
+        }
+      },
+      "required": [
+        "expectedVersion"
+      ],
+      "additionalProperties": false,
+      "description": "expectedVersion es controlVersion. Actor exclusivamente de contexto autenticado."
+    },
+    "ReleaseRequest": {
+      "oneOf": [
+        {
+          "type": "object",
+          "properties": {
+            "expectedVersion": {
+              "$ref": "#/$defs/Version"
+            },
+            "overrideOwner": {
+              "type": "boolean",
+              "default": false
+            },
+            "resumePolicy": {
+              "const": "future_only",
+              "type": "string",
+              "default": "future_only"
+            }
+          },
+          "required": [
+            "expectedVersion"
+          ],
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "properties": {
+            "expectedVersion": {
+              "$ref": "#/$defs/Version"
+            },
+            "overrideOwner": {
+              "type": "boolean",
+              "default": false
+            },
+            "resumePolicy": {
+              "const": "process_pending",
+              "type": "string"
+            },
+            "pendingInboundIds": {
+              "type": "array",
+              "items": {
+                "$ref": "#/$defs/Id"
+              },
+              "minItems": 1,
+              "maxItems": 100,
+              "uniqueItems": true
+            }
+          },
+          "required": [
+            "expectedVersion",
+            "resumePolicy",
+            "pendingInboundIds"
+          ],
+          "additionalProperties": false
+        }
+      ],
+      "description": "Selección pendiente explícita; servicio comprueba live/no atendida/24h/versión. No reanima jobs antiguos."
+    },
+    "SendMessageRequest": {
+      "type": "object",
+      "properties": {
+        "expectedVersion": {
+          "$ref": "#/$defs/Version"
+        },
+        "clientMessageId": {
+          "$ref": "#/$defs/Id"
+        },
+        "text": {
+          "$ref": "#/$defs/OutgoingText"
+        },
+        "handledThroughInboundSeq": {
+          "$ref": "#/$defs/Sequence"
+        }
+      },
+      "required": [
+        "expectedVersion",
+        "clientMessageId",
+        "text"
+      ],
+      "additionalProperties": false
+    },
+    "ReadRequest": {
+      "type": "object",
+      "properties": {
+        "throughInboundSeq": {
+          "$ref": "#/$defs/Sequence"
+        }
+      },
+      "required": [
+        "throughInboundSeq"
+      ],
+      "additionalProperties": false,
+      "description": "Cursor monotónico del actor y chat; no recibo del proveedor."
+    },
+    "ReadResponse": {
+      "type": "object",
+      "properties": {
+        "throughInboundSeq": {
+          "$ref": "#/$defs/Sequence"
+        }
+      },
+      "required": [
+        "throughInboundSeq"
+      ],
+      "additionalProperties": false
+    },
+    "UpdateConversationRequest": {
+      "type": "object",
+      "properties": {
+        "expectedVersion": {
+          "$ref": "#/$defs/Version"
+        },
+        "lifecycle": {
+          "$ref": "#/$defs/Lifecycle"
+        }
+      },
+      "required": [
+        "expectedVersion",
+        "lifecycle"
+      ],
+      "additionalProperties": false
+    },
+    "Operation": {
+      "type": "object",
+      "properties": {
+        "id": {
+          "$ref": "#/$defs/Id"
+        },
+        "conversationId": {
+          "$ref": "#/$defs/Id"
+        },
+        "actorId": {
+          "$ref": "#/$defs/Id"
+        },
+        "type": {
+          "const": "takeover",
+          "type": "string"
+        },
+        "status": {
+          "type": "string",
+          "enum": [
+            "taking_control",
+            "completed",
+            "failed"
+          ]
+        },
+        "controlVersion": {
+          "$ref": "#/$defs/Version"
+        },
+        "uncertainMessageIds": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/Id"
+          },
+          "uniqueItems": true
+        },
+        "createdAt": {
+          "$ref": "#/$defs/Timestamp"
+        },
+        "completedAt": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/Timestamp"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      },
+      "required": [
+        "id",
+        "conversationId",
+        "actorId",
+        "type",
+        "status",
+        "controlVersion",
+        "uncertainMessageIds",
+        "createdAt",
+        "completedAt"
+      ],
+      "additionalProperties": false
+    },
+    "TakeoverConfirmedResponse": {
+      "type": "object",
+      "properties": {
+        "conversation": {
+          "$ref": "#/$defs/Conversation"
+        }
+      },
+      "required": [
+        "conversation"
+      ],
+      "additionalProperties": false
+    },
+    "TakeoverPendingResponse": {
+      "type": "object",
+      "properties": {
+        "operation": {
+          "$ref": "#/$defs/Operation"
+        }
+      },
+      "required": [
+        "operation"
+      ],
+      "additionalProperties": false,
+      "description": "HTTP202; compositor espera operación completada y proyección confirmada."
+    },
+    "SendMessageResponse": {
+      "type": "object",
+      "properties": {
+        "messageId": {
+          "$ref": "#/$defs/Id"
+        },
+        "clientMessageId": {
+          "$ref": "#/$defs/Id"
+        }
+      },
+      "required": [
+        "messageId",
+        "clientMessageId"
+      ],
+      "additionalProperties": false,
+      "description": "HTTP202 confirma intención durable, no entrega en proveedor."
+    },
+    "ErrorCode": {
+      "type": "string",
+      "enum": [
+        "UNAUTHENTICATED",
+        "FORBIDDEN",
+        "NOT_FOUND",
+        "VALIDATION_ERROR",
+        "VERSION_CONFLICT",
+        "OWNER_CONFLICT",
+        "IDENTITY_AMBIGUOUS",
+        "IDENTITY_CONFLICT",
+        "IDEMPOTENCY_CONFLICT",
+        "IDEMPOTENCY_RESULT_EXPIRED",
+        "CONTROL_NOT_CONFIRMED",
+        "ACCESS_IGNORED",
+        "CURSOR_EXPIRED",
+        "DATA_EPOCH_MISMATCH",
+        "SERVICE_UNAVAILABLE",
+        "TIMEOUT",
+        "INTERNAL_ERROR"
+      ]
+    },
+    "ErrorResponse": {
+      "type": "object",
+      "properties": {
+        "error": {
+          "type": "object",
+          "properties": {
+            "code": {
+              "$ref": "#/$defs/ErrorCode"
+            },
+            "message": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 256,
+              "format": "unicode-text"
+            },
+            "requestId": {
+              "$ref": "#/$defs/Id"
+            },
+            "details": {
+              "type": "array",
+              "items": {
+                "type": "object",
+                "properties": {
+                  "field": {
+                    "type": "string",
+                    "maxLength": 128
+                  },
+                  "reason": {
+                    "type": "string",
+                    "maxLength": 256,
+                    "format": "unicode-text"
+                  }
+                },
+                "required": [
+                  "field",
+                  "reason"
+                ],
+                "additionalProperties": false
+              },
+              "maxItems": 20
+            }
+          },
+          "required": [
+            "code",
+            "message",
+            "requestId"
+          ],
+          "additionalProperties": false
+        }
+      },
+      "required": [
+        "error"
+      ],
+      "additionalProperties": false,
+      "description": "Solo mensajes saneados. Sin raw, stack, rutas locales, tokens ni payload arbitrario."
+    },
+    "Event": {
+      "oneOf": [
+        {
+          "type": "object",
+          "properties": {
+            "schemaVersion": {
+              "const": 1,
+              "type": "integer"
+            },
+            "cursor": {
+              "$ref": "#/$defs/EventCursor"
+            },
+            "type": {
+              "type": "string",
+              "enum": [
+                "conversation.updated"
+              ]
+            },
+            "occurredAt": {
+              "$ref": "#/$defs/Timestamp"
+            },
+            "data": {
+              "type": "object",
+              "properties": {
+                "conversationId": {
+                  "$ref": "#/$defs/Id"
+                },
+                "aggregateVersion": {
+                  "$ref": "#/$defs/Version"
+                }
+              },
+              "required": [
+                "conversationId",
+                "aggregateVersion"
+              ],
+              "additionalProperties": false
+            }
+          },
+          "required": [
+            "schemaVersion",
+            "cursor",
+            "type",
+            "occurredAt",
+            "data"
+          ],
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "properties": {
+            "schemaVersion": {
+              "const": 1,
+              "type": "integer"
+            },
+            "cursor": {
+              "$ref": "#/$defs/EventCursor"
+            },
+            "type": {
+              "type": "string",
+              "enum": [
+                "message.created",
+                "message.updated"
+              ]
+            },
+            "occurredAt": {
+              "$ref": "#/$defs/Timestamp"
+            },
+            "data": {
+              "type": "object",
+              "properties": {
+                "conversationId": {
+                  "$ref": "#/$defs/Id"
+                },
+                "messageId": {
+                  "$ref": "#/$defs/Id"
+                },
+                "aggregateVersion": {
+                  "$ref": "#/$defs/Version"
+                }
+              },
+              "required": [
+                "conversationId",
+                "messageId",
+                "aggregateVersion"
+              ],
+              "additionalProperties": false
+            }
+          },
+          "required": [
+            "schemaVersion",
+            "cursor",
+            "type",
+            "occurredAt",
+            "data"
+          ],
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "properties": {
+            "schemaVersion": {
+              "const": 1,
+              "type": "integer"
+            },
+            "cursor": {
+              "$ref": "#/$defs/EventCursor"
+            },
+            "type": {
+              "type": "string",
+              "enum": [
+                "operation.updated"
+              ]
+            },
+            "occurredAt": {
+              "$ref": "#/$defs/Timestamp"
+            },
+            "data": {
+              "type": "object",
+              "properties": {
+                "conversationId": {
+                  "$ref": "#/$defs/Id"
+                },
+                "operationId": {
+                  "$ref": "#/$defs/Id"
+                },
+                "aggregateVersion": {
+                  "$ref": "#/$defs/Version"
+                }
+              },
+              "required": [
+                "conversationId",
+                "operationId",
+                "aggregateVersion"
+              ],
+              "additionalProperties": false
+            }
+          },
+          "required": [
+            "schemaVersion",
+            "cursor",
+            "type",
+            "occurredAt",
+            "data"
+          ],
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "properties": {
+            "schemaVersion": {
+              "const": 1,
+              "type": "integer"
+            },
+            "cursor": {
+              "$ref": "#/$defs/EventCursor"
+            },
+            "type": {
+              "type": "string",
+              "enum": [
+                "policy.updated"
+              ]
+            },
+            "occurredAt": {
+              "$ref": "#/$defs/Timestamp"
+            },
+            "data": {
+              "type": "object",
+              "properties": {
+                "policyVersion": {
+                  "$ref": "#/$defs/Version"
+                }
+              },
+              "required": [
+                "policyVersion"
+              ],
+              "additionalProperties": false
+            }
+          },
+          "required": [
+            "schemaVersion",
+            "cursor",
+            "type",
+            "occurredAt",
+            "data"
+          ],
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "properties": {
+            "schemaVersion": {
+              "const": 1,
+              "type": "integer"
+            },
+            "cursor": {
+              "$ref": "#/$defs/EventCursor"
+            },
+            "type": {
+              "type": "string",
+              "enum": [
+                "resync.required"
+              ]
+            },
+            "occurredAt": {
+              "$ref": "#/$defs/Timestamp"
+            },
+            "data": {
+              "type": "object",
+              "properties": {
+                "reason": {
+                  "type": "string",
+                  "enum": [
+                    "epoch_changed",
+                    "cursor_expired",
+                    "scope_changed"
+                  ]
+                }
+              },
+              "required": [
+                "reason"
+              ],
+              "additionalProperties": false
+            }
+          },
+          "required": [
+            "schemaVersion",
+            "cursor",
+            "type",
+            "occurredAt",
+            "data"
+          ],
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "schemaVersion",
+            "cursor",
+            "type",
+            "occurredAt",
+            "data"
+          ],
+          "properties": {
+            "schemaVersion": {
+              "const": 1,
+              "type": "integer"
+            },
+            "cursor": {
+              "$ref": "#/$defs/EventCursor"
+            },
+            "type": {
+              "const": "control.changed",
+              "type": "string"
+            },
+            "occurredAt": {
+              "$ref": "#/$defs/Timestamp"
+            },
+            "data": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": [
+                "conversationId",
+                "aggregateVersion",
+                "controlVersion"
+              ],
+              "properties": {
+                "conversationId": {
+                  "$ref": "#/$defs/Id"
+                },
+                "aggregateVersion": {
+                  "$ref": "#/$defs/Version"
+                },
+                "controlVersion": {
+                  "$ref": "#/$defs/Version"
+                }
+              }
+            }
+          }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "schemaVersion",
+            "cursor",
+            "type",
+            "occurredAt",
+            "data"
+          ],
+          "properties": {
+            "schemaVersion": {
+              "const": 1,
+              "type": "integer"
+            },
+            "cursor": {
+              "$ref": "#/$defs/EventCursor"
+            },
+            "type": {
+              "const": "channel.updated",
+              "type": "string"
+            },
+            "occurredAt": {
+              "$ref": "#/$defs/Timestamp"
+            },
+            "data": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": [
+                "accountId",
+                "status"
+              ],
+              "properties": {
+                "accountId": {
+                  "$ref": "#/$defs/Id"
+                },
+                "status": {
+                  "$ref": "#/$defs/AccountStatus"
+                }
+              }
+            }
+          }
+        }
+      ],
+      "description": "Invalidaciones mínimas sin copia de cuerpos/media. Leer recurso autorizado; publicar tras commit; replay durable F3."
+    },
+    "AccountStatus": {
+      "type": "string",
+      "enum": [
+        "connected",
+        "disconnected",
+        "connecting",
+        "requires_auth",
+        "error"
+      ]
+    }
+  }
+}

@@ -1,7 +1,9 @@
 # Validación y presupuestos v1 — F0.3
 
 Fecha: 2026-10-19. Define cómo se demostrará la especificación en fases posteriores.
-**No es un informe de rendimiento del producto ni declara escenarios implementados.**
+**No es un informe de rendimiento del producto.** F1A ejecuta los seis casos TXT
+y comprueba formas wire de ID; el resto sigue pendiente de sus servicios.
+Evidencia: [CONTRATOS-V1.md](CONTRATOS-V1.md).
 Norma: [SPEC-OPERATIVA-V1.md](SPEC-OPERATIVA-V1.md).
 Valores/ejemplos: [fixtures/v1-acceptance.json](fixtures/v1-acceptance.json).
 
@@ -61,7 +63,11 @@ Fuente de parámetros: loadProfile del fixture. El generador de F2 deberá:
    Epoch fijo para benchmark; restauración usa otro epoch en su caso de aceptación.
 6. Generar casos de purga/identidad inválida por separado del dataset de consultas.
    Exportar JSONL UTF-8, claves ordenadas, sin espacios y LF final por registro;
-   el esquema de registro se fija en F1. Emitir manifest con esa versión, parámetros,
+   para archivo usar los DTOs v1 de packages/contracts/schema.json: Account, Contact,
+   Conversation, Message y Event, un archivo por tipo, sin wrappers arbitrarios.
+   El generador/adapters falsos de F2 definen aparte las inyecciones de redelivery
+   por alias; no confundirlas con mensajes distintos del archivo. Emitir manifest
+   con versión de contratos v1 y hash del schema, parámetros,
    recuentos y SHA-256 de cada archivo. Igual seed/config/esquema debe dar igual hash.
 
 Los archivos generados viven en temporales, sin tokens/sesiones y con limpieza.

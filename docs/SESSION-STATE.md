@@ -1,6 +1,6 @@
 # Estado de continuidad — SDK-Bot
 
-Actualización: 2026-10-19. Última unidad cerrada: **F0.3; Fase 0 completada**.
+Actualización: 2026-10-19. Última unidad cerrada: **F1A; Fase 1 pendiente de F1B**.
 
 ## Objetivo vigente
 
@@ -25,6 +25,9 @@ respuesta humana desde el chat y retorno seguro a IA con contexto actualizado.
 - F0.3 completada: [SPEC-OPERATIVA-V1.md](SPEC-OPERATIVA-V1.md) fija identidades,
   permisos/control/versiones, retención, corte/rollback y límites; 75 escenarios
   sintéticos de aceptación futura y protocolo de medición en VALIDACION-V1.
+- F1A completada: workspace raíz packages/* y contracts con JSON Schema/OpenAPI,
+  validadores AJV y tipos TS generados; CI de contratos. Gateway conserva su lock
+  y despliegue independientes. Evidencia: [CONTRATOS-V1.md](CONTRATOS-V1.md).
 - No se modificaron módulos de producción ni se migraron datos. No hay bandeja nueva,
   DB operativa de conversaciones, API v1 ni control versionado implementados.
 
@@ -85,32 +88,55 @@ Detalles de reproducción y logs efímeros están en la baseline.
 - No se cambió runtime ni se ejecutaron suites/benchmark del producto en esta
   unidad documental. Los escenarios aún deben ejecutarse contra implementaciones.
 
-## Siguiente unidad exacta: Fase 1 / F1A
+## Validación ejecutada en F1A
 
-**Entregable:** workspace Node mínimo y packages/contracts con OpenAPI 3.1/JSON
-Schema, validación runtime de formatos y generación/verificación de tipos.
+- Instalaciones limpias raíz/gateway en copia temporal sin secretos ni DB.
+- Raíz npm run check: 14 tests, referencias OpenAPI válidas, tipos reproducibles y
+  compilación con casos positivos/negativos pasan en Node 22.13.0 y 24.19.0 Linux.
+- TXT-01 a TXT-06 ejecutados contra validador; ID-01 a 07 solo formas, sin demostrar
+  resolución/aliases. El resto de escenarios sigue pendiente de servicios reales.
+- Gateway npm run check: lint, tipos y 143 tests pasan Node 24.19.0; spike SQLite
+  pasa sus 10 comprobaciones y elimina temporales. Brain/smoke no repetidos.
+- npm ci --omit=dev en layout de manifiestos Docker resuelve dependencias gateway
+  sin raíz. No se construyó imagen ni se ejecutaron canales/IA/GitHub Actions.
+- BUG-017 corregido: generador marcaba defaults opcionales como requeridos;
+  defaultNonNullable=false. Compilación reproduce fallo al reactivar opción;
+  --check rechaza artefacto alterado. BUG-018 corregido: TextEncoder sustituye
+  Buffer; test con global Buffer ausente. Bundle/navegador pendiente F4.
+  BUG-001 a 014 siguen abiertos.
 
-1. Leer AGENTS, arquitectura, ADR-001 a 005, SPEC-OPERATIVA-V1, VALIDACION-V1,
-   baseline, SQLITE-SPIKE y BACKLOG. Revisar git status y commits de cierre.
-2. Crear workspace/paquete sin mover gateway/brain/stt/panel. Resolver locks, CI,
-   Docker/npm ci y release-please de forma coherente; no romper instalaciones
-   actuales por introducir una dependencia de workspace que su build no copie.
-3. Definir cuenta, identidad, conversación, mensaje, control/operaciones, actor,
-   errores y eventos con IDs texto y schemas canónicos, límites y versionado.
-4. Separar controlVersion/aggregateVersion, dataEpoch/seq textual, dedup canónica,
-   nulls/required y request/response DTO sin raw/secretos. expectedVersion liga control.
-5. Validadores runtime y tipos TS generados o comprobados desde una sola fuente;
-   OpenAPI referencia esos schemas. No duplicar un motor de políticas para tests.
-6. Pruebas de aceptación/rechazo de formas: signo/precisión TG, UUID, Unicode,
-   límites/paginación, versiones/errores; detectar deriva de schemas/tipos. Los
-   casos de migración/dispatch de fixture siguen pendientes de sus fases reales.
-7. Ejecutar checks adecuados con copia/estado temporales, revisar backlog y cerrar
-   con docs/estado/commit. No marcar F1B ni endpoints como implementados por crear DTOs.
+## Siguiente unidad exacta: Fase 1 / F1B
 
-**Aceptación:** contratos válidos, tipos reproducibles, tests de formas útiles y
-checks de compatibilidad del gateway en verde. Sin transporte, claves IA, DB
-runtime ni migraciones. F1B incorporará sesión/contexto firmado y resolverá
-BUG-013 antes de exponer historial autenticado.
+**Entregable:** frontera autenticada y actor firmado, conservando superficies actuales.
+
+1. Leer AGENTS, arquitectura/ADR, SPEC, contratos/README, CONTRATOS-V1 y BACKLOG;
+   revisar git status. Leer OAUTH-LESSONS antes de tocar sesión/proxy.
+2. Inventariar sesión/cookie existentes, principal OAuth y modo dev; agregar
+   GET /api/v1/session sin confiar actor/capacidades del navegador ni romper login.
+3. Si gateway/panel consumen contracts, integrar instalación/copia de ese paquete
+   en Docker/CI/launchers con lock coherente antes de importarlo en runtime. No
+   asumir que el link del workspace raíz existe en producción. Gateway aún independiente.
+4. Implementar contexto panel → gateway firmado con actor/requestId/expiración,
+   método, ruta y hash del cuerpo; firma de secreto servidor (no clave IA), permisos,
+   replay/alcance apropiados. Principal local dev explícito y solo entorno desarrollo.
+   No reenviar headers de actor/firma suministrados por navegador. Sesión/origen
+   siguen vigentes; un servicio en red interna no es identidad suficiente.
+5. BUG-010: timeout acotado del proxy/frontera; errores saneados 401/403/503 y
+   comportamiento del stream, sin retry ciego de mutaciones.
+6. BUG-013: /history brain exige credencial cuando está configurada, health público;
+   ajustar prueba que conserva la exención. Usar configuración temporal/fake, sin
+   llamadas IA. No paralelizar suites Python mientras BUG-014 siga abierto; arreglarlo
+   si bloquea la verificación necesaria.
+7. Pruebas de sesión ausente/capacidad denegada/actor falsificado/firma alterada,
+   vencida/método-ruta-body distintos y dev explícito. Comprobar compatibilidad
+   de rutas/proxy/OAuth; validar ErrorResponse/SessionResponse en fronteras nuevas.
+8. Checks aislados, backlog, evidencia/estado y commit. No exponer archivo de
+   conversaciones que aún no existe ni cerrar F2/F5 por validar DTOs.
+
+**Aceptación:** autenticación/autorización y contexto firmado probados, BUG-010 de
+proxy y BUG-013 cerrados, checks compatibles. Sin canales reales, claves IA ni
+migración de estado. Si hace falta secreto de servicio, fixture temporal y variable
+servidor documentada; nunca generar/versionar credenciales de producción.
 
 ## Pendientes materiales
 
@@ -127,5 +153,5 @@ BUG-013 antes de exponer historial autenticado.
 Actualizar este archivo y solo los checkboxes demostrados. El prompt estable de
 [PROMPT-CONTINUIDAD.md](PROMPT-CONTINUIDAD.md) consulta este estado para retomar.
 Hacer commit de la unidad probada e informar su hash. BUG-001 a BUG-014 siguen
-abiertos; BUG-015 cerrado en F0.2 y BUG-016 cerrado en diseño F0.3, con ejecución
+abiertos; BUG-015 cerrado en F0.2, BUG-017/018 cerrados en F1A y BUG-016 cerrado en diseño F0.3, con ejecución
 contra el repositorio de mensajes pendiente de F2.

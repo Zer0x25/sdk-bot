@@ -6,8 +6,9 @@
 
 La siguiente etapa propone historial persistente, una bandeja similar a WhatsApp
 Web y control humano con respuesta desde el chat. Es una **base de diseño y hoja
-de ruta**; estas funciones todavía no están implementadas.
+de ruta**; la base de contratos ya está implementada, la bandeja aún no.
 
+- [Contratos v1 y comandos del workspace](packages/contracts/README.md)
 - [Arquitectura y contratos de destino](docs/ARCHITECTURE.md)
 - [Decisión arquitectónica ADR-005](docs/adr/005-plataforma-conversaciones.md)
 - [Hoja de ruta por entregas](docs/ROADMAP.md)

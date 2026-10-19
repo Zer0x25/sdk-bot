@@ -3,7 +3,9 @@
 Fecha: 2026-10-19. Estado: **diseño para implementación incremental**.
 El código todavía usa `gateway/`, `brain/`, `stt/` y un panel estático.
 Las carpetas, tablas, servicios y endpoints de destino no existen todavía,
-salvo indicación expresa. Esta sesión entrega documentación, no una migración.
+salvo indicación expresa. F1A implementa `packages/contracts` y workspace raíz
+para `packages/*`; gateway conserva instalación/lock independientes. No se migraron
+datos ni se implementaron endpoints/UI. Evidencia: [CONTRATOS-V1.md](CONTRATOS-V1.md).
 
 ## 1. Producto y primera entrega
 
@@ -304,9 +306,12 @@ Mantener OAuth state server-side, cookie HttpOnly/SameSite=Lax y Secure tras HTT
 Autorizar también lecturas, SSE y adjuntos futuros; conservar validación de origen.
 No enviar secretos en query SSE. Ver OAUTH-LESSONS.md antes de cambios de sesión.
 
-Evento SSE: { id, type, schemaVersion, conversationId, aggregateVersion,
-occurredAt, data }. Tipos message.created, message.updated, conversation.updated,
-control.changed, channel.updated y resync.required. Emitir tras commit; replay
+Contrato SSE F1A: id = `dataEpoch:seq`, event = type y data JSON =
+{ cursor: { dataEpoch, seq }, type, schemaVersion, occurredAt, data }. Referencias
+de conversación/versiones van en data según tipo; no se copian cuerpos. Tipos
+message.created, message.updated, conversation.updated, control.changed,
+channel.updated, operation.updated, policy.updated y resync.required.
+Emitir tras commit; replay
 ordenado con entrega al menos una vez. Cliente deduplica event IDs, reconcilia
 messageId y recarga ante huecos. Enganchar flujo vivo antes de finalizar replay;
 la instantánea inicial obtiene watermark y la escucha empieza desde allí. Cursor

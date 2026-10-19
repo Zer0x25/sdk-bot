@@ -20,7 +20,8 @@ F0.2 también completada: [experimento SQLite](SQLITE-SPIKE.md) probado en Linux
 con Node 22.13/22.23/24, driver elegido y plataformas pendientes registradas.
 F0.3 completada: [especificación operativa](SPEC-OPERATIVA-V1.md), 75 escenarios de
 aceptación futura revisados y [protocolo de validación](VALIDACION-V1.md). Fase 0
-cerrada; siguiente unidad F1A (contratos/workspace). Sin canales reales ni migración.
+cerrada. F1A completada: workspace mínimo, contratos y tipos probados; siguiente
+unidad F1B (frontera autenticada). Sin canales reales ni migración.
 
 ## Alcance y entregas
 
@@ -56,7 +57,7 @@ roles de equipo, un rediseño de proveedores o mover todas las carpetas.
 
 ## Fase 0 — Línea base y compatibilidad
 
-**Depende de:** ninguna. **Estado: completada; siguiente unidad F1A.**
+**Depende de:** ninguna. **Estado: completada; F1A también cerrada.**
 
 - [x] F0.1 Inventariar entradas/salidas, generaciones de sockets, comandos, rutas,
   cursores y puntos de persistencia; producir `docs/BASELINE-CONVERSACIONES.md`
@@ -87,12 +88,15 @@ Unidades: **F1A**, workspace/contratos/validación de formas y tipos; **F1B**,
 frontera autenticada/identidad firmada y BUG-013 antes de exponer historial.
 Cada unidad termina con pruebas y commit, sin marcar toda Fase 1 por cerrar F1A.
 
-- [ ] Crear `packages/contracts` y workspace Node mínimo sin mover apps actuales;
+- [x] Crear `packages/contracts` y workspace Node mínimo sin mover apps actuales;
   registrar impacto en locks, CI y release-please. Mantener Python independiente.
-- [ ] OpenAPI/JSON Schema para cuenta, identidad, conversación, mensaje, control,
+  Raíz packages/*; gateway conserva paquete/lock y despliegue independientes.
+- [x] OpenAPI/JSON Schema para cuenta, identidad, conversación, mensaje, control,
   operaciones, errores y eventos. IDs texto; límites y cursores documentados.
-- [ ] Validación runtime y generación/verificación de tipos. Tests impiden deriva
+- [x] Validación runtime y generación/verificación de tipos. Tests impiden deriva
   entre schema, DTO servidor y cliente; contratos Python solo donde corresponda.
+  F1A: 14 tests de formas/tipos, TXT-01 a 06 ejecutados; no políticas de dominio.
+  Evidencia: [CONTRATOS-V1.md](CONTRATOS-V1.md).
 - [ ] Endpoint de sesión y contexto actor firmado panel -> gateway; validar firma,
   expiración, método/ruta/hash, permisos y principal local dev. No confiar actor
   del navegador. Conservar OAuth, origen y compatibilidad de rutas previas.
