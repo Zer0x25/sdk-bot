@@ -1,6 +1,8 @@
 # Base de contratos v1 — resultado F1A
 
 Fecha: 2026-10-19. Estado: **implementada y probada en Linux x64**.
+Seguimiento F1B: [FRONTERA-AUTENTICADA-V1](FRONTERA-AUTENTICADA-V1.md) incorpora
+consumo runtime y sesión; lo que sigue describe la evidencia histórica de F1A.
 Código y guía: [packages/contracts](../packages/contracts/README.md).
 Norma: [SPEC-OPERATIVA-V1](SPEC-OPERATIVA-V1.md).
 

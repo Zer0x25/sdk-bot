@@ -75,6 +75,13 @@ Ver también: función `cookieFlags` en `gateway/panel/index.js`.
 
 ## Reglas aplicadas (no las rompas)
 
+Actualización F1B (2026-10-19): producción o auth forzada sin ambas credenciales
+falla cerrada; no vuelve al modo abierto. La identidad nueva exige userinfo con
+ID estable/correo verificado. Se preservan state server-side y Lax; se repararon
+separadores faltantes de Secure/Expires/Max-Age. GET /api/v1/session necesita
+login nuevo si la cookie anterior no contiene sub/verified. Configuración y pruebas:
+[FRONTERA-AUTENTICADA-V1](FRONTERA-AUTENTICADA-V1.md).
+
 1. **El `state` de OAuth es server-side** (memoria del panel), no cookie.
 2. **La cookie de sesión es `SameSite=Lax; Secure`** (no `None`).
 3. OAuth solo se activa en producción: requiere `NODE_ENV=production` (o

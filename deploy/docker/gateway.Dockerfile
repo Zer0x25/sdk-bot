@@ -4,6 +4,8 @@ WORKDIR /app
 
 COPY gateway/package.json /app/gateway/package.json
 COPY gateway/package-lock.json /app/gateway/package-lock.json
+COPY gateway/.npmrc /app/gateway/.npmrc
+COPY packages/contracts /app/packages/contracts
 WORKDIR /app/gateway
 RUN npm ci --omit=dev
 

@@ -41,10 +41,25 @@ const CONTACTS_FILE_PATH = process.env.SDK_CONTACTS_DB_PATH || path.join(__dirna
 const SETTINGS_FILE_PATH = process.env.SDK_SETTINGS_DB_PATH || path.join(__dirname, 'settings_db.json');
 
 // Estado Global del Bot
+// Revisión de la política efectiva durante esta época de proceso. F5 trasladará
+// la autoridad/versionado a SQLite; por ahora no hay jobs/control v1 que la usen.
+let policyRevision = 1n;
+let paused = false;
+let globalMode = 'ignored_all';
+let currentProfile = 'default';
 const state = {
-    IS_BOT_PAUSED: false,
-    CURRENT_PROFILE: 'default',
-    GLOBAL_MODE: 'ignored_all', // 🔒 default seguro: db.js lo sobrescribe con settings_db.json
+    get IS_BOT_PAUSED() { return paused; },
+    set IS_BOT_PAUSED(value) {
+        if (paused !== value) { paused = value; policyRevision += 1n; }
+    },
+    get CURRENT_PROFILE() { return currentProfile; },
+    set CURRENT_PROFILE(value) {
+        if (currentProfile !== value) { currentProfile = value; policyRevision += 1n; }
+    },
+    get GLOBAL_MODE() { return globalMode; },
+    set GLOBAL_MODE(value) {
+        if (globalMode !== value) { globalMode = value; policyRevision += 1n; }
+    },
     ADMIN_PHONE: '',
     ADMIN_LID: ''
 };
@@ -83,6 +98,7 @@ module.exports = {
     CONTACTS_FILE_PATH,
     SETTINGS_FILE_PATH,
     state,
+    getGlobalPolicy: () => ({ globalMode, globalPaused: paused, policyVersion: String(policyRevision) }),
     counters,
     registerSentMessage,
     isBotSentMessage

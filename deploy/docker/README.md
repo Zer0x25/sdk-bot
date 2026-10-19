@@ -7,7 +7,12 @@ automático y persistencia mediante volúmenes.
 ## Preparar Y Arrancar
 
 1. Crea `brain/.env` con las API keys. No lo versiones.
-2. Desde la raíz ejecuta:
+2. Configura `gateway/panel/.env` con OAuth. Proporciona a Compose la variable
+   `SDK_PANEL_GATEWAY_SECRET` (secreto servidor >=32 bytes, diferente del de cookie
+   y de claves IA) mediante el entorno del servicio o un archivo de entorno privado
+   pasado con `--env-file`. Compose la exige y la inyecta a gateway/panel; definirla
+   solo en el env_file del panel no la entrega al gateway. No versionar secretos.
+3. Desde la raíz ejecuta:
 
 ```bash
 docker compose -f deploy/docker/compose.yml build
@@ -16,9 +21,12 @@ docker compose -f deploy/docker/compose.yml ps
 docker compose -f deploy/docker/compose.yml logs -f gateway
 ```
 
-El panel queda en `http://127.0.0.1:5201`. No se publican el brain, el bus ni
-el status server. Si se necesita acceso remoto, usa un reverse proxy o cambia
-explícitamente el bind del puerto del panel y protégelo en la red.
+Compose sirve el panel en `:3005` interno a través de la red externa `proxy_net`
+para Caddy; no publica puertos del panel, brain, bus ni status en el host.
+El panel ejecuta `node panel/index.js`, sin abrir otra sesión de WhatsApp.
+Contratos se empaquetan como dependencia local del gateway, sin workspace raíz
+instalado en la imagen. Configuración y límites:
+[frontera F1B](../../docs/FRONTERA-AUTENTICADA-V1.md).
 
 ## Estado Y Operación
 

@@ -4,6 +4,7 @@ node_modules
 gateway/node_modules
 brain/venv
 brain/.env
+gateway/panel/.env
 brain/__pycache__
 brain/.pytest_cache
 brain/.ruff_cache

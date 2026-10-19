@@ -9,8 +9,9 @@
 - Para contratos/identidad/control/migración usa `docs/SPEC-OPERATIVA-V1.md` y
   `docs/VALIDACION-V1.md`. Los escenarios JSON son expectativas, no tests runtime
   aprobados; la deduplicación usa identidad canónica y expectedVersion es controlVersion.
-- `packages/contracts` y workspace raíz existen desde F1A. `apps/`, React, SQLite
-  operativo y API v1 siguen como **arquitectura de destino**. Las rutas y
+- `packages/contracts` y workspace raíz existen desde F1A. F1B implementa sesión
+  v1 y frontera firmada; `apps/`, React, SQLite operativo y el resto de API v1
+  siguen como **arquitectura de destino**. Las rutas y
   comandos de las secciones siguientes describen la estructura actual.
 - Una unidad revisable por sesión. Actualiza estado y evidencia al cerrar;
   marca solo tareas demostradas. Conserva los límites de ADR-001/002/003.
@@ -25,7 +26,7 @@
 
 ## Limites y arquitectura
 
-- El workspace raíz contiene `packages/*`; `packages/contracts` tiene schemas OpenAPI/JSON Schema, validadores y tipos generados. Gateway sigue independiente, con su propio manifest/lock en `gateway/`; Python en `brain/` y `stt/` mantiene requirements. Entradas: `gateway/index.js`, `brain/main.py`, `stt/server.py`. No importar paquetes del workspace en runtime sin actualizar instalación/Docker/launchers. Ver `packages/contracts/README.md`.
+- El workspace raíz contiene `packages/*`; `packages/contracts` tiene schemas OpenAPI/JSON Schema, validadores y tipos generados. Gateway sigue independiente, con su propio manifest/lock en `gateway/`; consume contracts como `file:../packages/contracts`, empaquetado por `.npmrc` install-links=true. Tras editar contratos, repetir `cd gateway && npm ci`: no depender de la copia instalada anterior. Docker copia el paquete antes de instalar. Python en `brain/` y `stt/` mantiene requirements. Entradas: `gateway/index.js`, `brain/main.py`, `stt/server.py`. Ver `packages/contracts/README.md`.
 - `gateway/index.js` es dueño de WhatsApp/Baileys, Telegram, el bus interno y el status server. `gateway/panel/index.js` es el proceso de UI/control: sirve `panel/public/` sin build y proxifica `/api/*` al bus. `stt/server.py` expone un endpoint OpenAI-compatible (`POST /v1/audio/transcriptions`) con `faster-whisper` en CPU int8 para normalizar audios a texto sin tocar el cerebro; si STT cae o falla, el gateway descarta el audio con aviso y no tumba el canal.
 - En Docker el panel debe ejecutar `node panel/index.js`, nunca `node index.js`: lo segundo iniciaria un gateway adicional y puede provocar una segunda sesion de WhatsApp.
 - Mapeo de puertos y procesos (dev vs produccion Docker):
@@ -84,3 +85,6 @@ npm ci
 
 - Antes de tocar OAuth del panel lee `docs/OAUTH-LESSONS.md`: el estado OAuth es server-side y la cookie de sesion es `SameSite=Lax` (`Secure` tras HTTPS). OAuth requiere produccion o `PANEL_REQUIRE_AUTH=true`/`***`, ademas de ambas credenciales; en dev el panel queda abierto. Si se utiliza un reverse proxy o tunel con proteccion perimetral (ej. Zero Trust), el panel opera de forma transparente respetando HTTPS.
 - Mantener `google-genai` detras del `ImportError`: `requirements-termux.txt` lo omite deliberadamente porque no instala de forma fiable en Termux.
+- La API v1 exige actor verificado y `SDK_PANEL_GATEWAY_SECRET` >=32 bytes en ambos procesos. `PANEL_DEV_ACTOR=true` solo actúa con NODE_ENV=development y OAuth desactivado; no usarlo en un panel público. Grants v1 por sub Google en servidor, no en cookie/body/header. Las cookies antiguas siguen válidas para legacy pero requieren nuevo login para v1. Ver `docs/FRONTERA-AUTENTICADA-V1.md`. `gateway/lib/` comparte únicamente infraestructura sin estado/canales; panel no importa servicios del gateway.
+- Con secreto configurado el bus exige firma también para legacy. Sin él solo conserva compatibilidad local legacy, nunca v1. Compose exige secreto común. No exponer bus/status ni asumir que red interna autentica. Snapshot de sesión actual es bootstrap volátil seq=0: F2 debe sustituirlo por época/watermark durable antes de habilitar lectura/SSE; F5 hará durable policyVersion. No es un cursor de historial disponible.
+- Producción o PANEL_REQUIRE_AUTH sin ambas credenciales OAuth falla cerrada; no volver a abrir legacy ni conceder actor dev como fallback. Grants de v1 aún no limitan al administrador del panel legacy: BUG-024 debe resolverse antes de incorporar operadores con permisos limitados.

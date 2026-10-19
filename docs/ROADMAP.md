@@ -20,8 +20,9 @@ F0.2 también completada: [experimento SQLite](SQLITE-SPIKE.md) probado en Linux
 con Node 22.13/22.23/24, driver elegido y plataformas pendientes registradas.
 F0.3 completada: [especificación operativa](SPEC-OPERATIVA-V1.md), 75 escenarios de
 aceptación futura revisados y [protocolo de validación](VALIDACION-V1.md). Fase 0
-cerrada. F1A completada: workspace mínimo, contratos y tipos probados; siguiente
-unidad F1B (frontera autenticada). Sin canales reales ni migración.
+cerrada. F1A y F1B completadas: workspace mínimo, contratos/tipos y frontera
+autenticada probados. Siguiente unidad F2A (repositorios del archivo).
+Sin canales reales ni migración.
 
 ## Alcance y entregas
 
@@ -97,9 +98,13 @@ Cada unidad termina con pruebas y commit, sin marcar toda Fase 1 por cerrar F1A.
   entre schema, DTO servidor y cliente; contratos Python solo donde corresponda.
   F1A: 14 tests de formas/tipos, TXT-01 a 06 ejecutados; no políticas de dominio.
   Evidencia: [CONTRATOS-V1.md](CONTRATOS-V1.md).
-- [ ] Endpoint de sesión y contexto actor firmado panel -> gateway; validar firma,
+- [x] Endpoint de sesión y contexto actor firmado panel -> gateway; validar firma,
   expiración, método/ruta/hash, permisos y principal local dev. No confiar actor
   del navegador. Conservar OAuth, origen y compatibilidad de rutas previas.
+  F1B: sesión/errores validados, firma con replay acotado y grants servidor;
+  proxy con timeout/SSE y /history brain protegido. Snapshot bootstrap volátil,
+  reemplazar por DB antes de consultas/SSE F2/F3. Evidencia:
+  [FRONTERA-AUTENTICADA-V1.md](FRONTERA-AUTENTICADA-V1.md).
 
 **Aceptación:** contratos válidos y pruebas de 401/403, actor falsificado, contexto
 alterado/vencido y desarrollo explícito, sin conectarse a canales reales.
@@ -144,6 +149,8 @@ miles de mensajes sin bloquear pings del transporte falso; progreso observable.
   resync.required. Cerrar carrera replay/vivo y soportar cursor fuera de retención.
 - [ ] Autorizar lectura/SSE por sesión; probar proxy, desconexión, cierre de recursos
   y falta temporal de gateway. No exponer raw/secretos/rutas locales.
+  Resolver BUG-024 antes de operadores limitados: grants v1 deben acompañarse de
+  autorización administrativa legacy. Definir revocación/alcance de streams activos.
 
 **Aceptación:** mismo resultado al leer y reanudar stream; no perder eventos entre
 snapshot y suscripción; páginas sin duplicados con timestamps iguales. Revisar

@@ -40,7 +40,10 @@ ensure_brain_deps() {
 }
 
 ensure_gateway_deps() {
-    if [ ! -d "$REPO/gateway/node_modules/eslint" ] && [ ! -d "$REPO/gateway/node_modules/typescript" ]; then
+    if [ ! -d "$REPO/gateway/node_modules/eslint" ] || [ ! -d "$REPO/gateway/node_modules/typescript" ] ||
+        [ ! -f "$REPO/gateway/node_modules/@sdk-bot/contracts/index.js" ] ||
+        ! cmp -s "$REPO/packages/contracts/schema.json" "$REPO/gateway/node_modules/@sdk-bot/contracts/schema.json" ||
+        ! cmp -s "$REPO/packages/contracts/index.js" "$REPO/gateway/node_modules/@sdk-bot/contracts/index.js"; then
         log "📦 Instalando devDeps del gateway (NODE_ENV=development)..."
         (cd "$REPO/gateway" && NODE_ENV=development npm ci)
     fi

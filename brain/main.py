@@ -41,7 +41,7 @@ app = FastAPI(title="SDK-Bot Brain API (Modular Multi-Provider Router)")
 # ("/", "/health") exige el header. La comparación es en tiempo constante.
 @app.middleware("http")
 async def require_api_key(request: Request, call_next):
-    if BRAIN_API_KEY and request.url.path not in ("/", "/health", "/history"):
+    if BRAIN_API_KEY and request.url.path not in ("/", "/health"):
         provided = request.headers.get("X-API-Key", "")
         if not secrets.compare_digest(provided, BRAIN_API_KEY):
             return JSONResponse(status_code=401, content={"detail": "API key inválida o faltante"})

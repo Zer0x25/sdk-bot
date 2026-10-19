@@ -1,7 +1,7 @@
 # Contratos v1 — F1A
 
 Base wire para la futura bandeja. No inicia servicios, canales, SQLite ni llamadas
-IA. Los endpoints de OpenAPI todavía no están implementados.
+IA. F1B implementa GET /api/v1/session; los demás endpoints siguen pendientes.
 
 Desde la raíz del repo (Node >=22.13.0):
 
@@ -12,10 +12,12 @@ npm run contracts:generate
 ```
 
 El workspace raíz contiene `packages/*`. Gateway sigue siendo paquete independiente:
-`cd gateway && npm ci && npm run check`. Sus manifests/lock, Dockerfile, CI y
-launchers conservan ese flujo. Python mantiene sus requirements. No importar este
-paquete desde el runtime gateway/panel hasta integrar explícitamente su instalación
-y copia en Docker/launchers; un link de desarrollo en node_modules no es despliegue.
+`cd gateway && npm ci && npm run check`. Desde F1B consume el paquete como
+`file:../packages/contracts`; gateway/.npmrc usa install-links=true para empaquetarlo
+con sus dependencias, sin symlink ni instalación raíz en producción. Docker copia
+el paquete antes de npm ci. Tras cambiar fuente/tipos de contracts, repetir npm ci
+en gateway: la copia instalada no se actualiza sola. CI instala desde checkout;
+launchers comprueban ausencia/cambios de index/schema. Python mantiene requirements.
 No se movieron aplicaciones. Release-please sigue usando `simple` en raíz y
 CHANGELOG, sin publicar paquetes npm; ambos manifests nuevos son privados y el
 workspace raíz no tiene versión de producto.
@@ -70,6 +72,7 @@ entre campos. El contenido es invalidación mínima; el cliente relee el recurso
 ## Qué queda pendiente
 
 La semántica sigue en [SPEC-OPERATIVA-V1](../../docs/SPEC-OPERATIVA-V1.md).
+Sesión/frontera F1B: [FRONTERA-AUTENTICADA-V1](../../docs/FRONTERA-AUTENTICADA-V1.md).
 Validar una forma no acredita sesión, capacidades, propietario, cancelación,
 control confirmado, unicidad durable, alias verificado, idempotencia, monotonicidad,
 retención ni entrega. Se implementarán/probarán en F1B/F2/F3/F5, sin un segundo motor

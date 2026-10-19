@@ -11,7 +11,9 @@
  * comandos/pairing/reset. El gateway sigue siendo dueño del socket de
  * Baileys; el bus es solo el canal de transporte entre procesos.
  *
- * Endpoints (todos sin auth: es loopback local):
+ * Endpoints legacy (firma obligatoria al configurar SDK_PANEL_GATEWAY_SECRET;
+ * compatibilidad sin secreto solo para instalación local no expuesta):
+ *   GET  /v1/session → siempre requiere actor firmado con permiso de lectura
  *   GET  /qr       → SSE estado del QR (data URL PNG o null) + sesión
  *   GET  /logs     → SSE stream del log del gateway (y /logs?component=brain)
  *   GET  /status   → JSON buildStatus()
@@ -27,6 +29,11 @@ const http = require('http');
 const fs = require('fs');
 const path = require('path');
 const { URL } = require('url');
+const { createVerifier } = require('../lib/panelContext');
+const { readBytes, sendError, BoundaryError } = require('../lib/httpBoundary');
+const { createSessionApi } = require('./sessionApi');
+const { getGlobalPolicy } = require('../config');
+const verifiedBodies = new WeakMap();
 const { spawn } = require('child_process');
 const QRCode = require('qrcode');
 const { buildStatus } = require('./statusServer');
@@ -756,6 +763,10 @@ function sendJson(res, code, obj) {
 }
 
 function readBody(req) {
+    if (verifiedBodies.has(req)) {
+        try { return Promise.resolve(JSON.parse(verifiedBodies.get(req).toString('utf8') || '{}')); }
+        catch { return Promise.resolve({}); }
+    }
     return new Promise((resolve) => {
         let data = '';
         req.on('data', (c) => { data += c; if (data.length > 1e6) req.destroy(); });
@@ -1050,14 +1061,34 @@ function routeApi(req, res, pathname, params) {
 function startInternalBus(opts = {}) {
     const port = opts.port ?? Number(process.env.INTERNAL_BUS_PORT || 5400);
     const host = process.env.INTERNAL_BUS_HOST || '127.0.0.1';
-    const server = http.createServer((req, res) => {
-        const u = new URL(req.url || '/', `http://${host}:${port}`);
+    const secret = process.env.SDK_PANEL_GATEWAY_SECRET || '';
+    const signedRequired = Boolean(secret) || process.env.NODE_ENV === 'production' ||
+        !['127.0.0.1', '::1', 'localhost'].includes(host);
+    const verify = createVerifier({ secret });
+    const sessionApi = createSessionApi(() => { getSettingsDB(); return getGlobalPolicy(); });
+    const server = http.createServer(async (req, res) => {
+        let u;
+        try { u = new URL(req.url || '/', 'http://gateway.local'); }
+        catch { sendError(res, new BoundaryError(422, 'VALIDATION_ERROR', 'URL inválida.')); return; }
         const params = u.searchParams;
         const pathname = u.pathname;
+        const v1 = pathname === '/v1' || pathname.startsWith('/v1/');
+        let requestId;
         try {
+            // v1 siempre exige firma. Al configurar secreto, también las rutas
+            // anteriores quedan protegidas sin cambiar su contrato de respuesta.
+            if (v1 || signedRequired) {
+                if (!secret) throw new BoundaryError(503, 'SERVICE_UNAVAILABLE', 'Frontera del panel sin configurar.');
+                const body = await readBytes(req);
+                const context = verify(req, body);
+                requestId = context.requestId;
+                verifiedBodies.set(req, body);
+                if (v1) { sessionApi(req, res, context, pathname); return; }
+            }
             routeApi(req, res, pathname, params);
         } catch (e) {
-            sendJson(res, 500, { error: errMsg(e) });
+            if (v1 || signedRequired) sendError(res, e, requestId);
+            else sendJson(res, 500, { error: errMsg(e) });
         }
     });
     server.on('error', (e) => logError.error(`🔌 [BUS] Error en bus interno: ${e && e.message}`));

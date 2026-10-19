@@ -1,6 +1,6 @@
 # Estado de continuidad — SDK-Bot
 
-Actualización: 2026-10-19. Última unidad cerrada: **F1A; Fase 1 pendiente de F1B**.
+Actualización: 2026-10-19. Última unidad cerrada: **F1B; Fase 1 completada**.
 
 ## Objetivo vigente
 
@@ -28,8 +28,11 @@ respuesta humana desde el chat y retorno seguro a IA con contexto actualizado.
 - F1A completada: workspace raíz packages/* y contracts con JSON Schema/OpenAPI,
   validadores AJV y tipos TS generados; CI de contratos. Gateway conserva su lock
   y despliegue independientes. Evidencia: [CONTRATOS-V1.md](CONTRATOS-V1.md).
-- No se modificaron módulos de producción ni se migraron datos. No hay bandeja nueva,
-  DB operativa de conversaciones, API v1 ni control versionado implementados.
+- F1B completada: sesión v1, actor/grants servidor, firma panel → gateway, límites
+  HTTP/SSE y /history brain autenticado. Contratos instalados en gateway/Docker.
+  Evidencia: [FRONTERA-AUTENTICADA-V1](FRONTERA-AUTENTICADA-V1.md).
+- Hay cambios runtime de frontera probados, sin migrar datos. No hay bandeja nueva,
+  DB operativa, API de lectura/envío/control ni barrera de automatización v1.
 
 ## Validación ejecutada en F0.1
 
@@ -105,38 +108,101 @@ Detalles de reproducción y logs efímeros están en la baseline.
   Buffer; test con global Buffer ausente. Bundle/navegador pendiente F4.
   BUG-001 a 014 siguen abiertos.
 
-## Siguiente unidad exacta: Fase 1 / F1B
+## Validación ejecutada en F1B
 
-**Entregable:** frontera autenticada y actor firmado, conservando superficies actuales.
+- Raíz npm ci y npm run check: 14 tests de contratos, generación y tipos pasan
+  Node 24.19.0. Schemas/OpenAPI no cambiaron; cambió instalación/consumo runtime.
+- Gateway npm ci limpio; npm run check pasa lint/tipos y **158 tests** en Node
+  24.19.0 y mínimo 22.13.0 Linux. Comprobación final usa copias separadas por
+  versión. Son 143 anteriores + 15 de frontera, no 158 casos de chat completo.
+- Brain: ruff y 21 tests pasan, suite secuencial desde copia; /history prueba
+  contenido privado denegado sin/con clave incorrecta y lectura con clave correcta.
+  / y /health públicos. No hubo peticiones /chat ni llamadas a proveedores.
+- Imagen de gateway construida en Docker con npm ci --omit=dev, contracts
+  empaquetado sin symlink ni node_modules raíz. Dockerfile temporal conserva COPY/
+  instalación/entrada reales y solo agrega mount de CA proxy al RUN npm ci para
+  este cloud, con TLS verificado; certificado no queda en capas. No build Compose.
+- Esa imagen (Node 22.23.3) pasa **15 tests de frontera con --network none**;
+  proceso HTTP de panel/bus y OAuth simulado, sin iniciar gateway/index.js/canales.
+  Verificado require contracts y precisión TG sin instalación raíz.
+- Compose config validado con env_files vacíos temporales y secreto ficticio:
+  rechaza ausencia del secreto, comparte variable gateway/panel, conserva comando
+  node panel/index.js y bus sin puertos publicados. No se ejecutó compose up.
+- bash -n pasa Linux y scripts Termux editados. No se ejecutó smoke del launcher:
+  aunque puertos estaban libres, sus logs globales /tmp preexistían; se conservaron.
+  Prueba previa de launcher offline sigue en baseline, sin atribuirla a esta unidad.
+- Reproducción con panel de f0d2b13 confirma excepción por cookie/Referer dañados,
+  OAuth no verificado aceptado, separadores faltantes de cookie y desvío de proxy
+  por request-target absoluto; regresiones pasan en implementación nueva.
+- BUG-013 y BUG-019 a 023 cerrados; BUG-010 proxy reparado, TG pendiente F5.
+  BUG-025 también cerrado: panel/.env ya se excluye de Docker; canary falso
+  reproduce inclusión con reglas anteriores y demuestra exclusión tras reparar,
+  tanto en COPY directo como en imagen de producción sin ese archivo.
+  BUG-024 registrado antes de roles limitados/F3. BUG-014 no bloqueó la suite
+  secuencial y sigue abierto. No se marcaron resueltos bugs de captura/control.
+- Evidencia efímera: /tmp/sdkbot-f1b-1xfiq0qs (logs de Node/imagen/reproducción).
+  Sin .env/sesiones/DB nuevas en workspace, sin credenciales reales en fixtures.
+  No push, despliegue, Google OAuth real, IA ni canales reales. GitHub Actions
+  preparado, no ejecutado. Windows/Termux no ejecutados.
 
-1. Leer AGENTS, arquitectura/ADR, SPEC, contratos/README, CONTRATOS-V1 y BACKLOG;
-   revisar git status. Leer OAUTH-LESSONS antes de tocar sesión/proxy.
-2. Inventariar sesión/cookie existentes, principal OAuth y modo dev; agregar
-   GET /api/v1/session sin confiar actor/capacidades del navegador ni romper login.
-3. Si gateway/panel consumen contracts, integrar instalación/copia de ese paquete
-   en Docker/CI/launchers con lock coherente antes de importarlo en runtime. No
-   asumir que el link del workspace raíz existe en producción. Gateway aún independiente.
-4. Implementar contexto panel → gateway firmado con actor/requestId/expiración,
-   método, ruta y hash del cuerpo; firma de secreto servidor (no clave IA), permisos,
-   replay/alcance apropiados. Principal local dev explícito y solo entorno desarrollo.
-   No reenviar headers de actor/firma suministrados por navegador. Sesión/origen
-   siguen vigentes; un servicio en red interna no es identidad suficiente.
-5. BUG-010: timeout acotado del proxy/frontera; errores saneados 401/403/503 y
-   comportamiento del stream, sin retry ciego de mutaciones.
-6. BUG-013: /history brain exige credencial cuando está configurada, health público;
-   ajustar prueba que conserva la exención. Usar configuración temporal/fake, sin
-   llamadas IA. No paralelizar suites Python mientras BUG-014 siga abierto; arreglarlo
-   si bloquea la verificación necesaria.
-7. Pruebas de sesión ausente/capacidad denegada/actor falsificado/firma alterada,
-   vencida/método-ruta-body distintos y dev explícito. Comprobar compatibilidad
-   de rutas/proxy/OAuth; validar ErrorResponse/SessionResponse en fronteras nuevas.
-8. Checks aislados, backlog, evidencia/estado y commit. No exponer archivo de
-   conversaciones que aún no existe ni cerrar F2/F5 por validar DTOs.
+## Decisiones y puertas después de F1B
 
-**Aceptación:** autenticación/autorización y contexto firmado probados, BUG-010 de
-proxy y BUG-013 cerrados, checks compatibles. Sin canales reales, claves IA ni
-migración de estado. Si hace falta secreto de servicio, fixture temporal y variable
-servidor documentada; nunca generar/versionar credenciales de producción.
+- SDK_PANEL_GATEWAY_SECRET >=32 bytes en ambos procesos; Compose lo exige.
+  Producción/bind de bus expuesto sin secreto falla cerrado. Solo legacy local
+  de desarrollo en loopback admite compatibilidad sin firma. Panel requerido sin
+  OAuth no se abre ni habilita dev como fallback.
+- PANEL_DEV_ACTOR=true requiere NODE_ENV=development y auth no forzada; grants
+  PANEL_ACTOR_GRANTS por google:<sub> o dev:local, omisión solo lectura v1.
+  Cookie OAuth anterior conserva legacy; requiere login nuevo para v1.
+- Grants v1 no limitan todavía el administrador legacy: BUG-024 antes de ofrecer
+  operadores limitados. No describir esto como un sistema global de roles de equipo.
+- Snapshot de sesión bootstrap volátil: época por bus y seq=0, sin archivo/eventos.
+  F2 debe reemplazarlo por snapshot transaccional persistente antes de consultas/SSE.
+  PolicyVersion efectiva en memoria incluye pausa/modo/perfil global; F5 la hará
+  durable. No usarla ahora para afirmar cancelación/entrega segura.
+- Cache replay 10000 entradas/30s, no durable entre reinicios. F5 requiere ledger
+  de idempotencia antes de mutaciones; no confundir requestId con Idempotency-Key.
+- contracts es dependencia file: empaquetada (install-links=true), no workspace
+  gateway. Repetir npm ci en gateway tras cambiar contracts. Docker copia fuente;
+  launchers/updater detectan cambios. No depender de la instalación raíz en runtime.
+
+## Siguiente unidad exacta: Fase 2 / F2A
+
+**Entregable:** repositorios SQLite del archivo con worker único, migración de
+schema y aceptación con fixtures. Sin conectar captura live ni cambiar autoridad
+legacy de permisos/control. Después vendrán F2B (captura WA) y F2C (TG/ack durable),
+con sus propias pruebas/commits y puertas de bugs pendientes.
+
+1. Leer AGENTS, arquitectura/ADR-005, SPEC, VALIDACION, SQLITE-SPIKE, contratos y
+   frontera F1B; revisar git status. Conservar procesos/transportes únicos.
+2. Antes de primera escritura, añadir SDK_CONVERSATIONS_DB_PATH, rutas DB/WAL/SHM,
+   .gitignore, inventario factoryReset y montaje/entorno Docker coherentes. Fixtures
+   temporales: nunca leer/importar datos o sesiones del workspace para probar.
+3. Encapsular node:sqlite DatabaseSync en worker, mínimo Node 22.13.0 sin flags.
+   Inicialización/migraciones transaccionales, readiness, cierre y propiedad única.
+   WAL/synchronous FULL; no SQL síncrono en hilo del gateway.
+4. Repositorios de cuentas/identidades/aliases/contactos/conversaciones/mensajes
+   y eventos mínimos; constraints/índices y secuencias textuales. IDs TG exactos con
+   signo, namespaces por cuenta/canal; aliases solo con evidencia verificada y
+   conflicto en cuarentena. Dedup por cuenta/identidad canónica/providerMessageId,
+   no rawChatId; ejecutar caso JID/LID de BUG-016 contra repositorio real.
+5. API de ingesta de fixture atómica: mensaje+evento+watermark en una transacción,
+   IDs estables, dedup/reimportación sin efectos IA y contenido fuera de eventos.
+   Distinguir live/history y cobertura sin afirmar historial previo completo.
+   No crear segunda autoridad activa de control; JSON conserva esa autoridad F5.
+6. Integrar época/watermark durable del archivo en sesión de gateway, sin habilitar
+   páginas/SSE de F3. Error de worker/DB da 503 saneado; nunca seguir con snapshot
+   ficticio ni bloquear el event loop mientras inicia.
+7. Probar rollback/crash/reapertura, dedup/aliases/conflictos, separación de cuentas,
+   orden/precisión, evento atómico, backup VACUUM INTO/restauración y cierre con
+   temporales. Usar presupuestos VALIDACION sin atribuir rendimiento no medido.
+8. Checks de contratos/gateway y aislamiento, evidencia, estado/backlog/roadmap,
+   commit local de F2A. No cerrar BUG-001/002/003/004/005/009 ni F2 completa sin
+   integrar adapters en unidades posteriores; no empezar F5 por tener tablas.
+
+**Aceptación:** repositorio durable comprobado tras reinicio, claves/identidades
+exactas, transacciones sin eventos huérfanos y snapshot de DB en sesión; instalación
+compatible y ningún estado de usuario tocado. Archivo operativo live aún pendiente.
 
 ## Pendientes materiales
 
@@ -152,6 +218,6 @@ servidor documentada; nunca generar/versionar credenciales de producción.
 
 Actualizar este archivo y solo los checkboxes demostrados. El prompt estable de
 [PROMPT-CONTINUIDAD.md](PROMPT-CONTINUIDAD.md) consulta este estado para retomar.
-Hacer commit de la unidad probada e informar su hash. BUG-001 a BUG-014 siguen
-abiertos; BUG-015 cerrado en F0.2, BUG-017/018 cerrados en F1A y BUG-016 cerrado en diseño F0.3, con ejecución
-contra el repositorio de mensajes pendiente de F2.
+Hacer commit de la unidad probada e informar su hash. BUG-001 a 012 (010 parcial),
+BUG-014 y BUG-024 siguen abiertos. BUG-013/019–023/025 cerrados F1B; BUG-015 F0.2,
+BUG-017/018 F1A y BUG-016 cerrado en diseño F0.3, con prueba runtime pendiente F2.

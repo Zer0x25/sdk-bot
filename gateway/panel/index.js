@@ -13,14 +13,19 @@
  * 🔐 OAuth 2.0 con Google (OPCIONAL, controlado por env):
  *   - Si PANEL_GOOGLE_CLIENT_ID y PANEL_GOOGLE_CLIENT_SECRET están presentes,
  *     TODAS las rutas (excepto /auth/*) exigen sesión Google.
- *   - Si no, el panel queda ABIERTO (comportamiento legacy) y avisa en consola.
- *   - Usa solo Node built-ins (fetch + crypto), sin dependencias extra.
+ *   - Dev legacy queda abierto; producción/auth forzada sin credenciales falla cerrada.
+ *   - v1 exige identidad verificada o dev explícito, y firma al gateway.
+ *   - Validación wire compartida mediante @sdk-bot/contracts.
  */
 const http = require('http');
 const fs = require('fs');
 const path = require('path');
 const crypto = require('crypto');
 const { URL } = require('url');
+const { proxy: proxyRequest } = require('./proxy');
+const { resolveActor } = require('./identity');
+const { actorId } = require('../lib/panelContext');
+const { BoundaryError, sendError } = require('../lib/httpBoundary');
 
 // Carga gateway/panel/.env (no versionado) si existe. No sobreescribe env ya definidas.
 const DOTENV = path.join(__dirname, '.env');
@@ -51,7 +56,8 @@ const SESSION_SECRET = process.env.PANEL_SESSION_SECRET || crypto.randomBytes(32
 // En desarrollo el panel queda ABIERTO (mock) aunque haya credenciales, para no frenar el trabajo.
 const NODE_ENV = process.env.NODE_ENV || 'development';
 const FORCE_AUTH = process.env.PANEL_REQUIRE_AUTH === '***' || process.env.PANEL_REQUIRE_AUTH === 'true';
-const OAUTH_ENABLED = Boolean(GOOGLE_CLIENT_ID && GOOGLE_CLIENT_SECRET) && (NODE_ENV === 'production' || FORCE_AUTH);
+const AUTH_REQUIRED = NODE_ENV === 'production' || FORCE_AUTH;
+const OAUTH_ENABLED = Boolean(GOOGLE_CLIENT_ID && GOOGLE_CLIENT_SECRET) && AUTH_REQUIRED;
 // Si se define, solo estos correos (csv, minúsculas) pueden entrar. Vacío = cualquier cuenta Google verificada.
 const ALLOWED_EMAILS = (process.env.PANEL_ALLOWED_EMAILS || '')
     .split(',').map((s) => s.trim().toLowerCase()).filter(Boolean);
@@ -77,6 +83,12 @@ function isWriteAuthorized(req) {
         return true;
     }
 
+    if (!isOriginAuthorized(req)) return false;
+    if (STATUS_TOKEN && !parseSession(req)) return false;
+    return true;
+}
+
+function isOriginAuthorized(req) {
     const secFetchSite = req.headers['sec-fetch-site'];
     if (secFetchSite === 'cross-site') {
         return false;
@@ -84,9 +96,9 @@ function isWriteAuthorized(req) {
 
     const originHeader = req.headers.origin;
     const refererHeader = req.headers.referer;
-    const origin = typeof originHeader === 'string' ? originHeader : (typeof refererHeader === 'string' ? new URL(refererHeader).origin : null);
-    if (origin) {
-        try {
+    try {
+        const origin = typeof originHeader === 'string' ? originHeader : (typeof refererHeader === 'string' ? new URL(refererHeader).origin : null);
+        if (origin) {
             const originUrl = new URL(origin);
             const reqHost = req.headers.host || '';
             const matchesHost = originUrl.host === reqHost;
@@ -97,14 +109,9 @@ function isWriteAuthorized(req) {
             if (!matchesHost && !matchesPublic) {
                 return false;
             }
-        } catch {
-            return false;
         }
-    }
-
-    if (STATUS_TOKEN) {
-        const session = parseSession(req);
-        if (!session) return false;
+    } catch {
+        return false;
     }
 
     return true;
@@ -140,13 +147,13 @@ function unsign(signed) {
 }
 function parseSession(req) {
     const cookie = req.headers.cookie || '';
-    const m = cookie.match(new RegExp(`${COOKIE_NAME}=([^;]+)`));
+    const m = cookie.match(new RegExp(`(?:^|;\\s*)${COOKIE_NAME}=([^;]+)`));
     if (!m) return null;
-    const payload = unsign(decodeURIComponent(m[1]));
-    if (!payload) return null;
     try {
+        const payload = unsign(decodeURIComponent(m[1]));
+        if (!payload) return null;
         const data = JSON.parse(Buffer.from(payload, 'base64url').toString('utf8'));
-        if (!data.exp || Date.now() > data.exp) return null;
+        if (!data || !Number.isSafeInteger(data.exp) || Date.now() >= data.exp) return null;
         return data;
     } catch {
         return null;
@@ -178,29 +185,22 @@ function sessionCookie(data, secure) {
     // ignoran Expires sin Max-Age y tratan la cookie como sesión de navegador
     // (se borra al cerrar). Max-Age la hace persistente el TTL real.
     const maxAge = Math.floor((data.exp - Date.now()) / 1000);
-    return `${COOKIE_NAME}=${encodeURIComponent(signed)}; ${cookieFlags(secure)} Expires=${exp}; Max-Age=${maxAge}`;
+    return `${COOKIE_NAME}=${encodeURIComponent(signed)}; ${cookieFlags(secure)}; Expires=${exp}; Max-Age=${maxAge}`;
 }
 function clearCookie(secure) {
-    return `${COOKIE_NAME}=; ${cookieFlags(secure)} Max-Age=0`;
+    return `${COOKIE_NAME}=; ${cookieFlags(secure)}; Max-Age=0`;
 }
 
 // ---------- Proxy al bus interno ----------
 function proxy(req, res, targetPath) {
-    const targetUrl = new URL(targetPath, INTERNAL);
-    const headers = { ...req.headers, host: targetUrl.host };
-    const preq = http.request(targetUrl, { method: req.method, headers }, (pres) => {
-        res.writeHead(pres.statusCode || 500, pres.headers);
-        pres.pipe(res);
+    const session = parseSession(req);
+    // Identidad técnica legacy sin capacidades v1. Nunca se usa como fallback
+    // del actor de conversaciones ni permite cambiar la ruta firmada.
+    return proxyRequest(req, res, targetPath, {
+        internal: INTERNAL, secret: process.env.SDK_PANEL_GATEWAY_SECRET || '',
+        actor: { id: actorId(`legacy:${session?.email || 'panel'}`), displayName: 'Panel legacy', capabilities: [] },
+        requestId: crypto.randomUUID(), sessionExpiresAt: session?.exp
     });
-    preq.on('error', (e) => {
-        if (!res.headersSent) res.writeHead(502, { 'Content-Type': 'application/json' });
-        res.end(JSON.stringify({ error: 'bus interno caído: ' + e.message }));
-    });
-    if (req.method === 'POST' || req.method === 'DELETE' || req.method === 'PUT' || req.method === 'PATCH') {
-        req.pipe(preq);
-    } else {
-        preq.end();
-    }
 }
 
 function serveStatic(req, res, pathname) {
@@ -283,7 +283,7 @@ function startLogin(req, res) {
 
 async function finishLogin(req, res) {
     const secure = (req.headers['x-forwarded-proto'] || 'https').split(',')[0].trim() === 'https';
-    const u = new URL(req.url || '/', `http://${req.headers.host || HOST + ':' + PORT}`);
+    const u = new URL(req.url || '/', 'http://panel.local');
     const code = u.searchParams.get('code');
     const state = u.searchParams.get('state');
     // State verificado server-side (no depende de cookies del navegador).
@@ -296,6 +296,7 @@ async function finishLogin(req, res) {
     const redirectUri = externalUrl(req, '/auth/callback');
     try {
         const tokenResp = await fetch('https://oauth2.googleapis.com/token', {
+            signal: AbortSignal.timeout(10000),
             method: 'POST',
             headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
             body: new URLSearchParams({
@@ -307,21 +308,30 @@ async function finishLogin(req, res) {
             })
         });
         const token = /** @type {{ access_token?: string }} */ (await tokenResp.json());
-        if (!token.access_token) {
+        if (!tokenResp.ok || !token.access_token) {
             res.writeHead(401, { 'Content-Type': 'text/plain' });
             res.end('No se pudo obtener el token de Google.');
             return;
         }
         const userResp = await fetch('https://www.googleapis.com/oauth2/v2/userinfo', {
+            signal: AbortSignal.timeout(10000),
             headers: { Authorization: `Bearer ${token.access_token}` }
         });
-        const user = /** @type {{ email?: string, name?: string, picture?: string }} */ (await userResp.json());
+        const user = /** @type {{ id?: string, verified_email?: boolean, email?: string, name?: string, picture?: string }} */ (await userResp.json());
+        if (!userResp.ok || typeof user.id !== 'string' || !/^[0-9]{1,200}$/.test(user.id) ||
+            user.verified_email !== true || typeof user.email !== 'string' || !user.email) {
+            res.writeHead(401, { 'Content-Type': 'text/plain' });
+            res.end('Google no confirmó una identidad verificada.');
+            return;
+        }
         if (ALLOWED_EMAILS.length && !ALLOWED_EMAILS.includes((user.email || '').toLowerCase())) {
             res.writeHead(403, { 'Content-Type': 'text/plain' });
             res.end('Tu cuenta de Google no está autorizada para este panel.');
             return;
         }
         const data = {
+            sub: user.id,
+            verified: true,
             email: user.email,
             name: user.name,
             picture: user.picture,
@@ -329,10 +339,9 @@ async function finishLogin(req, res) {
         };
         res.writeHead(302, { Location: '/', 'Set-Cookie': sessionCookie(data, secure) });
         res.end();
-    } catch (e) {
-        const msg = e instanceof Error ? e.message : String(e);
-        res.writeHead(500, { 'Content-Type': 'text/plain' });
-        res.end('Error en el intercambio OAuth: ' + msg);
+    } catch {
+        res.writeHead(503, { 'Content-Type': 'text/plain' });
+        res.end('No se pudo completar el intercambio OAuth.');
     }
 }
 
@@ -344,8 +353,30 @@ function handleLogout(req, res) {
 
 // ---------- Router principal ----------
 const server = http.createServer(async (req, res) => {
-    const u = new URL(req.url || '/', `http://${req.headers.host || HOST + ':' + PORT}`);
+    let u;
+    try { u = new URL(req.url || '/', 'http://panel.local'); }
+    catch { sendError(res, new BoundaryError(422, 'VALIDATION_ERROR', 'URL inválida.')); return; }
     const { pathname } = u;
+
+    if (pathname === '/api/v1' || pathname.startsWith('/api/v1/')) {
+        const requestId = crypto.randomUUID();
+        try {
+            const session = parseSession(req);
+            const actor = resolveActor(session, {
+                oauthEnabled: OAUTH_ENABLED, nodeEnv: NODE_ENV,
+                authRequired: AUTH_REQUIRED,
+                devActor: process.env.PANEL_DEV_ACTOR, grants: process.env.PANEL_ACTOR_GRANTS
+            });
+            // Tokens de status no sustituyen sesión ni evitan el control de origen v1.
+            if (['POST', 'PUT', 'DELETE', 'PATCH'].includes(req.method || '') && !isOriginAuthorized(req)) {
+                throw new BoundaryError(403, 'FORBIDDEN', 'Origen de escritura no autorizado.');
+            }
+            return proxyRequest(req, res, (u.pathname + u.search).replace(/^\/api/, ''), {
+                internal: INTERNAL, secret: process.env.SDK_PANEL_GATEWAY_SECRET || '',
+                actor, requestId, v1: true, sessionExpiresAt: session?.exp
+            });
+        } catch (error) { sendError(res, error, requestId); return; }
+    }
 
     // Rutas de auth solo existen cuando OAuth está habilitado (prod/forzado).
     // En dev (abierto) estas rutas no hacen nada y el panel queda accesible.
@@ -353,6 +384,11 @@ const server = http.createServer(async (req, res) => {
         if (pathname === '/auth/google') return startLogin(req, res);
         if (pathname === '/auth/callback') return finishLogin(req, res);
         if (pathname === '/auth/logout') return handleLogout(req, res);
+    }
+
+    if (AUTH_REQUIRED && !OAUTH_ENABLED) {
+        sendError(res, new BoundaryError(503, 'SERVICE_UNAVAILABLE', 'Autenticación del panel sin configurar.'));
+        return;
     }
 
     // Seguridad de escrituras en API (Fase 9: Origin check + STATUS_TOKEN)
@@ -367,7 +403,7 @@ const server = http.createServer(async (req, res) => {
     // Legacy: OAuth deshabilitado => comportamiento original (panel abierto).
     if (!OAUTH_ENABLED) {
         if (pathname.startsWith('/api/')) {
-            const busPath = (req.url ?? '/').replace(/^\/api/, '') || '/';
+            const busPath = (u.pathname + u.search).replace(/^\/api/, '') || '/';
             return proxy(req, res, busPath);
         }
         return serveStatic(req, res, pathname);
@@ -395,7 +431,7 @@ const server = http.createServer(async (req, res) => {
 
     // Autenticado:
     if (pathname.startsWith('/api/')) {
-        const busPath = (req.url ?? '/').replace(/^\/api/, '') || '/';
+        const busPath = (u.pathname + u.search).replace(/^\/api/, '') || '/';
         return proxy(req, res, busPath);
     }
     return serveStatic(req, res, pathname);
@@ -406,6 +442,8 @@ if (require.main === module) {
         if (OAUTH_ENABLED) {
             const restrict = ALLOWED_EMAILS.length ? `solo: ${ALLOWED_EMAILS.join(', ')}` : 'cualquier cuenta Google';
             console.log(`🖥️ [PANEL] Panel web en http://${HOST}:${PORT} (OAuth Google ACTIVO, ${restrict}; bus interno ${INTERNAL})`);
+        } else if (AUTH_REQUIRED) {
+            console.log(`🖥️ [PANEL] Panel en http://${HOST}:${PORT}: autenticación requerida sin configurar, acceso bloqueado`);
         } else {
             console.log(`🖥️ [PANEL] Panel web en http://${HOST}:${PORT} (OAuth DESHABILITADO — panel abierto; bus interno ${INTERNAL})`);
         }
