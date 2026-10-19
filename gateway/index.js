@@ -195,6 +195,7 @@ async function startGateway() {
     // 2. Iniciar Telegram
     const telegram = new TelegramAdapter();
     adapters.set('telegram', telegram);
+    internalBus.setTelegramChatIdResolver((token, options) => telegram.discoverChatId(token, options));
 
     telegram.on('ready', ({ adminLid }) => {
         log.info(`👑 ADMIN TG DETECTADO -> Chat ID: ${adminLid}`);

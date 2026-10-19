@@ -19,6 +19,7 @@ ya están implementados. La bandeja y el control desde el chat siguen pendientes
 - [Archivo SQLite con worker y evidencia F2A](docs/ARCHIVO-CONVERSACIONES-F2A.md)
 - [Captura base WA live/history y límites F2B.2](docs/CAPTURA-WHATSAPP-F2B2.md)
 - [Transcripciones durables y multimedia F2B.3](docs/MULTIMEDIA-WHATSAPP-F2B3.md)
+- [Dueño único y descubrimiento Telegram F2C.1](docs/TELEGRAM-DUENO-UNICO-F2C1.md)
 - [Experimento SQLite probado y compatibilidad](docs/SQLITE-SPIKE.md)
 - [Especificación operativa v1](docs/SPEC-OPERATIVA-V1.md) y [criterios de validación](docs/VALIDACION-V1.md)
 - [Prompt para continuar en otra sesión](docs/PROMPT-CONTINUIDAD.md)

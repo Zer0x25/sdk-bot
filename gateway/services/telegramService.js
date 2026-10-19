@@ -76,30 +76,6 @@ function sendTelegramMessage(message, overrideToken = null, overrideChatId = nul
     });
 }
 
-function testAndGetChatId(token) {
-    return new Promise((resolve, reject) => {
-        https.get({hostname: 'api.telegram.org', path: `/bot${token}/getUpdates`, family: 4}, (res) => {
-            let body = '';
-            res.on('data', chunk => body += chunk);
-            res.on('end', () => {
-                try {
-                    const data = JSON.parse(body);
-                    if (!data.ok) return reject(new Error(data.description || 'Error al obtener updates'));
-                    const updates = data.result || [];
-                    for (let i = updates.length - 1; i >= 0; i--) {
-                        if (updates[i].message && updates[i].message.chat) {
-                            return resolve(updates[i].message.chat.id);
-                        }
-                    }
-                    reject(new Error('No se encontraron mensajes. Por favor, envía un mensaje (ej: /start) al bot en Telegram primero y vuelve a intentarlo.'));
-                } catch (e) {
-                    reject(e);
-                }
-            });
-        }).on('error', reject);
-    });
-}
-
 /**
  * Menú de comandos del bot (única fuente de verdad).
  * El adaptador de Telegram lo reutiliza para que el menú que ve el usuario
@@ -157,7 +133,6 @@ function updateTelegramMenu(token) {
 
 module.exports = {
     sendTelegramMessage,
-    testAndGetChatId,
     updateTelegramMenu,
     TELEGRAM_MENU_COMMANDS,
     classifyPollResponse

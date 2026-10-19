@@ -23,7 +23,8 @@ aceptación futura revisados y [protocolo de validación](VALIDACION-V1.md). Fas
 cerrada. F1A y F1B completadas: workspace mínimo, contratos/tipos y frontera
 autenticada probados. F2A completada (repositorios del archivo); F2B.1 cierra la puerta de reset CLI.
 F2B.2 conecta captura base WA y F2B.3 completa enriquecimiento multimedia durable.
-Siguiente: F2C.1, dueño único del polling/descubrimiento Telegram (BUG-004).
+F2C.1 completa dueño único del polling/descubrimiento Telegram.
+Siguiente: F2C.2, captura base TG con cursor durable y namespace exacto.
 Sin canales reales ni migración.
 
 ## Alcance y entregas
@@ -113,7 +114,7 @@ alterado/vencido y desarrollo explícito, sin conectarse a canales reales.
 
 ## Fase 2 — Historial durable y captura completa
 
-**Depende de:** Fase 1. **Estado: F2A/F2B completadas; F2C y carga completa pendientes.**
+**Depende de:** Fase 1. **Estado: F2A/F2B/F2C.1 completadas; F2C.2 y carga completa pendientes.**
 Evidencia: [ARCHIVO-CONVERSACIONES-F2A](ARCHIVO-CONVERSACIONES-F2A.md).
 F2B.1 completa la puerta BUG-029/031 del reset CLI; evidencia en
 [RESET-SEGURO-F2B1](RESET-SEGURO-F2B1.md). F2B integra WA; F2C Telegram/ack; carga
@@ -135,10 +136,14 @@ abort físico queda como puerta de aceptación STT real F8, sin prometerlo aquí
   legacy/cache, guardas de socket y reconexión solapada; BUG-001/002/003/032
   cerrados. FIFO 1000/32MiB, desbordamiento visible sin ack ficticio. Purga
   inicial/diaria acotada; Node22/24 y entry real con transporte simulado probados.
-- [ ] Captura Telegram antes de adelantar/confirmar cursor durable. Reprocesar un
-  update tras crash sin duplicarlo. No agregar otro poller para descubrir historial.
-  Reconducir el getUpdates indirecto de testAndGetChatId al dueño único o coordinar
-  descubrimiento sin competencia de transporte; añadir prueba de esa exclusión.
+- [x] F2C.1 Dueño único en descubrimiento/polling Telegram. BUG-004/038–042
+  cerrados: observación del adapter configurado sin lector/offset extra, cierre HTTP
+  antes de reemplazo, offset RAM separado al cambiar token y setup parcial usable.
+  [Evidencia](TELEGRAM-DUENO-UNICO-F2C1.md); esto no prueba ACK/captura durable.
+- [ ] F2C.2 Captura base Telegram antes de adelantar/confirmar cursor durable.
+  Reprocesar un update tras crash sin duplicarlo; cuenta verificada sin token en
+  archivo y namespace de IDs/eco. BUG-005/008/009 pendientes en TG. Completar
+  enriquecimiento multimedia TG antes de cerrar F2C, en unidad separada si procede.
 - [ ] Persistir entrada aunque IA esté pausada, ignorando o en human. Reconciliar
   salida IA, humana desde teléfono y avisos por origen; separar chats administrativos.
 - [x] F2B.3 Multimedia durable: BUG-033/034/036 reparados. Mismo ID/huella;

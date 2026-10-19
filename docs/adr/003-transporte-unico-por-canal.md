@@ -17,7 +17,8 @@ Regla arquitectónica: **cada fuente de transporte tiene exactamente UN dueño, 
 
 ## 3. Consecuencias
 ### Positivas
-- Determinismo total: cada update se procesa exactamente una vez y por quien corresponde.
+- Un consumidor por fuente. Eso no garantiza exactly-once ni ACK durable: captura,
+  cursor y deduplicación necesitan las puertas F2 de la especificación operativa.
 - Agregar un canal = implementar adapter + conectar sus eventos; cero cambios en pipeline/commands.
 - Los tres puntos de administración (WA self-chat, TG admin, panel) garantizan comportamiento idéntico.
 - La lógica de decisión se testea sin red ni sockets.
@@ -25,3 +26,11 @@ Regla arquitectónica: **cada fuente de transporte tiene exactamente UN dueño, 
 ### Negativas / Trade-offs
 - Todo feature "que escuche mensajes" debe pasar por el pipeline; no hay atajos leyendo el transporte (esto es intencional).
 - El patrón generación/callback exige disciplina al tocar adapters: capturar referencias locales del socket/ciclo actual e invalidar ciclos viejos.
+
+## Aplicación F2C.1
+
+El descubridor indirecto testAndGetChatId también violaba el punto 1. Se elimina:
+el bus usa un callback del mismo TelegramAdapter, con observación acotada, sin
+getUpdates de prueba. Reemplazos esperan cierre del request local. Evidencia y
+límites: [TELEGRAM-DUENO-UNICO-F2C1](../TELEGRAM-DUENO-UNICO-F2C1.md).
+El cursor todavía es RAM; captura/ACK durable Telegram siguen F2C.2.

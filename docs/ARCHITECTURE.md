@@ -9,7 +9,8 @@ datos ni UI nueva. F1B implementa sesión v1 y firma panel → gateway, con cont
 instalados como dependencia local del gateway. F2A añade repositorios SQLite con
 worker y snapshot durable de sesión; F2B.1 protege el reset CLI antes de captura.
 F2B.2 conecta captura base WA y F2B.3 añade enriquecimiento multimedia durable
-([evidencia y límites](MULTIMEDIA-WHATSAPP-F2B3.md)). Telegram y resto de API v1 pendientes.
+([evidencia y límites](MULTIMEDIA-WHATSAPP-F2B3.md)). F2C.1 elimina el lector paralelo de descubrimiento TG
+([evidencia](TELEGRAM-DUENO-UNICO-F2C1.md)); archivo/cursor TG y resto de API v1 pendientes.
 Ver [CAPTURA-WHATSAPP-F2B2](CAPTURA-WHATSAPP-F2B2.md). Evidencia: [CONTRATOS-V1.md](CONTRATOS-V1.md) y
 [FRONTERA-AUTENTICADA-V1.md](FRONTERA-AUTENTICADA-V1.md) y
 [ARCHIVO-CONVERSACIONES-F2A.md](ARCHIVO-CONVERSACIONES-F2A.md).
@@ -47,8 +48,9 @@ un marcador visible aunque todavía no pueda abrirse o descargarse.
 En esa baseline, upsertMessage del store RAM no tenía llamadas y las guardas
 de socket WA solo cubrían connection.update. F2B.2 corrige lotes, cache live y
 callbacks obsoletos con captura SQLite; evidencia y límites en
-[CAPTURA-WHATSAPP-F2B2](CAPTURA-WHATSAPP-F2B2.md). El descubridor Telegram aún
-conserva un getUpdates independiente del adapter. Referencias y alcance de las pruebas en
+[CAPTURA-WHATSAPP-F2B2](CAPTURA-WHATSAPP-F2B2.md). F2C.1 conecta descubrimiento Telegram
+al adapter configurado, sin un getUpdates independiente; ciclo HTTP/offset por token
+corregidos. Cursor durable/captura TG siguen F2C.2. Referencias y alcance de las pruebas en
 [BASELINE-CONVERSACIONES.md](BASELINE-CONVERSACIONES.md).
 
 ## 3. Arquitectura y límites

@@ -33,6 +33,8 @@ export async function refreshTgStatus() {
       setTgStatus('● Telegram conectado y escuchando comandos.', 'ok');
     } else if (reason === 'token_invalido') {
       setTgStatus('● Token inválido o revocado: genera uno nuevo con @BotFather y guárdalo aquí.', 'bad');
+    } else if (reason === 'error_polling') {
+      setTgStatus('● Telegram rechazó la conexión. Revisa la configuración y vuelve a guardar.', 'bad');
     } else if (reason === 'sin_token') {
       setTgStatus('● Sin token configurado: sigue los pasos de abajo para vincular tu bot.', 'warn');
     } else {
@@ -43,7 +45,7 @@ export async function refreshTgStatus() {
   }
 }
 
-function setTgUIState(connected) {
+function setTgUIState(connected, configured = connected) {
   if (connected) {
     tgToken.readOnly = true;
     tgChatId.readOnly = true;
@@ -59,10 +61,7 @@ function setTgUIState(connected) {
     tgChatId.style.opacity = '1';
     tgTestBtn.style.display = 'block';
     tgSaveBtn.style.display = 'block';
-    tgResetBtn.style.display = 'none';
-    tgToken.value = '';
-    tgChatId.value = '';
-    tgMsg.textContent = '';
+    tgResetBtn.style.display = configured ? 'block' : 'none';
   }
 }
 
@@ -70,16 +69,15 @@ export async function loadTgSettings() {
   refreshTgStatus();
   try {
     const d = await getTelegramSettings();
-    if (d.token && d.chatId) {
-      rawTgToken = d.token;
-      tgToken.value = maskToken(d.token);
-      tgChatId.value = d.chatId;
-      setTgUIState(true);
-      tgMsg.style.color = '#4ade80';
-      tgMsg.textContent = '✅ Bot configurado. Si cambió el token en BotFather, ingrésalo de nuevo y guarda.';
-    } else {
-      setTgUIState(false);
-    }
+    rawTgToken = d.token || '';
+    const complete = !!(d.token && d.chatId);
+    setTgUIState(complete, !!d.token);
+    tgToken.value = complete ? maskToken(d.token) : rawTgToken;
+    tgChatId.value = d.chatId || '';
+    tgMsg.style.color = complete ? '#4ade80' : '#aab3c5';
+    tgMsg.textContent = complete
+      ? '✅ Bot configurado. Desconecta para cambiar el token o el Chat ID.'
+      : d.token ? 'Token guardado. Envía /start al bot, pulsa Probar y guarda el Chat ID obtenido.' : '';
   } catch (e) {
     console.error('Error cargando config telegram', e);
   }
@@ -108,10 +106,10 @@ export function initTelegramTab() {
     tgMsg.style.color = '#aab3c5';
     tgMsg.textContent = '⏳ Probando conexión...';
     try {
-      const d = await testTelegramToken(token);
+      const d = await testTelegramToken(token, tgChatId.value.trim());
       if (d.success) {
         tgMsg.style.color = '#4ade80';
-        tgMsg.textContent = '✅ Mensaje de prueba enviado. Chat ID obtenido.';
+        tgMsg.textContent = '✅ Mensaje de prueba enviado. Guarda para aplicar el Chat ID.';
         if (d.chatId) tgChatId.value = d.chatId;
       } else {
         tgMsg.style.color = '#f87171';
@@ -134,10 +132,11 @@ export function initTelegramTab() {
       const d = await saveTelegramSettings(token, chatId);
       if (d.success) {
         rawTgToken = token;
-        tgToken.value = maskToken(token);
-        setTgUIState(true);
+        tgToken.value = chatId ? maskToken(token) : token;
+        setTgUIState(!!chatId, !!token);
         tgMsg.style.color = '#4ade80';
-        tgMsg.textContent = '✅ ' + (d.message || 'Configuración guardada correctamente.');
+        tgMsg.textContent = chatId ? '✅ ' + (d.message || 'Configuración guardada correctamente.')
+          : 'Token guardado. Envía /start al bot, pulsa Probar y vuelve a guardar el Chat ID.';
         // El adaptador se reconecta en caliente; refrescar el badge enseguida
         setTimeout(refreshTgStatus, 2500);
       } else {
@@ -157,6 +156,8 @@ export function initTelegramTab() {
     try {
       await saveTelegramSettings('', '');
       rawTgToken = '';
+      tgToken.value = '';
+      tgChatId.value = '';
       setTgUIState(false);
       setTgStatus('● Sin token configurado: sigue los pasos de abajo para vincular tu bot.', 'warn');
       tgMsg.style.color = '#aab3c5';

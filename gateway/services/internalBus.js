@@ -1,4 +1,5 @@
 // @ts-check
+/* global AbortController */
 /**
  * 🔌 BUS INTERNO del gateway (tercer proceso: el panel web lo consume).
  *
@@ -42,7 +43,8 @@ const {
     importProfileFile, deleteProfileFile, reloadProfiles
 } = require('./brainService');
 const { getContactsDB, getSettingsDB, saveSettingsDB } = require('./db');
-const { sendTelegramMessage, testAndGetChatId } = require('./telegramService');
+const { sendTelegramMessage } = require('./telegramService');
+const { requestJson: telegramRequest, failure: telegramFailure } = require('./telegramHttp');
 const { runAdminCommand } = require('./adminCommandRunner');
 const { findKeyByDigits } = require('./contactsRepository');
 const { setNumberState, setContactProfile } = require('./stateService');
@@ -164,6 +166,8 @@ let resetReconnectCb = null;
 let pairingCodeRequester = null;
 /** @type {any} Callback que el gateway inyecta para reconectar Telegram tras cambiar la config. */
 let telegramReloader = null;
+/** @type {((token:string, options:{signal:AbortSignal}) => Promise<string>)|null} */
+let telegramChatIdResolver = null;
 /** Estado compartido para que el panel pueda restaurar el método pendiente. */
 /** @type {'qr'|'code'|null} */
 let pairingMethod = null;
@@ -459,6 +463,11 @@ function setPairingCodeRequester(cb) {
 /** El gateway inyecta un callback para (re)conectar Telegram al cambiar la config sin reiniciar. */
 function setTelegramReloader(cb) {
     telegramReloader = typeof cb === 'function' ? cb : null;
+}
+
+/** Read-only discovery port; only the configured transport owner observes chats. */
+function setTelegramChatIdResolver(cb) {
+    telegramChatIdResolver = typeof cb === 'function' ? cb : null;
 }
 
 /** Reconnecta el adaptador de Telegram si el gateway registró el reload. */
@@ -919,20 +928,31 @@ function routeApi(req, res, pathname, params) {
         return;
     }
     if (pathname === '/telegram/test' && req.method === 'POST') {
-        readBody(req).then(async (b) => {
-            try {
-                if (!b.token) throw new Error('Se requiere el token del bot');
-                // Si mandan un token nuevo pero sin chatId, lo buscamos
-                let chatId = b.chatId;
-                if (!chatId) {
-                    chatId = await testAndGetChatId(b.token);
-                }
-                await sendTelegramMessage('🤖 *Test de notificaciones SDK-Bot*\n\n¡La integración de Telegram se ha configurado con éxito!', b.token, chatId);
-                sendJson(res, 200, { success: true, chatId: chatId });
-            } catch (e) {
-                sendJson(res, 400, { success: false, message: errMsg(e) });
+        const controller = new AbortController();
+        const closed = () => { if (!res.writableEnded) controller.abort(); };
+        res.on('close', closed);
+        readBody(req).then(async b => {
+            if (typeof b.token !== 'string' || !b.token.trim()) throw telegramFailure('TG_TOKEN_REQUIRED', 'Se requiere el token del bot');
+            const token = b.token.trim();
+            if (!/^[a-zA-Z0-9:_-]{1,256}$/.test(token)) throw telegramFailure('TG_TOKEN_INVALID', 'El token tiene un formato inválido.');
+            let chatId = b.chatId;
+            if (!chatId) {
+                if (!telegramChatIdResolver) throw telegramFailure('TG_DISCOVERY_UNAVAILABLE', 'Guarda primero el token con el gateway activo, envía /start al bot y vuelve a probar.');
+                chatId = await telegramChatIdResolver(token, { signal: controller.signal });
             }
-        });
+            if (typeof chatId === 'number' && !Number.isSafeInteger(chatId)) throw telegramFailure('TG_CHAT_ID_INVALID', 'Introduce el Chat ID como texto decimal exacto.');
+            chatId = String(chatId);
+            if (!/^-?[1-9]\d*$/.test(chatId)) throw telegramFailure('TG_CHAT_ID_INVALID', 'El Chat ID debe ser un identificador decimal válido.');
+            if (controller.signal.aborted) return;
+            const result = await telegramRequest({ path: `/bot${token}/sendMessage`, method: 'POST',
+                body: { chat_id: chatId, text: '🤖 Test de notificaciones SDK-Bot. ¡La integración de Telegram se ha configurado con éxito!' },
+                signal: controller.signal, timeoutMs: 2000 });
+            if (!result?.ok) throw telegramFailure('TG_TEST_REJECTED', 'Telegram rechazó el mensaje de prueba. Revisa el token y el Chat ID.');
+            if (!controller.signal.aborted) sendJson(res, 200, { success: true, chatId });
+        }).catch(e => {
+            if (!controller.signal.aborted) sendJson(res, 400, { success: false,
+                message: typeof e.code === 'string' && e.code.startsWith('TG_') ? e.message : 'No se pudo procesar la prueba de Telegram.' });
+        }).finally(() => { res.removeListener('close', closed); });
         return;
     }
 
@@ -1106,7 +1126,7 @@ function startInternalBus(opts = {}) {
 
 module.exports = {
     startInternalBus, setSock, clearSock, handleConnectionUpdate, setQrRefresh, setPairingCodeRequester,
-    setResetReconnect, setTelegramReloader, requestPairing, runAdminCommand, performReset, performRestart, wsReadyState,
+    setResetReconnect, setTelegramReloader, setTelegramChatIdResolver, requestPairing, runAdminCommand, performReset, performRestart, wsReadyState,
     qrPayload, resetInProgressForTests, setQrTtlForTests, resetQrForTests, setPairingCodeTimeoutForTests,
     isQrWindowOpen: () => qrWindowOpen && !!lastQrDataUrl && Date.now() < qrExpiresAt,
     notifyAdmin
