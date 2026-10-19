@@ -1,146 +1,386 @@
-# Plan de Arquitectura: SDK-Bot (100% Custom & Modular)
+# SDK-Bot: arquitectura de la plataforma de conversaciones
 
-Este documento define la arquitectura y componentes de la plataforma Multi-Bot de WhatsApp **SDK-Bot**, diseñada para operar con control total de flujo, privacidad, simulación humana y derivación quirúrgica a atención humana.
+Fecha: 2026-10-19. Estado: **diseño para implementación incremental**.
+El código todavía usa `gateway/`, `brain/`, `stt/` y un panel estático.
+Las carpetas, tablas, servicios y endpoints de destino no existen todavía,
+salvo indicación expresa. Esta sesión entrega documentación, no una migración.
 
----
+## 1. Producto y primera entrega
 
-## 🎯 Objetivo Principal
-Crear una plataforma escalable donde podamos levantar `N` cantidad de bots de WhatsApp, cada uno con su propio número, memoria aislada, personalidad configurable (SOUL), protección anti-baneo y derivación a atención humana en tiempo real.
+SDK-Bot evoluciona hacia una consola de atención multicanal. La pantalla principal
+será una bandeja familiar a WhatsApp Web: lista de chats, hilo de mensajes y ficha
+del contacto. Desde el hilo se podrá tomar control humano, responder y devolver
+la conversación a la IA.
 
----
+La v1 incluye chats individuales de texto en WhatsApp y Telegram, historial
+persistente desde la captura, autoría de salidas, control humano y actualización
+en vivo. Habrá un administrador por instalación, con varias pestañas posibles.
+No se promete paridad completa con WhatsApp Web ni todo el historial anterior.
+Adjuntos reproducibles, grupos, equipos de agentes y herramientas IA con efectos
+externos se incorporan después. Desde el inicio, un multimedia recibido tendrá
+un marcador visible aunque todavía no pueda abrirse o descargarse.
 
-## 📁 Estructura del Proyecto
+## 2. Diagnóstico comprobado en el código
 
+| Pieza actual | Evidencia | Implicación |
+|---|---|---|
+| Memoria IA | `brain/memory.py`: append_exchange, barrido y límites; `.env.tuning`: 7 días y ~5000 tokens de contexto | Es contexto de generación, no archivo íntegro del chat. |
+| Historial WA | `gateway/store/chatStore.js`: Map, máximo por chat y expulsión por inactividad | Se pierde al reiniciar; fromMe se normaliza como assistant sin distinguir humano. |
+| Captura WA | `gateway/adapters/whatsappAdapter.js`: messages.upsert procesa m.messages[0], filtra mensajes del bot y deriva audio antes de emitir texto | Capturar todos los mensajes y separar archivo de decisión de respuesta. |
+| Captura Telegram | `gateway/adapters/telegramAdapter.js`: texto/audio y lastUpdateId adelantado antes de terminar el trabajo | Revisar confirmación y persistencia del cursor. Bot API no da un archivo histórico arbitrario. |
+| Handoff | stateService.js, contactsRepository.js y commands/chatControl.js | Mezcla permisos y automatización, TTL de 24 h y resolución por dígitos; no garantiza cancelación. |
+| Envío IA | `services/brainService.js`: petición, esperas, typing y varios globos | Falta barrera común de validación antes de cada envío. |
+| Memoria prematura | `brain/main.py`: /chat llama append_exchange antes de entregar al gateway | Una generación cancelada puede quedar en contexto como si se hubiera enviado. |
+| Envíos directos | `internalBus.js`: /notify usa activeSock.sendMessage; otros servicios llaman al adapter | Converger en un caso de uso con auditoría e idempotencia. |
+| UI | `gateway/panel/public/`: ES Modules y CSS sin build | Sin bandeja ni cliente tipado para conversaciones. |
+| Documentación | ROADMAP declaraba pendientes índices ya presentes en contactsRepository.js; ARCHITECTURE tenía OAuth desactualizado | Confirmar con código/pruebas; no marcar validaciones reales como realizadas. |
+
+F0.1 confirmó además que upsertMessage del store RAM no tiene llamadas, las guardas
+de socket WA solo cubren connection.update y el descubridor Telegram conserva un
+getUpdates independiente del adapter. Los checks actuales pasan, pero no cubren
+esas propiedades. Referencias y alcance de las pruebas en
+[BASELINE-CONVERSACIONES.md](BASELINE-CONVERSACIONES.md).
+
+## 3. Arquitectura y límites
+
+**Monolito modular dentro del gateway**, con procesos separados para panel,
+brain y STT. Se conservan los límites de ADR-001/002/003. ADR-005 amplía ADR-004
+para admitir salida persistente de mensajes interactivos.
+
+```mermaid
+flowchart LR
+    WA[WhatsApp / Baileys] <--> A[Adapters del gateway]
+    TG[Telegram Bot API] <--> A
+    A --> I[Ingesta normalizada]
+    I --> D[(SQLite del gateway)]
+    I --> C[Casos de uso de conversaciones]
+    C --> G[Generación y control IA]
+    G --> B[Brain: perfiles y proveedores]
+    A --> STT[STT local]
+    C --> O[Salida persistente y barrera de envío]
+    O --> A
+    C --> D
+    D --> E[Eventos durables / SSE]
+    UI[Panel React] --> P[Servidor del panel: sesión y proxy]
+    P --> API[API interna versionada]
+    API --> C
+    E --> P
+    P --> UI
 ```
-SDK-Bot/
-├── gateway/                      # Capa de Mensajería (Node.js + Hub de Adaptadores)
-│   ├── index.js                  # Punto de entrada (orquesta adaptadores, pipelines y colas)
-│   ├── core/                     # Interfaces abstractas (ChannelAdapter, StandardMessage)
-│   ├── adapters/                 # Implementaciones de red (whatsappAdapter, telegramAdapter)
-│   ├── reset-session.js          # Script de re-sincronización de libreta (npm run reset / Fresh QR)
-│   ├── reset-clean.js            # Reset limpio de fábrica F7 (npm run clean)
-│   ├── config.js                 # Estado global, URLs y registro anti-bucle
-│   ├── tuning.js                 # Variables de afinación y rendimiento
-│   ├── panel/                    # Panel Web — 3er proceso independiente (puerto 5201)
-│   │   ├── index.js              # Servidor HTTP proxy hacia el bus interno (:5400) y estáticos
-│   │   └── public/               # Frontend web estático modular (dashboard, pairing, contactos, perfiles, logs)
-│   ├── store/
-│   │   └── chatStore.js          # Store RAM de mensajes de Baileys (precarga web-like)
-│   ├── services/
-│   │   ├── internalBus.js        # Bus interno HTTP (:5400) para desacoplar el gateway del panel
-│   │   ├── db.js                 # Persistencia atómica (contacts_db, settings_db)
-│   │   ├── contactsRepository.js # Lógica de contactos, índices RAM O(1) y saneamiento
-│   │   ├── contactSyncQueue.js   # Cola de sincronización de contactos por lotes (100/tick)
-│   │   ├── messageSyncQueue.js   # Cola de sincronización de mensajes de historial (100/tick)
-│   │   ├── messageQueue.js       # Cola persistente en disco (JSONL) para caídas del brain
-│   │   ├── broadcastService.js   # Difusión masiva y mensajes programados
-│   │   ├── stateService.js       # Estados de contacto y modos globales
-│   │   ├── metadataService.js    # Smart Delta Sync (TTL 24h), Phone/LID dual, Foto HD, Bio y Países
-│   │   ├── statusServer.js       # Métricas locales en HTTP (:5300)
-│   │   ├── factoryReset.js       # Motor unificado de reset limpio F7
-│   │   └── brainService.js       # Cliente HTTP REST + Simulación Humana (Typing Delay & Multi-Bubble)
-│   ├── handlers/
-│   │   ├── commandHandler.js     # Dispatcher modular de comandos admin con extracción de citas
-│   │   ├── commandHelpers.js     # Sanitización, help de comandos y utilidades
-│   │   ├── commands/             # Comandos por categoría (/ia, /humano, /perfil, /broadcast, /estado, etc.)
-│   │   └── messageHandler.js     # Pipeline de mensajes, De-bounce estocástico, Handoff y Presencia RAM
-│   ├── contacts_db.json          # Base de datos centralizada de contactos y estados (gitignored)
-│   ├── settings_db.json          # Configuración global del bot (globalMode: allowed_all / ignored_all)
-│   ├── settings_db.json.example  # Plantilla de configuración global
-│   ├── *.json.example            # Plantillas de ejemplo para despliegues limpios
-│   ├── auth_info_baileys/        # Sesión y estado de WhatsApp (gitignored)
-├── brain/                        # Capa de Inteligencia (Python + FastAPI)
-│   ├── main.py                   # Aplicación FastAPI modularizada (/chat, /reset-memory, /profiles, :5100)
-│   ├── config.py                 # API Keys y modelos (Groq, OpenRouter, Gemini)
-│   ├── memory.py                 # Gestor de memoria persistente SQLite (brain/memory.db)
-│   ├── providers.py              # Router multi-proveedor (orden y timeouts TUNABLES vía .env.tuning: BRAIN_PRIMARY_MODEL)
-│   ├── profiles.py               # Motor de perfiles SOUL en caliente
-│   ├── profiles/                 # Perfiles SOUL editables en Markdown (default, lucia, mateo, cobranzas, recepcion)
-│   ├── .env                      # API Keys (gitignored)
-│   └── requirements.txt          # Dependencias Python
-├── deploy/                       # Despliegue por plataforma (Docker Linux, Termux runit, Windows batch)
-├── PLAN-ARQUITECTURA.md          # Documentación técnica completa
-└── ROADMAP.md                    # Hoja de ruta de fases (guía de sesiones)
+
+- Solo el gateway mantiene sockets/polling y escribe su DB. Una réplica por cuenta
+  de WhatsApp. Abrir el nuevo panel jamás inicia otro transporte.
+- El panel conserva sesión, validación de origen y proxy. No importa módulos del
+  gateway, no abre SQLite y no conoce tokens de canales ni claves de modelos.
+- El brain genera y deriva contexto; no lee SQLite del gateway ni habla con canales.
+  STT transcribe; su caída no bloquea capturar el audio.
+- El dominio no importa HTTP, React, Baileys, Telegram ni SQLite. Los casos de uso
+  dependen de interfaces pequeñas implementadas por infraestructura.
+- Panel, comandos, cola IA y avisos convergen en casos de uso comunes. El bus sigue
+  siendo HTTP interno; SSE actualiza UI. Redis, Kafka y WebSockets no son necesarios
+  para este alcance. El log de cambios no convierte al dominio en event sourcing.
+
+El contrato del adapter evoluciona a eventos normalizados de mensaje observado,
+actualización, recibo y estado de canal. Captura y automatización son consumidores
+distintos de esa normalización dentro del gateway; no son dos consumidores del
+transporte. La aplicación persiste antes de habilitar automatización. Las salidas
+emiten resultados normalizados también cuando el proveedor no devuelve eco.
+`raw` queda en el adapter o frontera legacy; no cruza dominio ni DTO. Un contrato
+de capacidades indica soporte de histórico, adjuntos, citas, edición y recibos;
+una función no soportada no se simula en UI.
+
+## 4. Estructura de destino
+
+```text
+sdk-bot/
+├── apps/
+│   ├── gateway/
+│   │   ├── src/
+│   │   │   ├── bootstrap/              # composición, config, ciclo de vida
+│   │   │   ├── modules/
+│   │   │   │   ├── conversations/      # hilo, control, lectura, estado
+│   │   │   │   ├── contacts/           # identidad y permisos
+│   │   │   │   ├── messaging/          # ingesta, salida y entregas
+│   │   │   │   ├── automation/         # debounce, jobs IA y contexto
+│   │   │   │   └── campaigns/          # difusión existente, aislada
+│   │   │   ├── adapters/              # únicos transportes WA/TG
+│   │   │   ├── infrastructure/        # SQLite worker, brain/STT, archivos
+│   │   │   └── interfaces/            # HTTP, SSE y comandos admin
+│   │   ├── migrations/
+│   │   └── tests/
+│   ├── panel/
+│   │   ├── server/                    # OAuth, identidad y proxy
+│   │   └── web/src/
+│   │       ├── app/                   # router, providers y layout
+│   │       ├── features/              # inbox, contacts, channels, assistant, system
+│   │       ├── components/ui/         # controles y estados accesibles
+│   │       ├── lib/                   # cliente API y conexión SSE
+│   │       └── styles/                # tokens y estilos globales
+│   ├── brain/                        # Python: generación, perfiles, contexto
+│   └── stt/                          # Python: transcripción local
+├── packages/
+│   ├── contracts/                    # OpenAPI, JSON Schema y tipos generados
+│   └── testkit/                      # fixtures sintéticos y adapters simulados
+├── docs/                             # arquitectura, ADR, roadmap y continuidad
+└── deploy/                           # Docker, Linux, Windows y Termux
 ```
 
----
+Cada módulo puede usar domain/, application/ e infrastructure/ cuando tenga código
+que lo justifique. No crear árboles vacíos ni un shared genérico para toda la lógica.
 
-## 🏗️ Componentes de Arquitectura e Innovaciones
+| Área | Elección y propósito |
+|---|---|
+| Organización Node | npm workspaces para apps Node/contratos; Python conserva requirements y entorno. |
+| UI | React + TypeScript + Vite; React Router; TanStack Query para caché/paginación; CSS con tokens e iconos SVG consistentes. |
+| Gateway/panel server | TypeScript incremental. JS existente sigue funcionando mientras se extrae por módulo. Sin cambio obligatorio de framework HTTP. |
+| Datos | SQLite local, WAL, migraciones y un worker propietario de la conexión del gateway. Puertos de repositorio permiten sustituirla. |
+| Driver | Preferencia inicial node:sqlite con Node 22 compatible. Fase 0 valida API/versión real y Linux, Windows y Termux antes de incorporarlo; documentar alternativa si falla. |
+| Contratos | OpenAPI 3.1 + JSON Schema como fuente, validación runtime y tipos TS/modelos Python generados o comprobados contra esquemas. |
+| Calidad | node:test para dominio/contratos, pytest para brain; Vitest/Testing Library para UI; Playwright para recorridos. |
 
-### 1. 🤝 Derivación a Humano (Human Handoff & Pausa Quirúrgica)
-- **Detección Automática:** Cuando un cliente utiliza expresiones como `"hablar con una persona"`, `"asesor"`, `"ejecutivo"`, `"atención humana"`, el Gateway pausa la IA **exclusivamente para ese cliente** asignando `estado: "handoff"` en `contacts_db.json`.
-- **Notificación en Self-Chat:** Alerta al Administrador en su chat privado de WhatsApp indicando datos del cliente y el comando copiable `/auto <num>`.
-- **Control por Comandos & Extracción de Citas:**
-  - Comandos `/auto` (o `/a`, `/ia`) para reactivar la IA, `/handoff` (o `/h`, `/humano`) para pausarla individualmente, y `/limpiar` (o `/c`, `/reset`) para reiniciar la memoria conversacional del cliente.
-  - **Extracción de Citas:** Al responder (citar) un mensaje en Self-Chat con un comando, el sistema extrae automáticamente el teléfono o LID del contexto.
+Vite funciona en desarrollo/build. En producción el proceso del panel sirve el
+build: no se agrega un servicio de frontend. CI puede distribuir artefactos a
+Termux. No se requiere SSR para esta consola privada.
 
-### 2. 🧠 De-bounce Queue & Timer de Silencio Estocástico Adaptativo (Random sobre Random)
-- **Ventana de Silencio Estocástica Adaptativa:** En lugar de un temporizador fijo, el tiempo de silencio pos-escritura se calcula dinámicamente:
-  - **Adaptativo Normal (~83%):** 5s a 7s para mensajes únicos/cortos (<20 chars); 7.5s a 12s para múltiples mensajes o textos largos.
-  - **Capa Ocupado / Distraído (~12%):** Posponimiento de 1 a 2 minutos (60s - 120s) imitando un retraso humano ocasional.
-  - **Capa AFK / Muy Ocupado (~5%):** Posponimiento de 3 a 4 minutos (180s - 240s) imitando distracciones más prolongadas.
-- **Renovación Dinámica (`presence.update`):** Si el cliente está escribiendo (`composing` / `recording`), los temporizadores se renuevan continuamente sin cortar la idea del usuario. Además, el composing dispara la precarga de contexto (Opción A, 2 etapas web-like): el gateway hace GET /history del cerebro y guarda en RAM la ventana reciente de ESE chat (etapa 1, señal de intervención: el bot ya sabe de qué va al abrir el chat), con límites acotados (GATEWAY_PRELOAD_MAX_MESSAGES=25, sin tope de tokens). Cuando el mensaje llega, la respuesta usa el contexto COMPLETO del cerebro (7d / 5000 tok, etapa 2); la precarga NO se inyecta en la respuesta. El dedup por TTL evita martillear al cerebro en cada evento de presencia.
-  - *Soporte Multi-Device (Dual JID):* El estado de presencia entra a nivel de Teléfono (@s.whatsapp.net), pero los mensajes pueden operar bajo el LID (@lid). Nuestro motor en memoria RAM (activePresences) resuelve ambos IDs simultáneamente apoyándose en contacts_db.json.
-- **Expiración de Escritura (5.0s):** Si el usuario deja de escribir sin enviar evento `paused`, el estado de escritura expira a los 5.0s (`TYPING_TTL_MS`) e inicia el temporizador de silencio adaptativo.
+## 5. Modelo y autoridades
 
-### 3. 🛡️ Simulación Humana & Anti-Ban Rate Limiter
-- **Lectura / Pensamiento Inicial:** Simula tiempo de lectura (800ms - 3.3s) antes de encender el estado de tecleo.
-- **Typing Delay Adaptativo (1.5s - 16s):** Simula velocidad humana de 7 a 10 caracteres por segundo (100ms - 135ms por carácter) con ruido estocástico (jitter), acotado entre 1.5s y 16.0s por globo.
-- **Multi-Bubble (Globos Secuenciales):** Divide respuestas extensas en fragmentos (máx `GATEWAY_BUBBLE_MAX_CHARS`, default ~220 chars) con pausas inter-globo tunables (`GATEWAY_PAUSE_BETWEEN_BUBBLES_MIN/MAX_MS`, default 1.0s–2.2s). Todo en `.env.tuning` (`gateway/services/humanSim.js`).
+SQLite del gateway será la fuente operativa. No se comparte su archivo con panel
+ni brain. brain/memory.db será contexto derivado, versionado e invalidable;
+limpiar memoria IA no borra el archivo de conversaciones.
 
-### 4. ⚡ Router Multi-Proveedor de IA & Resiliencia
-- **Cascada Automatizada de Respaldo** (orden TUNABLE vía `BRAIN_PRIMARY_MODEL` en `.env.tuning`; default **Gemini primary**):
-  1. **Google Gemini** (`gemini-3.1-flash-lite`, default primary): Timeout tunable (`BRAIN_TIMEOUT_GEMINI`, default 40s).
-  2. **Groq** (`llama-3.3-70b-versatile`): Respaldo 1 (Timeout `BRAIN_TIMEOUT_GROQ`, default 25s).
-  3. **OpenRouter** (`openrouter/free`): Respaldo 2 (Timeout `BRAIN_TIMEOUT_OPENROUTER`, default 25s).
-- Los timeouts, temperatura/top_p/max_tokens y el estilo global de "voz" son tunables en `.env.tuning` (ver `brain/config.py`).
-- **Alertas Silenciosas de Error:** Si la IA falla o se agota el timeout, el error **nunca se muestra al cliente**. Se envía una alerta privada al Self-Chat del Admin con el diagnóstico exacto.
+| Entidad | Campos y restricciones esenciales |
+|---|---|
+| channel_accounts | ID interno estable, canal y referencia del proveedor. Nunca token en DTO. El teléfono no es PK mutable. |
+| contacts / contact_identities | ID estable y aliases exactos por cuenta/canal: JID, LID, teléfono, chat ID como texto. Unión solo con evidencia del adapter. |
+| conversations | UUID, accountId, identidad remota canónica, accessPolicy, automationMode, lifecycle, ownerId, controlVersion, handoffReason, takenAt, lastActivityAt, historyCoverage. |
+| messages | ID local, conversationId, providerMessageId nullable, direction, authorKind, actorId nullable, type, text, transcript, occurredAt, ingestedAt, deliveryStatus, replyToId nullable, source. |
+| message_attempts / outbox | Mensaje local, idempotencyKey, payload validado/hash, intent, controlVersion, intentos, estado, error acotado, próximo intento. |
+| conversation_events | Secuencia durable, tipo, versión de esquema, aggregateVersion, fecha y payload mínimo; auditoría/replay en la misma transacción del cambio. |
+| operator_read_cursors | actorId, conversationId y última secuencia entrante vista; independiente del recibo de lectura del canal. |
+| automation_jobs | IDs de entradas, versión de control/contexto, estado, cancelación, generationId y mensajes entregados. |
+| operations | ID, conversación, actor, tipo takeover, estado pendiente/completado/fallido, versión, resultado/aviso y fechas; permite consultar y recuperar la toma tras reinicio. |
+| schema_migrations / import_runs | Versión, checksum, origen, progreso, recuentos y errores recuperables. |
 
-### 5. 🗂️ Motor de Estados Centralizado (`contacts_db.json` & `settings_db.json`)
-- **Gestión Unificada de Estados:** Reemplaza listas externas obsoletas por el campo `estado` (`permitido`, `ignorado`, `handoff`, `neutro`) en `contacts_db.json` y `globalMode` (`allowed_all` / `ignored_all`) en `settings_db.json`.
-- **TTL de 24 Horas:** Evita consultas redundantes de foto/bio a WhatsApp si el contacto fue enriquecido en las últimas 24h.
-- **`bulkUpsertContactsMetadata`:** Inserciones en lote ultra-rápidas para no bloquear el Event Loop de Node.js.
+Unicidad remota: (accountId, remoteChatId, providerMessageId) cuando exista.
+No deduplicar por texto/timestamp ni por message_id de Telegram global: es local
+al chat. Los IDs desconocidos no se inventan como confirmación. Telegram conserva
+signo negativo y formato texto; nunca mezclar sus dígitos con WhatsApp.
 
-### 6. 🚀 Re-Sincronización Automatizada para Usuarios Finales (`npm run reset` y `npm run clean`)
-- Script `reset-session.js` para limpiar `auth_info_baileys` y generar un código QR nuevo que descargue la libreta completa de contactos de la cuenta.
-- Script `reset-clean.js` (F7) para un restablecimiento de fábrica total con borrado de memoria, agenda, colas, logs y settings.
+Separar tres ejes:
 
-### 7. 🖥️ Panel Web Desacoplado & Bus Interno (Arquitectura de 3 Procesos)
-- **Panel Web (`gateway/panel/index.js`):** Proceso HTTP independiente en puerto `5201` (bind `0.0.0.0` en dev nativo, accesible por LAN/Tailscale) que sirve el frontend administrativo y actúa como proxy inverso al bus interno. Carga `gateway/panel/.env` al arrancar.
-  - **OAuth solo en producción:** el login con Google OAuth 2.0 se activa únicamente cuando `NODE_ENV=production` (o `PANEL_REQUIRE_AUTH=***, además de definir `PANEL_GOOGLE_CLIENT_ID`/`PANEL_GOOGLE_CLIENT_SECRET`. En desarrollo el panel queda **ABIERTO** (sin login) aunque haya credenciales, para no frenar el trabajo. Las rutas `/auth/*` solo existen cuando OAuth está habilitado.
-  - La sesión es una cookie HMAC-SHA256 (HttpOnly, Secure tras proxy HTTPS, **SameSite=None; Secure** para sobrevivir el redirect de Google, 12 h). La cookie de estado OAuth usa lo mismo.
-  - **No se expone el dominio público en dev:** en desarrollo el panel corre en localhost/LAN/Tailscale pero **no** vía `panel.zer0x.org` (ese dominio queda reservado para el despliegue en producción con Docker + OAuth). El Caddyfile del homelab no enruta `panel.zer0x.org` al panel de dev.
-- **Bus Interno HTTP (`gateway/services/internalBus.js` en puerto `5400`):** Expuesto por el gateway en loopback (`127.0.0.1:5400`). Permite consultar estado, transmitir el QR y logs por SSE, regenerar QR bajo demanda (`/qr/refresh`), consultar el método de pairing pendiente (`/pairing/status`), vincular por número (`/pairing`), ejecutar comandos admin y arrancar el brain (`/brain/start`). La tanda QR conserva una ventana total de 140s aunque Baileys emita varios tokens, y el bus bloquea solicitudes QR/código cruzadas. Si el gateway cae, el panel sigue vivo y el frontend se reconecta solo al volver el servicio.
+- accessPolicy = allowed | ignored | neutral. Neutral hereda el modo global para
+  IA. Ignored bloquea también envío humano hasta quitar explícitamente la regla.
+  Un operador puede responder a neutral en modo estricto sin autorizar futuras
+  respuestas IA por ese solo acto.
+- automationMode = ai | human | off. Control humano del panel hasta liberación
+  explícita; no caduca a las 24 horas.
+- lifecycle = open | resolved. Resolver no reactiva IA; una nueva entrada reabre
+  sin cambiar control ni permisos.
 
----
+Autoría: customer | ai | operator | external_self | system | unknown.
+Un fromMe del teléfono no demuestra quién escribió. Reconciliar primero contra
+salidas registradas; un envío propio no correlacionado se muestra external_self
+y suspende IA de forma conservadora con evento visible cuando es tráfico en vivo.
+Backfill no cambia control. Importaciones antiguas usan unknown sin evidencia.
+No confundir sistema técnico con texto del cliente.
 
-## 🔒 Pipeline de Seguridad y Flujo de Mensajes
+## 6. Ingesta e historial
 
-```
-Mensaje Entrante en Adapter Hub (WhatsApp, Telegram, etc.)
-│
-├── 🗂️ Registro/Actualización en contacts_db.json (bulkUpsert / upsertContactMetadata)
-├── 🧠 Smart TTL Check (¿lastEnrichedAt < 24h? SÍ: Omitir Red | NO: Consultar Foto/Bio)
-│
-├── ¿Es mensaje de bot anti-loop (ID en botSentMessageIds)? → IGNORAR
-├── ¿Es Self-Chat (isSelfChat: Admin Phone o LID)?
-│   ├── ¿Empieza con /? → EJECUTAR COMANDO ADMIN (con auto-extracción de JID si cita mensaje)
-│   └── Texto normal   → ASISTENTE PERSONAL IA (brainService)
-├── ¿Es mensaje enviado por ti en chat de cliente (fromMe)? → IGNORAR (Bot en silencio)
-├── ¿Empieza con / (cliente)?                      → BLOQUEAR (Seguridad Admin)
-├── ¿Bot pausado globalmente (IS_BOT_PAUSED)?       → IGNORAR
-│
-├── 🗂️ Evaluación de Estado en contacts_db.json:
-│   ├── ¿estado == 'ignorado'?                     → IGNORAR
-│   ├── ¿estado == 'permitido'?                    → CONTINUAR (Bypassea modo global)
-│   └── ¿estado == 'neutro'?
-│       └── ¿globalMode == 'ignored_all'?          → IGNORAR (Modo Estricto Whitelist)
-│
-├── 🤝 ¿Contiene palabras clave de atención humana?  → SÍ: ESTADO = HANDOFF + NOTIFICAR ADMIN + AVISAR CLIENTE
-├── ¿Tiene estado == 'handoff'?                     → SÍ: IGNORAR (Esperando atención humana)
-│
-└── 🧠 De-bounce Queue (Silencio estocástico adaptativo 5s-12s / 1-2m / 3-4m)
-    ├── 📖 Simulación Lectura (800ms - 3.3s)
-    ├── ⌨️ Simulación Tipeo ('composing' 1.5s - 16s)
-    └── 🧩 Envío por Globos (Multi-Bubble ~220 chars con pausas de 1.0s - 2.2s)
-```
+1. El adapter recorre todos los mensajes del lote y normaliza IDs, dirección,
+   fecha, texto y tipo. Emite captura independiente de texto/STT.
+2. Persistir mensaje + chat + evento en una transacción antes de programar IA.
+   Pausa global, handoff y filtros de respuesta no excluyen del archivo los chats
+   individuales dentro del alcance configurado.
+3. Los ecos propios se reconcilian y no disparan IA. El anti-bucle protege
+   procesamiento, sin eliminar mensajes del historial.
+4. Backfill usa la misma deduplicación con source=history. Nunca dispara respuestas,
+   no infla no leídos y no reemplaza última actividad con una fecha anterior.
+5. STT actualiza el mensaje original y publica message.updated. Si falla, queda
+   audio visible con estado de transcripción fallido, sin perder el evento base.
+6. Cola de ingesta acotada, lotes que ceden event loop y saturación observable.
+   Telegram confirma offset solo tras persistencia durable y recupera cursor al
+   reiniciar. WA aprovecha redelivery/sync sin garantizar recuperación perfecta
+   de eventos que el proveedor nunca vuelva a emitir.
+
+Alcance inicial: chats individuales. Self-chat, chat admin, grupos, estados y
+broadcasts técnicos tienen clasificación explícita; administración no aparece
+como conversación de cliente.
+
+WA conserva lo que Baileys entregue en sync, con alcance variable. Telegram Bot
+API no permite descargar libremente todo el pasado. UI expone cobertura como
+capturing_since, partial_import o provider_sync_observed y fecha de captura;
+ninguno certifica historial total. El store RAM queda como caché. Importar memoria
+IA antigua exige procedencia/limitaciones; no prueba que una respuesta fue enviada.
+
+## 7. Control humano y envío sin carreras
+
+TakeControl(conversationId, actor, expectedVersion, idempotencyKey) se comparte
+entre panel y comandos:
+
+1. Bajo coordinación por conversación, validar actor/versión, persistir human,
+   incrementar controlVersion y registrar propietario/evento en transacción.
+   Desde ese commit ningún nuevo envío IA cruza la barrera de despacho.
+2. Cancelar debounce, tareas que esperan turno, reintentos y jobs con versión vieja.
+   Propagar AbortSignal a IA y detener typing/esperas cuando sea posible. La
+   versión durable protege incluso cuando el proveedor no obedece la cancelación.
+3. Cada globo valida modo, versión, pausa global y permisos en la misma sección
+   crítica que inicia el envío. Nunca mantener una transacción SQLite durante red.
+4. Un envío ya iniciado en el proveedor podría llegar después de solicitar control.
+   Devolver 202 taking_control mientras se resuelve; al terminar o vencer timeout,
+   informar resultado y envíos inciertos. Habilitar compositor solo con confirmación
+   del gateway. No prometer retirar algo ya entregado al transporte.
+5. Sobrevive reinicios. Jobs viejos no reviven al liberar. ReleaseControl conserva
+   permisos, cambia versión y exige intención expresa sobre responder pendientes.
+   Una toma pendiente se recupera al arrancar; envíos que estaban en red se resuelven
+   como confirmados o inciertos, sin bloquear el control eternamente.
+
+Pausa global cancela/bloquea IA y permite captura y respuesta manual autorizada.
+Cerrar panel no libera el chat. Pestañas con versiones distintas reciben 409 y
+recargan estado. V1 no incluye reparto entre varios agentes.
+
+SendMessage y salida persistente centralizan todos los envíos interactivos:
+
+- Persistir intención, mensaje local y evento antes de contactar al proveedor.
+- Idempotencia por actor/cuenta/conversación: misma clave/payload devuelve resultado
+  anterior; cambiar payload con la misma clave devuelve 409.
+- Estados queued -> sending -> sent -> delivered -> read; failed,
+  delivery_unknown y cancelled según resultado/capacidades reales del canal.
+- No reintentar automáticamente un POST que pudo completarse: timeout o reinicio
+  tras aceptación deja delivery_unknown. Reconciliar con eco/ID si existe o exigir
+  reintento explícito avisando posible duplicado. No prometer exactly-once externo.
+- La idempotencia local evita doble clic y repetir HTTP; no resuelve la ventana
+  entre aceptación del proveedor y commit local.
+- Lecturas siguen ADR-004. Toda operación de red tiene timeout. Campañas usan el
+  mismo puerto con su intent/políticas; tomar control cancela IA, no una campaña
+  implícitamente. Su UI debe indicar campañas pendientes cuando se incorpore.
+
+## 8. API, identidad y eventos
+
+Navegador -> /api/v1/* del panel -> /v1/* del gateway. Mantener rutas actuales
+con adaptadores de compatibilidad. El nuevo cliente usa casos de uso tipados,
+sin convertir clicks en cadenas de comandos.
+
+| Método/ruta pública | Contrato mínimo |
+|---|---|
+| GET /api/v1/session | Identidad y capacidades del operador, sin secretos. |
+| GET /api/v1/conversations | Filtros canal/control/lifecycle/no leídos/búsqueda; cursor por (lastActivityAt,id), límite 50, máximo 100. |
+| GET /api/v1/conversations/:id | Chat, cobertura y versión de control. |
+| GET /api/v1/conversations/:id/messages | Cursor opaco por (occurredAt,id); límite 50/máximo 100; página cronológica. |
+| POST /api/v1/conversations/:id/takeover | expectedVersion e Idempotency-Key; confirmado o 202 con operación consultable. |
+| GET /api/v1/operations/:id | Estado de takeover y avisos de envíos inciertos. |
+| POST /api/v1/conversations/:id/release | expectedVersion; resumePolicy=future_only por defecto. Responder pendientes es expreso. |
+| POST /api/v1/conversations/:id/messages | Texto, clientMessageId, expectedVersion e Idempotency-Key; exige human confirmado, propietario y permiso; 202 + messageId. |
+| POST /api/v1/conversations/:id/read | Cursor local monotónico por actor; no marca WhatsApp leído automáticamente. |
+| PATCH /api/v1/conversations/:id | lifecycle/campos permitidos con expectedVersion. |
+| GET /api/v1/events | SSE, ID durable, replay y recuperación. |
+
+Error JSON: { error: { code, message, requestId, details? } }.
+401 sin sesión; 403 sin permiso; 404 desconocido; 409 conflicto/idempotencia;
+422 validación; 503 servicio temporalmente caído. DTOs excluyen raw, secretos,
+rutas de archivos y objetos arbitrarios de proveedor.
+
+El panel deriva actorId de sesión, descarta actor enviado por navegador y firma
+contexto interno breve: actor, requestId, expiración, método, ruta y hash del cuerpo.
+Gateway verifica firma/autorización con secreto servidor compartido. Este secreto
+no es una clave de proveedor IA. Comandos internos tienen principal comprobado;
+un token técnico tiene principal acotado. Dev usa actor local explícito, registrado
+y permitido solo en desarrollo. No confiar identidad a un campo del formulario
+ni a la red privada por sí sola.
+
+Mantener OAuth state server-side, cookie HttpOnly/SameSite=Lax y Secure tras HTTPS.
+Autorizar también lecturas, SSE y adjuntos futuros; conservar validación de origen.
+No enviar secretos en query SSE. Ver OAUTH-LESSONS.md antes de cambios de sesión.
+
+Evento SSE: { id, type, schemaVersion, conversationId, aggregateVersion,
+occurredAt, data }. Tipos message.created, message.updated, conversation.updated,
+control.changed, channel.updated y resync.required. Emitir tras commit; replay
+ordenado con entrega al menos una vez. Cliente deduplica event IDs, reconcilia
+messageId y recarga ante huecos. Enganchar flujo vivo antes de finalizar replay;
+la instantánea inicial obtiene watermark y la escucha empieza desde allí. Cursor
+expirado fuerza resync.required. Retención de eventos configurable y separada del
+historial; heartbeats sin datos privados y proxy probado sin buffering.
+
+El orden de la lista de chats cambia al llegar mensajes. Su cursor debe vincularse
+a una instantánea/watermark o invalidarse explícitamente para releer la primera
+página y reconciliar IDs; no tratar un listado mutable como snapshot estable.
+
+## 9. Contexto IA y aprovechamiento de herramientas
+
+El archivo registra lo observado y enviado. Una generación no equivale a envío.
+Evolucionar brain a GenerateReply separado de confirmación/contexto, con
+generationId idempotente. Mientras exista /chat legacy, invalidar contexto de una
+generación cancelada; no reanudar IA con respuestas fantasma como antecedentes.
+Versionar también la escritura de contexto: una respuesta tardía de una generación
+cancelada no puede volver a insertarse después de limpiar o invalidar memoria.
+
+El gateway prepara contexto desde mensajes canónicos hasta una secuencia conocida,
+incluye mensajes humanos y etiquetas de autoría. Brain limita tokens/resume sobre
+contexto versionado recibido, sin leer DB del gateway. Resumen indica
+throughMessageId/contextVersion. Limpiar memoria aumenta versión y evita volver
+a importar al contexto lo limpiado. Con varios globos solo confirmar los enviados;
+los de entrega incierta se señalan expresamente.
+
+Más adelante, cada herramienta IA declara nombre, schemas entrada/salida,
+timeout, permisos, clasificación read/write, auditoría e idempotencia. Consultas de
+chat/contactos pasan por casos de uso del gateway. Brain puede devolver solicitudes
+de herramientas tipadas; gateway las ejecuta, sin conexión brain -> canal/DB ni
+shell genérica. Primera función: borradores, sin publicar mientras un humano tenga
+control. Acciones externas con efectos requieren política expresa y ADR de alcance.
+No cambiar proveedores/SDK actuales solo por tener otra herramienta disponible.
+
+Las herramientas de desarrollo se usan con propósito: contratos para detectar
+incompatibilidades, Playwright para revisar el chat, adapters falsos para fallos y
+carreras, SQLite para inspección local de fixtures, CI para builds reproducibles.
+Diseñar y probar sin cuentas externas ni consumir APIs IA es posible con fakes.
+
+## 10. UX de la bandeja
+
+- Navegación: Bandeja, Resumen, Contactos, Canales, Asistente y Sistema. Logs,
+  terminal, RAM, uptime y mantenimiento pasan a Sistema.
+- Escritorio: lista izquierda, hilo/compositor central y ficha derecha colapsable.
+  En móvil se abre una vista a la vez, conservando chat activo al volver.
+- Filtros todos, sin leer, atención humana y resueltos, más canal. Búsqueda de
+  contactos primero; búsqueda textual de mensajes solo al disponer de backend.
+- Hilo distingue cliente, IA, operador, teléfono y eventos. Fecha original, cita
+  cuando existe y estado de envío verificado.
+- Cabecera Tomar control / Devolver a IA. Compositor bloqueado con motivo en modo
+  IA o toma pendiente; queda habilitado solo tras confirmación.
+- Paginación hacia atrás sin saltos. Mantener scroll cuando se lee arriba; mostrar
+  contador de novedades y botón para bajar. Virtualización según medición real.
+- Borradores locales no son mensajes enviados. Carga, vacío, error, reconexión y
+  entrega incierta tienen estados propios. Teclado, foco, contraste, etiquetas y
+  movimiento reducido forman parte de aceptación.
+- Gráficas solo con métricas reales, periodo y origen. Cobertura limitada se
+  explica dentro del chat, no se disimula con datos de ejemplo en producción.
+
+## 11. Migración y operación
+
+Primero introducir límites/repositorios detrás de rutas actuales. Mover carpetas
+tras tener pruebas, una por vez. Actualizar Dockerfiles, Compose, launchers,
+imports, CI, release config, perfiles y docs con cada movimiento. No cambiar
+ubicación de credenciales/volúmenes por renombrar código.
+
+Sin doble escritura JSON/SQLite indefinida: repositorios delante de JSON, luego
+importación en mantenimiento y cambio de autoridad por módulo. Verificar recuentos,
+checksums y aliases; guardar copia previa y registro. Datos ambiguos se reportan,
+no se resuelven por coincidencia parcial de dígitos. Handoff legacy se traduce de
+forma conservadora sin reactivar IA; TTL/semántica de comandos cambian de forma
+versionada y visible al migrar al nuevo control.
+
+Rollback de código no implica rollback de datos: antes de nuevas escrituras puede
+restaurarse snapshot; después hay que reconciliar/exportar delta o mantener versión
+compatible. No perder mensajes humanos enviados restaurando un backup viejo.
+Backups SQLite consistentes, con manejo correcto WAL/SHM; no copiar WAL aislado.
+
+DB nueva, adjuntos futuros y cursores se agregan a factoryReset.js, .gitignore,
+variables y volúmenes antes de persistirlos. Conservar confirmación destructiva.
+Retención propuesta: 90 días configurables para historial, independiente de IA;
+documentar purga/exportación/backup. No ejecutar reset/re-pairing ni usar producción
+como fixture para validar. No almacenar tokens o cuerpos completos en logs por defecto.
+
+Métricas: retraso de ingesta, duplicados reconciliados, jobs cancelados, tiempo de
+toma de control, salidas inciertas, colas, SSE y latencia de páginas. Correlación
+con requestId/conversationId/messageId, sin exponer teléfonos/textos por defecto.
+
+Orden y aceptación: [ROADMAP.md](ROADMAP.md). Próxima unidad ejecutable:
+[SESSION-STATE.md](SESSION-STATE.md). Prompt: [PROMPT-CONTINUIDAD.md](PROMPT-CONTINUIDAD.md).

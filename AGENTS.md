@@ -1,5 +1,25 @@
 # SDK-Bot: instrucciones y reglas de arquitectura para agentes de IA
 
+## Evolución hacia la plataforma de conversaciones
+
+- Antes de trabajar en historial, bandeja, UI o control humano, lee
+  `docs/SESSION-STATE.md`, `docs/ARCHITECTURE.md`, `docs/ROADMAP.md` y
+  `docs/adr/005-plataforma-conversaciones.md`. El prompt reutilizable está en
+  `docs/PROMPT-CONTINUIDAD.md`.
+- La estructura `apps/` + `packages/`, React, SQLite operativo y API v1 son
+  **arquitectura de destino**; no suponer que están implementados. Las rutas y
+  comandos de las secciones siguientes describen la estructura actual.
+- Una unidad revisable por sesión. Actualiza estado y evidencia al cerrar;
+  marca solo tareas demostradas. Conserva los límites de ADR-001/002/003.
+- Haz un commit local al cerrar cada fase o unidad entregable probada. Registra
+  bugs en `docs/BACKLOG.md`: repara ahora los que bloqueen la especificación de la
+  unidad; los demás quedan priorizados con fase límite y aceptación. Cierra bugs
+  con evidencia/commit, sin borrar el registro. No publiques por hacer un commit.
+- Historial operativo y contexto IA tienen autoridades y retenciones distintas.
+  El control humano requiere cancelación y barrera de envío, no solo cambiar un
+  estado visual. ADR-005 propone ampliar ADR-004 para una salida durable; esto
+  no indica que ya exista ni modifica el runtime por sí solo.
+
 ## Limites y arquitectura
 
 - No hay workspace ni manifest de paquete en la raiz: el paquete Node vive en `gateway/`, la aplicacion Python del cerebro en `brain/` y el servicio de transcripcion local en `stt/`. Sus entradas son `gateway/index.js`, `brain/main.py` y `stt/server.py`.
@@ -17,7 +37,7 @@
 - Las decisiones de arquitectura viven en `docs/adr/`: 001 hub multi-canal, 002 procesos y planos (datos/control), 003 dueno unico del transporte por canal, 004 resiliencia de la interaccion. Leelas antes de refactors grandes; cualquier cambio que rompa esos contratos exige una ADR nueva.
 - Todo `fetch` saliente lleva `AbortSignal.timeout(ms)` explicito y clasificacion 4xx (no reintentar) vs transitorio (1 reintento); ver ADR-004.
 - Usa `syntaxError()`/`COMMAND_USAGE` para errores de comandos y `sanitizeMarkdown()` para texto de usuario interpolado en respuestas Markdown.
-- El router ejecutable del brain es Groq -> OpenRouter -> Gemini (`brain/providers.py`); los perfiles son Markdown en `brain/profiles/`, se recargan en caliente y `default` es el fallback.
+- El orden del router del brain lo define `BRAIN_PRIMARY_MODEL` (`brain/providers.py`); `.env.tuning` selecciona Gemini -> Groq -> OpenRouter. Los perfiles son Markdown en `brain/profiles/`, se recargan en caliente y `default` es el fallback.
 
 ## Setup y verificacion
 

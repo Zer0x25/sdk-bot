@@ -2,6 +2,19 @@
 
 **Plataforma Multi-Canal (WhatsApp & Telegram) 100% Custom, Smart Sync & Automated Handoff** — Gateway de mensajería modular con arquitectura Adapter Hub en Node.js + Cerebro IA en Python FastAPI con router multi-proveedor (Groq → OpenRouter → Gemini).
 
+## Evolución: bandeja de conversaciones y atención humana
+
+La siguiente etapa propone historial persistente, una bandeja similar a WhatsApp
+Web y control humano con respuesta desde el chat. Es una **base de diseño y hoja
+de ruta**; estas funciones todavía no están implementadas.
+
+- [Arquitectura y contratos de destino](docs/ARCHITECTURE.md)
+- [Decisión arquitectónica ADR-005](docs/adr/005-plataforma-conversaciones.md)
+- [Hoja de ruta por entregas](docs/ROADMAP.md)
+- [Estado y próxima tarea](docs/SESSION-STATE.md)
+- [Backlog de bugs y política de reparación](docs/BACKLOG.md)
+- [Prompt para continuar en otra sesión](docs/PROMPT-CONTINUIDAD.md)
+
 ---
 
 ## 🎯 Características Principales
