@@ -667,6 +667,10 @@
                 "completed",
                 "failed"
               ]
+            },
+            "caption": {
+              "$ref": "#/$defs/StoredText",
+              "description": "Texto adjunto literal; opcional para compatibilidad con marcadores anteriores."
             }
           },
           "required": [

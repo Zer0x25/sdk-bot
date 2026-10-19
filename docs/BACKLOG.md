@@ -47,22 +47,30 @@ salvo indicación contraria. La evidencia detallada y líneas están en la basel
 | BUG-030 | P1 | Cerrado F2A: index ignoraba SDK_GATEWAY_LOCK_PATH aunque Compose/CLI/inventario lo usan; reset podía no encontrar el proceso vivo. | Smoke aislado reproduce ausencia del lock configurado antes del cambio; entry real ahora crea/borrar ese lock y conserva epoch tras reinicio. | Reparado para coherencia de rutas F2A; no cierra carrera de supervisor BUG-029. |
 | BUG-031 | P1 | Cerrado F2B.1: brain ignoraba SDK_BRAIN_LOCK_PATH, ocultando el proceso al CLI con ruta configurada; errores de escritura del lock también se silenciaban. | Hijo Python verifica ruta/PID/remoción; ensure_singleton aborta si no puede publicar lock. | Reparado antes de captura live; dos regresiones, brain 23 tests pasan. Ver RESET-SEGURO-F2B1. |
 | BUG-032 | P1 | Cerrado F2B.2: dos connect con loadAuth asíncrono podían instalar primero el socket nuevo y luego uno obsoleto. | Reproducción en 4bb4ec3 confirma sustitución; revisión monotónica de conexión descarta auth atrasado. | Test overlapping connect pasa; mismo commit de cierre F2B.2. |
-| BUG-033 | P1 | Abierto: STT emite texto legacy pero no actualiza transcripción/estado/evento del mensaje de audio archivado. | Test con STT falso alcanza transcribe después del commit base; no existe API update del archivo. Marcador permanece not_requested incluso si se intentó STT. | F2B.3, antes de cerrar F2B: mismo ID, pending/completed/failed y message.updated; commit antes de IA, dedup/huella estable y purga sin recreación. |
-| BUG-034 | P2 | Abierto: multimedia con caption se normaliza como texto y pierde la clasificación de adjunto. | normalize prioriza caption; MessageContent no permite caption junto al marcador. Inspección de contrato/normalizador. | F2B.3 antes de cerrar F2B: conservar tipo y caption, wrappers incluidos; validar contrato/copia instalada, reimportación y mensajes existentes. |
+| BUG-033 | P1 | Cerrado F2B.3: STT legacy no actualizaba el audio archivado. | Reproducción de 7d99f36 deja cinco audios not_requested tras terminar. Ahora se guarda pending/completed/failed y message.updated sobre el ID original antes de legacy. | Mismo ID/huella, redelivery JID/LID, fallo/exceso, purga sin recreación, restart y resultado incierto sin retry probados; MULTIMEDIA-WHATSAPP-F2B3. |
+| BUG-034 | P2 | Cerrado F2B.3: caption se guardaba como texto perdiendo tipo de adjunto. | Reproducción de 7d99f36 confirma type=text. Caption opcional en contrato multimedia y normalización con wrappers; copia gateway refrescada. | Tipos/validadores Node22/24, captions literales, límite/oversized y dedup. Texto antiguo sigue legible; forma incompatible nueva se conserva en revisión, sin inventar el tipo perdido. |
 | BUG-035 | P2 | Abierto: el solicitante de pairing invoca connect sin await y puede pedir código antes de terminar loadAuth/crear socket; refresh también pierde el Promise. | Inspección en index.js, setPairingCodeRequester y setQrRefresh. No se probó pairing real. | F8 antes de aceptación de pairing: prueba con auth suspendido espera socket y propaga fallo; mantener pairing activo sin segundo socket. No bloquea captura de cuenta ya autenticada. |
+| BUG-036 | P1 | Cerrado F2B.3: audios live iniciaban descargas/STT sin límite propio y bufferizaban el adjunto completo antes de validar tamaño. | Reproducción anterior inicia cinco transcripciones bloqueadas simultáneas. Coordinador actual limita cuatro trabajos sin cola, deadline 150 s y acumulación por stream hasta límite de bytes. | Timeout/saturación y proveedor que ignora abort conservando su plaza, exceso de stream sin STT, captura no bloqueada y desconexión probados. No garantiza cancelación física de Baileys: BUG-037 separado. |
+| BUG-037 | P2 | Abierto: Baileys 7.0.0-rc14 getHttpStream omite signal al llamar fetch; abort lógico no garantiza detener descarga física/handles del proveedor. | Reproducción con fetch sustituido y signal ya abortado confirma ausencia de signal, sin red. Inspección del pipe interno tampoco acredita destrucción del origen. | F8, antes de aceptar STT real: frontera/pin de descarga que preserve abort y timeout; HTTP local que no envía headers/body debe cerrar request/stream al cancelar/vencer, sin handles crecientes. No parchear fetch global/node_modules. No bloquea actualización durable offline F2B.3; resultados tardíos bloqueados y plazas conservadas hasta terminar el trabajo. |
 
 ## Clasificación para la unidad activa
 
-F2B.2 conecta captura base WA y cierra BUG-001/002/003/032. Evidencia en
-[CAPTURA-WHATSAPP-F2B2](CAPTURA-WHATSAPP-F2B2.md); F2B permanece abierta por
-BUG-033/034, siguiente unidad F2B.3. BUG-035 se difiere a F8 por no bloquear la
-captura autenticada. F2B.1 conserva BUG-029/031 cerrados. BUG-004–012 (009/010
-parciales), BUG-014 y BUG-024 siguen abiertos. BUG-008 tiene archivo exacto por
-cuenta/canal y aliases comprobados, pero resolución/control legacy aún pendientes.
-Telegram y ack durable siguen F2C. No extrapolar evidencia del archivo a control,
-roles limitados, salidas durables ni aceptación completa F2.
+F2B.3 completa enriquecimiento multimedia y cierra BUG-033/034/036. Evidencia en
+[MULTIMEDIA-WHATSAPP-F2B3](MULTIMEDIA-WHATSAPP-F2B3.md). BUG-037 queda P2/F8
+antes de aceptar STT real; no se promete abort físico de descarga por la protección
+lógica. F2B.2 conserva BUG-001/002/003/032 y F2B.1 BUG-029/031 cerrados.
+Siguiente unidad F2C.1: BUG-004 dueño único de polling/descubrimiento Telegram;
+luego captura/ack/namespace BUG-005/009. BUG-035 pairing queda F8. BUG-004–012
+(009/010 parciales), BUG-014/024/035/037 siguen abiertos. BUG-008 tiene archivo
+exacto, pero resolución/control legacy pendientes. No extrapolar archivo a
+control, roles limitados, salidas durables ni carga/aceptación completa F2.
 
 ## Cerrados
+
+- **BUG-033/034/036 — F2B.3:** actualizaciones durables de STT, captions por tipo
+  y trabajos acotados. Reproducción anterior, 218 tests gateway/15 contratos en
+  Node22/24 y 72 tests en imagen nueva de producción sin red. Commit:
+  `git log --grep="close F2B.3"`. [Evidencia y límites](MULTIMEDIA-WHATSAPP-F2B3.md).
 
 - **BUG-001/002/003/032 — F2B.2:** lotes y cache live tras commit, guardas de
   socket/reconexión solapada. Reproducción del adapter previo con transporte falso

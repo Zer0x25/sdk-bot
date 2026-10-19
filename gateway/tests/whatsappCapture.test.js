@@ -297,3 +297,166 @@ test('disconnect still drains admitted archive work when transport end throws', 
     assert.equal(a.instance.capture.queue().elements, 0);
     assert.equal(a.instance.sock, null); assert.equal(a.messages.length, 0);
 });
+
+test('BUG-033: wrapped audio commits pending before STT and completed before legacy; capture keeps progressing', async t => {
+    const f = await fixture(t); const ready = deferred(), release = deferred();
+    process.env.AUDIO_STT_ENABLED = '1'; t.after(() => { process.env.AUDIO_STT_ENABLED = '0'; });
+    let original, eventRead;
+    const a = await f.adapter({ download: async (_msg, type, options) => {
+        assert.equal(type, 'stream'); assert.ok(options.options.signal);
+        const account = await f.archive.registerAccount({ channel: 'whatsapp', providerKey: session.providerKey });
+        const identity = await f.archive.resolve({ accountId: account.id, channel: 'whatsapp', kind: 'whatsapp_jid', exactValue: '200@s.whatsapp.net' });
+        [original] = await f.archive.messages({ conversationId: identity.conversation_id });
+        assert.equal(original.content.transcriptionStatus, 'pending');
+        return Buffer.from('audio');
+    }, transcribe: async (_buffer, _file, options) => { assert.ok(options.signal); ready.resolve(); return release.promise; } });
+    a.instance.on('message', m => { if (m.isAudio) eventRead = f.archive.messages({ conversationId: original.conversationId }); });
+    a.sockets[0].ev.emit('messages.upsert', { type: 'notify', messages: [
+        msg('wrapped', undefined, { ephemeralMessage: { message: { viewOnceMessage: { message: { audioMessage: { seconds: 1 } } } } } })] });
+    await ready.promise;
+    a.sockets[0].ev.emit('messages.upsert', { type: 'notify', messages: [msg('next', '201@s.whatsapp.net')] });
+    await settled(a.instance);
+    assert.equal(a.messages.length, 1); assert.equal((await f.archive.diagnostics()).messages, 2);
+    release.resolve('Transcripción durable 😀'); await a.instance.transcriptions.idle();
+    assert.equal(a.messages.length, 2);
+    const [completed] = await eventRead;
+    assert.equal(completed.id, original.id); assert.equal(completed.content.transcriptionStatus, 'completed');
+    assert.equal(completed.content.transcript, a.messages[1].text);
+    a.sockets[0].ev.emit('messages.upsert', { type: 'notify', messages: [msg('wrapped', undefined,
+        { ephemeralMessage: { message: { viewOnceMessage: { message: { audioMessage: { seconds: 1 } } } } } })] });
+    await settled(a.instance); assert.equal(a.messages.length, 2);
+});
+
+test('BUG-034: wrapped media captions retain type in archive and reach legacy literally; oversized never reaches it', async t => {
+    const f = await fixture(t); const a = await f.adapter();
+    const batch = ['image','video','document'].map(type => msg(type, undefined, { documentWithCaptionMessage: {
+        message: { [`${type}Message`]: { caption: `Caption ${type} 😀` } } } }));
+    batch.push(msg('large-caption', undefined, { imageMessage: { caption: '😀'.repeat(16385) } }));
+    a.sockets[0].ev.emit('messages.upsert', { type: 'notify', messages: batch }); await settled(a.instance);
+    assert.equal(a.messages.length, 3);
+    assert.deepEqual(a.messages.map(m => m.text), ['Caption image 😀','Caption video 😀','Caption document 😀']);
+    for (const e of a.archived.slice(0, 3)) {
+        assert.equal(e.observation.result.message.content.type, e.raw.key.id);
+        assert.equal(e.observation.result.message.content.caption, `Caption ${e.raw.key.id} 😀`);
+    }
+    assert.equal(a.archived[3].observation.result.message.content.type, 'oversized');
+    a.sockets[0].ev.emit('messaging-history.set', { messages: batch }); await settled(a.instance);
+    assert.equal((await f.archive.diagnostics()).messages, 4); assert.equal(a.messages.length, 3);
+});
+
+test('STT failure, empty download, invalid/oversized transcript and excessive duration retain failed markers', async t => {
+    const f = await fixture(t);
+    process.env.AUDIO_STT_ENABLED = '1'; t.after(() => { process.env.AUDIO_STT_ENABLED = '0'; });
+    for (const [name, download, transcribe, seconds] of [
+        ['null', async () => Buffer.from('a'), async () => null, 1],
+        ['throw', async () => { throw new Error('private provider error'); }, async () => 'unused', 1],
+        ['empty', async () => Buffer.alloc(0), async () => 'unused', 1],
+        ['large', async () => Buffer.from('a'), async () => '😀'.repeat(16385), 1],
+        ['unicode', async () => Buffer.from('a'), async () => '\ud800', 1],
+        ['long', async () => assert.fail('duration rejects before download'), async () => 'unused', 121],
+        ['huge-download', async () => require('node:stream').Readable.from([Buffer.alloc(5 * 1024 * 1024), Buffer.from('x')]), async () => assert.fail('size rejects before STT'), 1]
+    ]) {
+        const a = await f.adapter({ download, transcribe });
+        a.sockets[0].ev.emit('messages.upsert', { type: 'notify', messages: [msg(name, undefined, { audioMessage: { seconds } })] });
+        await settled(a.instance); await a.instance.transcriptions.idle();
+        const base = a.archived[0].observation.result.message;
+        const stored = (await f.archive.messages({ conversationId: base.conversationId })).find(m => m.id === base.id);
+        assert.equal(stored.content.transcriptionStatus, 'failed', name);
+        assert.equal(stored.content.transcript, null); assert.equal(stored.content.type, 'audio');
+        assert.equal(a.messages.length, 0); assert.equal(a.failures.length, 0);
+    }
+});
+
+test('STT result after reconnect is failed durably, no late text/presence, and disconnect drains cancellation', async t => {
+    const f = await fixture(t); const started = deferred(), release = deferred();
+    process.env.AUDIO_STT_ENABLED = '1'; t.after(() => { process.env.AUDIO_STT_ENABLED = '0'; });
+    const a = await f.adapter({ download: async () => Buffer.from('a'), transcribe: async () => { started.resolve(); return release.promise; } });
+    a.sockets[0].ev.emit('messages.upsert', { type: 'notify', messages: [msg('cancel', undefined, { audioMessage: {} })] });
+    await started.promise; await a.instance.connect(); await a.instance.transcriptions.idle();
+    const base = a.archived[0].observation.result.message;
+    assert.equal((await f.archive.messages({ conversationId: base.conversationId }))[0].content.transcriptionStatus, 'failed');
+    assert.equal(a.instance.transcriptions.queue().active, 1); // uncancellable mock retains its lease
+    const baseline = [...a.effects]; release.resolve('late'); await tick(); await tick();
+    assert.deepEqual(a.effects, baseline); assert.equal(a.messages.length, 0);
+    assert.equal(a.instance.transcriptions.queue().active, 0);
+    await a.instance.disconnect();
+});
+
+test('audio timeout and saturation fail durably; ignored cancellation cannot create unlimited orphan tasks', async t => {
+    const f = await fixture(t);
+    const { createWhatsappTranscription } = require('../services/conversations/whatsappTranscription');
+    const capture = createWhatsappCapture(f.archive), release = deferred(), codes = [];
+    const service = createWhatsappTranscription(f.archive, code => codes.push(code), { limit: 1, timeoutMs: 20 });
+    t.after(() => service.close());
+    const first = await capture.enqueue(msg('deadline', undefined, { audioMessage: {} }), session, 'live');
+    const second = await capture.enqueue(msg('saturation', undefined, { audioMessage: {} }), session, 'live');
+    const job = service.run(first.result.message.id, () => release.promise, () => true, () => assert.fail('timed out'));
+    await job;
+    assert.equal(service.queue().active, 1);
+    await service.run(second.result.message.id, () => assert.fail('saturated'), () => true, () => {});
+    assert.deepEqual(codes, ['WA_STT_SATURATED']);
+    const stored = await f.archive.messages({ conversationId: first.result.message.conversationId });
+    assert.deepEqual(stored.map(m => m.content.transcriptionStatus), ['failed','failed']);
+    release.resolve('late'); await tick(); assert.equal(service.queue().active, 0);
+});
+
+test('purge during STT suppresses completion; archive write with uncertain result is never retried or emitted', async t => {
+    const f = await fixture(t);
+    process.env.AUDIO_STT_ENABLED = '1'; t.after(() => { process.env.AUDIO_STT_ENABLED = '0'; });
+    for (const purge of [true, false]) {
+        const started = deferred(), release = deferred(); let completionCalls = 0;
+        const a = await f.adapter({ archive: { ...f.archive, async updateTranscription(input) {
+            const result = await f.archive.updateTranscription(input);
+            if (input.status === 'completed') {
+                completionCalls++;
+                if (!purge) throw Object.assign(new Error('uncertain after commit'), { code: 'ARCHIVE_TIMEOUT' });
+            }
+            return result;
+        } }, download: async () => Buffer.from('a'), transcribe: async () => { started.resolve(); return release.promise; } });
+        a.sockets[0].ev.emit('messages.upsert', { type: 'notify', messages: [msg(`purge-${purge}`, undefined, { audioMessage: {} })] });
+        await started.promise;
+        const base = a.archived[0].observation.result.message;
+        if (purge) await f.archive.purge({ now: new Date(Date.parse(base.ingestedAt) + 90 * 86400000 + 1).toISOString() });
+        release.resolve('result'); await a.instance.transcriptions.idle(); await tick();
+        assert.equal(a.messages.length, 0); assert.equal(completionCalls, 1);
+        const stored = (await f.archive.messages({ conversationId: base.conversationId })).find(m => m.id === base.id);
+        if (purge) assert.equal(stored, undefined);
+        else assert.equal(stored.content.transcriptionStatus, 'completed');
+        assert.equal(a.failures.some(e => e.code === 'ARCHIVE_TIMEOUT'), !purge);
+    }
+});
+
+test('STT stays disabled for history/fromMe/duplicates and preserves self-chat audio outside customer archive', async t => {
+    const f = await fixture(t); let calls = 0;
+    const a = await f.adapter({ download: async () => Buffer.from('a'), transcribe: async () => { calls++; return '/help'; } });
+    const voice = id => msg(id, undefined, { audioMessage: {} });
+    a.sockets[0].ev.emit('messages.upsert', { type: 'notify', messages: [voice('disabled')] });
+    await settled(a.instance); assert.equal(calls, 0);
+    process.env.AUDIO_STT_ENABLED = '1'; t.after(() => { process.env.AUDIO_STT_ENABLED = '0'; });
+    a.sockets[0].ev.emit('messages.upsert', { type: 'append', messages: [voice('history')] });
+    a.sockets[0].ev.emit('messages.upsert', { type: 'notify', messages: [voice('disabled'), {
+        ...voice('from-me'), key: { id: 'from-me', remoteJid: '200@s.whatsapp.net', fromMe: true } }] });
+    await settled(a.instance); assert.equal(calls, 0);
+    const first = a.archived[0].observation.result.message;
+    assert.equal((await f.archive.messages({ conversationId: first.conversationId }))[0].content.transcriptionStatus, 'not_requested');
+    a.sockets[0].ev.emit('messages.upsert', { type: 'notify', messages: [msg('admin-audio', session.providerKey, { audioMessage: {} })] });
+    await settled(a.instance); await a.instance.transcriptions.idle();
+    assert.equal(calls, 1); assert.equal(a.messages[0].text, '/help');
+    assert.equal((await f.archive.diagnostics()).messages, 3);
+});
+
+test('new identity conflict during STT retains transcript but suppresses legacy automation', async t => {
+    const f = await fixture(t); const started = deferred(), release = deferred();
+    process.env.AUDIO_STT_ENABLED = '1'; t.after(() => { process.env.AUDIO_STT_ENABLED = '0'; });
+    const a = await f.adapter({ download: async () => Buffer.from('a'), transcribe: async () => { started.resolve(); return release.promise; } });
+    const base = msg('review-stt', undefined, { audioMessage: {} });
+    a.sockets[0].ev.emit('messages.upsert', { type: 'notify', messages: [base] });
+    await started.promise;
+    await a.instance.capture.enqueue({ ...base, message: { conversation: 'conflict' } }, session, 'history');
+    release.resolve('factual transcript'); await a.instance.transcriptions.idle();
+    assert.equal(a.messages.length, 0);
+    const archived = a.archived[0].observation.result.message;
+    const [stored] = await f.archive.messages({ conversationId: archived.conversationId });
+    assert.equal(stored.content.transcriptionStatus, 'completed');
+    assert.equal((await f.archive.conversation(archived.conversationId)).requires_review, 1);
+});

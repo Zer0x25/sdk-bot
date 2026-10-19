@@ -66,6 +66,7 @@ function createArchive(options = {}) {
         resolve: input => call('resolve', input),
         bindAlias: input => call('bindAlias', input),
         ingestBatch: input => call('ingestBatch', input),
+        updateTranscription: input => call('updateTranscription', input),
         conversation: id => call('conversation', id),
         messages: input => call('messages', input),
         events: (input = {}) => call('events', input),

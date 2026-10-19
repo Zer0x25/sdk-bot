@@ -1,7 +1,9 @@
 # Captura base WhatsApp — F2B.2
 
 Fecha: 2026-10-19. Unidad implementada y probada con transporte simulado y SQLite
-real. **F2B continúa abierta:** falta enriquecimiento multimedia (BUG-033/034).
+real. La evidencia de este informe es histórica de F2B.2.
+**F2B.3 ya completa el enriquecimiento multimedia** (BUG-033/034):
+[MULTIMEDIA-WHATSAPP-F2B3](MULTIMEDIA-WHATSAPP-F2B3.md).
 No hay bandeja nueva ni API de conversaciones/control humano todavía.
 
 ## Autoridad y recorrido

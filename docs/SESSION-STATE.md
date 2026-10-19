@@ -1,6 +1,6 @@
 # Estado de continuidad — SDK-Bot
 
-Actualización: 2026-10-19. Última unidad cerrada: **F2B.2; captura base WA conectada y probada**.
+Actualización: 2026-10-19. Última unidad cerrada: **F2B.3; multimedia WA durable y probada**.
 
 ## Objetivo vigente
 
@@ -42,6 +42,10 @@ respuesta humana desde el chat y retorno seguro a IA con contexto actualizado.
   cerrados. [ADR-006](adr/006-admision-durable-en-adapter.md) documenta la espera
   de admisión en el adapter antes del consumidor legacy. Evidencia:
   [CAPTURA-WHATSAPP-F2B2](CAPTURA-WHATSAPP-F2B2.md).
+- F2B.3: STT durable sobre el mismo ID y huella, pending/completed/failed con
+  message.updated, recuperación de pendientes, captions por tipo y tareas acotadas.
+  BUG-033/034/036 cerrados. [MULTIMEDIA-WHATSAPP-F2B3](MULTIMEDIA-WHATSAPP-F2B3.md).
+  BUG-037 descarga Baileys sin abort físico queda puerta F8 antes de STT real.
 - Sin migrar datos antiguos ni conectar cuentas reales. No hay bandeja nueva, páginas/SSE públicos,
   API de envío/control ni barrera de automatización v1.
 
@@ -81,7 +85,8 @@ Detalles de reproducción y logs efímeros están en la baseline.
 ## Hallazgos que condicionan implementación
 
 - F2B.2 corrige el primer elemento del lote, la conexión live al cache y los
-  callbacks de socket reemplazado. Multimedia aún tiene BUG-033/034.
+  callbacks de socket reemplazado. F2B.3 repara BUG-033/034/036; la descarga
+  física tiene BUG-037 antes de aceptación STT real F8.
 - El descubridor testAndGetChatId todavía llama getUpdates fuera del adapter;
   el test de dueño único no cubre esa competencia indirecta.
 - Telegram adelanta cursor en RAM sin ack durable del consumidor asíncrono.
@@ -255,58 +260,86 @@ Detalles de reproducción y logs efímeros están en la baseline.
   repetir sus suites. Launcher global no repetido para conservar logs. Sin
   proveedores/cuentas/OAuth reales, push, despliegue, Windows/Termux ni carga completa.
 
-## Siguiente unidad exacta: Fase 2 / F2B.3
+## Validación ejecutada en F2B.3
 
-**Entregable:** completar enriquecimiento multimedia WA (BUG-033/034), conservando
-la captura base ya operativa. F2B no está cerrada. Telegram/ack sigue F2C;
-generador/carga completa de VALIDACION es puerta de cierre de F2.
+- Gateway npm run check: lint/tipos y **218 tests** pasan en Node 24.19.0 y mínimo
+  22.13.0 Linux, copias independientes sin secretos/DB. 204 anteriores +5 archivo
+  +8 captura/enriquecimiento +1 cancelación STT. Dependencias enlazadas tras npm ci
+  --offline gateway con scripts habilitados para refrescar contracts empaquetado.
+- Contratos raíz npm run check: generación/tipos y **15 tests** pasan en ambas
+  versiones. Caption opcional conserva marcadores previos; tipos regenerados.
+  No cambios de manifiestos/lock ni nuevas dependencias.
+- SQLite real: CAS, evento mínimo/versión atómicos, huella estable, alias/dedup,
+  reinicio de pending a failed, purga sin recreación, caption/oversized y texto
+  antiguo conservado ante forma incompatible nueva en cuarentena.
+- STT sustituido: pending antes de descarga y completed antes de legacy; captura
+  de texto progresa durante STT. Falla/exceso/Unicode, deadline/saturación, cancelación
+  de socket, revisión de identidad y resultado incierto sin retry pasan. Self-chat
+  audio sigue fuera del archivo. History/fromMe/duplicados no inician STT.
+- Cuatro trabajos sin cola, deadline 150 s, acumulación por stream limitada a
+  STT_MAX_UPLOAD_BYTES. Un trabajo que ignora abort conserva plaza hasta terminar;
+  no publicar resultados tardíos. Shutdown/reset drenan actualizaciones antes de SQLclose.
+- Imagen nueva sdkbot-f2b3:local construida con npm ci --omit=dev, contrato actual
+  empaquetado y sin node_modules raíz; CA temporal solo en RUN/TLS verificado.
+  **72 tests** pasan Node22.23.3 --network none, profiles como Compose. No despliegue.
+- Reproducción adapter/normalizador 7d99f36 confirma cinco STT sin límite, estados
+  not_requested tras terminar y caption como texto. BUG-033/034/036 cerrados.
+  BUG-037 nuevo: fetch sustituido confirma que Baileys no reenvía signal de descarga;
+  deferido P2/F8 antes de aceptar STT real, sin afirmar aborto físico/handles cerrados.
+- Evidencia efímera /tmp/sdkbot-f2b3-9a8_8bcc. Fixture 75 expectativas sin cambios;
+  no carga completa. Brain/launcher no cambiaron ni se repitieron, logs conservados.
+  Sin cuentas/STT/modelos/OAuth reales, push, despliegue, Windows/Termux/GitHub Actions.
 
-1. Leer AGENTS, estado, arquitectura/ADR005/006, SPEC/VALIDACION, informes F2A/F2B.1/
-   [F2B.2](CAPTURA-WHATSAPP-F2B2.md) y backlog; revisar git status. Conservar
-   worker SQL único, Node>=22.13 y guardas de reset/locks. No usar estado real.
-2. BUG-033: repositorio de actualización de multimedia por ID original, transacción
-   con aggregateVersion/evento message.updated. API interna acotada, no HTTP nuevo.
-   No cambiar fingerprint del original al enriquecer; redelivery no es conflicto.
-3. Audio base antes de STT; persistir pending/completed/failed y transcript antes
-   de emitir texto al handler. Desactivado queda not_requested. Descarga vacía,
-   timeout, error, reconexión y reinicio deben dejar estado veraz; no IA tardía.
-   Actualización de cuerpo purgado no lo recrea; fallo conserva marcador y no
-   inventa éxito. No bloquear captura por la espera STT.
-4. BUG-034: conservar tipo de multimedia y caption en contrato/normalización,
-   incluyendo wrappers. Si cambia packages/contracts: regenerar, checks raíz y
-   npm ci gateway para refrescar copia empaquetada; mantener compatibilidad con
-   mensajes text/media existentes. Caption >64KiB con marcador sin IA.
-5. Probar actualización/dedup/aliases, transcript fallida/exceso, purga/restart,
-   STT sustituido y commit antes de IA en temporales. Regresiones 204 existentes
-   siguen como base, no como demostración del control/outbox F5.
-6. Cuenta proviene de socket autenticado, no token/settings. requires_review sigue
-   bloqueando nueva admisión y envío por adapter. JSON aún autoridad de control;
-   external_self no suspende IA con garantía v1 hasta F5. No introducir doble writer.
-7. Mantener saturación 1000/32MiB observable y no reintentar RPC de resultado
-   incierto. Las observaciones rechazadas pueden faltar si WA no las reentrega.
-8. Checks Node22/24 y distribución afectada, evidencia, backlog/roadmap/estado y
-   commit de la unidad. No cerrar F2 por pruebas reducidas ni habilitar UI/API F3.
+## Siguiente unidad exacta: Fase 2 / F2C.1
+
+**Entregable:** reparar dueño único Telegram al descubrir/probar Chat ID (BUG-004).
+F2B de captura/enriquecimiento está implementada; F2 completa no está cerrada.
+F2C.1 prepara captura/ack durable F2C.2 (BUG-005/009), sin añadir otro poller.
+
+1. Leer AGENTS, estado, arquitectura/ADR001–006, SPEC/VALIDACION y backlog. Revisar
+   git status y las rutas adapter Telegram → telegramService → bus/panel/comandos.
+   No tocar OAuth sin OAUTH-LESSONS; conservar firma/grants y límites existentes.
+2. Reproducir getUpdates simultáneos de adapter y testAndGetChatId con proveedor
+   sustituido. Definir un propietario para polling y descubrimiento por token;
+   no exponer/guardar token en archivo ni usarlo como identidad de cuenta.
+3. Reconducir descubrimiento al propietario o coordinar su exclusión, también al
+   cambiar token/desconectar/reintentar. No perder updates interceptados ni
+   confirmar offset nuevo antes de persistirlos: el cursor durable llegará F2C.2.
+   Evitar presentar exclusión como captura/ack ya implementados.
+4. Probar polling activo, descubrimiento concurrente, fallo/timeout/cancelación,
+   token reemplazado y reinicio, con IDs sintéticos y fetch sustituido. No consultas
+   getUpdates/getMe/sendMessage reales ni cambios de settings originales.
+5. Conservar archivo y multimedia WA, límites 1000/32MiB, worker único y guardas de
+   reset. La autoridad de acceso/control sigue JSON; sin UI/API pública nueva.
+6. Checks Node22/24/distribución afectada; actualizar evidencia/backlog/roadmap y
+   hacer commit de una unidad probada. Después F2C.2: captura TG/cursor durable,
+   namespace de IDs/eco (BUG-005/009) y cuenta verificada sin token; carga completa
+   de VALIDACION sigue puerta antes de cerrar F2.
 
 ## Pendientes materiales
 
-- F2B.2 archiva observaciones WA admitidas; todavía faltan enriquecimiento completo
-  de multimedia, atribución durable de salidas y control desde teléfono/panel.
-- Telegram/cursor/descubrimiento (BUG004/005/009) y carga completa F2 pendientes.
-- Corte/rollback/control/outbox, invalidación de contexto derivado y backups
-  programados siguen F5/F8. Purga de archivo inicial/diaria ya está conectada.
-- Historial previo completo no está garantizado por WA/Bot API. Driver probado en
-  Linux; Windows/Termux y cuenta real de prueba con una sola instancia pendientes.
-- BUG-035 pairing async no bloquea captura autenticada; reparar antes de su
-  aceptación F8. BUG-024 antes de operadores limitados F3. No paralelizar suites
-  Python hasta BUG-014. No asumir que el panel legacy respeta grants v1.
+- Telegram/cursor/descubrimiento (BUG-004/005/009) y carga completa F2 pendientes.
+- La bandeja React/API de lectura/eventos siguen F3/F4; control humano, cancelación
+  de IA, corte/outbox/contexto y backups operativos siguen F5/F8. Purga del archivo
+  inicial/diaria ya conectada. external_self no suspende IA con garantía v1 todavía.
+- La captura no garantiza recuperar observaciones WA rechazadas. Historial previo
+  íntegro tampoco está garantizado por proveedores. Driver probado Linux;
+  Windows/Termux y cuenta real de prueba con una sola instancia pendientes.
+- BUG-035 pairing async y BUG-037 abort físico descarga deben repararse antes de
+  su aceptación real F8. La limitación de Baileys no permite afirmar cierre universal
+  de sockets de descarga, aunque el resultado STT tardío esté bloqueado.
+- Texto antiguo con caption sigue legible; tipo perdido no se infiere al reimportar:
+  forma incompatible del mismo ID queda en revisión, sin sobrescribir historia.
+- BUG-024 antes de operadores limitados F3. BUG-014 antes de paralelizar Python.
 
 ## Regla de cierre para la siguiente sesión
 
 Actualizar estado y solo checkboxes demostrados; hacer commit probado e informar
 hash. El [prompt estable](PROMPT-CONTINUIDAD.md) consulta este estado sin reescritura.
-BUG-004–012 (009/010 parciales), BUG-014/024 y BUG-033/034/035 siguen abiertos.
-BUG-016 probado en repositorio y aliases del adapter, sin afirmar F2 completa.
+BUG-004–012 (009/010 parciales), BUG-014/024/035/037 siguen abiertos.
+BUG-016 probado en repositorio/alias del adapter, sin afirmar F2 completa.
 
-Cierre F2B.2: commit local `git log --grep="close F2B.2"`; BUG-001/002/003/032 cerrados.
+Cierre F2B.3: commit local `git log --grep="close F2B.3"`; BUG-033/034/036 cerrados.
+Cierre F2B.2: `7d99f36`; BUG-001/002/003/032 cerrados.
 Cierre F2B.1: `4bb4ec3`; BUG-029/031 cerrados.
 Cierre F2A: `37525a1`; BUG-026/027/028/030 cerrados.

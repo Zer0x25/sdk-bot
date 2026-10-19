@@ -33,16 +33,17 @@ function normalize(message, session, source) {
     if (!remote) return { scope: 'non_individual' };
     if (session.self.includes(remote)) return { scope: 'administration' };
     const body = unwrap(message.message);
-    const text = body.conversation ?? body.extendedTextMessage?.text
-        ?? body.imageMessage?.caption ?? body.documentMessage?.caption ?? body.videoMessage?.caption;
+    const type = ['audio', 'image', 'video', 'document'].find(name => body[`${name}Message`]);
+    const caption = type && body[`${type}Message`]?.caption;
+    const text = type ? caption : body.conversation ?? body.extendedTextMessage?.text;
     if (typeof text === 'string' && !text.isWellFormed()) throw failure('WA_CONTENT_INVALID');
     const providerMessageId = message.key.id ?? null;
     if (providerMessageId !== null && (typeof providerMessageId !== 'string'
         || !providerMessageId.length || Array.from(providerMessageId).length > 512)) throw failure('WA_MESSAGE_ID_INVALID');
-    const type = ['audio', 'image', 'video', 'document'].find(name => body[`${name}Message`]) || 'unsupported';
-    const content = typeof text === 'string' && text.length
+    const content = !type && typeof text === 'string' && text.length
         ? { type: 'text', text }
-        : { type, availability: 'not_stored', transcript: null, transcriptionStatus: 'not_requested' };
+        : { type: type || 'unsupported', availability: 'not_stored', transcript: null, transcriptionStatus: 'not_requested',
+            ...(typeof caption === 'string' && caption.length ? { caption } : {}) };
     // Long from protobuf has a decimal toString; never coerce a 64-bit ID.
     const seconds = String(message.messageTimestamp ?? '');
     if (!/^\d+$/.test(seconds) || BigInt(seconds) > 253402300799n) throw failure('WA_TIMESTAMP_INVALID');
@@ -104,4 +105,4 @@ function createWhatsappCapture(archive) {
         async close() { closed = true; await tail; } };
 }
 
-module.exports = { individualJid, socketIdentity, normalize, createWhatsappCapture };
+module.exports = { individualJid, socketIdentity, normalize, unwrap, createWhatsappCapture };

@@ -3,6 +3,8 @@
 Fecha: 2026-10-19. Estado: **implementada y probada en Linux x64**.
 Seguimiento F1B: [FRONTERA-AUTENTICADA-V1](FRONTERA-AUTENTICADA-V1.md) incorpora
 consumo runtime y sesión; lo que sigue describe la evidencia histórica de F1A.
+Seguimiento F2B.3: caption opcional junto al tipo multimedia;
+[MULTIMEDIA-WHATSAPP-F2B3](MULTIMEDIA-WHATSAPP-F2B3.md), 15 tests actuales.
 Código y guía: [packages/contracts](../packages/contracts/README.md).
 Norma: [SPEC-OPERATIVA-V1](SPEC-OPERATIVA-V1.md).
 

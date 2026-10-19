@@ -451,6 +451,8 @@ export interface components {
         } | {
             /** @enum {string} */
             availability: "not_stored" | "available" | "expired" | "failed";
+            /** @description Texto adjunto literal; opcional para compatibilidad con marcadores anteriores. */
+            caption?: components["schemas"]["StoredText"];
             transcript: components["schemas"]["StoredText"] | null;
             /** @enum {string} */
             transcriptionStatus: "not_requested" | "pending" | "completed" | "failed";

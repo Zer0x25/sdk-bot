@@ -235,3 +235,15 @@ test('bounded errors omit raw values; validation is pure and unknown schemas fai
   accept('TakeoverRequest', { expectedVersion: '3' });
   assert.ok(result.errors.length, 'next call must not invalidate prior errors');
 });
+
+test('media captions preserve attachment type and accept existing markers without caption', () => {
+  for (const type of ['audio','image','video','document','unsupported']) {
+    const content = { type, availability: 'not_stored', transcript: null, transcriptionStatus: 'not_requested' };
+    accept('MessageContent', content);
+    accept('MessageContent', { ...content, caption: 'Descripción 😀' });
+    accept('MessageContent', { ...content, caption: '😀'.repeat(16384) });
+    reject('MessageContent', { ...content, caption: '😀'.repeat(16385) });
+    reject('MessageContent', { ...content, caption: '\ud800' });
+    reject('MessageContent', { ...content, caption: null });
+  }
+});

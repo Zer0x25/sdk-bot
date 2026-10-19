@@ -1,8 +1,9 @@
 # Archivo persistente de conversaciones — F2A
 
 Fecha: 2026-10-19. Unidad de repositorios cerrada. F2B.2 añade
-[captura base WA](CAPTURA-WHATSAPP-F2B2.md) y purga diaria; Telegram y
-enriquecimiento multimedia siguen pendientes. La evidencia de abajo es de F2A.
+[captura base WA](CAPTURA-WHATSAPP-F2B2.md) y purga diaria;
+[F2B.3](MULTIMEDIA-WHATSAPP-F2B3.md) añade enriquecimiento multimedia. Telegram
+sigue pendiente. La evidencia de abajo es de F2A.
 Norma: [SPEC-OPERATIVA-V1](SPEC-OPERATIVA-V1.md), límites de
 [ADR-005](adr/005-plataforma-conversaciones.md). No hay bandeja, API de páginas/SSE,
 control humano v1 ni corte de contactos/settings en esta entrega.

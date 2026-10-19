@@ -8,7 +8,8 @@ para `packages/*`; gateway conserva instalación/lock independientes. No se migr
 datos ni UI nueva. F1B implementa sesión v1 y firma panel → gateway, con contratos
 instalados como dependencia local del gateway. F2A añade repositorios SQLite con
 worker y snapshot durable de sesión; F2B.1 protege el reset CLI antes de captura.
-F2B.2 conecta captura base WA; enriquecimiento multimedia y resto de API v1 pendientes.
+F2B.2 conecta captura base WA y F2B.3 añade enriquecimiento multimedia durable
+([evidencia y límites](MULTIMEDIA-WHATSAPP-F2B3.md)). Telegram y resto de API v1 pendientes.
 Ver [CAPTURA-WHATSAPP-F2B2](CAPTURA-WHATSAPP-F2B2.md). Evidencia: [CONTRATOS-V1.md](CONTRATOS-V1.md) y
 [FRONTERA-AUTENTICADA-V1.md](FRONTERA-AUTENTICADA-V1.md) y
 [ARCHIVO-CONVERSACIONES-F2A.md](ARCHIVO-CONVERSACIONES-F2A.md).
@@ -156,7 +157,8 @@ Termux. No se requiere SSR para esta consola privada.
 
 Resultado y límites del experimento de almacenamiento:
 [SQLITE-SPIKE.md](SQLITE-SPIKE.md). F2A ya implementa worker y repositorios
-operativos, con snapshot en sesión; F2B.2 los conecta a captura base WA. Ver
+operativos, con snapshot en sesión; F2B.2 los conecta a captura base WA y F2B.3
+a actualización de transcripciones con eventos. Ver
 [ARCHIVO-CONVERSACIONES-F2A](ARCHIVO-CONVERSACIONES-F2A.md) y la puerta de reset
 [RESET-SEGURO-F2B1](RESET-SEGURO-F2B1.md).
 

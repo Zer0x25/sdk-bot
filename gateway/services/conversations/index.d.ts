@@ -30,6 +30,9 @@ export interface Archive {
     resolve(identity: Contract<'IdentityKey'>): Promise<ArchiveIdentity>;
     bindAlias(input: { canonical: Contract<'IdentityKey'>; alias: Contract<'IdentityKey'>; evidence: { kind: 'adapter' | 'admin'; reference: string } }): Promise<{ status: 'linked' | 'existing'; identity: ArchiveIdentity } | { status: 'quarantined'; quarantineId: string }>;
     ingestBatch(input: ArchiveInput[]): Promise<IngestResult[]>;
+    updateTranscription(input: { messageId: string; expectedStatus: 'not_requested' | 'pending'; status: 'pending' | 'completed' | 'failed'; transcript?: string | null }): Promise<
+        { status: 'updated'; message: Contract<'Message'>; event: Contract<'Event'> } |
+        { status: 'missing' | 'unchanged' }>;
     conversation(id: string): Promise<ArchiveConversation | null>;
     messages(input: { conversationId: string; limit?: number; before?: { occurredAt: string; id: string } }): Promise<Contract<'Message'>[]>;
     events(input?: { after?: string; limit?: number }): Promise<Contract<'Event'>[]>;

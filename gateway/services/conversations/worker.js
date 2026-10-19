@@ -44,6 +44,15 @@ function initialize() {
         run('DELETE FROM events');
         run('UPDATE archive_meta SET epoch=? WHERE id=1', randomUUID());
     });
+    // No STT work survives the sole owner's restart. Do not resume/replay it.
+    // Keyset batches avoid retaining the entire pending set in memory.
+    let after = '';
+    for (;;) {
+        const pending = all("SELECT id FROM messages WHERE id>? AND json_extract(payload,'$.content.type')='audio' AND json_extract(payload,'$.content.transcriptionStatus')='pending' ORDER BY id LIMIT 500", after);
+        if (!pending.length) break;
+        transaction(() => pending.forEach(row => updateTranscription({ messageId: row.id, expectedStatus: 'pending', status: 'failed' })));
+        after = pending[pending.length - 1].id;
+    }
     return { ...snapshot(), schemaVersion: 1, journalMode: one('PRAGMA journal_mode').journal_mode,
         synchronous: one('PRAGMA synchronous').synchronous, threadId: require('node:worker_threads').threadId };
 }
@@ -107,8 +116,9 @@ function ingest(input) {
     if (providerId !== null) assertValid('ProviderMessageId', providerId);
     if (!['live','history','import'].includes(input.source)) fail('INVALID_SOURCE');
     let content = input.content;
-    if (content?.type === 'text' && typeof content.text === 'string' && Buffer.byteLength(content.text) > 65536) {
-        content = { type: 'oversized', originalBytes: Buffer.byteLength(content.text), reason: 'text_limit' };
+    const storedText = content?.type === 'text' ? content.text : content?.caption;
+    if (typeof storedText === 'string' && Buffer.byteLength(storedText) > 65536) {
+        content = { type: 'oversized', originalBytes: Buffer.byteLength(storedText), reason: 'text_limit' };
     }
     const draft = {
         id: randomUUID(), conversationId: c.id, providerMessageId: providerId, clientMessageId: null,
@@ -134,13 +144,41 @@ function ingest(input) {
         capturing_since=CASE WHEN ?='live' THEN COALESCE(capturing_since,?) ELSE capturing_since END,
         history_observed=CASE WHEN ? IN ('history','import') THEN 1 ELSE history_observed END WHERE id=?`,
     aggregate, draft.inboundSeq ?? c.inbound_seq, draft.occurredAt, draft.source, now, draft.source, c.id);
+    const event = appendMessageEvent(draft, aggregate, 'message.created', now);
+    return { status: 'created', message: draft, event };
+}
+function appendMessageEvent(message, aggregate, type, now) {
     const cursor = snapshot();
     cursor.seq = String(BigInt(cursor.seq) + 1n);
-    const event = assertValid('Event', { schemaVersion: 1, cursor, type: 'message.created', occurredAt: now,
-        data: { conversationId: c.id, messageId: draft.id, aggregateVersion: aggregate } });
-    run('INSERT INTO events VALUES(?,?,?,?,?)', cursor.seq, c.id, draft.id, now, JSON.stringify(event));
+    const event = assertValid('Event', { schemaVersion: 1, cursor, type, occurredAt: now,
+        data: { conversationId: message.conversationId, messageId: message.id, aggregateVersion: aggregate } });
+    run('INSERT INTO events VALUES(?,?,?,?,?)', cursor.seq, message.conversationId, message.id, now, JSON.stringify(event));
     run('UPDATE archive_meta SET seq=? WHERE id=1', cursor.seq);
-    return { status: 'created', message: draft, event };
+    return event;
+}
+function updateTranscription(input) {
+    assertValid('Id', input.messageId);
+    if (!['not_requested','pending'].includes(input.expectedStatus)
+        || !(input.expectedStatus === 'not_requested' ? ['pending','failed'] : ['completed','failed']).includes(input.status)
+        || input.status !== 'completed' && input.transcript != null) fail('INVALID_TRANSCRIPTION');
+    if (input.status === 'completed') {
+        assertValid('StoredText', input.transcript);
+        if (!input.transcript.trim()) fail('INVALID_TRANSCRIPTION');
+    }
+    const row = one('SELECT payload FROM messages WHERE id=?', input.messageId);
+    if (!row) return { status: 'missing' }; // Purge never resurrects a body.
+    const message = JSON.parse(row.payload);
+    if (message.content.type !== 'audio') fail('INVALID_TRANSCRIPTION');
+    if (message.content.transcriptionStatus !== input.expectedStatus) return { status: 'unchanged' };
+    message.content = { ...message.content, transcriptionStatus: input.status, transcript: input.transcript ?? null };
+    assertValid('Message', message);
+    const c = one('SELECT aggregate_version FROM conversations WHERE id=?', message.conversationId);
+    const aggregate = String(BigInt(c.aggregate_version) + 1n);
+    run('UPDATE messages SET payload=? WHERE id=?', JSON.stringify(message), message.id);
+    run('UPDATE conversations SET aggregate_version=? WHERE id=?', aggregate, message.conversationId);
+    // Fingerprint, inboundSeq, activity and capture time refer to the original.
+    const event = appendMessageEvent(message, aggregate, 'message.updated', new Date().toISOString());
+    return { status: 'updated', message, event };
 }
 function page(input) {
     assertValid('Id', input.conversationId);
@@ -176,6 +214,7 @@ function dispatch(method, input) {
             if (!Array.isArray(input) || !input.length || input.length > 1000) fail('INVALID_BATCH');
             return transaction(() => input.map(ingest));
         }
+        case 'updateTranscription': return transaction(() => updateTranscription(input));
         case 'conversation': assertValid('Id', input); return one('SELECT * FROM conversations WHERE id=?', input) ?? null;
         case 'messages': return page(input);
         case 'events': {

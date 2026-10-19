@@ -84,3 +84,7 @@ seis TXT de F0.3 y se validan las formas de ID, sin afirmar resolución de alias
 La compilación incluye casos positivos/negativos y regresión de defaults opcionales.
 CI prepara ejecutarlos en Node 22.13.0/24; Windows/Termux siguen pendientes.
 Evidencia local en [CONTRATOS-V1](../../docs/CONTRATOS-V1.md).
+
+F2B.3 amplía MessageContent multimedia con caption opcional (StoredText), sin
+invalidar marcadores previos. Tipos regenerados y dependencia gateway refrescada.
+Semántica durable y límites: [multimedia WA](../../docs/MULTIMEDIA-WHATSAPP-F2B3.md).
