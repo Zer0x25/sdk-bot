@@ -40,6 +40,11 @@ verificación de sesión única y la compatibilidad de instalaciones existentes.
    `VACUUM INTO`, compatible con ese mínimo. La API experimental queda encapsulada.
 9. Migrar handoff/permisos conservadoramente. Resolver IDs exactos por canal/cuenta;
    no mezclar dígitos de WhatsApp y Telegram ni reactivar IA por una importación.
+10. F0.3 fija semántica operativa en SPEC-OPERATIVA-V1: deduplicar por identidad
+    canónica verificada (rawChatId solo como procedencia), controlVersion separado
+    de aggregateVersion, retención 90/7/180 días para historial/eventos/huellas y
+    rollback compatible con DB actual tras nuevos envíos. Sus escenarios son
+    aceptación futura, sin declarar solucionados los bugs del runtime.
 
 ## Alternativas consideradas
 
@@ -73,3 +78,5 @@ Validación manual posterior en cuenta de prueba, sin duplicar producción.
 Modelo y contratos: [ARCHITECTURE.md](../ARCHITECTURE.md).
 Orden de implementación: [ROADMAP.md](../ROADMAP.md).
 Evidencia del driver y limitaciones por plataforma: [SQLITE-SPIKE.md](../SQLITE-SPIKE.md).
+Semántica operativa y pruebas futuras: [SPEC-OPERATIVA-V1.md](../SPEC-OPERATIVA-V1.md)
+y [VALIDACION-V1.md](../VALIDACION-V1.md).

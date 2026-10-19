@@ -42,11 +42,10 @@ salvo indicación contraria. La evidencia detallada y líneas están en la basel
 
 ## Clasificación para la unidad activa
 
-F0.2 ejecutó exclusivamente un experimento SQLite con fixtures locales. Ninguno
-de BUG-001 a BUG-014 bloquea ese experimento: no usa adapters, handlers, HTTP del
-producto, memoria del brain ni sus tests en paralelo. Siguen abiertos con las
-puertas anteriores. Un fallo del experimento que impida worker/WAL/transacciones/
-backup sí debe repararse antes de su commit; no se difiere como si hubiera pasado.
+F0.3 define semántica y aceptación, sin activar adapters, handlers o migraciones.
+BUG-001 a BUG-014 siguen abiertos con sus puertas de implementación. BUG-008 se
+aborda en la especificación pero no queda reparado en runtime por describirlo.
+BUG-016 sí bloqueaba la coherencia de F0.3 y se corrigió en el diseño antes de cerrar.
 
 ## Cerrados
 
@@ -55,7 +54,16 @@ backup sí debe repararse antes de su commit; no se difiere como si hubiera pasa
   errores agregados tras cerrar workers/temporales. Lint limpio; fallo simulado
   tras escribir conserva el error, termina con código 1 y no deja estado temporal,
   probado en Node 22.13.0 y 24.19.0. Evidencia: [SQLITE-SPIKE.md](SQLITE-SPIKE.md).
-  Commit: cierre F0.2, identificado por `git log --grep=BUG-015`.
+  Commit: `f69ac1d` (F0.2).
+
+- **BUG-016 — cerrado en diseño (P1, F0.3):** la clave de deduplicación propuesta
+  usaba rawChatId mientras el mismo hilo puede observarse por JID/LID. Un mismo
+  providerMessageId con esos dos valores produciría dos claves. Reparación: usar
+  canonicalIdentityId por cuenta, con aliases verificados y conflicto bloqueante;
+  rawChatId queda como procedencia. ARCHITECTURE/ADR/SPEC alineados y escenario
+  DEDUP-01 revisado (clave vieja distinta, clave canónica idéntica). No es una
+  reparación de DB runtime: F2 debe ejecutar el caso contra captura/repositorio.
+  Commit: cierre F0.3, identificado por `git log --grep=BUG-016`.
 
 Los bugs BUG-001 a BUG-014 siguen abiertos. Checks actuales en verde no demuestran
 los escenarios pendientes.

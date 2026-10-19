@@ -165,7 +165,8 @@ limpiar memoria IA no borra el archivo de conversaciones.
 | operations | ID, conversación, actor, tipo takeover, estado pendiente/completado/fallido, versión, resultado/aviso y fechas; permite consultar y recuperar la toma tras reinicio. |
 | schema_migrations / import_runs | Versión, checksum, origen, progreso, recuentos y errores recuperables. |
 
-Unicidad remota: (accountId, remoteChatId, providerMessageId) cuando exista.
+Unicidad remota: (accountId, canonicalIdentityId, providerMessageId) cuando exista;
+rawChatId es procedencia. JID/LID verificados comparten identidad y deduplicación.
 No deduplicar por texto/timestamp ni por message_id de Telegram global: es local
 al chat. Los IDs desconocidos no se inventan como confirmación. Telegram conserva
 signo negativo y formato texto; nunca mezclar sus dígitos con WhatsApp.
@@ -180,6 +181,11 @@ Separar tres ejes:
   explícita; no caduca a las 24 horas.
 - lifecycle = open | resolved. Resolver no reactiva IA; una nueva entrada reabre
   sin cambiar control ni permisos.
+
+F0.3 fija esas reglas en [SPEC-OPERATIVA-V1.md](SPEC-OPERATIVA-V1.md), con ejemplos
+de migración, retención y corte. controlVersion gobierna comandos/despacho;
+aggregateVersion gobierna la proyección UI. Mensajes/lecturas no invalidan control.
+policyVersion global y contextVersion se verifican también en jobs IA.
 
 Autoría: customer | ai | operator | external_self | system | unknown.
 Un fromMe del teléfono no demuestra quién escribió. Reconciliar primero contra
@@ -282,6 +288,9 @@ Error JSON: { error: { code, message, requestId, details? } }.
 401 sin sesión; 403 sin permiso; 404 desconocido; 409 conflicto/idempotencia;
 422 validación; 503 servicio temporalmente caído. DTOs excluyen raw, secretos,
 rutas de archivos y objetos arbitrarios de proveedor.
+410 IDEMPOTENCY_RESULT_EXPIRED identifica una intención cuyo resultado se purgó
+pero conserva huella; no se ejecuta otra vez. dataEpoch separa líneas temporales
+de eventos/cursores tras restauración. Detalle de campos wire: contratos de F1.
 
 El panel deriva actorId de sesión, descarta actor enviado por navegador y firma
 contexto interno breve: actor, requestId, expiración, método, ruta y hash del cuerpo.
@@ -378,8 +387,9 @@ Backups SQLite consistentes, con manejo correcto WAL/SHM; no copiar WAL aislado.
 
 DB nueva, adjuntos futuros y cursores se agregan a factoryReset.js, .gitignore,
 variables y volúmenes antes de persistirlos. Conservar confirmación destructiva.
-Retención propuesta: 90 días configurables para historial, independiente de IA;
-documentar purga/exportación/backup. No ejecutar reset/re-pairing ni usar producción
+Retención inicial fijada por F0.3: historial 90 días desde ingestedAt, eventos 7 días,
+huellas/idempotencia 180 días y backups diarios 7 días; configurable e independiente
+de IA. Límites de purga/exportación/backup en SPEC-OPERATIVA-V1. No ejecutar reset/re-pairing ni usar producción
 como fixture para validar. No almacenar tokens o cuerpos completos en logs por defecto.
 
 Métricas: retraso de ingesta, duplicados reconciliados, jobs cancelados, tiempo de

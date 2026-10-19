@@ -18,7 +18,9 @@ checks actuales en copia temporal: gateway Node 22/24, brain y smoke del launche
 con WA simulado/TG sin token. Evidencia: [BASELINE-CONVERSACIONES.md](BASELINE-CONVERSACIONES.md).
 F0.2 también completada: [experimento SQLite](SQLITE-SPIKE.md) probado en Linux
 con Node 22.13/22.23/24, driver elegido y plataformas pendientes registradas.
-Siguiente unidad: F0.3. No se conectaron canales reales ni se migraron datos.
+F0.3 completada: [especificación operativa](SPEC-OPERATIVA-V1.md), 75 escenarios de
+aceptación futura revisados y [protocolo de validación](VALIDACION-V1.md). Fase 0
+cerrada; siguiente unidad F1A (contratos/workspace). Sin canales reales ni migración.
 
 ## Alcance y entregas
 
@@ -54,7 +56,7 @@ roles de equipo, un rediseño de proveedores o mover todas las carpetas.
 
 ## Fase 0 — Línea base y compatibilidad
 
-**Depende de:** ninguna. **Próxima sesión recomendada: F0.3.**
+**Depende de:** ninguna. **Estado: completada; siguiente unidad F1A.**
 
 - [x] F0.1 Inventariar entradas/salidas, generaciones de sockets, comandos, rutas,
   cursores y puntos de persistencia; producir `docs/BASELINE-CONVERSACIONES.md`
@@ -68,9 +70,11 @@ roles de equipo, un rediseño de proveedores o mover todas las carpetas.
   driver con evidencia y actualizar ADR-005 antes de añadir dependencia.
   Node >=22.13.0 sin flags en Linux; Windows/Termux pendientes. Sin dependencia
   externa ni DB runtime añadida. Script incluido en el job de CI para futuras ejecuciones.
-- [ ] F0.3 Fijar alcance v1, orden de IDs/aliases, retención inicial (propuesta 90d
+- [x] F0.3 Fijar alcance v1, orden de IDs/aliases, retención inicial (90d
   historial), compatibilidad de handoff y estrategia de backup/corte/rollback.
   Definir presupuesto de carga y mediciones con fixtures reproducibles.
+  Decisiones/75 ejemplos revisados, sin declarar implementación de servicios ni
+  rendimiento aprobado. BUG-016 corregido en diseño; bugs runtime conservan sus puertas.
 
 **Aceptación:** baseline con resultados reproducibles, riesgos concretos y siguiente
 cambio acotado. Sin mover carpetas ni tocar credenciales/sesiones.
@@ -78,6 +82,10 @@ cambio acotado. Sin mover carpetas ni tocar credenciales/sesiones.
 ## Fase 1 — Contratos y frontera autenticada
 
 **Depende de:** Fase 0.
+
+Unidades: **F1A**, workspace/contratos/validación de formas y tipos; **F1B**,
+frontera autenticada/identidad firmada y BUG-013 antes de exponer historial.
+Cada unidad termina con pruebas y commit, sin marcar toda Fase 1 por cerrar F1A.
 
 - [ ] Crear `packages/contracts` y workspace Node mínimo sin mover apps actuales;
   registrar impacto en locks, CI y release-please. Mantener Python independiente.

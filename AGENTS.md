@@ -6,6 +6,9 @@
   `docs/SESSION-STATE.md`, `docs/ARCHITECTURE.md`, `docs/ROADMAP.md` y
   `docs/adr/005-plataforma-conversaciones.md`. El prompt reutilizable está en
   `docs/PROMPT-CONTINUIDAD.md`.
+- Para contratos/identidad/control/migración usa `docs/SPEC-OPERATIVA-V1.md` y
+  `docs/VALIDACION-V1.md`. Los escenarios JSON son expectativas, no tests runtime
+  aprobados; la deduplicación usa identidad canónica y expectedVersion es controlVersion.
 - La estructura `apps/` + `packages/`, React, SQLite operativo y API v1 son
   **arquitectura de destino**; no suponer que están implementados. Las rutas y
   comandos de las secciones siguientes describen la estructura actual.

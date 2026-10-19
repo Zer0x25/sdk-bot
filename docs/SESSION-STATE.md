@@ -1,6 +1,6 @@
 # Estado de continuidad — SDK-Bot
 
-Actualización: 2026-10-19. Última unidad cerrada: **Fase 0 / F0.2**.
+Actualización: 2026-10-19. Última unidad cerrada: **F0.3; Fase 0 completada**.
 
 ## Objetivo vigente
 
@@ -21,6 +21,10 @@ respuesta humana desde el chat y retorno seguro a IA con contexto actualizado.
 - F0.2 completada: [SQLITE-SPIKE.md](SQLITE-SPIKE.md), script temporal reproducible,
   driver node:sqlite con worker y mínimo sin flags Node 22.13.0 comprobado en Linux.
   Backup VACUUM INTO; Windows/Termux pendientes. CI prepara ejecutar el script.
+- Commit de cierre F0.2: `f69ac1d`.
+- F0.3 completada: [SPEC-OPERATIVA-V1.md](SPEC-OPERATIVA-V1.md) fija identidades,
+  permisos/control/versiones, retención, corte/rollback y límites; 75 escenarios
+  sintéticos de aceptación futura y protocolo de medición en VALIDACION-V1.
 - No se modificaron módulos de producción ni se migraron datos. No hay bandeja nueva,
   DB operativa de conversaciones, API v1 ni control versionado implementados.
 
@@ -71,34 +75,49 @@ Detalles de reproducción y logs efímeros están en la baseline.
   por dígitos pierden signo TG y pueden resolver por coincidencias parciales.
 - Los checks existentes no prueban estos escenarios de conversación completa.
 
-## Siguiente unidad exacta: Fase 0 / F0.3
+## Validación ejecutada en F0.3
 
-**Entregable:** especificación operativa v1 que cierre identidad/aliases, acceso,
-control, retención, migración/rollback y protocolo de medición antes de Fase 1.
+- Consistencia documental y JSON: 75 IDs de escenario únicos; matriz completa de
+  36 combinaciones; UUID/IDs TG, handoff, cuarentena, retención, seis límites Unicode
+  y cantidades del dataset/plazos revisados. Hash del fixture en VALIDACION-V1.
+- BUG-016 de diseño corregido: deduplicación por identidad canónica verificada,
+  sin tratar JID/LID del mismo hilo como dos chats distintos.
+- No se cambió runtime ni se ejecutaron suites/benchmark del producto en esta
+  unidad documental. Los escenarios aún deben ejecutarse contra implementaciones.
 
-1. Leer AGENTS, arquitectura, ADR-001 a 005, baseline, SQLITE-SPIKE, BACKLOG y roadmap;
-   revisar git status y commits de cierre. No reabrir elección del driver sin evidencia.
-2. Definir claves por cuenta/canal, aliases exactos y tratamiento de ambigüedades;
-   traducción legacy de handoff/permisos sin reactivar IA ni mezclar identidades.
-3. Fijar retención inicial propuesta de 90d independiente de memoria IA, borrado,
-   exportación y caducidad de eventos/cursores de lectura; aclarar cobertura histórica.
-4. Definir mantenimiento/corte y snapshot/delta; rollback posterior a nuevas
-   escrituras no puede descartar mensajes humanos enviados.
-5. Fijar datasets sintéticos y presupuestos verificables de carga/latencia/colas
-   para Linux y cómo medir plataformas pendientes. No usar los 32–43 ms de una
-   ejecución del spike como garantía de producción.
-6. Revisar backlog: reparar un bloqueante de esta unidad si existe, diferir lo
-   independiente con fase límite. Actualizar docs/ADR/estado y commit al cerrar.
+## Siguiente unidad exacta: Fase 1 / F1A
 
-**Aceptación:** decisiones sin contradicciones, ejemplos límite por cuenta/canal,
-criterios de corte/rollback y mediciones reproducibles. Sin migrar datos ni mover
-apps. Próxima entrega tras ello: contratos/frontera autenticada de Fase 1.
+**Entregable:** workspace Node mínimo y packages/contracts con OpenAPI 3.1/JSON
+Schema, validación runtime de formatos y generación/verificación de tipos.
+
+1. Leer AGENTS, arquitectura, ADR-001 a 005, SPEC-OPERATIVA-V1, VALIDACION-V1,
+   baseline, SQLITE-SPIKE y BACKLOG. Revisar git status y commits de cierre.
+2. Crear workspace/paquete sin mover gateway/brain/stt/panel. Resolver locks, CI,
+   Docker/npm ci y release-please de forma coherente; no romper instalaciones
+   actuales por introducir una dependencia de workspace que su build no copie.
+3. Definir cuenta, identidad, conversación, mensaje, control/operaciones, actor,
+   errores y eventos con IDs texto y schemas canónicos, límites y versionado.
+4. Separar controlVersion/aggregateVersion, dataEpoch/seq textual, dedup canónica,
+   nulls/required y request/response DTO sin raw/secretos. expectedVersion liga control.
+5. Validadores runtime y tipos TS generados o comprobados desde una sola fuente;
+   OpenAPI referencia esos schemas. No duplicar un motor de políticas para tests.
+6. Pruebas de aceptación/rechazo de formas: signo/precisión TG, UUID, Unicode,
+   límites/paginación, versiones/errores; detectar deriva de schemas/tipos. Los
+   casos de migración/dispatch de fixture siguen pendientes de sus fases reales.
+7. Ejecutar checks adecuados con copia/estado temporales, revisar backlog y cerrar
+   con docs/estado/commit. No marcar F1B ni endpoints como implementados por crear DTOs.
+
+**Aceptación:** contratos válidos, tipos reproducibles, tests de formas útiles y
+checks de compatibilidad del gateway en verde. Sin transporte, claves IA, DB
+runtime ni migraciones. F1B incorporará sesión/contexto firmado y resolverá
+BUG-013 antes de exponer historial autenticado.
 
 ## Pendientes materiales
 
 - Driver SQLite seleccionado y probado en Linux; falta validación Windows/Termux
   y adopción en repositorios runtime. La DB del brain no es el archivo operativo.
-- F0.3 debe fijar identidad, retención propuesta de 90d y corte/rollback de datos.
+- F0.3 fija identidad y retención 90d/7d/180d; falta implementarlas y ensayar el
+  corte/rollback con repositorios reales. Los presupuestos de carga no están medidos.
 - Historial previo completo no está garantizado por WA/Bot API.
 - Validación real WA/TG y ejecución Windows/Termux siguen pendientes; usar cuenta
   de prueba y una única instancia. Conservar pendientes heredados de ROADMAP.
@@ -108,4 +127,5 @@ apps. Próxima entrega tras ello: contratos/frontera autenticada de Fase 1.
 Actualizar este archivo y solo los checkboxes demostrados. El prompt estable de
 [PROMPT-CONTINUIDAD.md](PROMPT-CONTINUIDAD.md) consulta este estado para retomar.
 Hacer commit de la unidad probada e informar su hash. BUG-001 a BUG-014 siguen
-abiertos; BUG-015 queda cerrado con el commit F0.2 identificado en su registro.
+abiertos; BUG-015 cerrado en F0.2 y BUG-016 cerrado en diseño F0.3, con ejecución
+contra el repositorio de mensajes pendiente de F2.

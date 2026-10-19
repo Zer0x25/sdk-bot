@@ -38,6 +38,9 @@ LECTURA INICIAL OBLIGATORIA
 5. Si tocas login, sesiones o proxy, lee docs/OAUTH-LESSONS.md.
 6. Revisa git status y el código/pruebas reales antes de decidir qué falta.
 7. Lee docs/BACKLOG.md y aplica la política de bugs/commits acordada.
+8. Para contratos/control/retención/migración, lee docs/SPEC-OPERATIVA-V1.md,
+   docs/VALIDACION-V1.md y los escenarios docs/fixtures/v1-acceptance.json.
+   Esos escenarios son expectativas futuras; no equivalen a tests runtime pasados.
 
 La arquitectura es de destino. No supongas que apps/, SQLite de conversaciones,
 React, /api/v1 o los casos de uso propuestos ya existen. Confirma el árbol real.
