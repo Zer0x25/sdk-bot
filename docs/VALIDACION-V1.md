@@ -3,7 +3,10 @@
 Fecha: 2026-10-19. Define cómo se demostrará la especificación en fases posteriores.
 **No es un informe de rendimiento del producto.** F1A ejecuta los seis casos TXT
 y comprueba formas wire de ID; el resto sigue pendiente de sus servicios.
-Evidencia: [CONTRATOS-V1.md](CONTRATOS-V1.md).
+Evidencia: [CONTRATOS-V1.md](CONTRATOS-V1.md). F2A ejecuta casos de repositorio
+(identidad/dedup/purga/crash/backup), documentados en
+[ARCHIVO-CONVERSACIONES-F2A](ARCHIVO-CONVERSACIONES-F2A.md); no el protocolo
+completo de carga ni la captura live.
 Norma: [SPEC-OPERATIVA-V1.md](SPEC-OPERATIVA-V1.md).
 Valores/ejemplos: [fixtures/v1-acceptance.json](fixtures/v1-acceptance.json).
 

@@ -1,6 +1,6 @@
 # Estado de continuidad — SDK-Bot
 
-Actualización: 2026-10-19. Última unidad cerrada: **F1B; Fase 1 completada**.
+Actualización: 2026-10-19. Última unidad cerrada: **F2A; repositorios del archivo completados**.
 
 ## Objetivo vigente
 
@@ -31,8 +31,11 @@ respuesta humana desde el chat y retorno seguro a IA con contexto actualizado.
 - F1B completada: sesión v1, actor/grants servidor, firma panel → gateway, límites
   HTTP/SSE y /history brain autenticado. Contratos instalados en gateway/Docker.
   Evidencia: [FRONTERA-AUTENTICADA-V1](FRONTERA-AUTENTICADA-V1.md).
-- Hay cambios runtime de frontera probados, sin migrar datos. No hay bandeja nueva,
-  DB operativa, API de lectura/envío/control ni barrera de automatización v1.
+- F2A: worker SQLite, repositorios, migración, dedup/aliases/cuarentena, eventos,
+  retención/backup de repositorio y snapshot durable en sesión. Evidencia:
+  [ARCHIVO-CONVERSACIONES-F2A](ARCHIVO-CONVERSACIONES-F2A.md).
+- Sin migrar datos ni captura live. No hay bandeja nueva, páginas/SSE públicos,
+  API de envío/control ni barrera de automatización v1.
 
 ## Validación ejecutada en F0.1
 
@@ -156,8 +159,8 @@ Detalles de reproducción y logs efímeros están en la baseline.
   Cookie OAuth anterior conserva legacy; requiere login nuevo para v1.
 - Grants v1 no limitan todavía el administrador legacy: BUG-024 antes de ofrecer
   operadores limitados. No describir esto como un sistema global de roles de equipo.
-- Snapshot de sesión bootstrap volátil: época por bus y seq=0, sin archivo/eventos.
-  F2 debe reemplazarlo por snapshot transaccional persistente antes de consultas/SSE.
+- F1B usaba bootstrap volátil. **F2A ya lo sustituye** por epoch/seq del archivo;
+  falta/fallo devuelve 503. Esto no habilita páginas/SSE de F3.
   PolicyVersion efectiva en memoria incluye pausa/modo/perfil global; F5 la hará
   durable. No usarla ahora para afirmar cancelación/entrega segura.
 - Cache replay 10000 entradas/30s, no durable entre reinicios. F5 requiere ledger
@@ -166,50 +169,76 @@ Detalles de reproducción y logs efímeros están en la baseline.
   gateway. Repetir npm ci en gateway tras cambiar contracts. Docker copia fuente;
   launchers/updater detectan cambios. No depender de la instalación raíz en runtime.
 
-## Siguiente unidad exacta: Fase 2 / F2A
+## Validación ejecutada en F2A
 
-**Entregable:** repositorios SQLite del archivo con worker único, migración de
-schema y aceptación con fixtures. Sin conectar captura live ni cambiar autoridad
-legacy de permisos/control. Después vendrán F2B (captura WA) y F2C (TG/ack durable),
-con sus propias pruebas/commits y puertas de bugs pendientes.
+- Gateway check (lint/tipos): **174 tests** en Node 24.19.0 y mínimo 22.13.0 Linux,
+  copias separadas sin secretos/DB, dependencias instaladas enlazadas. No npm ci
+  nuevo porque no cambiaron manifiestos. 158 anteriores +14 archivo +1 reset +1
+  entry real offline. Raíz check: 14 contratos/generación/tipos pasan.
+- Repositorios probados: transacción con rollback, identidad/cuenta exactas,
+  JID/LID/dedup/procedencia, conflictos, IDs y secuencias >2^53, cobertura/history,
+  páginas internas, marcadores multimedia/oversized, FIFO/saturación/timers,
+  retención estricta y huellas después de borrar cuerpo, backup/restore con epoch.
+- Otro proceso es eliminado con SIGKILL dentro de transacción sin commit: conserva
+  anterior y revierte incompleto. No es prueba de pérdida de energía.
+- Sesión firmada real usa snapshot del archivo; archivo cerrado →503 saneado.
+  Entry real con WA sustituido/TG sin token prueba dos arranques, PID/lock
+  configurables, epoch estable y SIGTERM 0. Smoke gateway+panel con puertos
+  efímeros también pasa. Launcher global no repetido para conservar logs previos.
+- Docker producción con contracts/npm ci --omit=dev construido; adaptación cloud
+  solo mount CA temporal/TLS verificado en instalación. Pruebas sin red y profiles
+  montados como Compose: **37 tests pasan**, Node 22.23.3. Primer run sin ese
+  montaje falló un assert de profiles del fixture, corregido al montar el volumen. Sin compose up ni canales reales.
+- BUG-026/027/028/030 reparados; BUG-029 nuevo pendiente antes de captura live F2B.
+  BUG-016 ejecutado contra DB real; bugs de adapters/control no se cerraron.
+- Evidencia efímera /tmp/sdkbot-f2a-kg__9opd. Brain/smoke launcher no repetidos,
+  Windows/Termux/GitHub Actions no ejecutados. Sin push/despliegue/IA/OAuth real.
 
-1. Leer AGENTS, arquitectura/ADR-005, SPEC, VALIDACION, SQLITE-SPIKE, contratos y
-   frontera F1B; revisar git status. Conservar procesos/transportes únicos.
-2. Antes de primera escritura, añadir SDK_CONVERSATIONS_DB_PATH, rutas DB/WAL/SHM,
-   .gitignore, inventario factoryReset y montaje/entorno Docker coherentes. Fixtures
-   temporales: nunca leer/importar datos o sesiones del workspace para probar.
-3. Encapsular node:sqlite DatabaseSync en worker, mínimo Node 22.13.0 sin flags.
-   Inicialización/migraciones transaccionales, readiness, cierre y propiedad única.
-   WAL/synchronous FULL; no SQL síncrono en hilo del gateway.
-4. Repositorios de cuentas/identidades/aliases/contactos/conversaciones/mensajes
-   y eventos mínimos; constraints/índices y secuencias textuales. IDs TG exactos con
-   signo, namespaces por cuenta/canal; aliases solo con evidencia verificada y
-   conflicto en cuarentena. Dedup por cuenta/identidad canónica/providerMessageId,
-   no rawChatId; ejecutar caso JID/LID de BUG-016 contra repositorio real.
-5. API de ingesta de fixture atómica: mensaje+evento+watermark en una transacción,
-   IDs estables, dedup/reimportación sin efectos IA y contenido fuera de eventos.
-   Distinguir live/history y cobertura sin afirmar historial previo completo.
-   No crear segunda autoridad activa de control; JSON conserva esa autoridad F5.
-6. Integrar época/watermark durable del archivo en sesión de gateway, sin habilitar
-   páginas/SSE de F3. Error de worker/DB da 503 saneado; nunca seguir con snapshot
-   ficticio ni bloquear el event loop mientras inicia.
-7. Probar rollback/crash/reapertura, dedup/aliases/conflictos, separación de cuentas,
-   orden/precisión, evento atómico, backup VACUUM INTO/restauración y cierre con
-   temporales. Usar presupuestos VALIDACION sin atribuir rendimiento no medido.
-8. Checks de contratos/gateway y aislamiento, evidencia, estado/backlog/roadmap,
-   commit local de F2A. No cerrar BUG-001/002/003/004/005/009 ni F2 completa sin
-   integrar adapters en unidades posteriores; no empezar F5 por tener tablas.
+## Siguiente unidad exacta: Fase 2 / F2B
 
-**Aceptación:** repositorio durable comprobado tras reinicio, claves/identidades
-exactas, transacciones sin eventos huérfanos y snapshot de DB en sesión; instalación
-compatible y ningún estado de usuario tocado. Archivo operativo live aún pendiente.
+**Entregable:** captura WhatsApp live/history sobre el archivo F2A. Telegram y ack
+serán F2C. Generador/carga completa de VALIDACION es puerta de cierre de F2, no
+se declara aprobada por el lote reducido de F2A.
+
+1. Leer AGENTS/estado/arquitectura/ADR-005, SPEC/VALIDACION, informe F2A y backlog;
+   revisar git status. Conservar Node >=22.13, worker SQL exclusivo y transportes.
+2. Reparar BUG-029 antes de captura live: CLI debe detener/comprobar supervisor o
+   abortar antes de borrar; simular auto-reinicio sin tocar servicios ni datos reales.
+   BUG-030 está reparado: no volver a ignorar SDK_GATEWAY_LOCK_PATH.
+3. Definir cuenta WA por identidad comprobada del proveedor, nunca por token ni
+   UUID nuevo en cada arranque; registerAccount devuelve ID durable por providerKey.
+   Alcance individual vs self/admin/grupo/status/broadcast explícito. No habilitar
+   otra cuenta ni fusionar aliases por coincidencias de dígitos.
+4. Captura independiente de texto/IA/STT y de permiso/pausa/handoff: todos los
+   elementos messages.upsert, history_sync por lotes, IDs/fechas/procedencia,
+   aliases con evidencia. requires_review del archivo debe impedir futura
+   automatización/envío, sin crear un segundo control SQLite frente al JSON.
+5. Resolver BUG-001/002/003 y parte WA de 008/009 con tests de adapter falso:
+   lotes completos, callback de socket reemplazado sin efectos, sync/live/mismo
+   ID en chats/cuentas, JID/LID verificados y conflictos sin mezcla. No atribuir
+   corrección TG a pruebas WA. No copiar datos reales para validar.
+6. Conectar admisión/commit antes de generación; aplicar backpressure a 1000/32MiB,
+   observar saturación/fallo sin ack ficticio. No invocar IA en backfill/eco.
+   Un timeout de RPC tiene resultado incierto; recuperar/dedup sin reintento ciego.
+7. Multimedia base antes de STT y actualización del mismo ID/evento; fallos dejan
+   marcador visible. Archivo no depende del cache RAM ni de memoria del brain.
+8. Programar purga acotada antes de primeras capturas; cuerpo/eventos/huellas
+   90/7/180d, estrictamente <cutoff. Contexto derivado aún no conectado: F5 deberá
+   invalidarlo al purgar. No abrir HTTP de conversaciones ni SSE antes de F3.
+9. Tests aislados, checks Node22/24 y distribución/launcher afectados; actualizar
+   evidencia/backlog/roadmap/estado y commit local. No cerrar F2 completa sin TG
+   durable, carga, dedup/retención y aceptación conjunta.
+
+**Aceptación:** una ráfaga WA falsa se conserva al reiniciar, reimportación/eco no
+crean nuevas entradas, sockets viejos no modifican estado y captura funciona con
+IA pausada/ignorada/human. Sin contacto a cuentas/servicios reales.
 
 ## Pendientes materiales
 
-- Driver SQLite seleccionado y probado en Linux; falta validación Windows/Termux
-  y adopción en repositorios runtime. La DB del brain no es el archivo operativo.
-- F0.3 fija identidad y retención 90d/7d/180d; falta implementarlas y ensayar el
-  corte/rollback con repositorios reales. Los presupuestos de carga no están medidos.
+- Driver y repositorios SQLite implementados/probados en Linux; falta Windows/
+  Termux y captura en adapters. La DB del brain no es el archivo operativo.
+- F2A implementa identidad/huellas/purga en repositorios. Faltan captura, scheduler
+  y ensayo completo de corte/rollback/control y retención de contexto derivado. Los presupuestos de carga no están medidos.
 - Historial previo completo no está garantizado por WA/Bot API.
 - Validación real WA/TG y ejecución Windows/Termux siguen pendientes; usar cuenta
   de prueba y una única instancia. Conservar pendientes heredados de ROADMAP.
@@ -219,5 +248,7 @@ compatible y ningún estado de usuario tocado. Archivo operativo live aún pendi
 Actualizar este archivo y solo los checkboxes demostrados. El prompt estable de
 [PROMPT-CONTINUIDAD.md](PROMPT-CONTINUIDAD.md) consulta este estado para retomar.
 Hacer commit de la unidad probada e informar su hash. BUG-001 a 012 (010 parcial),
-BUG-014 y BUG-024 siguen abiertos. BUG-013/019–023/025 cerrados F1B; BUG-015 F0.2,
-BUG-017/018 F1A y BUG-016 cerrado en diseño F0.3, con prueba runtime pendiente F2.
+BUG-014, BUG-024 y BUG-029 siguen abiertos. BUG-013/019–023/025 cerrados F1B; BUG-015 F0.2,
+BUG-017/018 F1A y BUG-016 cerrado en diseño F0.3, con prueba de repositorio real F2A; captura live aún pendiente.
+
+Cierre F2A: commit local `git log --grep="close F2A"`; BUG-026/027/028/030 cerrados.

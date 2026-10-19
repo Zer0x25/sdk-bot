@@ -15,7 +15,7 @@
  * Al confirmar: performFactoryReset + reinicio del gateway (y del brain si
  * es service de systemd).
  */
-const { performFactoryReset, setWiping, isWiping, restartGatewayProcess, restartBrainIfSystemd } = require('./factoryReset');
+const { prepareFactoryReset, performFactoryReset, setWiping, isWiping, restartGatewayProcess, restartBrainIfSystemd } = require('./factoryReset');
 const { cat } = require('./logger');
 
 const log = cat('CORE');
@@ -84,7 +84,7 @@ function requestCleanReset(sock, remoteJid) {
     pending = { remoteJid, sock, minAcceptAt: Date.now() + READ_MS, expiresAt: Date.now() + TTL_MS, timer };
 
     log.warn(`🧨 [RESET-CLEAN] Pedido de reset limpio de ${remoteJid} — ventana de confirmación activa (lectura ${Math.round(READ_MS / 1000)}s + escritura ${Math.round(TTL_MS / 1000)}s).`);
-    return `🧨 *RESET LIMPIO (FÁBRICA)*\n\nSe borrará *TODO* el estado de runtime:\n• Sesión de WhatsApp actual\n• Agenda de contactos (*contacts_db.json*)\n• Configuración (estados, perfil global)\n• Broadcasts programados y cola de mensajes\n• Memoria del brain (*memory.db*)\n• Logs de gateway y brain\n\n✅ Los *perfiles SOUL* se conservan.\n\n⚠️ La app quedará *como recién instalada*: habrá que volver a vincular con QR o con número (default *ignored_all*).\n\n⏳ *Doble confirmación con timers:*\n1. *Lee* este aviso (la palabra no se acepta antes de ${Math.round(READ_MS / 1000)}s).\n2. Escribe ${'`' + MAGIC_WORD + '`'} antes de ${Math.round(TTL_MS / 1000)}s.\n\n✖️ Para cancelar: escribe *cancelar*.`;
+    return `🧨 *RESET LIMPIO (FÁBRICA)*\n\nSe borrará *TODO* el estado de runtime:\n• Sesión de WhatsApp actual\n• Agenda de contactos (*contacts_db.json*)\n• Configuración (estados, perfil global)\n• Broadcasts programados y cola de mensajes\n• Archivo de conversaciones (SQLite)\n• Memoria del brain (*memory.db*)\n• Logs de gateway y brain\n\n✅ Los *perfiles SOUL* se conservan.\n\n⚠️ La app quedará *como recién instalada*: habrá que volver a vincular con QR o con número (default *ignored_all*).\n\n⏳ *Doble confirmación con timers:*\n1. *Lee* este aviso (la palabra no se acepta antes de ${Math.round(READ_MS / 1000)}s).\n2. Escribe ${'`' + MAGIC_WORD + '`'} antes de ${Math.round(TTL_MS / 1000)}s.\n\n✖️ Para cancelar: escribe *cancelar*.`;
 }
 
 /**
@@ -120,6 +120,12 @@ async function tryCleanConfirm(text, activeSock, remoteJid) {
     clearPending();
     setWiping(true);
     log.warn('🧨 [RESET-CLEAN] Confirmado por el admin. Ejecutando reset limpio...');
+    try { await prepareFactoryReset(); }
+    catch {
+        setWiping(false);
+        await activeSock.sendMessage(remoteJid, { text: '🔴 Reset limpio abortado: no se pudo cerrar el archivo de conversaciones.' });
+        return true;
+    }
     const report = performFactoryReset();
     if (report.errors.length > 0) {
         setWiping(false);

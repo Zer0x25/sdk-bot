@@ -40,15 +40,40 @@ salvo indicación contraria. La evidencia detallada y líneas están en la basel
 | BUG-013 | P1 | Cerrado F1B: /history del brain eximía API key aunque contenía contexto privado. | main.require_api_key ya exige credencial; test_main verifica denegación y lectura autorizada. | 401 sin/con clave incorrecta, 200 con correcta; health público. Ver registro de cierre. |
 | BUG-014 | P2 | Tests brain usan un nombre /tmp fijo y no cierran todas las conexiones al sustituirlas; ejecuciones simultáneas pueden interferir. | test_main.setup_module/teardown_module y test_memory._nueva_db. | Antes de paralelizar suites: tmp_path único y cierre explícito; dos ejecuciones no comparten DB. |
 | BUG-024 | P1 | Grants v1 no limitan al administrador legacy: una sesión con solo lectura v1 conserva rutas de administración anteriores. | panel/index.js aplica grants solo al prefijo /api/v1; proxy legacy usa identidad técnica sin capacidades de chat y conserva autorización previa. Inspección; alcance explícito, sin operador limitado habilitado. | F3, antes de incorporar operadores limitados/exponer archivo con roles: denegar rutas legacy a sujetos sin autorización administrativa expresa; probar lectura v1 sin poder enviar comandos/reset ni consultar QR/logs privados. No bloquea la sesión v1 F1B sin archivo/mutaciones. |
+| BUG-026 | P1 | Cerrado F2A: reset desde self-chat/panel podía borrar la nueva SQLite sin cerrar su worker. | Hook común prepareFactoryReset; test con DB real comprueba cierre antes de unlink y fallo sin borrado. | Reparado antes de activar archivo; detalle abajo. |
+| BUG-027 | P2 | Cerrado F2A: RPC retenía referencias mutables mientras esperaba readiness, permitiendo cambiar payload después de admisión/presupuesto. | Copia JSON al admitir; regresión muta texto antes del dispatch y confirma contenido original. | Reparado en F2A; no usar objetos del caller como cola durable. |
+| BUG-028 | P1 | Cerrado F2A: hash sensible al orden de propiedades y calculado sobre marcador oversized confundía contenidos diferentes del mismo tamaño. | Hash de contenido original con claves ordenadas; prueba redelivery con propiedades permutadas y conflicto de dos textos >64 KiB del mismo tamaño. | Reparado F2A antes de persistencia live. |
+| BUG-029 | P1 | CLI reset-clean puede competir con auto-reinicio systemd: mata PID pero no detiene la unidad antes de borrar estado. | Inspección: stopProcess detecta systemd, envía SIGTERM y main borra asumiendo que Restart=always no recreó otro proceso. No se ejecutó reset/servicio real. | F2B antes de captura live: detener supervisor de forma comprobada o abortar antes de borrar; prueba con supervisor falso que relanza y conserva estado hasta quiescencia. |
+| BUG-030 | P1 | Cerrado F2A: index ignoraba SDK_GATEWAY_LOCK_PATH aunque Compose/CLI/inventario lo usan; reset podía no encontrar el proceso vivo. | Smoke aislado reproduce ausencia del lock configurado antes del cambio; entry real ahora crea/borrar ese lock y conserva epoch tras reinicio. | Reparado para coherencia de rutas F2A; no cierra carrera de supervisor BUG-029. |
 
 ## Clasificación para la unidad activa
 
-F1B cierra autenticación/sesión y BUG-013; repara la parte proxy de BUG-010.
-BUG-001 a 012 y BUG-014 siguen abiertos, además de BUG-024 antes de roles limitados.
-BUG-008 tiene formatos exactos, no resolución/índices runtime (F2/F5).
-BUG-019 a 023 y BUG-025 bloquearon la frontera y se repararon antes del cierre.
+F2A cierra repositorios/worker y prueba BUG-016 contra DB real; captura live no
+está conectada y F2 sigue abierta. BUG-026/027/028/030 fueron bloqueantes de esta
+unidad y se repararon. BUG-029 queda antes de captura live F2B; BUG-024 antes de
+operadores limitados F3. BUG-001 a 012 (010 parcial) y BUG-014 siguen abiertos.
+BUG-008 tiene resolución exacta en el nuevo archivo, pero legacy/comandos/adapters
+siguen pendientes; no extender la evidencia del repositorio a los canales.
 
 ## Cerrados
+
+- **BUG-026 — cerrado (P1, F2A):** prepareFactoryReset registrado por el gateway
+  espera cierre del archivo en panel y self-chat, antes del borrado. Fallo aborta
+  sin tocar DB; la nueva regresión de reset usa SQLite real en temporal. No se
+  hizo un reset de usuario. Commit de unidad: `git log --grep=BUG-026`.
+- **BUG-027 — cerrado (P2, F2A):** copia inmutable de argumentos al admitir RPC;
+  test cambia referencia original antes del dispatch y comprueba texto persistido.
+  Commit de unidad: `git log --grep=BUG-027`.
+- **BUG-028 — cerrado (P1, F2A):** fingerprint canónico previo a normalización
+  oversized; redelivery con diferente orden deduplica, textos originales distintos
+  del mismo tamaño se reportan en cuarentena. `git log --grep=BUG-028`.
+- **BUG-030 — cerrado (P1, F2A):** index ahora usa SDK_GATEWAY_LOCK_PATH y crea
+  directorio padre; prueba de entry real dos arranques, PID correcto, apagado 0 y
+  lock eliminado. Reproducción anterior en evidencia de F2A. `git log --grep=BUG-030`.
+
+Evidencia de estos cierres: [ARCHIVO-CONVERSACIONES-F2A](ARCHIVO-CONVERSACIONES-F2A.md).
+BUG-016, cerrado en diseño F0.3, ahora tiene ejecución JID/LID contra repositorio
+SQLite real en F2A; falta captura de aliases live antes de cerrar F2 completa.
 
 - **BUG-025 — cerrado (P1, F1B):** Docker copiaba gateway completo y .dockerignore
   no excluía panel/.env, pudiendo incluir credenciales OAuth/cookie/servicio en la

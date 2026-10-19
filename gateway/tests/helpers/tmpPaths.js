@@ -14,12 +14,14 @@ function withTempDbPaths() {
     fs.writeFileSync(contactsPath, JSON.stringify({}, null, 2));
     fs.writeFileSync(settingsPath, JSON.stringify({ globalMode: 'allowed_all' }, null, 2));
 
+    process.env.SDK_CONVERSATIONS_DB_PATH = path.join(tmpDir, 'conversations.db');
     process.env.SDK_CONTACTS_DB_PATH = contactsPath;
     process.env.SDK_SETTINGS_DB_PATH = settingsPath;
 
     return {
         tmpDir,
         restore() {
+            delete process.env.SDK_CONVERSATIONS_DB_PATH;
             delete process.env.SDK_CONTACTS_DB_PATH;
             delete process.env.SDK_SETTINGS_DB_PATH;
             fs.rmSync(tmpDir, { recursive: true, force: true });

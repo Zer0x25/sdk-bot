@@ -48,7 +48,7 @@ const { findKeyByDigits } = require('./contactsRepository');
 const { setNumberState, setContactProfile } = require('./stateService');
 const { num } = require('../tuning');
 const {
-    performFactoryReset, setWiping, restartGatewayProcess, restartBrainIfSystemd
+    performFactoryReset, prepareFactoryReset, setWiping, restartGatewayProcess, restartBrainIfSystemd
 } = require('./factoryReset');
 const { cat, errMsg } = require('./logger');
 
@@ -596,6 +596,11 @@ async function performReset(clean = false) {
     resetInProgress = true;
     if (clean) {
         setWiping(true);
+        try { await prepareFactoryReset(); }
+        catch {
+            setWiping(false); resetInProgress = false;
+            return { success: false, message: 'No se pudo cerrar el archivo de conversaciones.' };
+        }
         const report = performFactoryReset();
         if (report.errors.length > 0) {
             setWiping(false);
@@ -1065,7 +1070,7 @@ function startInternalBus(opts = {}) {
     const signedRequired = Boolean(secret) || process.env.NODE_ENV === 'production' ||
         !['127.0.0.1', '::1', 'localhost'].includes(host);
     const verify = createVerifier({ secret });
-    const sessionApi = createSessionApi(() => { getSettingsDB(); return getGlobalPolicy(); });
+    const sessionApi = createSessionApi(() => { getSettingsDB(); return getGlobalPolicy(); }, opts.archive);
     const server = http.createServer(async (req, res) => {
         let u;
         try { u = new URL(req.url || '/', 'http://gateway.local'); }
@@ -1083,7 +1088,7 @@ function startInternalBus(opts = {}) {
                 const context = verify(req, body);
                 requestId = context.requestId;
                 verifiedBodies.set(req, body);
-                if (v1) { sessionApi(req, res, context, pathname); return; }
+                if (v1) { await sessionApi(req, res, context, pathname); return; }
             }
             routeApi(req, res, pathname, params);
         } catch (e) {

@@ -16,6 +16,7 @@ la bandeja aún no.
 - [Hoja de ruta por entregas](docs/ROADMAP.md)
 - [Estado y próxima tarea](docs/SESSION-STATE.md)
 - [Backlog de bugs y política de reparación](docs/BACKLOG.md)
+- [Archivo SQLite con worker y evidencia F2A](docs/ARCHIVO-CONVERSACIONES-F2A.md)
 - [Experimento SQLite probado y compatibilidad](docs/SQLITE-SPIKE.md)
 - [Especificación operativa v1](docs/SPEC-OPERATIVA-V1.md) y [criterios de validación](docs/VALIDACION-V1.md)
 - [Prompt para continuar en otra sesión](docs/PROMPT-CONTINUIDAD.md)

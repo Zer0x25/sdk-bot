@@ -49,7 +49,7 @@ function noteFault(kind, err) {
 process.on('unhandledRejection', (err) => noteFault('unhandledRejection', err));
 process.on('uncaughtException', (err) => noteFault('uncaughtException', err));
 
-const GATEWAY_LOCK_FILE = path.join(__dirname, '.gateway.lock');
+const GATEWAY_LOCK_FILE = process.env.SDK_GATEWAY_LOCK_PATH || path.join(__dirname, '.gateway.lock');
 
 function isProcessAlive(pid) {
     if (!pid) return false;
@@ -108,6 +108,7 @@ async function ensureSingleInstance() {
         try { fs.unlinkSync(GATEWAY_LOCK_FILE); } catch (e) { /* ignorar */ }
     }
 
+    fs.mkdirSync(path.dirname(GATEWAY_LOCK_FILE), { recursive: true });
     fs.writeFileSync(GATEWAY_LOCK_FILE, String(process.pid));
     process.on('exit', removeLock);
 }
@@ -125,7 +126,11 @@ function getAdapter(channel) {
 }
 module.exports.getAdapter = getAdapter; // Expose for pipeline
 
+let conversationArchive;
 async function startGateway() {
+    conversationArchive = require('./services/conversations').createArchive();
+    require('./services/factoryReset').setBeforeReset(() => conversationArchive.close());
+    internalBus.startInternalBus({ archive: conversationArchive });
     log.info('Iniciando Hub de Canales del Gateway...');
 
     // 1. Iniciar WhatsApp
@@ -290,19 +295,22 @@ ensureSingleInstance().then(startGateway);
 // Status server
 startStatusServer();
 require('./services/brainService').startBrainHealthWatch();
-internalBus.startInternalBus();
 
 // Compatibilidad: Estas colas asumen WhatsApp por ahora
 setInterval(() => messageQueue.scheduleFlush(), 30 * 1000).unref();
 broadcastService.setIsConnected(() => channels.whatsapp.connection === 'open' || channels.telegram.connection === 'open');
 setInterval(() => { broadcastService.tick(); }, 10 * 1000).unref();
 
-function handleExit() {
+let exiting = false;
+async function handleExit() {
+    if (exiting) return;
+    exiting = true;
     log.info('\n🛑 Señal de apagado recibida. Cerrando de forma segura...');
     for (const [, adapter] of adapters.entries()) {
         adapter.disconnect().catch(() => {});
     }
     if (!isWiping()) flushToDisk();
+    try { await conversationArchive?.close(); } catch { /* exit after worker terminates */ }
     process.exit(0);
 }
 

@@ -21,7 +21,7 @@ con Node 22.13/22.23/24, driver elegido y plataformas pendientes registradas.
 F0.3 completada: [especificación operativa](SPEC-OPERATIVA-V1.md), 75 escenarios de
 aceptación futura revisados y [protocolo de validación](VALIDACION-V1.md). Fase 0
 cerrada. F1A y F1B completadas: workspace mínimo, contratos/tipos y frontera
-autenticada probados. Siguiente unidad F2A (repositorios del archivo).
+autenticada probados. F2A completada (repositorios del archivo); siguiente F2B, captura WA.
 Sin canales reales ni migración.
 
 ## Alcance y entregas
@@ -102,8 +102,8 @@ Cada unidad termina con pruebas y commit, sin marcar toda Fase 1 por cerrar F1A.
   expiración, método/ruta/hash, permisos y principal local dev. No confiar actor
   del navegador. Conservar OAuth, origen y compatibilidad de rutas previas.
   F1B: sesión/errores validados, firma con replay acotado y grants servidor;
-  proxy con timeout/SSE y /history brain protegido. Snapshot bootstrap volátil,
-  reemplazar por DB antes de consultas/SSE F2/F3. Evidencia:
+  proxy con timeout/SSE y /history brain protegido. El snapshot bootstrap de F1B
+  ya fue sustituido por DB en F2A; páginas/SSE de conversaciones siguen F3. Evidencia:
   [FRONTERA-AUTENTICADA-V1.md](FRONTERA-AUTENTICADA-V1.md).
 
 **Aceptación:** contratos válidos y pruebas de 401/403, actor falsificado, contexto
@@ -111,13 +111,15 @@ alterado/vencido y desarrollo explícito, sin conectarse a canales reales.
 
 ## Fase 2 — Historial durable y captura completa
 
-**Depende de:** Fase 1.
+**Depende de:** Fase 1. **Estado: F2A completada; captura pendiente F2B/F2C.**
+Evidencia: [ARCHIVO-CONVERSACIONES-F2A](ARCHIVO-CONVERSACIONES-F2A.md).
+F2B integra WA y puerta BUG-029; F2C Telegram/ack; carga completa antes de cerrar F2.
 
-- [ ] Repositorios y migraciones SQLite para cuentas, identidades, mensajes,
+- [x] Repositorios y migraciones SQLite para cuentas, identidades, mensajes,
   conversaciones y eventos. Worker único; constraints e índices para consultas.
-- [ ] Antes de escribir estado, agregar `SDK_CONVERSATIONS_DB_PATH`, DB/WAL/SHM,
-  cursores, .gitignore, inventario factoryReset y volumen. Probar backup/restauración
-  y cierre sin pérdida con temporales. No cambiar rutas de credenciales existentes.
+- [x] Antes de escribir estado, agregar `SDK_CONVERSATIONS_DB_PATH`, DB/WAL/SHM,
+  .gitignore, inventario factoryReset y volumen. Cursor TG será parte de F2C.
+  Backup/restauración y cierre sin pérdida probados con temporales. No cambiar rutas de credenciales existentes.
 - [ ] Captura de todos los elementos WA upsert, no solo el primero; importación de
   history_sync por lotes. Timestamps originales y deduplicación estable.
   Cubrir callbacks de sockets reemplazados y conexión del flujo live al archivo.
@@ -129,7 +131,7 @@ alterado/vencido y desarrollo explícito, sin conectarse a canales reales.
   salida IA, humana desde teléfono y avisos por origen; separar chats administrativos.
 - [ ] Multimedia como mensaje base y STT como actualización del mismo ID, incluso
   con STT apagado/fallido. Backfill sin respuestas ni no leídos falsos.
-- [ ] Mientras se migra, contactos/settings JSON siguen siendo autoridad detrás de
+- [x] Mientras se migra, contactos/settings JSON siguen siendo autoridad detrás de
   repositorios; SQLite es autoridad del nuevo archivo de mensajes/eventos. No
   introducir un segundo estado de control activo en competencia con JSON.
 

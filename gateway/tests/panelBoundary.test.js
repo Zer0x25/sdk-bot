@@ -19,6 +19,7 @@ const secret = 'test-only-service-secret-32-bytes-minimum';
 const cookieSecret = 'test-only-cookie-secret-never-production';
 const actor = { id: actorId('google:123'), displayName: 'Operador', capabilities: ['conversations:read'] };
 const empty = Buffer.alloc(0);
+const bootstrap = { snapshot: async () => ({ dataEpoch: '00000000-0000-4000-8000-000000000001', seq: '0' }) };
 function signed(overrides = {}) {
     return signContext({ secret, actor, requestId: crypto.randomUUID(), method: 'GET', target: '/v1/session', body: empty, ...overrides });
 }
@@ -128,7 +129,7 @@ async function errorResponse(response, status) {
 
 test('bus real: v1 exige firma/permisos y mantiene rutas legacy cuando secreto está configurado', async () => {
     const restore = environment({ SDK_PANEL_GATEWAY_SECRET: secret });
-    const bus = startInternalBus({ port: 0 });
+    const bus = startInternalBus({ port: 0, archive: bootstrap });
     await new Promise(resolve => bus.once('listening', resolve));
     const url = await listen(bus);
     try {
@@ -156,7 +157,7 @@ test('bus real: v1 exige firma/permisos y mantiene rutas legacy cuando secreto e
 
 test('sin secreto: v1 falla cerrada, status legacy conserva compatibilidad local', async () => {
     const restore = environment({ SDK_PANEL_GATEWAY_SECRET: undefined, NODE_ENV: 'development', INTERNAL_BUS_HOST: '127.0.0.1' });
-    const bus = startInternalBus({ port: 0 });
+    const bus = startInternalBus({ port: 0, archive: bootstrap });
     await new Promise(resolve => bus.once('listening', resolve));
     const url = await listen(bus);
     try {
@@ -168,7 +169,7 @@ test('sin secreto: v1 falla cerrada, status legacy conserva compatibilidad local
 test('bus en producción o bind expuesto sin secreto nunca abre rutas legacy', async () => {
     for (const options of [{ NODE_ENV: 'production' }, { NODE_ENV: 'development', INTERNAL_BUS_HOST: '0.0.0.0' }]) {
         const restore = environment({ SDK_PANEL_GATEWAY_SECRET: undefined, INTERNAL_BUS_HOST: '127.0.0.1', ...options });
-        const bus = startInternalBus({ port: 0 });
+        const bus = startInternalBus({ port: 0, archive: bootstrap });
         await new Promise(resolve => bus.once('listening', resolve));
         try { await errorResponse(await fetch(await listen(bus) + '/status'), 503); }
         finally { await close(bus); restore(); }
@@ -177,7 +178,7 @@ test('bus en producción o bind expuesto sin secreto nunca abre rutas legacy', a
 
 test('panel y bus reales: sesión sin tokens, headers falsificados no sustituyen actor ni elevan permisos', async () => {
     const restore = environment({ SDK_PANEL_GATEWAY_SECRET: secret });
-    const bus = startInternalBus({ port: 0 });
+    const bus = startInternalBus({ port: 0, archive: bootstrap });
     await new Promise(resolve => bus.once('listening', resolve));
     const panel = await panelFixture({ GATEWAY_INTERNAL_URL: await listen(bus) });
     try {

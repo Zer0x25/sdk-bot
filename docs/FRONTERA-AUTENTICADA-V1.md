@@ -96,6 +96,10 @@ reautorizar al reconectar. QR/logs actuales conservan autorización legacy.
 
 ## Snapshot bootstrap y puerta de persistencia
 
+**Actualización F2A:** gateway ya usa snapshot durable de SQLite y devuelve 503 si
+el archivo falla. Ver [archivo F2A](ARCHIVO-CONVERSACIONES-F2A.md). La descripción
+siguiente conserva el comportamiento histórico de F1B; policyVersion sigue volátil.
+
 SessionResponse devuelve política efectiva y snapshot bootstrap: dataEpoch UUID por
 instancia de bus, seq="0" porque aún no hay archivo/eventos v1. policyVersion decimal
 aumenta en cada cambio efectivo de pausa/modo/perfil global, incluso ida/vuelta

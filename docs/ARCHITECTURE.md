@@ -6,9 +6,10 @@ Las carpetas, tablas, servicios y endpoints de destino no existen todavía,
 salvo indicación expresa. F1A implementa `packages/contracts` y workspace raíz
 para `packages/*`; gateway conserva instalación/lock independientes. No se migraron
 datos ni UI nueva. F1B implementa sesión v1 y firma panel → gateway, con contratos
-instalados como dependencia local del gateway. El resto de API v1/archivo siguen
-pendientes. Evidencia: [CONTRATOS-V1.md](CONTRATOS-V1.md) y
-[FRONTERA-AUTENTICADA-V1.md](FRONTERA-AUTENTICADA-V1.md).
+instalados como dependencia local del gateway. F2A añade repositorios SQLite con
+worker y snapshot durable de sesión; captura live y resto de API v1 pendientes. Evidencia: [CONTRATOS-V1.md](CONTRATOS-V1.md) y
+[FRONTERA-AUTENTICADA-V1.md](FRONTERA-AUTENTICADA-V1.md) y
+[ARCHIVO-CONVERSACIONES-F2A.md](ARCHIVO-CONVERSACIONES-F2A.md).
 
 ## 1. Producto y primera entrega
 

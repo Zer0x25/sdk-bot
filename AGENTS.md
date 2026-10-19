@@ -10,7 +10,8 @@
   `docs/VALIDACION-V1.md`. Los escenarios JSON son expectativas, no tests runtime
   aprobados; la deduplicación usa identidad canónica y expectedVersion es controlVersion.
 - `packages/contracts` y workspace raíz existen desde F1A. F1B implementa sesión
-  v1 y frontera firmada; `apps/`, React, SQLite operativo y el resto de API v1
+  v1 y frontera firmada; F2A añade repositorios SQLite/worker y snapshot durable
+  (docs/ARCHIVO-CONVERSACIONES-F2A.md), sin captura live. `apps/`, React y el resto de API v1
   siguen como **arquitectura de destino**. Las rutas y
   comandos de las secciones siguientes describen la estructura actual.
 - Una unidad revisable por sesión. Actualiza estado y evidencia al cerrar;
@@ -86,5 +87,5 @@ npm ci
 - Antes de tocar OAuth del panel lee `docs/OAUTH-LESSONS.md`: el estado OAuth es server-side y la cookie de sesion es `SameSite=Lax` (`Secure` tras HTTPS). OAuth requiere produccion o `PANEL_REQUIRE_AUTH=true`/`***`, ademas de ambas credenciales; en dev el panel queda abierto. Si se utiliza un reverse proxy o tunel con proteccion perimetral (ej. Zero Trust), el panel opera de forma transparente respetando HTTPS.
 - Mantener `google-genai` detras del `ImportError`: `requirements-termux.txt` lo omite deliberadamente porque no instala de forma fiable en Termux.
 - La API v1 exige actor verificado y `SDK_PANEL_GATEWAY_SECRET` >=32 bytes en ambos procesos. `PANEL_DEV_ACTOR=true` solo actúa con NODE_ENV=development y OAuth desactivado; no usarlo en un panel público. Grants v1 por sub Google en servidor, no en cookie/body/header. Las cookies antiguas siguen válidas para legacy pero requieren nuevo login para v1. Ver `docs/FRONTERA-AUTENTICADA-V1.md`. `gateway/lib/` comparte únicamente infraestructura sin estado/canales; panel no importa servicios del gateway.
-- Con secreto configurado el bus exige firma también para legacy. Sin él solo conserva compatibilidad local legacy, nunca v1. Compose exige secreto común. No exponer bus/status ni asumir que red interna autentica. Snapshot de sesión actual es bootstrap volátil seq=0: F2 debe sustituirlo por época/watermark durable antes de habilitar lectura/SSE; F5 hará durable policyVersion. No es un cursor de historial disponible.
+- Con secreto configurado el bus exige firma también para legacy. Sin él solo conserva compatibilidad local legacy, nunca v1. Compose exige secreto común. No exponer bus/status ni asumir que red interna autentica. Snapshot de sesión viene del archivo SQLite desde F2A; si falta/falla devuelve 503, sin fallback. No hay páginas ni SSE públicos todavía. F5 hará durable policyVersion. SQL solo en services/conversations/worker.js. SDK_CONVERSATIONS_DB_PATH resuelve DB/WAL/SHM en inventario; default gateway/data/conversations.db, Compose en volumen de estado. Cerrar worker antes de reset mediante prepareFactoryReset. BUG-029 bloquea reset CLI con auto-reinicio systemd antes de captura live F2B.
 - Producción o PANEL_REQUIRE_AUTH sin ambas credenciales OAuth falla cerrada; no volver a abrir legacy ni conceder actor dev como fallback. Grants de v1 aún no limitan al administrador del panel legacy: BUG-024 debe resolverse antes de incorporar operadores con permisos limitados.

@@ -19,3 +19,5 @@ gateway/logs
 gateway/.gateway.lock
 brain/.brain.lock
 *.tmp
+
+gateway/data
