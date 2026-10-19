@@ -253,7 +253,7 @@ def _is_rate_limited(user_id: str) -> bool:
 log_instancia = make_logger("brain.instancia")
 
 BRAIN_PORT = int(os.getenv("BRAIN_PORT", "5100"))
-BRAIN_LOCK_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)), ".brain.lock")
+BRAIN_LOCK_FILE = os.path.abspath(os.getenv("SDK_BRAIN_LOCK_PATH") or os.path.join(os.path.dirname(os.path.abspath(__file__)), ".brain.lock"))
 
 
 def _is_pid_alive(pid):
@@ -349,11 +349,11 @@ def _handle_shutdown_signal(sig, frame):
 
 
 def _write_lock():
-    try:
-        with open(BRAIN_LOCK_FILE, "w", encoding="utf-8") as f:
-            f.write(str(os.getpid()))
-    except OSError:
-        pass
+    # A missing lock would make the live process invisible to reset/singleton.
+    # Fail startup rather than accepting work without publishing ownership.
+    os.makedirs(os.path.dirname(BRAIN_LOCK_FILE), exist_ok=True)
+    with open(BRAIN_LOCK_FILE, "w", encoding="utf-8") as f:
+        f.write(str(os.getpid()))
 
 
 if __name__ == "__main__":

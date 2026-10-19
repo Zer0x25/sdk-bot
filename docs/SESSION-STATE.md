@@ -1,6 +1,6 @@
 # Estado de continuidad — SDK-Bot
 
-Actualización: 2026-10-19. Última unidad cerrada: **F2A; repositorios del archivo completados**.
+Actualización: 2026-10-19. Última unidad cerrada: **F2B.1; puerta de reset CLI completada**.
 
 ## Objetivo vigente
 
@@ -34,6 +34,9 @@ respuesta humana desde el chat y retorno seguro a IA con contexto actualizado.
 - F2A: worker SQLite, repositorios, migración, dedup/aliases/cuarentena, eventos,
   retención/backup de repositorio y snapshot durable en sesión. Evidencia:
   [ARCHIVO-CONVERSACIONES-F2A](ARCHIVO-CONVERSACIONES-F2A.md).
+- F2B.1: parada segura del reset CLI, rechazo de supervisión antes de señales y
+  comprobación de identidad/parada; brain publica lock configurable. BUG-029/031
+  cerrados. Evidencia: [RESET-SEGURO-F2B1](RESET-SEGURO-F2B1.md).
 - Sin migrar datos ni captura live. No hay bandeja nueva, páginas/SSE públicos,
   API de envío/control ni barrera de automatización v1.
 
@@ -194,17 +197,44 @@ Detalles de reproducción y logs efímeros están en la baseline.
 - Evidencia efímera /tmp/sdkbot-f2a-kg__9opd. Brain/smoke launcher no repetidos,
   Windows/Termux/GitHub Actions no ejecutados. Sin push/despliegue/IA/OAuth real.
 
+## Validación ejecutada en F2B.1
+
+- Unidad acotada por AGENTS: cerrar la puerta de reset antes de conectar captura.
+  F2B no se declara completada por esta corrección.
+- Gateway npm run check: lint/tipos y **188 tests** pasan Node 24.19.0 y mínimo
+  22.13.0 Linux, en copias independientes sin secretos/DB. Dependencias instaladas
+  enlazadas; no npm ci nuevo. Son 174 previos +14 de guarda/CLI.
+- Brain ruff y **23 tests** pasan, secuenciales: 21 previos +2 de lock configurable
+  y fallo de arranque si no se publica. BUG-014 sigue abierto, no paralelizar Python.
+- Reproducción de stopProcess de 37525a1 con supervisor falso confirma SIGTERM y
+  reemplazo vivo; detector antiguo devuelve false ante cgroup systemd v2. Nueva
+  guarda rechaza servicio antes de señales a gateway/brain y antes del borrado.
+- Regresiones: supervisor simulado/reintento offline, PID/lock reemplazados,
+  inicio durante parada, lock eliminado con proceso vivo, SIGKILL/permiso/fallo de
+  inspección. CLI --yes real en hijos prueba aborto 1 y reset offline 0 sobre
+  inventario temporal; nunca relanza en --yes. Otro hijo cierra SQLite real antes
+  de borrar DB/WAL/SHM. Entry offline anterior sigue pasando en suite completa.
+- No detector universal de supervisores ni barrera contra lanzamiento concurrente:
+  detener supervisores antes del CLI y mantenerlos detenidos hasta finalizar.
+  Cgroup de servicio ancestro se rechaza conservadoramente. No señales a servicios
+  reales ni reset de datos originales. Windows/Termux requieren parada previa;
+  no ejecutados. Rutas absolutas coherentes en procesos/CLI.
+- Evidencia efímera /tmp/sdkbot-f2b1-llaak1dx. Sin cambios de manifiestos/contratos,
+  no nuevos checks raíz, build Docker ni smoke launcher. Logs previos conservados.
+  Sin proveedores/canales/OAuth reales, push ni despliegue.
+
 ## Siguiente unidad exacta: Fase 2 / F2B
 
 **Entregable:** captura WhatsApp live/history sobre el archivo F2A. Telegram y ack
 serán F2C. Generador/carga completa de VALIDACION es puerta de cierre de F2, no
 se declara aprobada por el lote reducido de F2A.
 
-1. Leer AGENTS/estado/arquitectura/ADR-005, SPEC/VALIDACION, informe F2A y backlog;
+1. Leer AGENTS/estado/arquitectura/ADR-005, SPEC/VALIDACION, informes F2A/F2B.1 y backlog;
    revisar git status. Conservar Node >=22.13, worker SQL exclusivo y transportes.
-2. Reparar BUG-029 antes de captura live: CLI debe detener/comprobar supervisor o
-   abortar antes de borrar; simular auto-reinicio sin tocar servicios ni datos reales.
-   BUG-030 está reparado: no volver a ignorar SDK_GATEWAY_LOCK_PATH.
+2. Conservar guarda de reset F2B.1 (BUG-029/031 cerrados): nunca matar un PID
+   supervisado para asumir que quedó detenido; abortar antes de borrar si no se
+   verifica parada. Respetar SDK_GATEWAY_LOCK_PATH y SDK_BRAIN_LOCK_PATH. No
+   quitar los tests de reemplazo de PID/worker/CLI ni usar estado real.
 3. Definir cuenta WA por identidad comprobada del proveedor, nunca por token ni
    UUID nuevo en cada arranque; registerAccount devuelve ID durable por providerKey.
    Alcance individual vs self/admin/grupo/status/broadcast explícito. No habilitar
@@ -248,7 +278,8 @@ IA pausada/ignorada/human. Sin contacto a cuentas/servicios reales.
 Actualizar este archivo y solo los checkboxes demostrados. El prompt estable de
 [PROMPT-CONTINUIDAD.md](PROMPT-CONTINUIDAD.md) consulta este estado para retomar.
 Hacer commit de la unidad probada e informar su hash. BUG-001 a 012 (010 parcial),
-BUG-014, BUG-024 y BUG-029 siguen abiertos. BUG-013/019–023/025 cerrados F1B; BUG-015 F0.2,
+BUG-014 y BUG-024 siguen abiertos. BUG-013/019–023/025 cerrados F1B; BUG-015 F0.2,
 BUG-017/018 F1A y BUG-016 cerrado en diseño F0.3, con prueba de repositorio real F2A; captura live aún pendiente.
 
+Cierre F2B.1: commit local `git log --grep="close F2B.1"`; BUG-029/031 cerrados.
 Cierre F2A: commit local `git log --grep="close F2A"`; BUG-026/027/028/030 cerrados.

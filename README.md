@@ -270,7 +270,12 @@ cd gateway
 npm run reset          # interactivo: pide confirmación y luego genera QR
 npm run reset -- --yes # no interactivo: borra la sesión y sale (el gateway ya corriendo regenera el QR)
 ```
-*(O usa `npm run clean -- --yes` para un reset limpio de fábrica F7 — borra TODO el estado de runtime excepto `brain/profiles/`)*
+`npm run clean -- --yes` hace un reset de fábrica: borra todo el estado runtime,
+incluido el archivo de conversaciones, y conserva `brain/profiles/`. Antes hay
+que detener supervisores y evitar arranques concurrentes. El CLI rechaza servicios
+supervisados detectados o una parada no verificable; `--yes` no omite esa guarda.
+Tras un reset correcto sale sin relanzar procesos. En Windows/Termux detén las
+instancias antes de usarlo. Alcance y límites: [reset seguro](docs/RESET-SEGURO-F2B1.md).
 
 ---
 

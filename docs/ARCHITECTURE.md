@@ -7,7 +7,8 @@ salvo indicación expresa. F1A implementa `packages/contracts` y workspace raíz
 para `packages/*`; gateway conserva instalación/lock independientes. No se migraron
 datos ni UI nueva. F1B implementa sesión v1 y firma panel → gateway, con contratos
 instalados como dependencia local del gateway. F2A añade repositorios SQLite con
-worker y snapshot durable de sesión; captura live y resto de API v1 pendientes. Evidencia: [CONTRATOS-V1.md](CONTRATOS-V1.md) y
+worker y snapshot durable de sesión; F2B.1 protege el reset CLI antes de captura.
+Captura live y resto de API v1 pendientes. Evidencia: [CONTRATOS-V1.md](CONTRATOS-V1.md) y
 [FRONTERA-AUTENTICADA-V1.md](FRONTERA-AUTENTICADA-V1.md) y
 [ARCHIVO-CONVERSACIONES-F2A.md](ARCHIVO-CONVERSACIONES-F2A.md).
 
@@ -149,8 +150,10 @@ build: no se agrega un servicio de frontend. CI puede distribuir artefactos a
 Termux. No se requiere SSR para esta consola privada.
 
 Resultado y límites del experimento de almacenamiento:
-[SQLITE-SPIKE.md](SQLITE-SPIKE.md). Hay un script reproducible, todavía no una DB
-operativa ni repositorios de conversaciones conectados al producto.
+[SQLITE-SPIKE.md](SQLITE-SPIKE.md). F2A ya implementa worker y repositorios
+operativos, con snapshot en sesión; falta conectarlos a captura. Ver
+[ARCHIVO-CONVERSACIONES-F2A](ARCHIVO-CONVERSACIONES-F2A.md) y la puerta de reset
+[RESET-SEGURO-F2B1](RESET-SEGURO-F2B1.md).
 
 ## 5. Modelo y autoridades
 

@@ -21,7 +21,8 @@ con Node 22.13/22.23/24, driver elegido y plataformas pendientes registradas.
 F0.3 completada: [especificación operativa](SPEC-OPERATIVA-V1.md), 75 escenarios de
 aceptación futura revisados y [protocolo de validación](VALIDACION-V1.md). Fase 0
 cerrada. F1A y F1B completadas: workspace mínimo, contratos/tipos y frontera
-autenticada probados. F2A completada (repositorios del archivo); siguiente F2B, captura WA.
+autenticada probados. F2A completada (repositorios del archivo); F2B.1 cierra la puerta de reset CLI.
+Siguiente: captura WA F2B.
 Sin canales reales ni migración.
 
 ## Alcance y entregas
@@ -113,13 +114,18 @@ alterado/vencido y desarrollo explícito, sin conectarse a canales reales.
 
 **Depende de:** Fase 1. **Estado: F2A completada; captura pendiente F2B/F2C.**
 Evidencia: [ARCHIVO-CONVERSACIONES-F2A](ARCHIVO-CONVERSACIONES-F2A.md).
-F2B integra WA y puerta BUG-029; F2C Telegram/ack; carga completa antes de cerrar F2.
+F2B.1 completa la puerta BUG-029/031 del reset CLI; evidencia en
+[RESET-SEGURO-F2B1](RESET-SEGURO-F2B1.md). F2B integra WA; F2C Telegram/ack; carga
+completa antes de cerrar F2.
 
 - [x] Repositorios y migraciones SQLite para cuentas, identidades, mensajes,
   conversaciones y eventos. Worker único; constraints e índices para consultas.
 - [x] Antes de escribir estado, agregar `SDK_CONVERSATIONS_DB_PATH`, DB/WAL/SHM,
   .gitignore, inventario factoryReset y volumen. Cursor TG será parte de F2C.
   Backup/restauración y cierre sin pérdida probados con temporales. No cambiar rutas de credenciales existentes.
+- [x] F2B.1 Antes de captura: reset CLI rechaza supervisión/inspección incierta y
+  verifica parada antes de borrar. Brain respeta su lock configurado. BUG-029/031
+  cerrados con procesos/estado temporales; no es prueba de captura ni control.
 - [ ] Captura de todos los elementos WA upsert, no solo el primero; importación de
   history_sync por lotes. Timestamps originales y deduplicación estable.
   Cubrir callbacks de sockets reemplazados y conexión del flujo live al archivo.

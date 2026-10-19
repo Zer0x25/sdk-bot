@@ -43,19 +43,31 @@ salvo indicación contraria. La evidencia detallada y líneas están en la basel
 | BUG-026 | P1 | Cerrado F2A: reset desde self-chat/panel podía borrar la nueva SQLite sin cerrar su worker. | Hook común prepareFactoryReset; test con DB real comprueba cierre antes de unlink y fallo sin borrado. | Reparado antes de activar archivo; detalle abajo. |
 | BUG-027 | P2 | Cerrado F2A: RPC retenía referencias mutables mientras esperaba readiness, permitiendo cambiar payload después de admisión/presupuesto. | Copia JSON al admitir; regresión muta texto antes del dispatch y confirma contenido original. | Reparado en F2A; no usar objetos del caller como cola durable. |
 | BUG-028 | P1 | Cerrado F2A: hash sensible al orden de propiedades y calculado sobre marcador oversized confundía contenidos diferentes del mismo tamaño. | Hash de contenido original con claves ordenadas; prueba redelivery con propiedades permutadas y conflicto de dos textos >64 KiB del mismo tamaño. | Reparado F2A antes de persistencia live. |
-| BUG-029 | P1 | CLI reset-clean puede competir con auto-reinicio systemd: mata PID pero no detiene la unidad antes de borrar estado. | Inspección: stopProcess detecta systemd, envía SIGTERM y main borra asumiendo que Restart=always no recreó otro proceso. No se ejecutó reset/servicio real. | F2B antes de captura live: detener supervisor de forma comprobada o abortar antes de borrar; prueba con supervisor falso que relanza y conserva estado hasta quiescencia. |
+| BUG-029 | P1 | Cerrado F2B.1: CLI podía borrar tras matar un PID que systemd relanza; detector tampoco reconocía cgroups v2. | Reproducción de stopProcess de 37525a1 con supervisor falso deja vivo un reemplazo. Nueva guarda rechaza supervisión antes de señales/borrado y verifica parada manual. | 14 regresiones de guarda/CLI; cierre y límites en RESET-SEGURO-F2B1. |
 | BUG-030 | P1 | Cerrado F2A: index ignoraba SDK_GATEWAY_LOCK_PATH aunque Compose/CLI/inventario lo usan; reset podía no encontrar el proceso vivo. | Smoke aislado reproduce ausencia del lock configurado antes del cambio; entry real ahora crea/borrar ese lock y conserva epoch tras reinicio. | Reparado para coherencia de rutas F2A; no cierra carrera de supervisor BUG-029. |
+| BUG-031 | P1 | Cerrado F2B.1: brain ignoraba SDK_BRAIN_LOCK_PATH, ocultando el proceso al CLI con ruta configurada; errores de escritura del lock también se silenciaban. | Hijo Python verifica ruta/PID/remoción; ensure_singleton aborta si no puede publicar lock. | Reparado antes de captura live; dos regresiones, brain 23 tests pasan. Ver RESET-SEGURO-F2B1. |
 
 ## Clasificación para la unidad activa
 
-F2A cierra repositorios/worker y prueba BUG-016 contra DB real; captura live no
-está conectada y F2 sigue abierta. BUG-026/027/028/030 fueron bloqueantes de esta
-unidad y se repararon. BUG-029 queda antes de captura live F2B; BUG-024 antes de
-operadores limitados F3. BUG-001 a 012 (010 parcial) y BUG-014 siguen abiertos.
-BUG-008 tiene resolución exacta en el nuevo archivo, pero legacy/comandos/adapters
-siguen pendientes; no extender la evidencia del repositorio a los canales.
+F2B.1 cierra la puerta de reset CLI (BUG-029/031); F2A mantiene repositorios y
+worker. Captura live WA sigue pendiente F2B y Telegram F2C; F2 completa continúa
+abierta. BUG-026/027/028/030 se repararon en F2A. BUG-024 antes de operadores
+limitados F3. BUG-001 a 012 (010 parcial) y BUG-014 siguen abiertos. BUG-008 tiene
+resolución exacta en el archivo, pero legacy/comandos/adapters siguen pendientes;
+no extender la evidencia del repositorio/CLI a los canales.
 
 ## Cerrados
+
+- **BUG-029 — cerrado (P1, F2B.1):** preflight de gateway y brain rechaza servicio
+  supervisado o inspección no verificable antes de señales/borrado. Procesos
+  manuales se comprueban por entrada/inicio de PID y parada efectiva; cambios de
+  lock/PID abortan. Reproducción del código anterior y 14 tests de guarda/CLI,
+  incluido worker SQLite real temporal. No se paró ningún supervisor real.
+- **BUG-031 — cerrado (P1, F2B.1):** brain publica el lock configurado, crea padre,
+  falla si no puede escribirlo y solo elimina el propio. Dos tests nuevos, suite
+  secuencial de 23 pasa. No cambia memoria/proveedores. Commit de ambos cierres:
+  `git log --grep="close F2B.1"`. Evidencia y límites de supervisión/plataformas:
+  [RESET-SEGURO-F2B1](RESET-SEGURO-F2B1.md).
 
 - **BUG-026 — cerrado (P1, F2A):** prepareFactoryReset registrado por el gateway
   espera cierre del archivo en panel y self-chat, antes del borrado. Fallo aborta

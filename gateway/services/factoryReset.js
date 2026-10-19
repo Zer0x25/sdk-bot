@@ -12,9 +12,8 @@
  * Rutas: mismas env vars que los módulos productores (SDK_AUTH_DIR,
  * SDK_CONTACTS_DB_PATH, …) para que los tests apunten a temporales y el
  * borrado nunca desincronice del estado real. Los locks tienen env propios
- * (SDK_GATEWAY_LOCK_PATH / SDK_BRAIN_LOCK_PATH) solo por seguridad de tests:
- * el proceso vivo del gateway escribe su lock en la ruta real, y los tests
- * locales no deben poder borrarle el lock a una instancia en producción.
+ * (SDK_GATEWAY_LOCK_PATH / SDK_BRAIN_LOCK_PATH) respetados por ambos productores;
+ * en tests TODAS las rutas deben apuntar a temporales, nunca a una instancia real.
  *
  * Flag `wiping`: mientras el reset limpio está en curso, el gateway NO debe
  * volcar su caché RAM a disco (al reiniciar, un flush reescribiría las DBs

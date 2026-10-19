@@ -40,8 +40,9 @@ los adapters deberán traducirla a backpressure, nunca a ack anticipado.
   sdk_bot_state; panel no lo monta. No se mueven credenciales ni se añade volumen.
 - SIGTERM/SIGINT cierran worker antes de salir. Reset desde panel y self-chat
   prepara el cierre antes de borrar; si falla, aborta. El aviso incluye el archivo.
-  CLI conserva parada previa; la carrera de auto-reinicio systemd queda en BUG-029
-  y debe repararse antes de activar captura live F2B.
+  F2A dejó la carrera de auto-reinicio systemd CLI en BUG-029; **F2B.1 ya la
+  reparó** mediante rechazo previo y verificación de parada, junto a la ruta de
+  lock del brain (BUG-031). Ver [RESET-SEGURO-F2B1](RESET-SEGURO-F2B1.md).
 - SDK_GATEWAY_LOCK_PATH ahora se respeta también en index.js, coincidiendo con
   inventario/CLI/Compose; se crea su directorio padre. BUG-030 reparado.
 - F2A no incluye backups programados, CLI de restauración ni purga diaria. Las
