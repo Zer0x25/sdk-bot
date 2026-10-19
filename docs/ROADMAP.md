@@ -16,7 +16,9 @@ pierde historial ni reactiva respuestas canceladas.
 La sesión inicial creó la base documental. Después se completaron F0.1 y los
 checks actuales en copia temporal: gateway Node 22/24, brain y smoke del launcher
 con WA simulado/TG sin token. Evidencia: [BASELINE-CONVERSACIONES.md](BASELINE-CONVERSACIONES.md).
-Siguiente unidad: F0.2. No se conectaron canales reales ni se migraron datos.
+F0.2 también completada: [experimento SQLite](SQLITE-SPIKE.md) probado en Linux
+con Node 22.13/22.23/24, driver elegido y plataformas pendientes registradas.
+Siguiente unidad: F0.3. No se conectaron canales reales ni se migraron datos.
 
 ## Alcance y entregas
 
@@ -52,7 +54,7 @@ roles de equipo, un rediseño de proveedores o mover todas las carpetas.
 
 ## Fase 0 — Línea base y compatibilidad
 
-**Depende de:** ninguna. **Próxima sesión recomendada: F0.2.**
+**Depende de:** ninguna. **Próxima sesión recomendada: F0.3.**
 
 - [x] F0.1 Inventariar entradas/salidas, generaciones de sockets, comandos, rutas,
   cursores y puntos de persistencia; producir `docs/BASELINE-CONVERSACIONES.md`
@@ -60,10 +62,12 @@ roles de equipo, un rediseño de proveedores o mover todas las carpetas.
 - [x] Ejecutar checks actuales de gateway/brain y smoke cuando el entorno lo permita;
   registrar versiones, comandos y resultados. Un fallo previo no se atribuye al cambio.
   Completado con smoke aislado sin transporte real; pairing/sync/entrega no validados.
-- [ ] F0.2 Probar en fixture temporal `node:sqlite`: versión mínima real, worker,
+- [x] F0.2 Probar en fixture temporal `node:sqlite`: versión mínima real, worker,
   WAL, transacciones, constraints, backup y cierre. Comprobar disponibilidad de
   runtime en Linux/Windows/Termux o registrar pendiente por plataforma. Decidir
   driver con evidencia y actualizar ADR-005 antes de añadir dependencia.
+  Node >=22.13.0 sin flags en Linux; Windows/Termux pendientes. Sin dependencia
+  externa ni DB runtime añadida. Script incluido en el job de CI para futuras ejecuciones.
 - [ ] F0.3 Fijar alcance v1, orden de IDs/aliases, retención inicial (propuesta 90d
   historial), compatibilidad de handoff y estrategia de backup/corte/rollback.
   Definir presupuesto de carga y mediciones con fixtures reproducibles.

@@ -52,6 +52,9 @@ npm ci
 
 - En distros Linux con PEP 668 se recomienda `uv` para crear el venv del brain (`uv venv venv && uv pip install ...`).
 - `cd gateway && npm run check` es el check completo y su orden es `lint -> typecheck -> npm test`.
+- `cd gateway && npm run spike:sqlite` verifica F0.2 con fixtures temporales y worker,
+  sin iniciar canales. Requiere Node >=22.13.0 sin flags; Linux probado, Windows y
+  Termux pendientes. No es la DB operativa. Ver `docs/SQLITE-SPIKE.md`.
 - `cd brain && venv/bin/ruff check . && venv/bin/python -m pytest tests/ -q` es el check completo del brain. CI usa Node 22 y Python 3.12.
 - CI tambien ejecuta `cd gateway && bash ../deploy/linux/tests/dev-smoke.sh` despues de las pruebas.
 - Tests enfocados: `cd gateway && node --test tests/pipeline.test.js`; `cd gateway && node --test tests/telegram.test.js`; `cd gateway && node --test tests/adminPairing.test.js`; `cd gateway && node --test tests/stt.test.js`; brain: `cd brain && venv/bin/python -m pytest tests/test_memory.py -q`.

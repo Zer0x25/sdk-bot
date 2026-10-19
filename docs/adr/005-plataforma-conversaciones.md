@@ -35,7 +35,9 @@ verificación de sesión única y la compatibilidad de instalaciones existentes.
    conservando OAuth/proxy. Migrar JS a TypeScript de forma incremental.
 8. Adoptar `apps/` + `packages/` mediante movimientos graduales y verificables.
    Python conserva su tooling. Verificar driver SQLite en plataformas soportadas
-   antes de incorporarlo; preferencia inicial `node:sqlite`.
+   antes de incorporarlo. F0.2 selecciona `node:sqlite` con worker, mínimo sin flags
+   Node 22.13.0 probado en Linux; Windows/Termux siguen pendientes. Backup mediante
+   `VACUUM INTO`, compatible con ese mínimo. La API experimental queda encapsulada.
 9. Migrar handoff/permisos conservadoramente. Resolver IDs exactos por canal/cuenta;
    no mezclar dígitos de WhatsApp y Telegram ni reactivar IA por una importación.
 
@@ -70,3 +72,4 @@ Validación manual posterior en cuenta de prueba, sin duplicar producción.
 
 Modelo y contratos: [ARCHITECTURE.md](../ARCHITECTURE.md).
 Orden de implementación: [ROADMAP.md](../ROADMAP.md).
+Evidencia del driver y limitaciones por plataforma: [SQLITE-SPIKE.md](../SQLITE-SPIKE.md).

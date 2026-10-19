@@ -10,6 +10,7 @@
     "lint": "eslint .",
     "lint:fix": "eslint . --fix",
     "typecheck": "tsc -p jsconfig.json",
+    "spike:sqlite": "node scripts/sqlite-spike.js",
     "check": "npm run lint && npm run typecheck && npm test"
   },
   "keywords": [],

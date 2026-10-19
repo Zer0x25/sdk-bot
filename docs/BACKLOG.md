@@ -42,7 +42,7 @@ salvo indicación contraria. La evidencia detallada y líneas están en la basel
 
 ## Clasificación para la unidad activa
 
-F0.2 ejecuta exclusivamente un experimento SQLite con fixtures locales. Ninguno
+F0.2 ejecutó exclusivamente un experimento SQLite con fixtures locales. Ninguno
 de BUG-001 a BUG-014 bloquea ese experimento: no usa adapters, handlers, HTTP del
 producto, memoria del brain ni sus tests en paralelo. Siguen abiertos con las
 puertas anteriores. Un fallo del experimento que impida worker/WAL/transacciones/
@@ -50,5 +50,12 @@ backup sí debe repararse antes de su commit; no se difiere como si hubiera pasa
 
 ## Cerrados
 
-Ningún bug de esta lista fue reparado todavía. No confundir checks actuales en
-verde con cobertura de los escenarios pendientes.
+- **BUG-015 — cerrado (P2, F0.2):** el primer prototipo del experimento podía ocultar
+  la excepción original con otra durante cleanup. Detectado por lint y corregido:
+  errores agregados tras cerrar workers/temporales. Lint limpio; fallo simulado
+  tras escribir conserva el error, termina con código 1 y no deja estado temporal,
+  probado en Node 22.13.0 y 24.19.0. Evidencia: [SQLITE-SPIKE.md](SQLITE-SPIKE.md).
+  Commit: cierre F0.2, identificado por `git log --grep=BUG-015`.
+
+Los bugs BUG-001 a BUG-014 siguen abiertos. Checks actuales en verde no demuestran
+los escenarios pendientes.

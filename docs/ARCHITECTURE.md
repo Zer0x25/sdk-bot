@@ -134,13 +134,17 @@ que lo justifique. No crear árboles vacíos ni un shared genérico para toda la
 | UI | React + TypeScript + Vite; React Router; TanStack Query para caché/paginación; CSS con tokens e iconos SVG consistentes. |
 | Gateway/panel server | TypeScript incremental. JS existente sigue funcionando mientras se extrae por módulo. Sin cambio obligatorio de framework HTTP. |
 | Datos | SQLite local, WAL, migraciones y un worker propietario de la conexión del gateway. Puertos de repositorio permiten sustituirla. |
-| Driver | Preferencia inicial node:sqlite con Node 22 compatible. Fase 0 valida API/versión real y Linux, Windows y Termux antes de incorporarlo; documentar alternativa si falla. |
+| Driver | node:sqlite con worker, mínimo sin flags Node 22.13.0 comprobado en Linux por F0.2. Backup VACUUM INTO. Windows/Termux pendientes antes del corte; API experimental encapsulada. |
 | Contratos | OpenAPI 3.1 + JSON Schema como fuente, validación runtime y tipos TS/modelos Python generados o comprobados contra esquemas. |
 | Calidad | node:test para dominio/contratos, pytest para brain; Vitest/Testing Library para UI; Playwright para recorridos. |
 
 Vite funciona en desarrollo/build. En producción el proceso del panel sirve el
 build: no se agrega un servicio de frontend. CI puede distribuir artefactos a
 Termux. No se requiere SSR para esta consola privada.
+
+Resultado y límites del experimento de almacenamiento:
+[SQLITE-SPIKE.md](SQLITE-SPIKE.md). Hay un script reproducible, todavía no una DB
+operativa ni repositorios de conversaciones conectados al producto.
 
 ## 5. Modelo y autoridades
 

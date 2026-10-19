@@ -13,6 +13,7 @@ de ruta**; estas funciones todavía no están implementadas.
 - [Hoja de ruta por entregas](docs/ROADMAP.md)
 - [Estado y próxima tarea](docs/SESSION-STATE.md)
 - [Backlog de bugs y política de reparación](docs/BACKLOG.md)
+- [Experimento SQLite probado y compatibilidad](docs/SQLITE-SPIKE.md)
 - [Prompt para continuar en otra sesión](docs/PROMPT-CONTINUIDAD.md)
 
 ---
