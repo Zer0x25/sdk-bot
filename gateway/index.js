@@ -127,14 +127,22 @@ function getAdapter(channel) {
 module.exports.getAdapter = getAdapter; // Expose for pipeline
 
 let conversationArchive;
+let archiveRetention;
 async function startGateway() {
     conversationArchive = require('./services/conversations').createArchive();
-    require('./services/factoryReset').setBeforeReset(() => conversationArchive.close());
+    await conversationArchive.ready;
+    archiveRetention = await require('./services/conversations/retention').startRetention(conversationArchive,
+        () => log.error('Archivo: falló la purga diaria; revisar retención.'));
+    require('./services/factoryReset').setBeforeReset(async () => {
+        for (const adapter of adapters.values()) await adapter.disconnect();
+        await archiveRetention.close();
+        await conversationArchive.close();
+    });
     internalBus.startInternalBus({ archive: conversationArchive });
     log.info('Iniciando Hub de Canales del Gateway...');
 
     // 1. Iniciar WhatsApp
-    const whatsapp = new WhatsappAdapter();
+    const whatsapp = new WhatsappAdapter({ archive: conversationArchive });
     adapters.set('whatsapp', whatsapp);
 
     // Conectar eventos del adaptador de WhatsApp
@@ -165,6 +173,12 @@ async function startGateway() {
         await handleIncomingMessage(stdMsg);
     });
 
+    whatsapp.on('capture_status', status => { channels.whatsapp.capture = status; });
+    whatsapp.on('archived_message', ({ raw, source }) => {
+        if (source === 'live') chatStore.upsertMessage(raw);
+        else messageSyncQueue.push([raw]);
+    });
+
     whatsapp.on('raw_message', async () => {
         // Temporarily handling raw Baileys messages if needed
     });
@@ -172,10 +186,6 @@ async function startGateway() {
     whatsapp.on('contact_sync', ({ contacts, source }) => {
         log.info(`📇 [${source}] ${contacts.length} contactos encolados`);
         contactSyncQueue.push(contacts);
-    });
-
-    whatsapp.on('history_sync', ({ messages }) => {
-        if (messages && messages.length) messageSyncQueue.push(messages);
     });
 
     whatsapp.on('presence_update', ({ id, presences }) => {
@@ -290,7 +300,10 @@ async function startGateway() {
     });
 }
 
-ensureSingleInstance().then(startGateway);
+ensureSingleInstance().then(startGateway).catch(() => {
+    log.error('No se pudo iniciar el gateway/archivo; se cierra sin admitir canales.');
+    void handleExit(1);
+});
 
 // Status server
 startStatusServer();
@@ -302,17 +315,17 @@ broadcastService.setIsConnected(() => channels.whatsapp.connection === 'open' ||
 setInterval(() => { broadcastService.tick(); }, 10 * 1000).unref();
 
 let exiting = false;
-async function handleExit() {
+async function handleExit(exitCode = 0) {
     if (exiting) return;
     exiting = true;
     log.info('\n🛑 Señal de apagado recibida. Cerrando de forma segura...');
     for (const [, adapter] of adapters.entries()) {
-        adapter.disconnect().catch(() => {});
+        await adapter.disconnect().catch(() => {});
     }
     if (!isWiping()) flushToDisk();
-    try { await conversationArchive?.close(); } catch { /* exit after worker terminates */ }
-    process.exit(0);
+    try { await archiveRetention?.close(); await conversationArchive?.close(); } catch { /* exit after worker terminates */ }
+    process.exit(exitCode);
 }
 
-process.on('SIGINT', handleExit);
-process.on('SIGTERM', handleExit);
+process.on('SIGINT', () => { void handleExit(); });
+process.on('SIGTERM', () => { void handleExit(); });

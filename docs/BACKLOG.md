@@ -25,15 +25,15 @@ salvo indicación contraria. La evidencia detallada y líneas están en la basel
 
 | ID | Prioridad | Bug e impacto | Evidencia | Fase límite y aceptación |
 |---|---|---|---|---|
-| BUG-001 | P1 | WhatsApp procesa solo el primer mensaje de un lote live; omite los demás. | whatsappAdapter.js, messages.upsert usa m.messages[0]. | F2: lote de varios mensajes se captura íntegro y una sola vez. |
-| BUG-002 | P1 | La precarga RAM no recibe mensajes live; el hilo usado como señal queda desactualizado. | chatStore.upsertMessage no tiene llamadas; solo seedMessages conectado en index. | F2: entrada live aparece en archivo/consulta tras sync inicial y después de reinicio. |
-| BUG-003 | P1 | Callbacks WA de mensajes/contactos/historial/presencia no descartan sockets reemplazados. | Solo connection.update compara this.sock con sock capturado. | F2: emitir desde un socket viejo no cambia archivo, presencia ni contactos. |
+| BUG-001 | P1 | Cerrado F2B.2: WA solo procesaba el primer elemento del lote. | Reproducción de 4bb4ec3 emite 1/3; adaptador actual captura todos los admitidos antes de legacy. | Lote, reinicio y ráfaga 1001 con saturación/redelivery probados; CAPTURA-WHATSAPP-F2B2. |
+| BUG-002 | P1 | Cerrado F2B.2: cache RAM no recibía mensajes live. | index conecta archived_message a upsertMessage tras commit; entry real conserva SQLite y reconstruye cache al reentregar tras reinicio. | Dos ciclos reales offline con 3 mensajes, IDs/epoch/seq estables; CAPTURA-WHATSAPP-F2B2. |
+| BUG-003 | P1 | Cerrado F2B.2: callbacks de sockets WA reemplazados seguían teniendo efectos. | Reproducción anterior emite mensaje/presencia obsoletos; nuevas guardas cubren mensajes, contactos, historia, presencia, credenciales y STT tardío. | Pruebas con dos sockets y STT suspendido; trabajo previamente admitido puede terminar commit, sin automatizar desde socket reemplazado. |
 | BUG-004 | P1 | Descubrir Chat ID puede consultar getUpdates mientras el adapter ya hace polling con ese token. | telegramService.testAndGetChatId llamado desde /telegram/test; no hay exclusión visible. | F2: prueba de descubrimiento con polling activo sin segundo consumidor. |
 | BUG-005 | P1 | Cursor TG adelanta antes de persistir/procesar y vive solo en RAM. | poll asigna lastUpdateId antes de emitir; EventEmitter no espera consumidor async. | F2: crash antes/después de persistir no pierde ni duplica el mensaje al recuperar. |
 | BUG-006 | P1 | Handoff/pausa no cancelan jobs admitidos ni protegen cada globo; cola puede responder después del cambio. | Debounce, processAIChat y flush sin validación final de control. | F5: takeover durante debounce/pool/generación/typing/globos bloquea nuevos despachos y sobrevive reinicio. |
 | BUG-007 | P1 | Respuesta generada se guarda en memoria antes de entregarse; cancelación/fallo/retry puede producir contexto fantasma. | brain /chat llama append_exchange antes de devolver; gateway puede reintentar POST. | F5: generación cancelada o entrega parcial solo confirma contexto de lo realmente enviado. |
 | BUG-008 | P1 | Resolución por dígitos/substrings e índices sin cuenta/canal puede mezclar identidades; TG pierde signo. | stateService, findKeyByDigits y phone/lid indexes. | F1 contratos exactos; F2/F5: IDs iguales en canales distintos y TG negativo no colisionan ni cambian otro contacto. |
-| BUG-009 | P1 | Anti-bucle usa message_id global aunque TG lo limita a chat; puede descartar entrada de otro chat. | config.botSentMessageIds y telegramAdapter.isBotSentMessage. | F2: mismo ID de proveedor en chats/cuentas diferentes no se ignora por error. |
+| BUG-009 | P1 | Parcial F2B.2: WA ya no usa el filtro global; Telegram aún descarta por message_id sin chat. | WA usa captura canónica y eco local por cuenta/chat/ID. Tests repiten ID entre chats/cuentas y registran el mismo ID global de TG sin perder WA. | F2C: resolver Telegram; no cerrar por evidencia WA. |
 | BUG-010 | P2 | Envíos/presencia/helpers HTTPS TG sin timeout propio. Proxy reparado en F1B, parte Telegram abierta. | panel/proxy.js ya acota recepción, respuesta y SSE; test de POST detenido confirma un intento. | F5 envío: TG sin respuesta termina acotado; sin retry ciego de envío ambiguo. Evidencia F1B en FRONTERA-AUTENTICADA-V1. |
 | BUG-011 | P2 | /humano rechaza un permitido en ignored_all; /ia establece neutro y puede dejarlo sin respuesta. | handlers/commands/chatControl.js, runHumano/runIa. | F5: control independiente de permisos; comandos legacy preservan elegibilidad o explican bloqueo. |
 | BUG-012 | P2 | /notify conserva payload/socket legacy aunque activeSock recibe adapter; compatibilidad no comprobada. | internalBus /notify frente a index.setSock(whatsapp) y adapter.sendMessage. | F5: prueba del payload real; reconducir al puerto de envío común sin pérdida ni duplicados. |
@@ -46,17 +46,29 @@ salvo indicación contraria. La evidencia detallada y líneas están en la basel
 | BUG-029 | P1 | Cerrado F2B.1: CLI podía borrar tras matar un PID que systemd relanza; detector tampoco reconocía cgroups v2. | Reproducción de stopProcess de 37525a1 con supervisor falso deja vivo un reemplazo. Nueva guarda rechaza supervisión antes de señales/borrado y verifica parada manual. | 14 regresiones de guarda/CLI; cierre y límites en RESET-SEGURO-F2B1. |
 | BUG-030 | P1 | Cerrado F2A: index ignoraba SDK_GATEWAY_LOCK_PATH aunque Compose/CLI/inventario lo usan; reset podía no encontrar el proceso vivo. | Smoke aislado reproduce ausencia del lock configurado antes del cambio; entry real ahora crea/borrar ese lock y conserva epoch tras reinicio. | Reparado para coherencia de rutas F2A; no cierra carrera de supervisor BUG-029. |
 | BUG-031 | P1 | Cerrado F2B.1: brain ignoraba SDK_BRAIN_LOCK_PATH, ocultando el proceso al CLI con ruta configurada; errores de escritura del lock también se silenciaban. | Hijo Python verifica ruta/PID/remoción; ensure_singleton aborta si no puede publicar lock. | Reparado antes de captura live; dos regresiones, brain 23 tests pasan. Ver RESET-SEGURO-F2B1. |
+| BUG-032 | P1 | Cerrado F2B.2: dos connect con loadAuth asíncrono podían instalar primero el socket nuevo y luego uno obsoleto. | Reproducción en 4bb4ec3 confirma sustitución; revisión monotónica de conexión descarta auth atrasado. | Test overlapping connect pasa; mismo commit de cierre F2B.2. |
+| BUG-033 | P1 | Abierto: STT emite texto legacy pero no actualiza transcripción/estado/evento del mensaje de audio archivado. | Test con STT falso alcanza transcribe después del commit base; no existe API update del archivo. Marcador permanece not_requested incluso si se intentó STT. | F2B.3, antes de cerrar F2B: mismo ID, pending/completed/failed y message.updated; commit antes de IA, dedup/huella estable y purga sin recreación. |
+| BUG-034 | P2 | Abierto: multimedia con caption se normaliza como texto y pierde la clasificación de adjunto. | normalize prioriza caption; MessageContent no permite caption junto al marcador. Inspección de contrato/normalizador. | F2B.3 antes de cerrar F2B: conservar tipo y caption, wrappers incluidos; validar contrato/copia instalada, reimportación y mensajes existentes. |
+| BUG-035 | P2 | Abierto: el solicitante de pairing invoca connect sin await y puede pedir código antes de terminar loadAuth/crear socket; refresh también pierde el Promise. | Inspección en index.js, setPairingCodeRequester y setQrRefresh. No se probó pairing real. | F8 antes de aceptación de pairing: prueba con auth suspendido espera socket y propaga fallo; mantener pairing activo sin segundo socket. No bloquea captura de cuenta ya autenticada. |
 
 ## Clasificación para la unidad activa
 
-F2B.1 cierra la puerta de reset CLI (BUG-029/031); F2A mantiene repositorios y
-worker. Captura live WA sigue pendiente F2B y Telegram F2C; F2 completa continúa
-abierta. BUG-026/027/028/030 se repararon en F2A. BUG-024 antes de operadores
-limitados F3. BUG-001 a 012 (010 parcial) y BUG-014 siguen abiertos. BUG-008 tiene
-resolución exacta en el archivo, pero legacy/comandos/adapters siguen pendientes;
-no extender la evidencia del repositorio/CLI a los canales.
+F2B.2 conecta captura base WA y cierra BUG-001/002/003/032. Evidencia en
+[CAPTURA-WHATSAPP-F2B2](CAPTURA-WHATSAPP-F2B2.md); F2B permanece abierta por
+BUG-033/034, siguiente unidad F2B.3. BUG-035 se difiere a F8 por no bloquear la
+captura autenticada. F2B.1 conserva BUG-029/031 cerrados. BUG-004–012 (009/010
+parciales), BUG-014 y BUG-024 siguen abiertos. BUG-008 tiene archivo exacto por
+cuenta/canal y aliases comprobados, pero resolución/control legacy aún pendientes.
+Telegram y ack durable siguen F2C. No extrapolar evidencia del archivo a control,
+roles limitados, salidas durables ni aceptación completa F2.
 
 ## Cerrados
+
+- **BUG-001/002/003/032 — F2B.2:** lotes y cache live tras commit, guardas de
+  socket/reconexión solapada. Reproducción del adapter previo con transporte falso
+  y regresiones contra SQLite/entry real. Gateway 204 tests Node22/24 y 52 en
+  dependencias Docker sin red. Commit: `git log --grep="close F2B.2"`.
+  [Evidencia y límites](CAPTURA-WHATSAPP-F2B2.md).
 
 - **BUG-029 — cerrado (P1, F2B.1):** preflight de gateway y brain rechaza servicio
   supervisado o inspección no verificable antes de señales/borrado. Procesos
@@ -168,5 +180,5 @@ SQLite real en F2A; falta captura de aliases live antes de cerrar F2 completa.
   de bundle/navegador; esa integración sigue en F4. Evidencia:
   [CONTRATOS-V1.md](CONTRATOS-V1.md). Commit F1A: `git log --grep=BUG-018`.
 
-BUG-001 a BUG-012 (010 parcialmente reparado), BUG-014 y BUG-024 siguen abiertos.
+BUG-004–012 (009/010 parciales), BUG-014/024 y BUG-033/034/035 siguen abiertos.
 Checks actuales en verde no demuestran esos escenarios pendientes.

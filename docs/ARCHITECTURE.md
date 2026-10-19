@@ -8,7 +8,8 @@ para `packages/*`; gateway conserva instalación/lock independientes. No se migr
 datos ni UI nueva. F1B implementa sesión v1 y firma panel → gateway, con contratos
 instalados como dependencia local del gateway. F2A añade repositorios SQLite con
 worker y snapshot durable de sesión; F2B.1 protege el reset CLI antes de captura.
-Captura live y resto de API v1 pendientes. Evidencia: [CONTRATOS-V1.md](CONTRATOS-V1.md) y
+F2B.2 conecta captura base WA; enriquecimiento multimedia y resto de API v1 pendientes.
+Ver [CAPTURA-WHATSAPP-F2B2](CAPTURA-WHATSAPP-F2B2.md). Evidencia: [CONTRATOS-V1.md](CONTRATOS-V1.md) y
 [FRONTERA-AUTENTICADA-V1.md](FRONTERA-AUTENTICADA-V1.md) y
 [ARCHIVO-CONVERSACIONES-F2A.md](ARCHIVO-CONVERSACIONES-F2A.md).
 
@@ -27,7 +28,7 @@ Adjuntos reproducibles, grupos, equipos de agentes y herramientas IA con efectos
 externos se incorporan después. Desde el inicio, un multimedia recibido tendrá
 un marcador visible aunque todavía no pueda abrirse o descargarse.
 
-## 2. Diagnóstico comprobado en el código
+## 2. Diagnóstico inicial comprobado en F0.1
 
 | Pieza actual | Evidencia | Implicación |
 |---|---|---|
@@ -42,10 +43,11 @@ un marcador visible aunque todavía no pueda abrirse o descargarse.
 | UI | `gateway/panel/public/`: ES Modules y CSS sin build | Sin bandeja ni cliente tipado para conversaciones. |
 | Documentación | ROADMAP declaraba pendientes índices ya presentes en contactsRepository.js; ARCHITECTURE tenía OAuth desactualizado | Confirmar con código/pruebas; no marcar validaciones reales como realizadas. |
 
-F0.1 confirmó además que upsertMessage del store RAM no tiene llamadas, las guardas
-de socket WA solo cubren connection.update y el descubridor Telegram conserva un
-getUpdates independiente del adapter. Los checks actuales pasan, pero no cubren
-esas propiedades. Referencias y alcance de las pruebas en
+En esa baseline, upsertMessage del store RAM no tenía llamadas y las guardas
+de socket WA solo cubrían connection.update. F2B.2 corrige lotes, cache live y
+callbacks obsoletos con captura SQLite; evidencia y límites en
+[CAPTURA-WHATSAPP-F2B2](CAPTURA-WHATSAPP-F2B2.md). El descubridor Telegram aún
+conserva un getUpdates independiente del adapter. Referencias y alcance de las pruebas en
 [BASELINE-CONVERSACIONES.md](BASELINE-CONVERSACIONES.md).
 
 ## 3. Arquitectura y límites
@@ -53,6 +55,9 @@ esas propiedades. Referencias y alcance de las pruebas en
 **Monolito modular dentro del gateway**, con procesos separados para panel,
 brain y STT. Se conservan los límites de ADR-001/002/003. ADR-005 amplía ADR-004
 para admitir salida persistente de mensajes interactivos.
+[ADR-006](adr/006-admision-durable-en-adapter.md) amplía la emisión pura del adapter
+de ADR-003 durante F2: permite esperar al coordinador de admisión durable antes
+del consumidor legacy, sin trasladar reglas de acceso/control a los adapters.
 
 ```mermaid
 flowchart LR
@@ -151,7 +156,7 @@ Termux. No se requiere SSR para esta consola privada.
 
 Resultado y límites del experimento de almacenamiento:
 [SQLITE-SPIKE.md](SQLITE-SPIKE.md). F2A ya implementa worker y repositorios
-operativos, con snapshot en sesión; falta conectarlos a captura. Ver
+operativos, con snapshot en sesión; F2B.2 los conecta a captura base WA. Ver
 [ARCHIVO-CONVERSACIONES-F2A](ARCHIVO-CONVERSACIONES-F2A.md) y la puerta de reset
 [RESET-SEGURO-F2B1](RESET-SEGURO-F2B1.md).
 

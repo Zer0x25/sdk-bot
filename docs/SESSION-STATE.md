@@ -1,6 +1,6 @@
 # Estado de continuidad — SDK-Bot
 
-Actualización: 2026-10-19. Última unidad cerrada: **F2B.1; puerta de reset CLI completada**.
+Actualización: 2026-10-19. Última unidad cerrada: **F2B.2; captura base WA conectada y probada**.
 
 ## Objetivo vigente
 
@@ -37,7 +37,12 @@ respuesta humana desde el chat y retorno seguro a IA con contexto actualizado.
 - F2B.1: parada segura del reset CLI, rechazo de supervisión antes de señales y
   comprobación de identidad/parada; brain publica lock configurable. BUG-029/031
   cerrados. Evidencia: [RESET-SEGURO-F2B1](RESET-SEGURO-F2B1.md).
-- Sin migrar datos ni captura live. No hay bandeja nueva, páginas/SSE públicos,
+- F2B.2: captura base WA live/history antes de legacy, identidad/cuenta exactas,
+  cola acotada, guardas de socket y purga inicial/diaria. BUG-001/002/003/032
+  cerrados. [ADR-006](adr/006-admision-durable-en-adapter.md) documenta la espera
+  de admisión en el adapter antes del consumidor legacy. Evidencia:
+  [CAPTURA-WHATSAPP-F2B2](CAPTURA-WHATSAPP-F2B2.md).
+- Sin migrar datos antiguos ni conectar cuentas reales. No hay bandeja nueva, páginas/SSE públicos,
   API de envío/control ni barrera de automatización v1.
 
 ## Validación ejecutada en F0.1
@@ -75,9 +80,8 @@ Detalles de reproducción y logs efímeros están en la baseline.
 
 ## Hallazgos que condicionan implementación
 
-- WA procesa solo primer elemento del lote; live no llama upsertMessage del store.
-- Guardas contra socket reemplazado están en connection.update, no en todos los
-  eventos de mensajes/contactos/historial/presencia.
+- F2B.2 corrige el primer elemento del lote, la conexión live al cache y los
+  callbacks de socket reemplazado. Multimedia aún tiene BUG-033/034.
 - El descubridor testAndGetChatId todavía llama getUpdates fuera del adapter;
   el test de dueño único no cubre esa competencia indirecta.
 - Telegram adelanta cursor en RAM sin ack durable del consumidor asíncrono.
@@ -223,63 +227,86 @@ Detalles de reproducción y logs efímeros están en la baseline.
   no nuevos checks raíz, build Docker ni smoke launcher. Logs previos conservados.
   Sin proveedores/canales/OAuth reales, push ni despliegue.
 
-## Siguiente unidad exacta: Fase 2 / F2B
+## Validación ejecutada en F2B.2
 
-**Entregable:** captura WhatsApp live/history sobre el archivo F2A. Telegram y ack
-serán F2C. Generador/carga completa de VALIDACION es puerta de cierre de F2, no
-se declara aprobada por el lote reducido de F2A.
+- Gateway npm run check: lint/tipos y **204 tests** pasan Node 24.19.0 y mínimo
+  22.13.0 Linux en copias independientes. 188 anteriores +15 captura/retención +1
+  entry integrado. No npm ci nuevo: manifiestos/contratos no cambiaron.
+- SQLite real y Baileys simulado: lotes/cuenta estable, cache live, restart/dedup,
+  JID/LID y cuarentena, IDs entre chats/cuentas, history/append/eco inertes,
+  malformed/oversized, cola 1000/32MiB, fallo después de commit sin retry,
+  sockets obsoletos, STT tardío y reconexiones solapadas. Purga antes de admisión,
+  acotada y con yield, falla cerrada si no puede iniciar.
+- Ráfaga de 1001: 1000 admitidos, saturación visible, mensaje restante guardado
+  cuando se reentrega. Heartbeat avanza; no demuestra presupuestos p95/p99 ni
+  recuperación garantizada WA. La pérdida de proveedor sigue siendo posible.
+- Entry real con transporte/auth sustituidos: dos ciclos SIGTERM 0 conservan tres
+  mensajes/eventos, epoch/seq estables y cache reconstruida. IA pausada, sin envío.
+- Docker de producción F2A ya instalado, código/tests actuales montados readonly,
+  profiles como Compose y --network none: **52 tests** pasan Node22.23.3. No nueva
+  imagen construida ni compose up; solo compatibilidad con dependencias/layout.
+- Reproducción de adapter 4bb4ec3: lote 3 emite 1, eventos de socket viejo tienen
+  efectos y auth antigua sustituye conexión nueva. Regresiones cierran
+  BUG-001/002/003/032; 008 solo aislamiento de archivo y 009 corregido solo WA.
+- Nuevos pendientes: BUG-033/034 antes de cerrar F2B (STT durable/tipo con caption);
+  BUG-035 pairing async diferido F8. No se presentan marcadores como transcripciones
+  persistidas ni unknown como autoría IA/humana confirmada.
+- Evidencia efímera /tmp/sdkbot-f2b2-uh19lsui. Brain/contratos no cambiaron; sin
+  repetir sus suites. Launcher global no repetido para conservar logs. Sin
+  proveedores/cuentas/OAuth reales, push, despliegue, Windows/Termux ni carga completa.
 
-1. Leer AGENTS/estado/arquitectura/ADR-005, SPEC/VALIDACION, informes F2A/F2B.1 y backlog;
-   revisar git status. Conservar Node >=22.13, worker SQL exclusivo y transportes.
-2. Conservar guarda de reset F2B.1 (BUG-029/031 cerrados): nunca matar un PID
-   supervisado para asumir que quedó detenido; abortar antes de borrar si no se
-   verifica parada. Respetar SDK_GATEWAY_LOCK_PATH y SDK_BRAIN_LOCK_PATH. No
-   quitar los tests de reemplazo de PID/worker/CLI ni usar estado real.
-3. Definir cuenta WA por identidad comprobada del proveedor, nunca por token ni
-   UUID nuevo en cada arranque; registerAccount devuelve ID durable por providerKey.
-   Alcance individual vs self/admin/grupo/status/broadcast explícito. No habilitar
-   otra cuenta ni fusionar aliases por coincidencias de dígitos.
-4. Captura independiente de texto/IA/STT y de permiso/pausa/handoff: todos los
-   elementos messages.upsert, history_sync por lotes, IDs/fechas/procedencia,
-   aliases con evidencia. requires_review del archivo debe impedir futura
-   automatización/envío, sin crear un segundo control SQLite frente al JSON.
-5. Resolver BUG-001/002/003 y parte WA de 008/009 con tests de adapter falso:
-   lotes completos, callback de socket reemplazado sin efectos, sync/live/mismo
-   ID en chats/cuentas, JID/LID verificados y conflictos sin mezcla. No atribuir
-   corrección TG a pruebas WA. No copiar datos reales para validar.
-6. Conectar admisión/commit antes de generación; aplicar backpressure a 1000/32MiB,
-   observar saturación/fallo sin ack ficticio. No invocar IA en backfill/eco.
-   Un timeout de RPC tiene resultado incierto; recuperar/dedup sin reintento ciego.
-7. Multimedia base antes de STT y actualización del mismo ID/evento; fallos dejan
-   marcador visible. Archivo no depende del cache RAM ni de memoria del brain.
-8. Programar purga acotada antes de primeras capturas; cuerpo/eventos/huellas
-   90/7/180d, estrictamente <cutoff. Contexto derivado aún no conectado: F5 deberá
-   invalidarlo al purgar. No abrir HTTP de conversaciones ni SSE antes de F3.
-9. Tests aislados, checks Node22/24 y distribución/launcher afectados; actualizar
-   evidencia/backlog/roadmap/estado y commit local. No cerrar F2 completa sin TG
-   durable, carga, dedup/retención y aceptación conjunta.
+## Siguiente unidad exacta: Fase 2 / F2B.3
 
-**Aceptación:** una ráfaga WA falsa se conserva al reiniciar, reimportación/eco no
-crean nuevas entradas, sockets viejos no modifican estado y captura funciona con
-IA pausada/ignorada/human. Sin contacto a cuentas/servicios reales.
+**Entregable:** completar enriquecimiento multimedia WA (BUG-033/034), conservando
+la captura base ya operativa. F2B no está cerrada. Telegram/ack sigue F2C;
+generador/carga completa de VALIDACION es puerta de cierre de F2.
+
+1. Leer AGENTS, estado, arquitectura/ADR005/006, SPEC/VALIDACION, informes F2A/F2B.1/
+   [F2B.2](CAPTURA-WHATSAPP-F2B2.md) y backlog; revisar git status. Conservar
+   worker SQL único, Node>=22.13 y guardas de reset/locks. No usar estado real.
+2. BUG-033: repositorio de actualización de multimedia por ID original, transacción
+   con aggregateVersion/evento message.updated. API interna acotada, no HTTP nuevo.
+   No cambiar fingerprint del original al enriquecer; redelivery no es conflicto.
+3. Audio base antes de STT; persistir pending/completed/failed y transcript antes
+   de emitir texto al handler. Desactivado queda not_requested. Descarga vacía,
+   timeout, error, reconexión y reinicio deben dejar estado veraz; no IA tardía.
+   Actualización de cuerpo purgado no lo recrea; fallo conserva marcador y no
+   inventa éxito. No bloquear captura por la espera STT.
+4. BUG-034: conservar tipo de multimedia y caption en contrato/normalización,
+   incluyendo wrappers. Si cambia packages/contracts: regenerar, checks raíz y
+   npm ci gateway para refrescar copia empaquetada; mantener compatibilidad con
+   mensajes text/media existentes. Caption >64KiB con marcador sin IA.
+5. Probar actualización/dedup/aliases, transcript fallida/exceso, purga/restart,
+   STT sustituido y commit antes de IA en temporales. Regresiones 204 existentes
+   siguen como base, no como demostración del control/outbox F5.
+6. Cuenta proviene de socket autenticado, no token/settings. requires_review sigue
+   bloqueando nueva admisión y envío por adapter. JSON aún autoridad de control;
+   external_self no suspende IA con garantía v1 hasta F5. No introducir doble writer.
+7. Mantener saturación 1000/32MiB observable y no reintentar RPC de resultado
+   incierto. Las observaciones rechazadas pueden faltar si WA no las reentrega.
+8. Checks Node22/24 y distribución afectada, evidencia, backlog/roadmap/estado y
+   commit de la unidad. No cerrar F2 por pruebas reducidas ni habilitar UI/API F3.
 
 ## Pendientes materiales
 
-- Driver y repositorios SQLite implementados/probados en Linux; falta Windows/
-  Termux y captura en adapters. La DB del brain no es el archivo operativo.
-- F2A implementa identidad/huellas/purga en repositorios. Faltan captura, scheduler
-  y ensayo completo de corte/rollback/control y retención de contexto derivado. Los presupuestos de carga no están medidos.
-- Historial previo completo no está garantizado por WA/Bot API.
-- Validación real WA/TG y ejecución Windows/Termux siguen pendientes; usar cuenta
-  de prueba y una única instancia. Conservar pendientes heredados de ROADMAP.
+- F2B.2 archiva observaciones WA admitidas; todavía faltan enriquecimiento completo
+  de multimedia, atribución durable de salidas y control desde teléfono/panel.
+- Telegram/cursor/descubrimiento (BUG004/005/009) y carga completa F2 pendientes.
+- Corte/rollback/control/outbox, invalidación de contexto derivado y backups
+  programados siguen F5/F8. Purga de archivo inicial/diaria ya está conectada.
+- Historial previo completo no está garantizado por WA/Bot API. Driver probado en
+  Linux; Windows/Termux y cuenta real de prueba con una sola instancia pendientes.
+- BUG-035 pairing async no bloquea captura autenticada; reparar antes de su
+  aceptación F8. BUG-024 antes de operadores limitados F3. No paralelizar suites
+  Python hasta BUG-014. No asumir que el panel legacy respeta grants v1.
 
 ## Regla de cierre para la siguiente sesión
 
-Actualizar este archivo y solo los checkboxes demostrados. El prompt estable de
-[PROMPT-CONTINUIDAD.md](PROMPT-CONTINUIDAD.md) consulta este estado para retomar.
-Hacer commit de la unidad probada e informar su hash. BUG-001 a 012 (010 parcial),
-BUG-014 y BUG-024 siguen abiertos. BUG-013/019–023/025 cerrados F1B; BUG-015 F0.2,
-BUG-017/018 F1A y BUG-016 cerrado en diseño F0.3, con prueba de repositorio real F2A; captura live aún pendiente.
+Actualizar estado y solo checkboxes demostrados; hacer commit probado e informar
+hash. El [prompt estable](PROMPT-CONTINUIDAD.md) consulta este estado sin reescritura.
+BUG-004–012 (009/010 parciales), BUG-014/024 y BUG-033/034/035 siguen abiertos.
+BUG-016 probado en repositorio y aliases del adapter, sin afirmar F2 completa.
 
-Cierre F2B.1: commit local `git log --grep="close F2B.1"`; BUG-029/031 cerrados.
-Cierre F2A: commit local `git log --grep="close F2A"`; BUG-026/027/028/030 cerrados.
+Cierre F2B.2: commit local `git log --grep="close F2B.2"`; BUG-001/002/003/032 cerrados.
+Cierre F2B.1: `4bb4ec3`; BUG-029/031 cerrados.
+Cierre F2A: `37525a1`; BUG-026/027/028/030 cerrados.

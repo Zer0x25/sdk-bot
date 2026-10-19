@@ -22,7 +22,7 @@ F0.3 completada: [especificación operativa](SPEC-OPERATIVA-V1.md), 75 escenario
 aceptación futura revisados y [protocolo de validación](VALIDACION-V1.md). Fase 0
 cerrada. F1A y F1B completadas: workspace mínimo, contratos/tipos y frontera
 autenticada probados. F2A completada (repositorios del archivo); F2B.1 cierra la puerta de reset CLI.
-Siguiente: captura WA F2B.
+F2B.2 conecta captura base WA. Siguiente: enriquecimiento multimedia F2B.3.
 Sin canales reales ni migración.
 
 ## Alcance y entregas
@@ -112,11 +112,12 @@ alterado/vencido y desarrollo explícito, sin conectarse a canales reales.
 
 ## Fase 2 — Historial durable y captura completa
 
-**Depende de:** Fase 1. **Estado: F2A completada; captura pendiente F2B/F2C.**
+**Depende de:** Fase 1. **Estado: F2A/F2B.1/F2B.2 completadas; F2B.3/F2C pendientes.**
 Evidencia: [ARCHIVO-CONVERSACIONES-F2A](ARCHIVO-CONVERSACIONES-F2A.md).
 F2B.1 completa la puerta BUG-029/031 del reset CLI; evidencia en
 [RESET-SEGURO-F2B1](RESET-SEGURO-F2B1.md). F2B integra WA; F2C Telegram/ack; carga
-completa antes de cerrar F2.
+completa antes de cerrar F2. Captura base WA probada en
+[CAPTURA-WHATSAPP-F2B2](CAPTURA-WHATSAPP-F2B2.md); esto no cierra F2B.
 
 - [x] Repositorios y migraciones SQLite para cuentas, identidades, mensajes,
   conversaciones y eventos. Worker único; constraints e índices para consultas.
@@ -126,16 +127,20 @@ completa antes de cerrar F2.
 - [x] F2B.1 Antes de captura: reset CLI rechaza supervisión/inspección incierta y
   verifica parada antes de borrar. Brain respeta su lock configurado. BUG-029/031
   cerrados con procesos/estado temporales; no es prueba de captura ni control.
-- [ ] Captura de todos los elementos WA upsert, no solo el primero; importación de
-  history_sync por lotes. Timestamps originales y deduplicación estable.
-  Cubrir callbacks de sockets reemplazados y conexión del flujo live al archivo.
+- [x] F2B.2 Captura base de todos los elementos WA admitidos (live/append/history),
+  timestamps originales, cuenta estable y dedup/aliases exactos. SQLite antes de
+  legacy/cache, guardas de socket y reconexión solapada; BUG-001/002/003/032
+  cerrados. FIFO 1000/32MiB, desbordamiento visible sin ack ficticio. Purga
+  inicial/diaria acotada; Node22/24 y entry real con transporte simulado probados.
 - [ ] Captura Telegram antes de adelantar/confirmar cursor durable. Reprocesar un
   update tras crash sin duplicarlo. No agregar otro poller para descubrir historial.
   Reconducir el getUpdates indirecto de testAndGetChatId al dueño único o coordinar
   descubrimiento sin competencia de transporte; añadir prueba de esa exclusión.
 - [ ] Persistir entrada aunque IA esté pausada, ignorando o en human. Reconciliar
   salida IA, humana desde teléfono y avisos por origen; separar chats administrativos.
-- [ ] Multimedia como mensaje base y STT como actualización del mismo ID, incluso
+- [ ] F2B.3 Completar multimedia: base sin caption ya existe en F2B.2; reparar
+  BUG-033 (STT no actualiza archivo) y BUG-034 (caption pierde tipo multimedia),
+  conservando huella del original y evento/ID. STT como actualización, incluso
   con STT apagado/fallido. Backfill sin respuestas ni no leídos falsos.
 - [x] Mientras se migra, contactos/settings JSON siguen siendo autoridad detrás de
   repositorios; SQLite es autoridad del nuevo archivo de mensajes/eventos. No
