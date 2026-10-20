@@ -23,8 +23,9 @@ class StandardMessage {
      * @param {boolean} [params.metadata.isFromMe] - Si el mensaje fue enviado por el bot
      * @param {boolean} [params.metadata.isAdminChannel] - Si el chat corresponde al canal del admin
      * @param {any} params.raw - Objeto crudo del canal (solo para casos de escape / media no estandarizada)
+     * @param {string|null} [params.archiveMessageId] - ID durable para replay de ingreso
      */
-    constructor({ channel, remoteId, rawId, text, transcript, isAudio, metadata = {}, raw }) {
+    constructor({ channel, remoteId, rawId, text, transcript, isAudio, metadata = {}, raw, archiveMessageId = null }) {
         this.channel = channel;
         this.remoteId = remoteId;
         this.rawId = rawId;
@@ -34,6 +35,8 @@ class StandardMessage {
         this.isAudio = Boolean(isAudio);
         this.metadata = metadata;
         this.raw = raw;
+        // Durable archive identity used only for replayable customer ingress.
+        this.archiveMessageId = archiveMessageId;
     }
 }
 

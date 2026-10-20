@@ -98,10 +98,19 @@ def test_require_api_key_middleware():
     client = TestClient(brain_main.app)
 
     with patch.object(brain_main, "BRAIN_API_KEY", "secret-test-key-999"):
-        # Rutas exentas: /, /health, /history
+        # Solo salud pública; el contexto privado exige credencial (BUG-013).
         assert client.get("/").status_code == 200
         assert client.get("/health").status_code == 200
-        assert client.get("/history?user_id=123").status_code == 200
+        M.append_exchange("single", "private-auth-test", "privado", "respuesta")
+        for headers in ({}, {"X-API-Key": "wrong-key"}):
+            denied = client.get("/history?user_id=private-auth-test", headers=headers)
+            assert denied.status_code == 401
+            assert "privado" not in denied.text
+        history = client.get("/history?user_id=private-auth-test", headers={
+            "X-API-Key": "secret-test-key-999"
+        })
+        assert history.status_code == 200
+        assert history.json()["history"][0]["content"] == "privado"
 
         # Rutas protegidas sin header -> 401
         res_blocked = client.get("/profiles")

@@ -64,32 +64,22 @@ test('POST /telegram/test - falla si no hay token', async () => {
 });
 
 test('POST /telegram/test - funciona con mock de Telegram', async () => {
-    // Mock getUpdates (para autodescubrir chatId) y sendMessage
-    https.get = (url, cb) => {
-        const res = new EventEmitter();
-        res.statusCode = 200;
-        process.nextTick(() => {
-            res.emit('data', JSON.stringify({
-                ok: true,
-                result: [ { message: { chat: { id: 112233 } } } ]
-            }));
-            res.emit('end');
-        });
-        if (cb) cb(res);
-        return { on: () => {} };
-    };
+    // Con Chat ID explícito no se abre un lector para descubrirlo.
+    https.get = () => assert.fail('la prueba manual no debe consultar getUpdates');
 
     let sendMessageBody = '';
     https.request = (opts, cb) => {
         const req = new EventEmitter();
         req.write = (data) => { sendMessageBody += data; };
-        req.end = () => {
+        req.end = data => {
+            if (data) sendMessageBody += data;
             const res = new EventEmitter();
             res.statusCode = 200;
             if (cb) cb(res);
             process.nextTick(() => {
                 res.emit('data', JSON.stringify({ ok: true }));
                 res.emit('end');
+                req.emit('close');
             });
         };
         return req;
@@ -98,14 +88,14 @@ test('POST /telegram/test - funciona con mock de Telegram', async () => {
     const r = await fetch(`${API_BASE}/telegram/test`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ token: 'mockToken' })
+        body: JSON.stringify({ token: 'mockToken', chatId: '112233' })
     });
     const j = await r.json();
     assert.strictEqual(j.success, true);
-    assert.strictEqual(j.chatId, 112233);
+    assert.strictEqual(j.chatId, '112233');
     
     const parsedBody = JSON.parse(sendMessageBody);
-    assert.strictEqual(parsedBody.chat_id, 112233);
+    assert.strictEqual(parsedBody.chat_id, '112233');
     assert.ok(parsedBody.text.includes('Test de notificaciones'));
 });
 
@@ -133,7 +123,7 @@ test('classifyPollResponse distingue ok / auth (401/404) / error', () => {
 test('el polling de getUpdates tiene un único dueño: el adaptador (sin poller en el bus)', () => {
     // Regresión: dos loops competían por getUpdates y cada update caía en
     // uno u otro según carrera. El bus ya no expone maquinaria de polling.
-    for (const fn of ['startTelegramPoller', 'stopTelegramPoller', 'setTelegramCommandCallback', 'pollTelegram']) {
+    for (const fn of ['startTelegramPoller', 'stopTelegramPoller', 'setTelegramCommandCallback', 'pollTelegram', 'testAndGetChatId']) {
         assert.strictEqual(telegramService[fn], undefined, `telegramService.${fn} eliminado`);
     }
 });
@@ -187,7 +177,9 @@ test('TelegramAdapter es el único dueño de getUpdates y emite el mensaje del a
     // Config con token+chatId; el update llega del chat admin
     saveSettingsDB({ globalMode: 'ignored_all', telegramToken: 'mockTok', telegramChatId: '555' });
     const TelegramAdapter = require('../adapters/telegramAdapter');
-    const adapter = new TelegramAdapter();
+    const { createTelegramArchive } = require('./helpers/telegramArchive');
+    const adapter = new TelegramAdapter({ archive: createTelegramArchive(),
+        getMe: async () => ({ ok: true, result: { id: 42, is_bot: true } }) });
     /** @type {any[]} */
     const seen = [];
     adapter.on('message', m => seen.push(m));
@@ -199,21 +191,23 @@ test('TelegramAdapter es el único dueño de getUpdates y emite el mensaje del a
     https.get = (opts, cb) => {
         gets.push(opts.path);
         pollCalls += 1;
+        const req = new EventEmitter();
+        req.destroy = () => process.nextTick(() => req.emit('close'));
         const res = new EventEmitter();
         res.statusCode = 200;
         process.nextTick(() => {
             if (pollCalls === 1) {
                 res.emit('data', JSON.stringify({ ok: true, result: [
-                    { update_id: 7, message: { text: '/estado', chat: { id: 555 }, from: { first_name: 'Admin' } } }
+                    { update_id: 7, message: { message_id: 7, date: 1792368000, text: '/estado',
+                        chat: { id: 555, type: 'private' }, from: { first_name: 'Admin' } } }
                 ] }));
             } else {
                 res.emit('data', JSON.stringify({ ok: true, result: [] }));
             }
-            res.emit('end');
+            res.emit('end'); req.emit('close');
         });
         if (cb) cb(res);
-        // El poller llama req.setTimeout(35s) y req.on('error')
-        return { on: () => {}, setTimeout: () => {} };
+        return req;
     };
     // setMyCommands (menú al conectar)
     https.request = (opts, cb) => {
@@ -234,7 +228,7 @@ test('TelegramAdapter es el único dueño de getUpdates y emite el mensaje del a
             await new Promise(r => setTimeout(r, 10));
         }
     } finally {
-        adapter.disconnect(); // corta el loop por generación/pollerActive
+        await adapter.disconnect(); // aborta y espera cierre del request activo
         https.get = originalGet;
         https.request = originalRequest;
     }
@@ -248,6 +242,6 @@ test('TelegramAdapter es el único dueño de getUpdates y emite el mensaje del a
     // Un único loop: offsets consecutivos sobre la MISMA fuente de updates
     const gu = gets.filter(p => p.includes('getUpdates'));
     assert.ok(gu.length >= 2, `hubo polling (${gu.length} llamadas)`);
-    assert.match(gu[0], /offset=1&/);
-    assert.match(gu[1], /offset=8&/, 'offset = update_id + 1 consumido por el dueño único');
+    assert.match(gu[0], /offset=0&/);
+    assert.match(gu[1], /offset=8&/, 'offset = update_id + 1 tras confirmar el archivo');
 });

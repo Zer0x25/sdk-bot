@@ -85,3 +85,18 @@ test('transcribeAudio: 200 con texto vacío -> null', async () => {
     const text = await transcribeAudio(Buffer.alloc(100), 'wa.ogg');
     assert.strictEqual(text, null);
 });
+
+test('transcribeAudio: cancellation reaches fetch and never retries a replaced socket', async () => {
+    const controller = new globalThis.AbortController();
+    calls = [];
+    fetchImpl = (_url, opts) => new Promise((_, reject) => {
+        opts.signal.addEventListener('abort', () => reject(opts.signal.reason), { once: true });
+    });
+    const pending = transcribeAudio(Buffer.from('audio'), 'wa.ogg', { signal: controller.signal });
+    controller.abort();
+    assert.strictEqual(await pending, null);
+    assert.strictEqual(calls.length, 1);
+    assert.ok(calls[0].opts.signal.aborted);
+    assert.strictEqual(await transcribeAudio(Buffer.from('audio'), 'wa.ogg', { signal: controller.signal }), null);
+    assert.strictEqual(calls.length, 1);
+});

@@ -8,10 +8,11 @@ const { cat } = require('../services/logger');
 const { isJunkJid } = require('../services/contactsRepository');
 const { extractUserMetadata } = require('../services/metadataService');
 const { extractTextMessage, decideReconnect } = require('../services/pipeline');
-const { isBotSentMessage } = require('../config');
+const { createWhatsappCapture, socketIdentity, individualJid, unwrap, acceptedOutbound } = require('../services/conversations/whatsappCapture');
+const { createWhatsappTranscription } = require('../services/conversations/whatsappTranscription');
 const internalBus = require('../services/internalBus');
 const { getSettingsDB, saveSettingsDB } = require('../services/db');
-const { transcribeAudio } = require('../services/stt');
+const { transcribeAudio, MAX_AUDIO_BYTES } = require('../services/stt');
 const { num } = require('../tuning');
 
 const log = cat('WHATSAPP');
@@ -20,9 +21,21 @@ const logError = cat('ERROR');
 const AUTH_DIR = process.env.SDK_AUTH_DIR || path.join(__dirname, '..', 'auth_info_baileys');
 
 class WhatsappAdapter extends ChannelAdapter {
-    constructor() {
+    constructor({ archive, makeSocket = makeWASocket, loadAuth = useMultiFileAuthState, download = downloadMediaMessage, transcribe = transcribeAudio } = {}) {
         super('whatsapp');
         this.sock = null;
+        this.accountId = null;
+        this.makeSocket = makeSocket;
+        this.loadAuth = loadAuth;
+        this.download = download;
+        this.transcribe = transcribe;
+        this.capture = archive ? createWhatsappCapture(archive, {
+            buildLegacyDispatch: (msg, observation) => this.buildLegacyDispatch(msg, observation)
+        }) : null;
+        this.archive = archive;
+        this.transcriptions = archive ? createWhatsappTranscription(archive, code => this.captureFailure(code)) : null;
+        this.connectRevision = 0;
+        this.sentIds = new Map();
         this.reconnectAttempt = 0;
         this.reconnectTimer = null;
         this.RECONNECT_BACKOFF_MS = [1000, 5000, 15000, 60000];
@@ -84,12 +97,13 @@ class WhatsappAdapter extends ChannelAdapter {
         if (this.reconnectTimer) clearTimeout(this.reconnectTimer);
         this.reconnectTimer = setTimeout(() => {
             this.reconnectTimer = null;
-            this.connect();
+            this.connect().catch(() => this.captureFailure('WA_CONNECT_FAILED'));
         }, delay);
     }
 
     async connect(options = {}) {
         const freshQr = options.freshQr === true;
+        const revision = ++this.connectRevision;
 
         // No destruir el socket si ya hay un QR vigente o pairing en curso:
         // connect({freshQr:true}) hace old.end() y eso cortaba el stream justo
@@ -97,13 +111,17 @@ class WhatsappAdapter extends ChannelAdapter {
         // El bus ya bloquea el refresh si hay ventana abierta, pero el adapter
         // tambien se protege (el refresh puede venir por otras vias).
         const pairingInFlight = this.sock && internalBus.isQrWindowOpen && internalBus.isQrWindowOpen();
-        if (this.sock && !pairingInFlight) {
+        if (pairingInFlight) return;
+        this.accountId = null;
+        if (this.sock) {
             const old = this.sock;
             this.sock = null;
+            this.transcriptions?.cancel();
             try { old.end(new Error('Reconnect por nueva conexión')); } catch (e) { /* ya cerrado */ }
         }
 
-        const { state: authState, saveCreds } = await useMultiFileAuthState(AUTH_DIR);
+        const { state: authState, saveCreds } = await this.loadAuth(AUTH_DIR);
+        if (revision !== this.connectRevision) return;
 
         // Limpiar sesion a medias SOLO cuando el panel pide QR fresco
         // (freshQr). En un reconnect normal NO se borra 'me': Baileys necesita
@@ -116,7 +134,8 @@ class WhatsappAdapter extends ChannelAdapter {
             log.info('🔌 [WHATSAPP] Pairing fresco: sesion a medias descartada (registered=false).');
         }
 
-        this.sock = makeWASocket({
+        if (revision !== this.connectRevision) return;
+        this.sock = this.makeSocket({
             printQRInTerminal: false,
             auth: authState,
             logger: pino({ level: 'silent' }),
@@ -136,7 +155,11 @@ class WhatsappAdapter extends ChannelAdapter {
         // viejo (tras reconnect o freshQr) deben ignorarse.
         const sock = this.sock;
         // Eventos Baileys
-        sock.ev.on('creds.update', saveCreds);
+        sock.ev.on('creds.update', () => {
+            if (this.sock !== sock) return;
+            void Promise.resolve().then(() => { if (this.sock === sock) return saveCreds(); })
+                .catch(() => { if (this.sock === sock) this.captureFailure('WA_CREDENTIAL_SAVE_FAILED'); });
+        });
 
         sock.ev.on('connection.update', (update) => {
             if (this.sock !== sock) return; // Ignora eventos de un socket reemplazado
@@ -149,6 +172,7 @@ class WhatsappAdapter extends ChannelAdapter {
             
             if (connection === 'close') {
                 this.sock = null;
+                this.transcriptions?.cancel();
                 const statusCode = (lastDisconnect?.error)?.output?.statusCode;
                 const closeDetail = (lastDisconnect?.error)?.message || 'sin detalle';
                 const loggedOut = statusCode === DisconnectReason.loggedOut;
@@ -192,6 +216,19 @@ class WhatsappAdapter extends ChannelAdapter {
                 this.reconnectAttempt = 0;
                 if (this.reconnectTimer) { clearTimeout(this.reconnectTimer); this.reconnectTimer = null; }
                 this.setStatus('open');
+
+                if (this.archive && sock.user) {
+                    try {
+                        const session = socketIdentity(sock.user);
+                        void this.archive.registerAccount({ channel: 'whatsapp', providerKey: session.providerKey })
+                            .then(account => {
+                                if (this.sock === sock && revision === this.connectRevision) this.accountId = account.id;
+                            })
+                            .catch(() => { if (this.sock === sock) this.captureFailure('WA_ACCOUNT_ARCHIVE_FAILED'); });
+                    } catch (error) {
+                        this.captureFailure(error?.code || 'WA_ACCOUNT_IDENTITY_INVALID');
+                    }
+                }
                 
                 let adminPhone = '';
                 let adminLid = '';
@@ -220,7 +257,7 @@ class WhatsappAdapter extends ChannelAdapter {
                     }
                     // Reconnect limpio: el socket actual se cierra y el nuevo
                     // lee creds vacíos -> emite QR nuevo para re-pairing.
-                    this.connect();
+                    this.connect().catch(() => this.captureFailure('WA_CONNECT_FAILED'));
                     return;
                 }
                 if (adminPhone) this.setKnownAdminPhone(adminPhone);
@@ -232,42 +269,14 @@ class WhatsappAdapter extends ChannelAdapter {
             }
         });
 
-        this.sock.ev.on('messages.upsert', async m => {
-            if (!m.messages || m.messages.length === 0) return;
-            const msg = m.messages[0];
-            if (!msg || !msg.message) return;
-
-            // 🛑 ANTI-BUCLE: Ignorar mensajes generados por el propio bot
-            if (msg.key.id && isBotSentMessage(msg.key.id)) return;
-
-            const text = extractTextMessage(msg);
-            const metadata = extractUserMetadata(msg);
-
-            if (!text) {
-                // 🎤 STT local: si es un audio de voz (ptt), transcribirlo y
-                // usar el texto como si fuera un mensaje de texto normal.
-                await this._maybeHandleAudio(msg, metadata);
-                return;
-            }
-
-            const remoteJid = metadata.remoteJid;
-
-            const stdMsg = new StandardMessage({
-                channel: 'whatsapp',
-                remoteId: `whatsapp:${remoteJid}`,
-                rawId: remoteJid,
-                text: text,
-                metadata: {
-                    ...metadata,
-                    isFromMe: msg.key.fromMe
-                },
-                raw: msg
-            });
-
-            this.emit('message', stdMsg);
+        sock.ev.on('messages.upsert', m => {
+            if (this.sock !== sock) return;
+            // append is offline/backfill traffic; only notify may reach automation.
+            this.captureBatch(sock, m.messages, m.type === 'notify' ? 'live' : 'history');
         });
 
         const handleContactSync = (contacts, source) => {
+            if (this.sock !== sock) return;
             if (!Array.isArray(contacts) || contacts.length === 0) return;
             const valid = contacts.filter(c => c && c.id && !isJunkJid(c.id));
             if (valid.length > 0) {
@@ -275,116 +284,203 @@ class WhatsappAdapter extends ChannelAdapter {
             }
         };
 
-        this.sock.ev.on('contacts.upsert', c => handleContactSync(c, 'contacts.upsert'));
-        this.sock.ev.on('contacts.update', c => handleContactSync(c, 'contacts.update'));
+        sock.ev.on('contacts.upsert', c => handleContactSync(c, 'contacts.upsert'));
+        sock.ev.on('contacts.update', c => handleContactSync(c, 'contacts.update'));
 
-        this.sock.ev.on('messaging-history.set', ({ contacts, chats, messages, progress, syncType }) => {
+        sock.ev.on('messaging-history.set', ({ contacts, chats, messages, progress, syncType }) => {
+            if (this.sock !== sock) return;
+            this.captureBatch(sock, messages, 'history');
             if (contacts) handleContactSync(contacts, 'history');
-            this.emit('history_sync', { messages });
+            // Legacy RAM cache is fed only after durable capture below.
             log.info(`📜 WA History sync: type=${syncType} progreso=${progress}% chats=${chats?.length ?? 0} msgs=${messages?.length ?? 0}`);
         });
 
-        this.sock.ev.on('presence.update', ({ id, presences }) => {
+        sock.ev.on('presence.update', ({ id, presences }) => {
+            if (this.sock !== sock) return;
             this.emit('presence_update', { id, presences });
         });
     }
 
-    async disconnect() {
-        if (this.sock) {
-            this.sock.end(new Error('Manual disconnect'));
-            this.sock = null;
-        }
-        this.setStatus('disconnected');
+    captureFailure(code) {
+        const status = { status: 'degraded', code, at: new Date().toISOString() };
+        this.emit('capture_status', status);
+        logError.error(`Archivo WhatsApp: ${code}. Captura no confirmada; revisar intervalo afectado.`);
     }
 
-    /**
-     * 🎤 STT local: si el mensaje es un audio de voz (ptt), lo descarga,
-     * lo transcribe con el servicio faster-whisper y emite un StandardMessage
-     * con el texto ya normalizado (igual que un texto). Si el STT está
-     * desactivado o falla, el audio se descarta sin romper el canal.
-     * @param {object} msg - mensaje Baileys (msg.message.audioMessage)
-     * @param {object} metadata - metadata ya extraída del usuario
-     */
-    async _maybeHandleAudio(msg, metadata) {
-        const audioMsg = msg?.message?.audioMessage;
-        if (!audioMsg) return; // no es audio: ignorar (imagen/doc/etc.) como antes
-
-        const enabled = num('AUDIO_STT_ENABLED', 0) === 1;
-        if (!enabled) {
-            log.info('🎤 STT desactivado (AUDIO_STT_ENABLED=0): audio ignorado.');
-            return;
+    captureBatch(sock, messages, source) {
+        if (!Array.isArray(messages) || this.sock !== sock) return;
+        let session;
+        try { session = socketIdentity(sock.user); }
+        catch (error) { this.captureFailure(error.code); return; }
+        if (!this.capture) { this.captureFailure('WA_CAPTURE_UNCONFIGURED'); return; }
+        // Each record is admitted synchronously. Overflow is visible and never
+        // reaches legacy automation. No extra unbounded promise-chain queue.
+        const reported = new Set();
+        for (const msg of messages) {
+            this.capture.enqueue(msg, session, source).then(observation => {
+                if (this.sock !== sock) return;
+                if (observation.scope === 'administration') {
+                    if (source === 'live') return this.processLive(sock, msg, session);
+                    return;
+                }
+                if (observation.scope !== 'individual') return;
+                if (observation.result.status !== 'quarantined') this.emit('archived_message', { raw: msg, source, observation });
+                if (source !== 'live' || observation.result.status !== 'created' || observation.requiresReview
+                    || observation.result.message.content.type === 'oversized') return;
+                // The archive records fromMe independently of the legacy echo guard.
+                if (msg.key.fromMe) return;
+                return this.processLive(sock, msg, session, observation);
+            }).catch(error => {
+                const code = error.code || 'WA_CAPTURE_FAILED';
+                if (!reported.has(code)) { reported.add(code); this.captureFailure(code); }
+            });
         }
+    }
 
-        // Tope de duración por el campo `seconds` que Baileys expone.
-        const seconds = Number(audioMsg.seconds) || 0;
-        const maxSeconds = num('STT_MAX_SECONDS', 120);
-        if (seconds > maxSeconds) {
-            log.warn(`🎤 Audio de ${seconds}s excede el tope (${maxSeconds}s). Se ignora.`);
-            // Avisar al usuario con un globo corto vía el adapter si está conectado.
-            const remoteJid = metadata?.remoteJid || msg.key?.remoteJid;
-            if (remoteJid && this.sock) {
-                await this.sendMessage(`whatsapp:${remoteJid}`,
-                    `🎤 Audio muy largo (${seconds}s). Máximo ${maxSeconds}s por ahora.`)
-                    .catch(() => {});
-            }
-            return;
-        }
+    buildLegacyDispatch(msg, observation) {
+        if (observation.source !== 'live' || observation.direction !== 'inbound' || observation.authorKind !== 'customer') return null;
+        const content = observation.content;
+        const text = content.type === 'text' ? content.text : content.caption || '';
+        if (Buffer.byteLength(text) > 65536) return null;
+        const waitForTranscription = content.type === 'audio' && !text && num('AUDIO_STT_ENABLED', 0) === 1;
+        if (!text && !waitForTranscription) return null;
+        const metadata = extractUserMetadata(msg);
+        return { waitForTranscription, message: {
+            channel: 'whatsapp', remoteId: `whatsapp:${observation.remote}`, rawId: observation.remote,
+            text, transcript: '', isAudio: waitForTranscription,
+            metadata: { pushName: metadata.pushName, savedName: metadata.savedName,
+                phoneNumber: metadata.phoneNumber, lid: metadata.lid, isBusiness: metadata.isBusiness,
+                country: metadata.country, isFromMe: false, isAdminChannel: false }
+        } };
+    }
 
+    isOwnEcho(msg, session) {
+        const remote = individualJid(msg.key?.remoteJid);
+        const k = `${session.providerKey}|${remote}|${msg.key?.id}`;
+        return msg.key?.fromMe && (this.sentIds.get(k) || 0) > Date.now();
+    }
+
+    async archiveAcceptedSend(session, targetJid, sentContent, result) {
+        if (!this.archive) return;
+        const outbound = acceptedOutbound(result, session, targetJid, sentContent);
+        if (!outbound) return;
         try {
-            // Indicar "grabando/transcribiendo" para feedback humano.
-            const remoteJid = metadata?.remoteJid || msg.key?.remoteJid;
-            if (remoteJid && this.sock) {
-                await this.sendPresenceUpdate('recording', `whatsapp:${remoteJid}`).catch(() => {});
-            }
-
-            // downloadMediaMessage(msg, 'buffer', options, ctx) — igual que profiles.js.
-            const buffer = await downloadMediaMessage(msg, 'buffer', {}, {
-                logger: log,
-                reuploadRequest: async (m) => m
-            });
-            if (!buffer || buffer.length === 0) {
-                log.warn('🎤 No se pudo descargar el audio (buffer vacío).');
-                return;
-            }
-
-            const ext = (audioMsg.mimetype || 'audio/ogg').includes('ogg') ? 'ogg'
-                : (audioMsg.mimetype || '').includes('mp4') ? 'm4a' : 'ogg';
-            const transcript = await transcribeAudio(buffer, `wa-audio.${ext}`, { language: 'es' });
-            if (!transcript) {
-                log.warn('🎤 STT no devolvió transcripción (audio ignorado).');
-                return;
-            }
-
-            log.info(`🎤 [AUDIO TRANSCRITO] ${remoteJid}: "${transcript}"`);
-            const stdMsg = new StandardMessage({
-                channel: 'whatsapp',
-                remoteId: `whatsapp:${remoteJid}`,
-                rawId: remoteJid,
-                text: transcript,
-                transcript: transcript,
-                isAudio: true,
-                metadata: {
-                    ...metadata,
-                    isFromMe: msg.key.fromMe
-                },
-                raw: msg
-            });
-            this.emit('message', stdMsg);
-        } catch (err) {
-            logError.error('🎤 Error en STT de WhatsApp: ' + (err && err.message));
-        } finally {
-            const remoteJid = metadata?.remoteJid || msg.key?.remoteJid;
-            if (remoteJid && this.sock) {
-                await this.sendPresenceUpdate('paused', `whatsapp:${remoteJid}`).catch(() => {});
-            }
+            const account = await this.archive.registerAccount({ channel: 'whatsapp', providerKey: session.providerKey });
+            outbound.identity = { accountId: account.id, channel: 'whatsapp',
+                kind: outbound.remote.endsWith('@lid') ? 'whatsapp_lid' : 'whatsapp_jid', exactValue: outbound.remote };
+            delete outbound.remote;
+            const [stored] = await this.archive.ingestBatch([outbound]);
+            if (stored?.status === 'quarantined') this.captureFailure('WA_OUTBOUND_RECONCILIATION_CONFLICT');
+        } catch (error) {
+            this.captureFailure(error.code || 'WA_OUTBOUND_ARCHIVE_FAILED');
         }
+    }
+
+    async processLive(sock, msg, session, observation) {
+        if (this.sock !== sock || this.isOwnEcho(msg, session)) return;
+        const content = observation?.result.message.content;
+        const text = content ? (content.type === 'text' ? content.text : content.caption || '') : extractTextMessage(msg);
+        const metadata = extractUserMetadata(msg);
+        if (!text) return this._maybeHandleAudio(msg, metadata, sock, observation);
+        this.emit('message', new StandardMessage({
+            channel: 'whatsapp', remoteId: `whatsapp:${metadata.remoteJid}`,
+            rawId: metadata.remoteJid, text,
+            metadata: { ...metadata, isFromMe: msg.key.fromMe }, raw: msg,
+            archiveMessageId: observation?.result?.message?.id ?? null
+        }));
+    }
+
+    async disconnect() {
+        this.connectRevision++;
+        if (this.reconnectTimer) { clearTimeout(this.reconnectTimer); this.reconnectTimer = null; }
+        const sock = this.sock;
+        this.sock = null;
+        this.accountId = null;
+        this.transcriptions?.cancel();
+        try { if (sock) sock.end(new Error('Manual disconnect')); }
+        finally {
+            await this.capture?.close();
+            await this.transcriptions?.close();
+            this.setStatus('disconnected');
+        }
+    }
+
+    /** Audio is enriched only after its original ID has committed. */
+    async _maybeHandleAudio(msg, metadata, sock, observation) {
+        const audio = unwrap(msg?.message).audioMessage;
+        const messageId = observation?.result.message.id;
+        if (!audio || !this.transcriptions || this.sock !== sock) return;
+        if (num('AUDIO_STT_ENABLED', 0) !== 1) return;
+        if ((Number(audio.seconds) || 0) > num('STT_MAX_SECONDS', 120)) {
+            await this.transcriptions.skip(messageId);
+            if (this.sock === sock) await this.sendMessage(`whatsapp:${metadata.remoteJid}`,
+                `🎤 Audio muy largo (${Number(audio.seconds)}s). Máximo ${num('STT_MAX_SECONDS', 120)}s por ahora.`).catch(() => {});
+            return;
+        }
+        const remoteJid = metadata.remoteJid;
+        await this.transcriptions.run(messageId, async signal => {
+            try {
+                await sock.sendPresenceUpdate('recording', remoteJid).catch(() => {});
+                signal.throwIfAborted();
+                const media = await this.download(msg, 'stream', { options: { signal } }, {
+                    logger: log, reuploadRequest: async m => m
+                });
+                let buffer;
+                try {
+                    signal.throwIfAborted();
+                    if (Buffer.isBuffer(media)) buffer = media; // injected transports
+                    else {
+                        const chunks = []; let bytes = 0;
+                        for await (const chunk of media) {
+                            signal.throwIfAborted();
+                            bytes += chunk.length;
+                            if (bytes > MAX_AUDIO_BYTES) throw new Error('Audio exceeds limit');
+                            chunks.push(chunk);
+                        }
+                        buffer = Buffer.concat(chunks);
+                    }
+                    if (!buffer?.length || buffer.length > MAX_AUDIO_BYTES) throw new Error('Invalid audio size');
+                } finally { if (!Buffer.isBuffer(media)) media?.destroy(); }
+                const ext = (audio.mimetype || '').includes('mp4') ? 'm4a' : 'ogg';
+                return await this.transcribe(buffer, `wa-audio.${ext}`, { language: 'es', signal });
+            } finally {
+                if (this.sock === sock && !signal.aborted) void sock.sendPresenceUpdate('paused', remoteJid).catch(() => {});
+            }
+        }, () => this.sock === sock, transcript => {
+            this.emit('message', new StandardMessage({
+                channel: 'whatsapp', remoteId: `whatsapp:${remoteJid}`, rawId: remoteJid,
+                text: transcript, transcript, isAudio: true,
+                metadata: { ...metadata, isFromMe: msg.key.fromMe }, raw: msg,
+                archiveMessageId: messageId
+            }));
+        });
     }
 
     async sendMessage(normalizedJid, text, options = {}) {
         if (!this.sock) throw new Error('WhatsApp no conectado');
+        const sock = this.sock;
         const waJid = normalizedJid.replace('whatsapp:', '');
+        const session = socketIdentity(sock.user);
+        const remote = individualJid(waJid);
+        if (this.archive && remote && !session.self.includes(remote)) {
+            const identity = await this.archive.resolve({ accountId: (await this.archive.registerAccount({
+                channel: 'whatsapp', providerKey: session.providerKey })).id, channel: 'whatsapp',
+            kind: remote.endsWith('@lid') ? 'whatsapp_lid' : 'whatsapp_jid', exactValue: remote });
+            if ((await this.archive.conversation(identity.conversation_id)).requires_review) {
+                throw Object.assign(new Error('Identidad pendiente de revisión.'), { code: 'WA_IDENTITY_REVIEW_REQUIRED' });
+            }
+        }
+        if (this.sock !== sock) throw new Error('Socket WhatsApp reemplazado');
         const content = (text && typeof text === 'object') ? { ...text, ...options } : { text, ...options };
-        return await this.sock.sendMessage(waJid, content);
+        const result = await sock.sendMessage(waJid, content);
+        if (result?.key?.id) {
+            const now = Date.now();
+            for (const [id, expiry] of this.sentIds) if (expiry <= now) this.sentIds.delete(id);
+            if (this.sentIds.size >= 10000) this.sentIds.delete(this.sentIds.keys().next().value);
+            this.sentIds.set(`${session.providerKey}|${individualJid(waJid)}|${result.key.id}`, now + 60000);
+        }
+        await this.archiveAcceptedSend(session, waJid, content, result);
+        return result;
     }
 
     async sendPresenceUpdate(status, normalizedJid) {

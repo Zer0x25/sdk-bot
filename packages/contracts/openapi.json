@@ -1,0 +1,985 @@
+{
+  "openapi": "3.1.0",
+  "info": {
+    "title": "SDK-Bot Conversations API",
+    "version": "1.0.0",
+    "description": "Contratos propuestos F1A; endpoints aún no implementados. Semántica: docs/SPEC-OPERATIVA-V1.md. expectedVersion = controlVersion textual. Formatos unicode-text y x-maxUtf8Bytes requieren validador del paquete; sin coerción ni defaults aplicados."
+  },
+  "jsonSchemaDialect": "https://json-schema.org/draft/2020-12/schema",
+  "servers": [
+    {
+      "url": "/api/v1",
+      "description": "Panel público con sesión; sesión implementada en F1B."
+    }
+  ],
+  "security": [
+    {
+      "panelSession": []
+    }
+  ],
+  "paths": {
+    "/session": {
+      "get": {
+        "operationId": "getSession",
+        "responses": {
+          "200": {
+            "description": "Sesión y capacidades verificadas por panel; no aceptar actor del cliente.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SessionResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "$ref": "#/components/responses/401"
+          },
+          "403": {
+            "$ref": "#/components/responses/403"
+          },
+          "404": {
+            "$ref": "#/components/responses/404"
+          },
+          "409": {
+            "$ref": "#/components/responses/409"
+          },
+          "410": {
+            "$ref": "#/components/responses/410"
+          },
+          "422": {
+            "$ref": "#/components/responses/422"
+          },
+          "503": {
+            "$ref": "#/components/responses/503"
+          }
+        }
+      }
+    },
+    "/accounts": {
+      "get": {
+        "operationId": "listAccounts",
+        "responses": {
+          "200": {
+            "description": "Cuentas sin credenciales.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AccountsResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "$ref": "#/components/responses/401"
+          },
+          "403": {
+            "$ref": "#/components/responses/403"
+          },
+          "404": {
+            "$ref": "#/components/responses/404"
+          },
+          "409": {
+            "$ref": "#/components/responses/409"
+          },
+          "410": {
+            "$ref": "#/components/responses/410"
+          },
+          "422": {
+            "$ref": "#/components/responses/422"
+          },
+          "503": {
+            "$ref": "#/components/responses/503"
+          }
+        }
+      }
+    },
+    "/conversations": {
+      "get": {
+        "operationId": "listConversations",
+        "responses": {
+          "200": {
+            "description": "Página de conversaciones y watermark.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ConversationsResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "$ref": "#/components/responses/401"
+          },
+          "403": {
+            "$ref": "#/components/responses/403"
+          },
+          "404": {
+            "$ref": "#/components/responses/404"
+          },
+          "409": {
+            "$ref": "#/components/responses/409"
+          },
+          "410": {
+            "$ref": "#/components/responses/410"
+          },
+          "422": {
+            "$ref": "#/components/responses/422"
+          },
+          "503": {
+            "$ref": "#/components/responses/503"
+          }
+        },
+        "parameters": [
+          {
+            "name": "cursor",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "$ref": "./schema.json#/$defs/ConversationsQuery/properties/cursor"
+            },
+            "description": "Decodificar explícitamente parámetros; sin coerción de IDs."
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "$ref": "./schema.json#/$defs/ConversationsQuery/properties/limit"
+            },
+            "description": "Decodificar explícitamente parámetros; sin coerción de IDs."
+          },
+          {
+            "name": "channel",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "$ref": "./schema.json#/$defs/ConversationsQuery/properties/channel"
+            },
+            "description": "Decodificar explícitamente parámetros; sin coerción de IDs."
+          },
+          {
+            "name": "accountId",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "$ref": "./schema.json#/$defs/ConversationsQuery/properties/accountId"
+            },
+            "description": "Decodificar explícitamente parámetros; sin coerción de IDs."
+          },
+          {
+            "name": "automationMode",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "$ref": "./schema.json#/$defs/ConversationsQuery/properties/automationMode"
+            },
+            "description": "Decodificar explícitamente parámetros; sin coerción de IDs."
+          },
+          {
+            "name": "lifecycle",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "$ref": "./schema.json#/$defs/ConversationsQuery/properties/lifecycle"
+            },
+            "description": "Decodificar explícitamente parámetros; sin coerción de IDs."
+          },
+          {
+            "name": "unreadOnly",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "$ref": "./schema.json#/$defs/ConversationsQuery/properties/unreadOnly"
+            },
+            "description": "Decodificar explícitamente parámetros; sin coerción de IDs."
+          },
+          {
+            "name": "search",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "$ref": "./schema.json#/$defs/ConversationsQuery/properties/search"
+            },
+            "description": "Decodificar explícitamente parámetros; sin coerción de IDs."
+          }
+        ]
+      }
+    },
+    "/conversations/{conversationId}": {
+      "get": {
+        "operationId": "getConversation",
+        "responses": {
+          "200": {
+            "description": "Proyección y watermark.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ConversationResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "$ref": "#/components/responses/401"
+          },
+          "403": {
+            "$ref": "#/components/responses/403"
+          },
+          "404": {
+            "$ref": "#/components/responses/404"
+          },
+          "409": {
+            "$ref": "#/components/responses/409"
+          },
+          "410": {
+            "$ref": "#/components/responses/410"
+          },
+          "422": {
+            "$ref": "#/components/responses/422"
+          },
+          "503": {
+            "$ref": "#/components/responses/503"
+          }
+        },
+        "parameters": [
+          {
+            "name": "conversationId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "$ref": "#/components/schemas/Id"
+            }
+          }
+        ]
+      },
+      "patch": {
+        "operationId": "updateConversation",
+        "responses": {
+          "200": {
+            "description": "Ciclo actualizado con versión de control.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TakeoverConfirmedResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "$ref": "#/components/responses/401"
+          },
+          "403": {
+            "$ref": "#/components/responses/403"
+          },
+          "404": {
+            "$ref": "#/components/responses/404"
+          },
+          "409": {
+            "$ref": "#/components/responses/409"
+          },
+          "410": {
+            "$ref": "#/components/responses/410"
+          },
+          "422": {
+            "$ref": "#/components/responses/422"
+          },
+          "503": {
+            "$ref": "#/components/responses/503"
+          }
+        },
+        "parameters": [
+          {
+            "name": "conversationId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "$ref": "#/components/schemas/Id"
+            }
+          },
+          {
+            "$ref": "#/components/parameters/IdempotencyKey"
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/UpdateConversationRequest"
+              }
+            }
+          }
+        }
+      }
+    },
+    "/conversations/{conversationId}/messages": {
+      "get": {
+        "operationId": "listMessages",
+        "responses": {
+          "200": {
+            "description": "Página cronológica estable.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/MessagesResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "$ref": "#/components/responses/401"
+          },
+          "403": {
+            "$ref": "#/components/responses/403"
+          },
+          "404": {
+            "$ref": "#/components/responses/404"
+          },
+          "409": {
+            "$ref": "#/components/responses/409"
+          },
+          "410": {
+            "$ref": "#/components/responses/410"
+          },
+          "422": {
+            "$ref": "#/components/responses/422"
+          },
+          "503": {
+            "$ref": "#/components/responses/503"
+          }
+        },
+        "parameters": [
+          {
+            "name": "conversationId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "$ref": "#/components/schemas/Id"
+            }
+          },
+          {
+            "name": "cursor",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "$ref": "./schema.json#/$defs/MessagesQuery/properties/cursor"
+            },
+            "description": "Decodificar explícitamente parámetros; sin coerción de IDs."
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "$ref": "./schema.json#/$defs/MessagesQuery/properties/limit"
+            },
+            "description": "Decodificar explícitamente parámetros; sin coerción de IDs."
+          }
+        ]
+      },
+      "post": {
+        "operationId": "sendMessage",
+        "responses": {
+          "202": {
+            "description": "Intención durable; no implica entrega.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SendMessageResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "$ref": "#/components/responses/401"
+          },
+          "403": {
+            "$ref": "#/components/responses/403"
+          },
+          "404": {
+            "$ref": "#/components/responses/404"
+          },
+          "409": {
+            "$ref": "#/components/responses/409"
+          },
+          "410": {
+            "$ref": "#/components/responses/410"
+          },
+          "422": {
+            "$ref": "#/components/responses/422"
+          },
+          "503": {
+            "$ref": "#/components/responses/503"
+          }
+        },
+        "parameters": [
+          {
+            "name": "conversationId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "$ref": "#/components/schemas/Id"
+            }
+          },
+          {
+            "$ref": "#/components/parameters/IdempotencyKey"
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/SendMessageRequest"
+              }
+            }
+          }
+        }
+      }
+    },
+    "/conversations/{conversationId}/takeover": {
+      "post": {
+        "operationId": "takeControl",
+        "responses": {
+          "200": {
+            "description": "Human confirmado.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TakeoverConfirmedResponse"
+                }
+              }
+            }
+          },
+          "202": {
+            "description": "Despacho previo en red; consultar operación.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TakeoverPendingResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "$ref": "#/components/responses/401"
+          },
+          "403": {
+            "$ref": "#/components/responses/403"
+          },
+          "404": {
+            "$ref": "#/components/responses/404"
+          },
+          "409": {
+            "$ref": "#/components/responses/409"
+          },
+          "410": {
+            "$ref": "#/components/responses/410"
+          },
+          "422": {
+            "$ref": "#/components/responses/422"
+          },
+          "503": {
+            "$ref": "#/components/responses/503"
+          }
+        },
+        "parameters": [
+          {
+            "name": "conversationId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "$ref": "#/components/schemas/Id"
+            }
+          },
+          {
+            "$ref": "#/components/parameters/IdempotencyKey"
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/TakeoverRequest"
+              }
+            }
+          }
+        }
+      }
+    },
+    "/conversations/{conversationId}/release": {
+      "post": {
+        "operationId": "releaseControl",
+        "responses": {
+          "200": {
+            "description": "Liberado conservando permisos/perfil.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TakeoverConfirmedResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "$ref": "#/components/responses/401"
+          },
+          "403": {
+            "$ref": "#/components/responses/403"
+          },
+          "404": {
+            "$ref": "#/components/responses/404"
+          },
+          "409": {
+            "$ref": "#/components/responses/409"
+          },
+          "410": {
+            "$ref": "#/components/responses/410"
+          },
+          "422": {
+            "$ref": "#/components/responses/422"
+          },
+          "503": {
+            "$ref": "#/components/responses/503"
+          }
+        },
+        "parameters": [
+          {
+            "name": "conversationId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "$ref": "#/components/schemas/Id"
+            }
+          },
+          {
+            "$ref": "#/components/parameters/IdempotencyKey"
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ReleaseRequest"
+              }
+            }
+          }
+        }
+      }
+    },
+    "/conversations/{conversationId}/read": {
+      "post": {
+        "operationId": "markRead",
+        "responses": {
+          "200": {
+            "description": "Cursor monotónico local del actor.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ReadResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "$ref": "#/components/responses/401"
+          },
+          "403": {
+            "$ref": "#/components/responses/403"
+          },
+          "404": {
+            "$ref": "#/components/responses/404"
+          },
+          "409": {
+            "$ref": "#/components/responses/409"
+          },
+          "410": {
+            "$ref": "#/components/responses/410"
+          },
+          "422": {
+            "$ref": "#/components/responses/422"
+          },
+          "503": {
+            "$ref": "#/components/responses/503"
+          }
+        },
+        "parameters": [
+          {
+            "name": "conversationId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "$ref": "#/components/schemas/Id"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ReadRequest"
+              }
+            }
+          }
+        }
+      }
+    },
+    "/operations/{operationId}": {
+      "get": {
+        "operationId": "getOperation",
+        "responses": {
+          "200": {
+            "description": "Resultado de toma de control.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Operation"
+                }
+              }
+            }
+          },
+          "401": {
+            "$ref": "#/components/responses/401"
+          },
+          "403": {
+            "$ref": "#/components/responses/403"
+          },
+          "404": {
+            "$ref": "#/components/responses/404"
+          },
+          "409": {
+            "$ref": "#/components/responses/409"
+          },
+          "410": {
+            "$ref": "#/components/responses/410"
+          },
+          "422": {
+            "$ref": "#/components/responses/422"
+          },
+          "503": {
+            "$ref": "#/components/responses/503"
+          }
+        },
+        "parameters": [
+          {
+            "name": "operationId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "$ref": "#/components/schemas/Id"
+            }
+          }
+        ]
+      }
+    },
+    "/events": {
+      "get": {
+        "operationId": "subscribeEvents",
+        "description": "SSE autenticado y durable. Sin Last-Event-ID emite un checkpoint id-only del watermark actual; el cliente carga un snapshot después de abrir el stream. Cada reconexión con Last-Event-ID reproduce eventos retenidos después del cursor. Si cambia epoch o hay un hueco por retención, emite resync.required en el watermark actual. Los eventos se publican tras commit, cada data es JSON Event validado y no contiene cuerpos. El stream termina al expirar el grant firmado para volver a validar permisos.",
+        "parameters": [
+          {
+            "name": "Last-Event-ID",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "$ref": "#/components/schemas/EventId"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Stream SSE. Puede incluir líneas id-only de checkpoint sin data; cada frame con data contiene un Event válido. No es un JSON array ni contiene cuerpos.",
+            "content": {
+              "text/event-stream": {
+                "schema": {
+                  "type": "string"
+                },
+                "x-event-schema": {
+                  "$ref": "#/components/schemas/Event"
+                }
+              }
+            }
+          },
+          "401": {
+            "$ref": "#/components/responses/401"
+          },
+          "403": {
+            "$ref": "#/components/responses/403"
+          },
+          "404": {
+            "$ref": "#/components/responses/404"
+          },
+          "409": {
+            "$ref": "#/components/responses/409"
+          },
+          "410": {
+            "$ref": "#/components/responses/410"
+          },
+          "422": {
+            "$ref": "#/components/responses/422"
+          },
+          "503": {
+            "$ref": "#/components/responses/503"
+          }
+        }
+      }
+    }
+  },
+  "components": {
+    "securitySchemes": {
+      "panelSession": {
+        "type": "apiKey",
+        "in": "cookie",
+        "name": "sdkbot_session",
+        "description": "Cookie OAuth existente del panel; integración de API v1 y actor firmado al gateway en F1B. Nunca tokens de proveedor."
+      }
+    },
+    "parameters": {
+      "IdempotencyKey": {
+        "name": "Idempotency-Key",
+        "in": "header",
+        "required": true,
+        "schema": {
+          "$ref": "#/components/schemas/IdempotencyKey"
+        }
+      }
+    },
+    "responses": {
+      "401": {
+        "description": "Sin sesión válida.",
+        "content": {
+          "application/json": {
+            "schema": {
+              "$ref": "#/components/schemas/ErrorResponse"
+            }
+          }
+        }
+      },
+      "403": {
+        "description": "Capacidad denegada.",
+        "content": {
+          "application/json": {
+            "schema": {
+              "$ref": "#/components/schemas/ErrorResponse"
+            }
+          }
+        }
+      },
+      "404": {
+        "description": "Recurso desconocido.",
+        "content": {
+          "application/json": {
+            "schema": {
+              "$ref": "#/components/schemas/ErrorResponse"
+            }
+          }
+        }
+      },
+      "409": {
+        "description": "Conflicto versión/propietario/identidad/idempotencia.",
+        "content": {
+          "application/json": {
+            "schema": {
+              "$ref": "#/components/schemas/ErrorResponse"
+            }
+          }
+        }
+      },
+      "410": {
+        "description": "Cursor o resultado de idempotencia expirado; nunca ejecutar intención otra vez.",
+        "content": {
+          "application/json": {
+            "schema": {
+              "$ref": "#/components/schemas/ErrorResponse"
+            }
+          }
+        }
+      },
+      "422": {
+        "description": "Formato inválido.",
+        "content": {
+          "application/json": {
+            "schema": {
+              "$ref": "#/components/schemas/ErrorResponse"
+            }
+          }
+        }
+      },
+      "503": {
+        "description": "Servicio temporalmente no disponible.",
+        "content": {
+          "application/json": {
+            "schema": {
+              "$ref": "#/components/schemas/ErrorResponse"
+            }
+          }
+        }
+      }
+    },
+    "schemas": {
+      "Id": {
+        "$ref": "./schema.json#/$defs/Id"
+      },
+      "Sequence": {
+        "$ref": "./schema.json#/$defs/Sequence"
+      },
+      "Version": {
+        "$ref": "./schema.json#/$defs/Version"
+      },
+      "Timestamp": {
+        "$ref": "./schema.json#/$defs/Timestamp"
+      },
+      "Channel": {
+        "$ref": "./schema.json#/$defs/Channel"
+      },
+      "AccessPolicy": {
+        "$ref": "./schema.json#/$defs/AccessPolicy"
+      },
+      "AutomationMode": {
+        "$ref": "./schema.json#/$defs/AutomationMode"
+      },
+      "Lifecycle": {
+        "$ref": "./schema.json#/$defs/Lifecycle"
+      },
+      "TelegramChatId": {
+        "$ref": "./schema.json#/$defs/TelegramChatId"
+      },
+      "ProviderMessageId": {
+        "$ref": "./schema.json#/$defs/ProviderMessageId"
+      },
+      "PageCursor": {
+        "$ref": "./schema.json#/$defs/PageCursor"
+      },
+      "PageLimit": {
+        "$ref": "./schema.json#/$defs/PageLimit"
+      },
+      "IdempotencyKey": {
+        "$ref": "./schema.json#/$defs/IdempotencyKey"
+      },
+      "Capability": {
+        "$ref": "./schema.json#/$defs/Capability"
+      },
+      "Actor": {
+        "$ref": "./schema.json#/$defs/Actor"
+      },
+      "ChannelCapabilities": {
+        "$ref": "./schema.json#/$defs/ChannelCapabilities"
+      },
+      "Account": {
+        "$ref": "./schema.json#/$defs/Account"
+      },
+      "IdentityKey": {
+        "$ref": "./schema.json#/$defs/IdentityKey"
+      },
+      "Identity": {
+        "$ref": "./schema.json#/$defs/Identity"
+      },
+      "Contact": {
+        "$ref": "./schema.json#/$defs/Contact"
+      },
+      "DeduplicationKey": {
+        "$ref": "./schema.json#/$defs/DeduplicationKey"
+      },
+      "HistoryCoverage": {
+        "$ref": "./schema.json#/$defs/HistoryCoverage"
+      },
+      "ConversationControl": {
+        "$ref": "./schema.json#/$defs/ConversationControl"
+      },
+      "Conversation": {
+        "$ref": "./schema.json#/$defs/Conversation"
+      },
+      "GlobalPolicy": {
+        "$ref": "./schema.json#/$defs/GlobalPolicy"
+      },
+      "EventCursor": {
+        "$ref": "./schema.json#/$defs/EventCursor"
+      },
+      "EventId": {
+        "$ref": "./schema.json#/$defs/EventId"
+      },
+      "OutgoingText": {
+        "$ref": "./schema.json#/$defs/OutgoingText"
+      },
+      "StoredText": {
+        "$ref": "./schema.json#/$defs/StoredText"
+      },
+      "MessageContent": {
+        "$ref": "./schema.json#/$defs/MessageContent"
+      },
+      "DeliveryStatus": {
+        "$ref": "./schema.json#/$defs/DeliveryStatus"
+      },
+      "Message": {
+        "$ref": "./schema.json#/$defs/Message"
+      },
+      "ConversationsQuery": {
+        "$ref": "./schema.json#/$defs/ConversationsQuery"
+      },
+      "MessagesQuery": {
+        "$ref": "./schema.json#/$defs/MessagesQuery"
+      },
+      "SessionResponse": {
+        "$ref": "./schema.json#/$defs/SessionResponse"
+      },
+      "AccountsResponse": {
+        "$ref": "./schema.json#/$defs/AccountsResponse"
+      },
+      "ConversationsResponse": {
+        "$ref": "./schema.json#/$defs/ConversationsResponse"
+      },
+      "ConversationResponse": {
+        "$ref": "./schema.json#/$defs/ConversationResponse"
+      },
+      "MessagesResponse": {
+        "$ref": "./schema.json#/$defs/MessagesResponse"
+      },
+      "TakeoverRequest": {
+        "$ref": "./schema.json#/$defs/TakeoverRequest"
+      },
+      "ReleaseRequest": {
+        "$ref": "./schema.json#/$defs/ReleaseRequest"
+      },
+      "SendMessageRequest": {
+        "$ref": "./schema.json#/$defs/SendMessageRequest"
+      },
+      "ReadRequest": {
+        "$ref": "./schema.json#/$defs/ReadRequest"
+      },
+      "ReadResponse": {
+        "$ref": "./schema.json#/$defs/ReadResponse"
+      },
+      "UpdateConversationRequest": {
+        "$ref": "./schema.json#/$defs/UpdateConversationRequest"
+      },
+      "Operation": {
+        "$ref": "./schema.json#/$defs/Operation"
+      },
+      "TakeoverConfirmedResponse": {
+        "$ref": "./schema.json#/$defs/TakeoverConfirmedResponse"
+      },
+      "TakeoverPendingResponse": {
+        "$ref": "./schema.json#/$defs/TakeoverPendingResponse"
+      },
+      "SendMessageResponse": {
+        "$ref": "./schema.json#/$defs/SendMessageResponse"
+      },
+      "ErrorCode": {
+        "$ref": "./schema.json#/$defs/ErrorCode"
+      },
+      "ErrorResponse": {
+        "$ref": "./schema.json#/$defs/ErrorResponse"
+      },
+      "Event": {
+        "$ref": "./schema.json#/$defs/Event"
+      },
+      "AccountStatus": {
+        "$ref": "./schema.json#/$defs/AccountStatus"
+      }
+    }
+  }
+}

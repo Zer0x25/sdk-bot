@@ -2,8 +2,10 @@
 .github
 node_modules
 gateway/node_modules
+gateway/panel/web/dist
 brain/venv
 brain/.env
+gateway/panel/.env
 brain/__pycache__
 brain/.pytest_cache
 brain/.ruff_cache
@@ -18,3 +20,5 @@ gateway/logs
 gateway/.gateway.lock
 brain/.brain.lock
 *.tmp
+
+gateway/data

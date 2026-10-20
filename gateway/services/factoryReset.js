@@ -12,9 +12,8 @@
  * Rutas: mismas env vars que los módulos productores (SDK_AUTH_DIR,
  * SDK_CONTACTS_DB_PATH, …) para que los tests apunten a temporales y el
  * borrado nunca desincronice del estado real. Los locks tienen env propios
- * (SDK_GATEWAY_LOCK_PATH / SDK_BRAIN_LOCK_PATH) solo por seguridad de tests:
- * el proceso vivo del gateway escribe su lock en la ruta real, y los tests
- * locales no deben poder borrarle el lock a una instancia en producción.
+ * (SDK_GATEWAY_LOCK_PATH / SDK_BRAIN_LOCK_PATH) respetados por ambos productores;
+ * en tests TODAS las rutas deben apuntar a temporales, nunca a una instancia real.
  *
  * Flag `wiping`: mientras el reset limpio está en curso, el gateway NO debe
  * volcar su caché RAM a disco (al reiniciar, un flush reescribiría las DBs
@@ -25,6 +24,7 @@ const path = require('path');
 const { execFile } = require('child_process');
 const { CONTACTS_FILE_PATH, SETTINGS_FILE_PATH } = require('../config');
 const { cat, errMsg } = require('./logger');
+const { statePaths: conversationPaths } = require('./conversations/paths');
 
 const logError = cat('ERROR');
 
@@ -43,6 +43,9 @@ const GATEWAY_LOG_DIR = () => process.env.SDK_ADMIN_WEB_LOG_GATEWAY || path.join
 const BRAIN_LOG_DIR = () => process.env.SDK_ADMIN_WEB_LOG_BRAIN || path.join(__dirname, '..', '..', 'brain', 'logs');
 
 let wiping = false;
+let beforeReset = async () => {};
+function setBeforeReset(closer) { beforeReset = closer; }
+async function prepareFactoryReset() { await beforeReset(); }
 
 /**
  * True mientras un reset limpio está en curso: los flushes de RAM a disco
@@ -77,6 +80,7 @@ function getStatePaths() {
         { label: 'Agenda (contacts_db.json)', kind: 'file', path: CONTACTS_FILE_PATH },
         { label: 'Configuración (settings_db.json)', kind: 'file', path: SETTINGS_FILE_PATH },
         { label: 'Broadcasts (broadcast_db.json)', kind: 'file', path: BROADCAST_DB() },
+        ...conversationPaths().map(p => ({ label: `Archivo de conversaciones (${path.basename(p)})`, kind: /** @type {'file'} */ ('file'), path: p })),
         { label: 'Cola de mensajes (pending_messages.jsonl)', kind: 'file', path: QUEUE_FILE() },
         { label: 'Memoria del brain (memory.db)', kind: 'file', path: BRAIN_MEMORY_DB() },
         { label: 'Logs del gateway (logs/)', kind: 'dir', path: GATEWAY_LOG_DIR() },
@@ -158,4 +162,4 @@ function restartBrainIfSystemd() {
     return true;
 }
 
-module.exports = { getStatePaths, performFactoryReset, setWiping, isWiping, lockFiles, restartGatewayProcess, restartBrainIfSystemd };
+module.exports = { setBeforeReset, prepareFactoryReset, getStatePaths, performFactoryReset, setWiping, isWiping, lockFiles, restartGatewayProcess, restartBrainIfSystemd };

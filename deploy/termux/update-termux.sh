@@ -12,23 +12,29 @@ BACKUP_DIR="$HOME/.sdk-bot-secrets"
 
 cd "$REPO"
 
-# Detectar si package.json / requirements cambiaron (comparando hash antes/después del pull)
-pkg_before=$(sha256sum gateway/package.json 2>/dev/null | cut -d' ' -f1)
+# La dependencia file: se empaqueta: un cambio de contracts también exige instalar.
+gateway_dependency_hash() {
+    sha256sum gateway/package.json gateway/package-lock.json gateway/.npmrc \
+        packages/contracts/package.json packages/contracts/index.js \
+        packages/contracts/index.d.ts packages/contracts/generated.d.ts \
+        packages/contracts/schema.json packages/contracts/openapi.json | sha256sum | cut -d' ' -f1
+}
+pkg_before=$(gateway_dependency_hash)
 req_before=$(sha256sum brain/requirements-termux.txt 2>/dev/null | cut -d' ' -f1)
 
 echo "📥 Pull de main..."
 git fetch origin
 git pull --ff-only origin main
 
-pkg_after=$(sha256sum gateway/package.json 2>/dev/null | cut -d' ' -f1)
+pkg_after=$(gateway_dependency_hash)
 req_after=$(sha256sum brain/requirements-termux.txt 2>/dev/null | cut -d' ' -f1)
 
 echo "🔄 Reinstalando dependencias si cambiaron..."
 if [ "$pkg_before" = "$pkg_after" ]; then
-    echo "    gateway: package.json sin cambios — npm install omitido."
+    echo "    gateway: manifests/contratos sin cambios — npm ci omitido."
 else
-    echo "    gateway: package.json cambió — npm install..."
-    (cd gateway && npm install)
+    echo "    gateway: manifests/contratos cambiaron — npm ci..."
+    (cd gateway && npm ci)
 fi
 if [ "$req_before" = "$req_after" ]; then
     echo "    brain: requirements sin cambios — pip omitido."

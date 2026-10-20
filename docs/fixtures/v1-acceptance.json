@@ -1,0 +1,1027 @@
+{
+  "fixtureVersion": 1,
+  "status": "expected-behavior-not-runtime-test-results",
+  "synthetic": true,
+  "anchorTime": "2026-10-19T12:00:00Z",
+  "defaults": {
+    "historyDays": 90,
+    "eventsDays": 7,
+    "idempotencyDays": 180,
+    "contextDays": 7,
+    "contextTokens": 5000,
+    "queuedHours": 24,
+    "exportHours": 1,
+    "backupDays": 7,
+    "ingestQueueItems": 1000,
+    "ingestQueueMiB": 32,
+    "outgoingCodePoints": 4096,
+    "outgoingUtf8KiB": 16,
+    "incomingTextKiB": 64,
+    "apiTimeoutMs": 5000,
+    "providerSendTimeoutMs": 15000
+  },
+  "eligibilityPreconditions": {
+    "identityResolved": true,
+    "profileValid": true,
+    "lifecycle": "open",
+    "ownerMatches": true,
+    "controlConfirmed": true,
+    "versionsCurrent": true
+  },
+  "identityCases": [
+    {
+      "id": "ID-01",
+      "left": {
+        "accountId": "00000000-0000-4000-8000-000000000003",
+        "kind": "telegram_chat",
+        "value": "-1001234567890"
+      },
+      "right": {
+        "accountId": "00000000-0000-4000-8000-000000000003",
+        "kind": "telegram_chat",
+        "value": "1001234567890"
+      },
+      "verifiedAlias": false,
+      "expectedSameIdentity": false
+    },
+    {
+      "id": "ID-02",
+      "left": {
+        "accountId": "00000000-0000-4000-8000-000000000001",
+        "kind": "whatsapp_jid",
+        "value": "56900000001@s.whatsapp.net"
+      },
+      "right": {
+        "accountId": "00000000-0000-4000-8000-000000000002",
+        "kind": "whatsapp_jid",
+        "value": "56900000001@s.whatsapp.net"
+      },
+      "verifiedAlias": false,
+      "expectedSameIdentity": false
+    },
+    {
+      "id": "ID-03",
+      "left": {
+        "accountId": "00000000-0000-4000-8000-000000000001",
+        "kind": "whatsapp_jid",
+        "value": "56900000001@s.whatsapp.net"
+      },
+      "right": {
+        "accountId": "00000000-0000-4000-8000-000000000001",
+        "kind": "whatsapp_lid",
+        "value": "700000001@lid"
+      },
+      "verifiedAlias": true,
+      "expectedSameIdentity": true
+    },
+    {
+      "id": "ID-04",
+      "left": {
+        "accountId": "00000000-0000-4000-8000-000000000001",
+        "kind": "whatsapp_jid",
+        "value": "56900000001@s.whatsapp.net"
+      },
+      "right": {
+        "accountId": "00000000-0000-4000-8000-000000000001",
+        "kind": "whatsapp_lid",
+        "value": "700000001@lid"
+      },
+      "verifiedAlias": false,
+      "expectedSameIdentity": false
+    },
+    {
+      "id": "ID-05",
+      "left": {
+        "accountId": "00000000-0000-4000-8000-000000000003",
+        "kind": "telegram_chat",
+        "value": "9007199254740993"
+      },
+      "right": {
+        "accountId": "00000000-0000-4000-8000-000000000003",
+        "kind": "telegram_chat",
+        "value": "9007199254740992"
+      },
+      "verifiedAlias": false,
+      "expectedSameIdentity": false
+    },
+    {
+      "id": "ID-06",
+      "left": {
+        "accountId": "00000000-0000-4000-8000-000000000001",
+        "kind": "whatsapp_jid",
+        "value": "56900000001@s.whatsapp.net"
+      },
+      "right": {
+        "accountId": "00000000-0000-4000-8000-000000000003",
+        "kind": "telegram_chat",
+        "value": "56900000001"
+      },
+      "verifiedAlias": false,
+      "expectedSameIdentity": false
+    },
+    {
+      "id": "ID-07",
+      "left": {
+        "accountId": "00000000-0000-4000-8000-000000000003",
+        "kind": "telegram_chat",
+        "value": "-1001234567890"
+      },
+      "right": {
+        "accountId": "00000000-0000-4000-8000-000000000003",
+        "kind": "telegram_chat",
+        "value": "-1001234567890"
+      },
+      "verifiedAlias": false,
+      "expectedSameIdentity": true
+    }
+  ],
+  "dedupCases": [
+    {
+      "id": "DEDUP-01",
+      "left": {
+        "accountId": "00000000-0000-4000-8000-000000000001",
+        "canonicalIdentityId": "00000000-0000-4000-8000-000000000011",
+        "rawChatId": "56900000001@s.whatsapp.net",
+        "providerMessageId": "mock-message-7"
+      },
+      "right": {
+        "accountId": "00000000-0000-4000-8000-000000000001",
+        "canonicalIdentityId": "00000000-0000-4000-8000-000000000011",
+        "rawChatId": "700000001@lid",
+        "providerMessageId": "mock-message-7"
+      },
+      "expectedDuplicate": true
+    },
+    {
+      "id": "DEDUP-02",
+      "left": {
+        "accountId": "00000000-0000-4000-8000-000000000001",
+        "canonicalIdentityId": "00000000-0000-4000-8000-000000000011",
+        "rawChatId": "56900000001@s.whatsapp.net",
+        "providerMessageId": "mock-message-7"
+      },
+      "right": {
+        "accountId": "00000000-0000-4000-8000-000000000002",
+        "canonicalIdentityId": "00000000-0000-4000-8000-000000000012",
+        "rawChatId": "56900000001@s.whatsapp.net",
+        "providerMessageId": "mock-message-7"
+      },
+      "expectedDuplicate": false
+    }
+  ],
+  "migrationCases": [
+    {
+      "id": "MIG-01",
+      "legacyState": "permitido",
+      "identityResolved": true,
+      "profileExists": true,
+      "expected": {
+        "accessPolicy": "allowed",
+        "automationMode": "ai",
+        "ownerId": null,
+        "requiresReview": false
+      }
+    },
+    {
+      "id": "MIG-02",
+      "legacyState": "ignorado",
+      "identityResolved": true,
+      "profileExists": true,
+      "expected": {
+        "accessPolicy": "ignored",
+        "automationMode": "off",
+        "ownerId": null,
+        "requiresReview": false
+      }
+    },
+    {
+      "id": "MIG-03",
+      "legacyState": "neutro",
+      "identityResolved": true,
+      "profileExists": true,
+      "expected": {
+        "accessPolicy": "neutral",
+        "automationMode": "ai",
+        "ownerId": null,
+        "requiresReview": false
+      }
+    },
+    {
+      "id": "MIG-04",
+      "legacyState": null,
+      "identityResolved": true,
+      "profileExists": true,
+      "expected": {
+        "accessPolicy": "neutral",
+        "automationMode": "ai",
+        "ownerId": null,
+        "requiresReview": false
+      }
+    },
+    {
+      "id": "MIG-05",
+      "legacyState": "handoff",
+      "identityResolved": true,
+      "profileExists": true,
+      "expected": {
+        "accessPolicy": "neutral",
+        "automationMode": "human",
+        "ownerId": null,
+        "requiresReview": false
+      }
+    },
+    {
+      "id": "MIG-06",
+      "legacyState": "invalid",
+      "identityResolved": true,
+      "profileExists": true,
+      "expected": {
+        "accessPolicy": "neutral",
+        "automationMode": "off",
+        "ownerId": null,
+        "requiresReview": true
+      }
+    },
+    {
+      "id": "MIG-07",
+      "legacyState": "handoff",
+      "handoffAt": "2020-01-01T00:00:00Z",
+      "identityResolved": true,
+      "profileExists": true,
+      "expected": {
+        "accessPolicy": "neutral",
+        "automationMode": "human",
+        "ownerId": null,
+        "requiresReview": false
+      }
+    },
+    {
+      "id": "MIG-08",
+      "legacyState": "permitido",
+      "identityResolved": true,
+      "profileExists": false,
+      "expected": {
+        "accessPolicy": "allowed",
+        "automationMode": "off",
+        "ownerId": null,
+        "requiresReview": true
+      }
+    },
+    {
+      "id": "MIG-09",
+      "legacyState": "permitido",
+      "identityResolved": false,
+      "profileExists": true,
+      "expected": {
+        "accessPolicy": "neutral",
+        "automationMode": "off",
+        "ownerId": null,
+        "requiresReview": true,
+        "disposition": "quarantined"
+      }
+    },
+    {
+      "id": "MIG-10",
+      "legacyState": "handoff",
+      "identityResolved": true,
+      "profileExists": false,
+      "expected": {
+        "accessPolicy": "neutral",
+        "automationMode": "human",
+        "ownerId": null,
+        "requiresReview": true
+      }
+    }
+  ],
+  "eligibilityCases": [
+    {
+      "id": "EL-01",
+      "input": {
+        "accessPolicy": "allowed",
+        "automationMode": "ai",
+        "globalMode": "allowed_all",
+        "globalPaused": false
+      },
+      "expected": {
+        "aiEligible": true,
+        "humanEligible": false,
+        "capture": true
+      }
+    },
+    {
+      "id": "EL-02",
+      "input": {
+        "accessPolicy": "allowed",
+        "automationMode": "ai",
+        "globalMode": "allowed_all",
+        "globalPaused": true
+      },
+      "expected": {
+        "aiEligible": false,
+        "humanEligible": false,
+        "capture": true
+      }
+    },
+    {
+      "id": "EL-03",
+      "input": {
+        "accessPolicy": "allowed",
+        "automationMode": "ai",
+        "globalMode": "ignored_all",
+        "globalPaused": false
+      },
+      "expected": {
+        "aiEligible": true,
+        "humanEligible": false,
+        "capture": true
+      }
+    },
+    {
+      "id": "EL-04",
+      "input": {
+        "accessPolicy": "allowed",
+        "automationMode": "ai",
+        "globalMode": "ignored_all",
+        "globalPaused": true
+      },
+      "expected": {
+        "aiEligible": false,
+        "humanEligible": false,
+        "capture": true
+      }
+    },
+    {
+      "id": "EL-05",
+      "input": {
+        "accessPolicy": "allowed",
+        "automationMode": "human",
+        "globalMode": "allowed_all",
+        "globalPaused": false
+      },
+      "expected": {
+        "aiEligible": false,
+        "humanEligible": true,
+        "capture": true
+      }
+    },
+    {
+      "id": "EL-06",
+      "input": {
+        "accessPolicy": "allowed",
+        "automationMode": "human",
+        "globalMode": "allowed_all",
+        "globalPaused": true
+      },
+      "expected": {
+        "aiEligible": false,
+        "humanEligible": true,
+        "capture": true
+      }
+    },
+    {
+      "id": "EL-07",
+      "input": {
+        "accessPolicy": "allowed",
+        "automationMode": "human",
+        "globalMode": "ignored_all",
+        "globalPaused": false
+      },
+      "expected": {
+        "aiEligible": false,
+        "humanEligible": true,
+        "capture": true
+      }
+    },
+    {
+      "id": "EL-08",
+      "input": {
+        "accessPolicy": "allowed",
+        "automationMode": "human",
+        "globalMode": "ignored_all",
+        "globalPaused": true
+      },
+      "expected": {
+        "aiEligible": false,
+        "humanEligible": true,
+        "capture": true
+      }
+    },
+    {
+      "id": "EL-09",
+      "input": {
+        "accessPolicy": "allowed",
+        "automationMode": "off",
+        "globalMode": "allowed_all",
+        "globalPaused": false
+      },
+      "expected": {
+        "aiEligible": false,
+        "humanEligible": false,
+        "capture": true
+      }
+    },
+    {
+      "id": "EL-10",
+      "input": {
+        "accessPolicy": "allowed",
+        "automationMode": "off",
+        "globalMode": "allowed_all",
+        "globalPaused": true
+      },
+      "expected": {
+        "aiEligible": false,
+        "humanEligible": false,
+        "capture": true
+      }
+    },
+    {
+      "id": "EL-11",
+      "input": {
+        "accessPolicy": "allowed",
+        "automationMode": "off",
+        "globalMode": "ignored_all",
+        "globalPaused": false
+      },
+      "expected": {
+        "aiEligible": false,
+        "humanEligible": false,
+        "capture": true
+      }
+    },
+    {
+      "id": "EL-12",
+      "input": {
+        "accessPolicy": "allowed",
+        "automationMode": "off",
+        "globalMode": "ignored_all",
+        "globalPaused": true
+      },
+      "expected": {
+        "aiEligible": false,
+        "humanEligible": false,
+        "capture": true
+      }
+    },
+    {
+      "id": "EL-13",
+      "input": {
+        "accessPolicy": "ignored",
+        "automationMode": "ai",
+        "globalMode": "allowed_all",
+        "globalPaused": false
+      },
+      "expected": {
+        "aiEligible": false,
+        "humanEligible": false,
+        "capture": true
+      }
+    },
+    {
+      "id": "EL-14",
+      "input": {
+        "accessPolicy": "ignored",
+        "automationMode": "ai",
+        "globalMode": "allowed_all",
+        "globalPaused": true
+      },
+      "expected": {
+        "aiEligible": false,
+        "humanEligible": false,
+        "capture": true
+      }
+    },
+    {
+      "id": "EL-15",
+      "input": {
+        "accessPolicy": "ignored",
+        "automationMode": "ai",
+        "globalMode": "ignored_all",
+        "globalPaused": false
+      },
+      "expected": {
+        "aiEligible": false,
+        "humanEligible": false,
+        "capture": true
+      }
+    },
+    {
+      "id": "EL-16",
+      "input": {
+        "accessPolicy": "ignored",
+        "automationMode": "ai",
+        "globalMode": "ignored_all",
+        "globalPaused": true
+      },
+      "expected": {
+        "aiEligible": false,
+        "humanEligible": false,
+        "capture": true
+      }
+    },
+    {
+      "id": "EL-17",
+      "input": {
+        "accessPolicy": "ignored",
+        "automationMode": "human",
+        "globalMode": "allowed_all",
+        "globalPaused": false
+      },
+      "expected": {
+        "aiEligible": false,
+        "humanEligible": false,
+        "capture": true
+      }
+    },
+    {
+      "id": "EL-18",
+      "input": {
+        "accessPolicy": "ignored",
+        "automationMode": "human",
+        "globalMode": "allowed_all",
+        "globalPaused": true
+      },
+      "expected": {
+        "aiEligible": false,
+        "humanEligible": false,
+        "capture": true
+      }
+    },
+    {
+      "id": "EL-19",
+      "input": {
+        "accessPolicy": "ignored",
+        "automationMode": "human",
+        "globalMode": "ignored_all",
+        "globalPaused": false
+      },
+      "expected": {
+        "aiEligible": false,
+        "humanEligible": false,
+        "capture": true
+      }
+    },
+    {
+      "id": "EL-20",
+      "input": {
+        "accessPolicy": "ignored",
+        "automationMode": "human",
+        "globalMode": "ignored_all",
+        "globalPaused": true
+      },
+      "expected": {
+        "aiEligible": false,
+        "humanEligible": false,
+        "capture": true
+      }
+    },
+    {
+      "id": "EL-21",
+      "input": {
+        "accessPolicy": "ignored",
+        "automationMode": "off",
+        "globalMode": "allowed_all",
+        "globalPaused": false
+      },
+      "expected": {
+        "aiEligible": false,
+        "humanEligible": false,
+        "capture": true
+      }
+    },
+    {
+      "id": "EL-22",
+      "input": {
+        "accessPolicy": "ignored",
+        "automationMode": "off",
+        "globalMode": "allowed_all",
+        "globalPaused": true
+      },
+      "expected": {
+        "aiEligible": false,
+        "humanEligible": false,
+        "capture": true
+      }
+    },
+    {
+      "id": "EL-23",
+      "input": {
+        "accessPolicy": "ignored",
+        "automationMode": "off",
+        "globalMode": "ignored_all",
+        "globalPaused": false
+      },
+      "expected": {
+        "aiEligible": false,
+        "humanEligible": false,
+        "capture": true
+      }
+    },
+    {
+      "id": "EL-24",
+      "input": {
+        "accessPolicy": "ignored",
+        "automationMode": "off",
+        "globalMode": "ignored_all",
+        "globalPaused": true
+      },
+      "expected": {
+        "aiEligible": false,
+        "humanEligible": false,
+        "capture": true
+      }
+    },
+    {
+      "id": "EL-25",
+      "input": {
+        "accessPolicy": "neutral",
+        "automationMode": "ai",
+        "globalMode": "allowed_all",
+        "globalPaused": false
+      },
+      "expected": {
+        "aiEligible": true,
+        "humanEligible": false,
+        "capture": true
+      }
+    },
+    {
+      "id": "EL-26",
+      "input": {
+        "accessPolicy": "neutral",
+        "automationMode": "ai",
+        "globalMode": "allowed_all",
+        "globalPaused": true
+      },
+      "expected": {
+        "aiEligible": false,
+        "humanEligible": false,
+        "capture": true
+      }
+    },
+    {
+      "id": "EL-27",
+      "input": {
+        "accessPolicy": "neutral",
+        "automationMode": "ai",
+        "globalMode": "ignored_all",
+        "globalPaused": false
+      },
+      "expected": {
+        "aiEligible": false,
+        "humanEligible": false,
+        "capture": true
+      }
+    },
+    {
+      "id": "EL-28",
+      "input": {
+        "accessPolicy": "neutral",
+        "automationMode": "ai",
+        "globalMode": "ignored_all",
+        "globalPaused": true
+      },
+      "expected": {
+        "aiEligible": false,
+        "humanEligible": false,
+        "capture": true
+      }
+    },
+    {
+      "id": "EL-29",
+      "input": {
+        "accessPolicy": "neutral",
+        "automationMode": "human",
+        "globalMode": "allowed_all",
+        "globalPaused": false
+      },
+      "expected": {
+        "aiEligible": false,
+        "humanEligible": true,
+        "capture": true
+      }
+    },
+    {
+      "id": "EL-30",
+      "input": {
+        "accessPolicy": "neutral",
+        "automationMode": "human",
+        "globalMode": "allowed_all",
+        "globalPaused": true
+      },
+      "expected": {
+        "aiEligible": false,
+        "humanEligible": true,
+        "capture": true
+      }
+    },
+    {
+      "id": "EL-31",
+      "input": {
+        "accessPolicy": "neutral",
+        "automationMode": "human",
+        "globalMode": "ignored_all",
+        "globalPaused": false
+      },
+      "expected": {
+        "aiEligible": false,
+        "humanEligible": true,
+        "capture": true
+      }
+    },
+    {
+      "id": "EL-32",
+      "input": {
+        "accessPolicy": "neutral",
+        "automationMode": "human",
+        "globalMode": "ignored_all",
+        "globalPaused": true
+      },
+      "expected": {
+        "aiEligible": false,
+        "humanEligible": true,
+        "capture": true
+      }
+    },
+    {
+      "id": "EL-33",
+      "input": {
+        "accessPolicy": "neutral",
+        "automationMode": "off",
+        "globalMode": "allowed_all",
+        "globalPaused": false
+      },
+      "expected": {
+        "aiEligible": false,
+        "humanEligible": false,
+        "capture": true
+      }
+    },
+    {
+      "id": "EL-34",
+      "input": {
+        "accessPolicy": "neutral",
+        "automationMode": "off",
+        "globalMode": "allowed_all",
+        "globalPaused": true
+      },
+      "expected": {
+        "aiEligible": false,
+        "humanEligible": false,
+        "capture": true
+      }
+    },
+    {
+      "id": "EL-35",
+      "input": {
+        "accessPolicy": "neutral",
+        "automationMode": "off",
+        "globalMode": "ignored_all",
+        "globalPaused": false
+      },
+      "expected": {
+        "aiEligible": false,
+        "humanEligible": false,
+        "capture": true
+      }
+    },
+    {
+      "id": "EL-36",
+      "input": {
+        "accessPolicy": "neutral",
+        "automationMode": "off",
+        "globalMode": "ignored_all",
+        "globalPaused": true
+      },
+      "expected": {
+        "aiEligible": false,
+        "humanEligible": false,
+        "capture": true
+      }
+    }
+  ],
+  "retentionCases": [
+    {
+      "id": "RET-01",
+      "ingestedAgeMs": 7775999999,
+      "expectedPurge": false
+    },
+    {
+      "id": "RET-02",
+      "ingestedAgeMs": 7776000000,
+      "expectedPurge": false
+    },
+    {
+      "id": "RET-03",
+      "ingestedAgeMs": 7776000001,
+      "expectedPurge": true
+    },
+    {
+      "id": "RET-04",
+      "ingestedAgeMs": 86400000,
+      "providerAgeDays": 1000,
+      "expectedPurge": false
+    }
+  ],
+  "transitionCases": [
+    {
+      "id": "CTL-01",
+      "action": "incoming_live",
+      "before": {
+        "controlVersion": 8,
+        "aggregateVersion": 20,
+        "automationMode": "human"
+      },
+      "expected": {
+        "controlVersion": 8,
+        "aggregateVersion": 21,
+        "automationMode": "human",
+        "aiDispatch": false
+      }
+    },
+    {
+      "id": "CTL-02",
+      "action": "release_future_only",
+      "before": {
+        "controlVersion": 8,
+        "automationMode": "human",
+        "accessPolicy": "allowed"
+      },
+      "expected": {
+        "controlVersion": 9,
+        "automationMode": "ai",
+        "accessPolicy": "allowed",
+        "replayOldJobs": false
+      }
+    },
+    {
+      "id": "CTL-03",
+      "action": "takeover_with_inflight_send",
+      "expected": {
+        "httpStatus": 202,
+        "operationState": "taking_control",
+        "composerEnabled": false,
+        "newAiDispatch": false
+      }
+    },
+    {
+      "id": "CTL-04",
+      "action": "restore_rotates_epoch",
+      "expected": {
+        "resyncRequired": true,
+        "replayOldJobs": false,
+        "resendDeliveryUnknown": false
+      }
+    },
+    {
+      "id": "CTL-05",
+      "action": "history_from_me",
+      "expected": {
+        "takeControl": false,
+        "aiDispatch": false,
+        "incrementUnread": false
+      }
+    },
+    {
+      "id": "CTL-06",
+      "action": "live_external_self",
+      "expected": {
+        "automationMode": "human",
+        "ownerId": null,
+        "aiDispatch": false
+      }
+    },
+    {
+      "id": "CTL-07",
+      "action": "expired_idempotency_result_with_retained_fingerprint",
+      "expected": {
+        "httpStatus": 410,
+        "code": "IDEMPOTENCY_RESULT_EXPIRED",
+        "executeAgain": false
+      }
+    }
+  ],
+  "rollbackCases": [
+    {
+      "id": "ROLL-01",
+      "phase": "before_cutover",
+      "newHumanSends": false,
+      "candidate": "abort_staging_and_replay_metadata_delta",
+      "expectedAllowed": true
+    },
+    {
+      "id": "ROLL-02",
+      "phase": "after_cutover",
+      "newHumanSends": true,
+      "candidate": "restore_old_snapshot",
+      "expectedAllowed": false
+    },
+    {
+      "id": "ROLL-03",
+      "phase": "after_cutover",
+      "newHumanSends": true,
+      "candidate": "compatible_code_preserving_current_database",
+      "expectedAllowed": true
+    }
+  ],
+  "loadProfile": {
+    "generatorVersion": "v1-xorshift32",
+    "seed": 20261019,
+    "accounts": {
+      "whatsapp": 2,
+      "telegram": 3
+    },
+    "contacts": 2000,
+    "conversations": 2000,
+    "uniqueMessages": 1000000,
+    "messagesPerConversation": 500,
+    "duplicateDeliveries": 50000,
+    "retainedReplayEvents": 50000,
+    "textCodePoints": {
+      "min": 100,
+      "max": 600
+    },
+    "warmupRuns": 2,
+    "measuredRuns": 3,
+    "querySamplesPerOperationPerRun": 2000,
+    "steadyIngressPerSecond": 10,
+    "steadySeconds": 120,
+    "burstIngressPerSecond": 50,
+    "burstSeconds": 30,
+    "referenceCpu": 2,
+    "referenceMemoryGiB": 4,
+    "gatewayRssMiBLimit": 512,
+    "budgets": {
+      "ingestCommitMs": {
+        "p95": 100,
+        "p99": 500
+      },
+      "conversationsPage50Ms": {
+        "p95": 150,
+        "p99": 500
+      },
+      "messagesPage50Ms": {
+        "p95": 100,
+        "p99": 300
+      },
+      "takeoverCommitMs": {
+        "p95": 100,
+        "p99": 250
+      },
+      "mainEventLoopDelayMs": {
+        "p99": 20
+      },
+      "importMessagesPerSecondMin": 1000
+    },
+    "uuidNamespace": "00000000-0000-4000-8000-000000000100"
+  },
+  "textCases": [
+    {
+      "id": "TXT-01",
+      "repeat": {
+        "value": " ",
+        "count": 5
+      },
+      "expectedAccepted": false
+    },
+    {
+      "id": "TXT-02",
+      "repeat": {
+        "value": "🙂",
+        "count": 4096
+      },
+      "expectedAccepted": true
+    },
+    {
+      "id": "TXT-03",
+      "repeat": {
+        "value": "🙂",
+        "count": 4097
+      },
+      "expectedAccepted": false
+    },
+    {
+      "id": "TXT-04",
+      "repeat": {
+        "value": "界",
+        "count": 4096
+      },
+      "expectedAccepted": true
+    },
+    {
+      "id": "TXT-05",
+      "repeat": {
+        "value": "\t\n",
+        "count": 3
+      },
+      "expectedAccepted": false
+    },
+    {
+      "id": "TXT-06",
+      "repeat": {
+        "value": "界",
+        "count": 1
+      },
+      "expectedAccepted": true
+    }
+  ]
+}

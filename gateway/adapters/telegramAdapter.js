@@ -1,148 +1,300 @@
 // @ts-check
+/* global AbortController */
 const ChannelAdapter = require('../core/ChannelAdapter');
 const StandardMessage = require('../core/StandardMessage');
 const https = require('https');
 const { getSettingsDB } = require('../services/db');
 const { updateTelegramMenu, classifyPollResponse } = require('../services/telegramService');
-const { registerSentMessage, isBotSentMessage } = require('../config');
 const { transcribeAudio } = require('../services/stt');
 const { num } = require('../tuning');
 const { cat } = require('../services/logger');
+const { requestJson, failure, parseTelegramJson } = require('../services/telegramHttp');
+const { verifiedBotId, normalizeUpdates, createTelegramCapture, normalizeSentMessage, decimalId } = require('../services/conversations/telegramCapture');
+const { setTimeout: delay, setImmediate: yieldLoop } = require('node:timers/promises');
 
 const log = cat('TELEGRAM');
 const logError = cat('ERROR');
 
 class TelegramAdapter extends ChannelAdapter {
-    constructor() {
+    /** @param {{archive?:any, getMe?:(input:any)=>Promise<any>, getUpdates?:(input:any)=>Promise<any>, updateMenu?:(token:string)=>Promise<any>, transcribe?:(buffer:Buffer,name:string,options:any)=>Promise<any>, sendHttpRequest?:(options:any,callback:(response:any)=>void)=>any, pollTimeoutMs?:number, retryMs?:number, discoveryTimeoutMs?:number}} [options] */
+    constructor({ archive, getMe = requestBotIdentity, getUpdates = requestUpdates, updateMenu = updateTelegramMenu, transcribe = transcribeAudio,
+        sendHttpRequest = (...args) => https.request(...args), pollTimeoutMs = 35000, retryMs = 5000, discoveryTimeoutMs = 1500 } = {}) {
         super('telegram');
         this.pollerActive = false;
-        this.lastUpdateId = 0;
+        this.lastUpdateId = null;
         this.token = null;
+        this.accountId = null;
         this.adminChatId = null;
         // Generación del loop de polling: al reconectar (ej: token nuevo
         // guardado desde el panel) la generación cambia y el loop viejo
         // termina solo, sin dejar dos loops compitiendo por getUpdates.
         this.pollGeneration = 0;
+        this.archive = archive || null;
+        this.capture = archive ? createTelegramCapture(archive) : null;
+        this.getMe = getMe;
+        this.getUpdates = getUpdates;
+        this.sendHttpRequest = sendHttpRequest;
+        this.updateMenu = updateMenu;
+        this.transcribe = transcribe;
+        this.pollTimeoutMs = pollTimeoutMs;
+        this.retryMs = retryMs;
+        this.discoveryTimeoutMs = discoveryTimeoutMs;
+        this.lifecycle = Promise.resolve();
+        /** @type {Promise<any>} */
+        this.pollRequest = Promise.resolve();
+        /** @type {AbortController|null} */
+        this.pollAbort = null;
+        this.runningGeneration = -1;
+        this.pollTask = Promise.resolve();
+        this.pollTasks = new Set();
+        this.archiveOperations = new Set();
+        /** @type {{id:string, at:number}|null} */
+        this.lastChat = null;
+        this.chatWaiters = new Set();
     }
 
-    async connect() {
-        // Detener cualquier loop previo antes de releer la configuración.
-        this.pollerActive = false;
-        const gen = ++this.pollGeneration;
-
-        const settings = getSettingsDB();
-        this.token = settings.telegramToken;
-        this.adminChatId = String(settings.telegramChatId || '');
-
-        if (!this.token) {
-            log.warn('⚠️ No hay token de Telegram configurado. Adaptador en standby (configúralo en el panel).');
-            this.setStatus('standby', 'sin_token');
-            return;
-        }
-
-        this.setStatus('open');
-        this.pollerActive = true;
-        this.emit('ready', { adminLid: this.adminChatId });
-
-        updateTelegramMenu(this.token).catch(e => log.error('Error actualizando menú: ' + e.message));
-        
-        log.info('✅ Conectado a Telegram (Polling activo)');
-        this.poll(gen);
-    }
-
-    async disconnect() {
-        this.pollerActive = false;
-        this.setStatus('disconnected');
-    }
-
-    async poll(gen = this.pollGeneration) {
-        if (!this.pollerActive || gen !== this.pollGeneration) return;
-
-        try {
-            const updates = await new Promise((resolve, reject) => {
-                const req = https.get({hostname: 'api.telegram.org', path: `/bot${this.token}/getUpdates?offset=${this.lastUpdateId + 1}&timeout=30`, family: 4}, (res) => {
-                    let body = '';
-                    res.on('data', chunk => body += chunk);
-                    res.on('end', () => {
-                        try { resolve(JSON.parse(body)); }
-                        catch (e) { reject(e); }
-                    });
-                });
-                req.on('error', reject);
-                req.setTimeout(35000, () => { req.destroy(); resolve({ ok: true, result: [] }); });
-            });
-
-            if (!this.pollerActive || gen !== this.pollGeneration) return;
-
-            if (updates.ok && updates.result) {
-                for (const u of updates.result) {
-                    this.lastUpdateId = Math.max(this.lastUpdateId, u.update_id);
-                    const msg = u.message;
-                    if (!msg) continue;
-
-                    // 🛑 ANTI-BUCLE (simétrico a WhatsApp): ignorar los mensajes
-                    // que el propio bot envió (evita reprocesar respuestas del
-                    // bot como si fueran del admin/cliente).
-                    if (msg.message_id && isBotSentMessage(msg.message_id)) continue;
-
-                    // 🎤 STT local: audio de voz (voice) o audio adjunto.
-                    if ((msg.voice || msg.audio) && num('AUDIO_STT_ENABLED', 0) === 1) {
-                        await this._maybeHandleAudio(u, msg).catch(e =>
-                            logError.error('🎤 Error STT Telegram: ' + e.message));
-                        continue;
-                    }
-
-                    if (msg.text) {
-                        const tgChatId = String(msg.chat.id);
-
-                        
-                        // Determinar si es el administrador principal de Telegram
-                        const isAdmin = (tgChatId === this.adminChatId);
-                        
-                        // Parse name
-                        const pushName = msg.from?.first_name || 'Desconocido';
-                        const username = msg.from?.username;
-                        const fullName = username ? `${pushName} (@${username})` : pushName;
-
-                        const stdMsg = new StandardMessage({
-                            channel: 'telegram',
-                            remoteId: `telegram:${tgChatId}`,
-                            rawId: tgChatId,
-                            text: msg.text,
-                            metadata: {
-                                pushName: fullName,
-                                savedName: null,
-                                phoneNumber: null,
-                                lid: tgChatId, // Usamos tgChatId como su identificador
-                                isBusiness: false,
-                                country: 'Desconocido',
-                                isFromMe: false,
-                                isAdminChannel: isAdmin
-                            },
-                            raw: msg
-                        });
-
-                        this.emit('message', stdMsg);
-                    }
+    connect() {
+        const gen = this.invalidatePolling();
+        const task = this.lifecycle.then(async () => {
+            // The cancelled HTTP request must really close before its successor.
+            await this.pollRequest.catch(() => {});
+            await Promise.allSettled([...this.pollTasks]);
+            if (!this.isGeneration(gen)) return;
+            const settings = getSettingsDB();
+            const token = typeof settings.telegramToken === 'string' ? settings.telegramToken.trim() || null : null;
+            this.token = token;
+            this.adminChatId = decimalId(settings.telegramChatId, { signed: true }) || '';
+            if (!token) { this.setStatus('standby', 'sin_token'); return; }
+            if (!/^[a-zA-Z0-9:_-]{1,256}$/.test(token)) { this.setStatus('standby', 'token_invalido'); return; }
+            this.pollAbort = new AbortController();
+            let identity;
+            try {
+                const response = await this.getMe({ token, signal: this.pollAbort.signal, timeoutMs: 15000 });
+                if (!this.isGeneration(gen, token)) return;
+                const botId = verifiedBotId(response);
+                if (!botId) {
+                    const authError = classifyPollResponse(response) === 'auth' || response?.error_code >= 400 && response.error_code < 500;
+                    this.setStatus('standby', authError ? 'token_invalido' : 'identidad_no_verificada');
+                    return;
                 }
-            } else if (classifyPollResponse(updates) === 'auth') {
-                // Token inválido o revocado: parar el loop y dejarlo visible en
-                // el panel (standby + motivo). Se reactiva al guardar token nuevo.
-                log.error('🚫 Token de Telegram inválido o revocado. Genera uno nuevo con @BotFather y guárdalo en el panel.');
-                this.pollerActive = false;
-                this.setStatus('standby', 'token_invalido');
+                if (!this.capture) { this.setStatus('standby', 'archivo_no_disponible'); return; }
+                identity = await this.trackArchive(this.capture.openBot(botId));
+            } catch (error) {
+                if (!this.isGeneration(gen, token)) return;
+                const code = /** @type {any} */ (error)?.code || 'TG_ACCOUNT_SETUP_FAILED';
+                log.error(`No se pudo verificar la cuenta o leer su cursor durable (${code}).`);
+                this.setStatus('standby', 'error_archivo');
                 return;
             }
-        } catch (e) {
-            const err = /** @type {any} */ (e);
-            if (err?.message !== 'socket hang up') {
-                log.error('Error en poller de telegram: ' + (err?.message || err));
-            }
-            await new Promise(r => setTimeout(r, 5000));
-        }
+            if (!this.isGeneration(gen, token)) return;
+            this.accountId = identity.accountId;
+            this.lastUpdateId = identity.lastUpdateId;
+            this.pollerActive = true;
+            this.setStatus('open');
+            this.emit('ready', { adminLid: this.adminChatId });
+            void this.updateMenu(token).catch(() => log.error('No se pudo actualizar el menú Telegram.'));
+            const pollTask = this.poll(gen, token, this.pollAbort.signal).catch(() => logError.error('Falló el ciclo de Telegram.'));
+            this.pollTask = pollTask;
+            this.pollTasks.add(pollTask);
+            void pollTask.finally(() => this.pollTasks.delete(pollTask));
+        });
+        this.lifecycle = task.catch(() => {});
+        return task;
+    }
 
-        if (this.pollerActive && gen === this.pollGeneration) {
-            setImmediate(() => this.poll(gen));
+    invalidatePolling() {
+        this.pollerActive = false;
+        this.pollAbort?.abort();
+        this.pollAbort = null;
+        this.accountId = null;
+        this.lastUpdateId = null;
+        this.lastChat = null;
+        for (const waiter of this.chatWaiters) waiter.reject(failure('TG_CONNECTION_CHANGED', 'La conexión de Telegram cambió. Guarda el token y vuelve a probar.'));
+        return ++this.pollGeneration;
+    }
+
+    disconnect() {
+        const gen = this.invalidatePolling();
+        const task = this.lifecycle.then(async () => {
+            await this.pollRequest.catch(() => {});
+            await Promise.allSettled([...this.pollTasks]);
+            await Promise.allSettled([...this.archiveOperations]);
+            if (gen !== this.pollGeneration) return;
+            this.token = null;
+            this.accountId = null;
+            this.lastUpdateId = null;
+            this.setStatus('disconnected');
+        });
+        this.lifecycle = task.catch(() => {});
+        return task;
+    }
+
+    /** Discovery observes the configured owner; it never reads/acks the source.
+     * @param {string} token
+     * @param {{signal?:AbortSignal}} [options]
+     * @returns {Promise<string>}
+     */
+    async discoverChatId(token, { signal } = {}) {
+        if (!token || token !== this.token) throw failure('TG_SAVE_TOKEN_FIRST', 'Guarda primero este token, envía /start al bot en Telegram y vuelve a probar.');
+        if (!this.pollerActive) throw failure('TG_NOT_CONNECTED', 'Telegram no está conectado. Guarda un token válido y vuelve a probar.');
+        if (signal?.aborted) throw failure('TG_REQUEST_CANCELLED');
+        if (this.lastChat && Date.now() - this.lastChat.at <= 5 * 60000) return this.lastChat.id;
+        if (this.chatWaiters.size >= 64) throw failure('TG_DISCOVERY_BUSY', 'Hay demasiadas pruebas pendientes. Reintenta.');
+        return new Promise((resolve, reject) => {
+            const finish = (error, id) => {
+                clearTimeout(timer); signal?.removeEventListener('abort', cancelled);
+                this.chatWaiters.delete(waiter);
+                if (error) reject(error); else resolve(id);
+            };
+            const cancelled = () => finish(failure('TG_REQUEST_CANCELLED'), null);
+            const timer = setTimeout(() => finish(failure('TG_CHAT_NOT_OBSERVED', 'No se observó un chat reciente. Envía /start al bot y vuelve a probar.'), null), this.discoveryTimeoutMs);
+            const waiter = { resolve: id => finish(null, id), reject: error => finish(error, null) };
+            this.chatWaiters.add(waiter);
+            signal?.addEventListener('abort', cancelled, { once: true });
+        });
+    }
+
+    observeChat(msg) {
+        const raw = msg?.chat?.id;
+        const id = typeof raw === 'string' ? raw : Number.isSafeInteger(raw) ? String(raw) : '';
+        if (!/^-?[1-9]\d*$/.test(id)) return;
+        this.lastChat = { id, at: Date.now() };
+        for (const waiter of this.chatWaiters) waiter.resolve(id);
+    }
+
+    isCurrent(gen, token) {
+        return this.pollerActive && this.isGeneration(gen, token);
+    }
+
+    isGeneration(gen, token = this.token) {
+        return gen === this.pollGeneration && token === this.token && !this.pollAbort?.signal.aborted;
+    }
+
+    trackArchive(operation) {
+        const tracked = Promise.resolve(operation);
+        this.archiveOperations.add(tracked);
+        return tracked.finally(() => this.archiveOperations.delete(tracked));
+    }
+
+    async poll(gen = this.pollGeneration, token = this.token, signal = this.pollAbort?.signal) {
+        if (!token || !signal || !this.isCurrent(gen, token) || this.runningGeneration === gen) return;
+        this.runningGeneration = gen;
+        try {
+            while (this.isCurrent(gen, token)) {
+                let updates;
+                try {
+                    const offset = this.lastUpdateId === null ? '0' : String(BigInt(this.lastUpdateId) + 1n);
+                    this.pollRequest = this.getUpdates({ token, offset, signal, timeoutMs: this.pollTimeoutMs });
+                    updates = await this.pollRequest;
+                } catch {
+                    if (!this.isCurrent(gen, token)) return;
+                    log.error('No se pudo consultar Telegram; reintento tras la pausa de recuperación.');
+                    await delay(this.retryMs, undefined, { signal }).catch(() => {});
+                    continue;
+                }
+                if (!this.isCurrent(gen, token)) return;
+                if (!updates?.ok || !Array.isArray(updates.result)) {
+                    const errorCode = Number(updates?.error_code);
+                    if (classifyPollResponse(updates) === 'auth' || errorCode >= 400 && errorCode < 500) {
+                        this.pollerActive = false;
+                        for (const waiter of this.chatWaiters) waiter.reject(failure('TG_NOT_CONNECTED', 'Telegram rechazó la conexión. Revisa el token y vuelve a guardar.'));
+                        this.setStatus('standby', classifyPollResponse(updates) === 'auth' ? 'token_invalido' : 'error_polling');
+                        return;
+                    }
+                    if (errorCode >= 500 || updates?.ok === false) {
+                        log.error('Telegram devolvió un error temporal; se reintentará tras la pausa de recuperación.');
+                        await delay(this.retryMs, undefined, { signal }).catch(() => {});
+                        continue;
+                    }
+                    log.error('Telegram devolvió una respuesta inválida; no se confirmó ningún update.');
+                    this.stopForCapture('respuesta_invalida');
+                    return;
+                }
+                if (updates.result.length) {
+                    let observations, committed;
+                    const capture = this.capture;
+                    const accountId = this.accountId;
+                    if (!capture || !accountId) { this.stopForCapture('archivo_no_disponible'); return; }
+                    try {
+                        observations = normalizeUpdates(updates.result, accountId, this.adminChatId || '', {
+                            includeAudio: num('AUDIO_STT_ENABLED', 0) === 1
+                        });
+                        for (const observation of observations) {
+                            if (observation.legacy) this.observeChat({ chat: { id: observation.legacy.chatId } });
+                        }
+                        committed = await this.trackArchive(capture.commitBatch(accountId, observations));
+                        if (committed.results.length !== observations.length) throw failure('TG_CAPTURE_RESULT_INVALID');
+                    } catch (error) {
+                        if (!this.isCurrent(gen, token)) return;
+                        const code = /** @type {any} */ (error)?.code || 'TG_CAPTURE_FAILED';
+                        log.error(`No se confirmó el lote Telegram (${code}); el cursor durable no avanzó.`);
+                        this.stopForCapture('error_captura');
+                        return;
+                    }
+                    if (!this.isCurrent(gen, token)) return;
+                    this.lastUpdateId = committed.lastUpdateId;
+                    let transcriptionFailure = false;
+                    for (let i = 0; i < observations.length; i++) {
+                        if (!this.isCurrent(gen, token)) return;
+                        const observation = observations[i], captured = committed.results[i];
+                        if (!observation.legacy) continue;
+                        const legacy = observation.legacy;
+                        if (legacy.isAdminChannel ? captured.status === 'stale' : captured.status !== 'created') continue;
+                        const stored = captured.result?.message;
+                        if (!legacy.isAdminChannel && (!stored || stored.content.type === 'oversized')) continue;
+                        if (legacy.audio && num('AUDIO_STT_ENABLED', 0) === 1) {
+                            if (transcriptionFailure) continue;
+                            try {
+                                await this._maybeHandleAudio(updates.result[i], legacy.message, {
+                                    token, gen, signal, accountId,
+                                    messageId: legacy.isAdminChannel ? null : stored.id
+                                });
+                            } catch (error) {
+                                transcriptionFailure = true;
+                                const code = /** @type {any} */ (error)?.code || 'TG_TRANSCRIPTION_FAILED';
+                                log.error(`No se pudo guardar el resultado de audio Telegram (${code}).`);
+                            }
+                            continue;
+                        }
+                        if (legacy.text) this.emitLegacyMessage(legacy.message, legacy.chatId, legacy.text,
+                            legacy.isAdminChannel, legacy.isAdminChannel ? null : stored?.id ?? null);
+                    }
+                    if (transcriptionFailure) this.stopForCapture('error_captura');
+                }
+                await yieldLoop();
+            }
+        } finally { if (this.runningGeneration === gen) this.runningGeneration = -1; }
+    }
+
+    stopForCapture(reason) {
+        this.pollerActive = false;
+        this.pollAbort?.abort();
+        for (const waiter of this.chatWaiters) waiter.reject(failure('TG_CAPTURE_FAILED', 'La captura Telegram se detuvo; revisa el estado antes de continuar.'));
+        this.setStatus('standby', reason);
+    }
+
+    emitLegacyMessage(msg, chatId, text, isAdminChannel, archiveMessageId = null) {
+        const pushName = msg.from?.first_name || 'Desconocido';
+        const username = msg.from?.username;
+        this.emit('message', new StandardMessage({
+            channel: 'telegram', remoteId: `telegram:${chatId}`, rawId: chatId, text,
+            metadata: { pushName: username ? `${pushName} (@${username})` : pushName,
+                savedName: null, phoneNumber: null, lid: chatId, isBusiness: false,
+                country: 'Desconocido', isFromMe: false, isAdminChannel }, raw: msg,
+            archiveMessageId
+        }));
+    }
+
+    async archiveAcceptedSend(chatId, message) {
+        if (!this.archive || !this.accountId) return;
+        const input = normalizeSentMessage(message, this.accountId, chatId, this.adminChatId);
+        if (!input) return;
+        try {
+            const [stored] = await this.trackArchive(this.archive.ingestBatch([input]));
+            if (stored?.status === 'quarantined') logError.error('Telegram: conflicto al reconciliar una salida aceptada con su eco.');
+        } catch (error) {
+            const code = /** @type {any} */ (error)?.code || 'TG_OUTBOUND_ARCHIVE_FAILED';
+            logError.error(`Telegram: salida aceptada sin confirmación local (${code}).`);
         }
     }
 
@@ -156,7 +308,7 @@ class TelegramAdapter extends ChannelAdapter {
             if (useMarkdown) payload.parse_mode = 'Markdown';
 
             const data = JSON.stringify(payload);
-            const req = https.request({
+            const req = this.sendHttpRequest({
                 hostname: 'api.telegram.org',
                 family: 4,
                 port: 443,
@@ -167,23 +319,28 @@ class TelegramAdapter extends ChannelAdapter {
                     'Content-Length': Buffer.byteLength(data)
                 }
             }, (res) => {
-                let body = '';
-                res.on('data', chunk => body += chunk);
-                res.on('end', () => {
-                    if (res.statusCode === 200) {
-                        const bodyJson = JSON.parse(body);
-                        // 🛑 Registrar el message_id para el anti-bucle del poller
-                        if (bodyJson && bodyJson.result && bodyJson.result.message_id) {
-                            registerSentMessage({ message_id: bodyJson.result.message_id });
-                        }
-                        resolve(bodyJson);
-                    } else if (useMarkdown && res.statusCode === 400 && body.includes("can't parse entities")) {
-                        // Retry without markdown
+                const chunks = [];
+                res.on('data', chunk => chunks.push(Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk)));
+                res.on('end', async () => {
+                    let body;
+                    try { body = new TextDecoder('utf-8', { fatal: true }).decode(Buffer.concat(chunks)); }
+                    catch { reject(failure('TG_SEND_RESPONSE_INVALID')); return; }
+                    if (useMarkdown && res.statusCode === 400 && body.includes("can't parse entities")) {
+                        // Retry without markdown, even when the provider body is not valid JSON.
                         this.sendMessage(normalizedJid, text, { ...options, useMarkdown: false })
                             .then(resolve)
                             .catch(reject);
+                        return;
+                    }
+                    let bodyJson;
+                    try { bodyJson = parseTelegramJson(body); }
+                    catch { reject(failure('TG_SEND_RESPONSE_INVALID')); return; }
+                    if (res.statusCode === 200 && bodyJson?.ok === true) {
+                        await this.archiveAcceptedSend(tgChatId, bodyJson.result);
+                        resolve(bodyJson);
                     } else {
-                        reject(new Error(`Telegram error ${res.statusCode}: ${body}`));
+                        reject(failure(bodyJson?.ok === false ? 'TG_SEND_REJECTED' : 'TG_SEND_HTTP_ERROR',
+                            `Telegram rechazó el envío (${res.statusCode}).`));
                     }
                 });
             });
@@ -232,11 +389,29 @@ class TelegramAdapter extends ChannelAdapter {
      * lo transcribe y emite un StandardMessage con el texto normalizado.
      * @param {any} update - update completo de Telegram (tiene .message.chat.id)
      * @param {any} msg - update.message (con .voice o .audio y .from)
+     * @param {{token:string, gen:number, signal:AbortSignal, accountId:string, messageId:string|null}} session
      */
-    async _maybeHandleAudio(update, msg) {
-        if (!this.token) return;
+    async _maybeHandleAudio(update, msg, session) {
+        const current = () => this.isCurrent(session.gen, session.token) && !session.signal.aborted;
+        if (!current()) return;
         const voiceOrAudio = msg.voice || msg.audio;
         if (!voiceOrAudio) return;
+
+        let transcriptionPending = false;
+        const updateTranscript = async input => {
+            try { return await this.trackArchive(this.archive.updateTranscription(input)); }
+            catch (error) { /** @type {any} */ (error).telegramArchiveFailure = true; throw error; }
+        };
+        const markFailed = async () => {
+            if (!session.messageId || !transcriptionPending) return;
+            await updateTranscript({ messageId: session.messageId, expectedStatus: 'pending', status: 'failed' });
+            transcriptionPending = false;
+        };
+        if (session.messageId) {
+            const pending = await updateTranscript({ messageId: session.messageId, expectedStatus: 'not_requested', status: 'pending' });
+            if (pending.status !== 'updated') return;
+            transcriptionPending = true;
+        }
 
         const tgChatId = String(msg.chat.id);
         const isAdmin = (tgChatId === this.adminChatId);
@@ -249,78 +424,124 @@ class TelegramAdapter extends ChannelAdapter {
         const maxSeconds = num('STT_MAX_SECONDS', 120);
         if (seconds > maxSeconds) {
             log.warn(`🎤 Audio TG de ${seconds}s excede tope (${maxSeconds}s). Ignorado.`);
-            await this.sendMessage(`telegram:${tgChatId}`,
-                `🎤 Audio muy largo (${seconds}s). Máximo ${maxSeconds}s por ahora.`).catch(() => {});
+            await markFailed();
+            if (!current()) return;
+            await abortable(Promise.resolve().then(() => this.sendMessage(`telegram:${tgChatId}`,
+                `🎤 Audio muy largo (${seconds}s). Máximo ${maxSeconds}s por ahora.`)), session.signal).catch(() => {});
             return;
         }
 
+        let transcript;
         try {
-            await this.sendPresenceUpdate('composing', `telegram:${tgChatId}`).catch(() => {});
+            await abortable(Promise.resolve().then(() => this.sendPresenceUpdate('composing', `telegram:${tgChatId}`)), session.signal).catch(() => {});
 
+            if (!current()) { await markFailed(); return; }
             // 1) getFile -> file_path
             const fileId = voiceOrAudio.file_id;
-            const getFileUrl = `https://api.telegram.org/bot${this.token}/getFile?file_id=${encodeURIComponent(fileId)}`;
-            const info = /** @type {any} */ (await fetchJson(getFileUrl));
+            const getFileUrl = `https://api.telegram.org/bot${session.token}/getFile?file_id=${encodeURIComponent(fileId)}`;
+            const info = /** @type {any} */ (await fetchJson(getFileUrl, session.signal));
+            if (!current()) { await markFailed(); return; }
             if (!info || !info.ok || !info.result || !info.result.file_path) {
-                log.warn('🎤 TG getFile falló: ' + JSON.stringify(info));
+                log.warn('🎤 TG getFile falló.');
+                await markFailed();
                 return;
             }
             // 2) descargar el binario
-            const dlUrl = `https://api.telegram.org/file/bot${this.token}/${info.result.file_path}`;
-            const buffer = await downloadBytes(dlUrl);
+            const dlUrl = `https://api.telegram.org/file/bot${session.token}/${info.result.file_path}`;
+            const buffer = await downloadBytes(dlUrl, session.signal);
             if (!buffer || buffer.length === 0) {
                 log.warn('🎤 TG no se pudo descargar el audio.');
+                await markFailed();
                 return;
             }
 
             const ext = (info.result.file_path.split('.').pop() || 'oga').toLowerCase();
-            const transcript = await transcribeAudio(buffer, `tg-audio.${ext}`, { language: 'es' });
-            if (!transcript) {
-                log.warn('🎤 STT TG no devolvió transcripción.');
-                return;
-            }
-
-            log.info(`🎤 [AUDIO TG TRANSCRITO] ${tgChatId}: "${transcript}"`);
-            const stdMsg = new StandardMessage({
-                channel: 'telegram',
-                remoteId: `telegram:${tgChatId}`,
-                rawId: tgChatId,
-                text: transcript,
-                transcript: transcript,
-                isAudio: true,
-                metadata: {
-                    pushName: fullName,
-                    savedName: null,
-                    phoneNumber: null,
-                    lid: tgChatId,
-                    isBusiness: false,
-                    country: 'Desconocido',
-                    isFromMe: false,
-                    isAdminChannel: isAdmin
-                },
-                raw: msg
-            });
-            this.emit('message', stdMsg);
+            if (!current()) { await markFailed(); return; }
+            const work = Promise.resolve().then(() => this.transcribe(buffer, `tg-audio.${ext}`, { language: 'es', signal: session.signal }));
+            transcript = await abortable(work, session.signal);
         } catch (err) {
-            const e = /** @type {any} */ (err);
-            logError.error('🎤 Error en STT de Telegram: ' + (e && e.message));
+            const error = /** @type {any} */ (err);
+            if (error?.telegramArchiveFailure) throw err;
+            if (current()) logError.error('🎤 Error en STT de Telegram: ' + (error && error.message));
+            await markFailed();
+            return;
         }
+        if (!current()) { await markFailed(); return; }
+        if (typeof transcript !== 'string' || !transcript.trim() || !/** @type {any} */ (transcript).isWellFormed()) {
+            log.warn('🎤 STT TG no devolvió una transcripción válida.');
+            await markFailed();
+            return;
+        }
+        if (session.messageId) {
+            const completed = await updateTranscript({ messageId: session.messageId, expectedStatus: 'pending', status: 'completed', transcript });
+            transcriptionPending = false;
+            if (completed.status !== 'updated') return;
+            const conversation = await this.trackArchive(this.archive.conversation(completed.message.conversationId));
+            if (conversation?.requires_review) return;
+        }
+        if (!current()) return;
+        log.info(`🎤 [AUDIO TG TRANSCRITO] ${tgChatId}: "${transcript}"`);
+        this.emit('message', new StandardMessage({
+            channel: 'telegram', remoteId: `telegram:${tgChatId}`, rawId: tgChatId,
+            text: transcript, transcript, isAudio: true,
+            metadata: { pushName: fullName, savedName: null, phoneNumber: null, lid: tgChatId,
+                isBusiness: false, country: 'Desconocido', isFromMe: false, isAdminChannel: isAdmin }, raw: msg,
+            archiveMessageId: session.messageId
+        }));
     }
 }
 
 module.exports = TelegramAdapter;
 
 /** GET JSON con timeout explícito (ADR-004). */
-async function fetchJson(url) {
-    const res = await fetch(url, { signal: AbortSignal.timeout(10000) });
+async function fetchJson(url, signal) {
+    const res = await fetch(url, { signal: AbortSignal.any([signal, AbortSignal.timeout(10000)]) });
     if (!res.ok) return null;
     return res.json();
 }
 
+async function abortable(operation, signal) {
+    if (signal.aborted) throw signal.reason || failure('TG_REQUEST_CANCELLED');
+    let listener;
+    const aborted = new Promise((_, reject) => {
+        listener = () => reject(signal.reason || failure('TG_REQUEST_CANCELLED'));
+        signal.addEventListener('abort', listener, { once: true });
+    });
+    try { return await Promise.race([operation, aborted]); }
+    finally { signal.removeEventListener('abort', listener); }
+}
+
 /** Descarga bytes con timeout explícito (ADR-004). */
-async function downloadBytes(url) {
-    const res = await fetch(url, { signal: AbortSignal.timeout(30000) });
+async function downloadBytes(url, signal) {
+    const res = await fetch(url, { signal: AbortSignal.any([signal, AbortSignal.timeout(30000)]) });
     if (!res.ok) return null;
-    const ab = await res.arrayBuffer();
-    return Buffer.from(ab);
+    const limit = num('STT_MAX_UPLOAD_BYTES', 5 * 1024 * 1024);
+    const declared = Number(res.headers?.get?.('content-length'));
+    if (Number.isFinite(declared) && declared > limit) { await res.body?.cancel?.().catch(() => {}); return null; }
+    if (!res.body?.getReader) {
+        const ab = await res.arrayBuffer();
+        return ab.byteLength <= limit ? Buffer.from(ab) : null;
+    }
+    const reader = res.body.getReader(), chunks = [];
+    let size = 0;
+    try {
+        for (;;) {
+            const { done, value } = await reader.read();
+            if (done) break;
+            size += value.byteLength;
+            if (size > limit) { await reader.cancel().catch(() => {}); return null; }
+            chunks.push(Buffer.from(value));
+        }
+    } finally { reader.releaseLock(); }
+    return Buffer.concat(chunks, size);
+}
+
+/** The only getUpdates path in the application. No discovery offset/reader. */
+function requestUpdates({ token, offset, signal, timeoutMs }) {
+    return requestJson({ path: `/bot${token}/getUpdates?offset=${encodeURIComponent(offset)}&limit=100&timeout=30`, signal, timeoutMs });
+}
+
+/** Verify the bot identity before connecting a token to its durable namespace. */
+function requestBotIdentity({ token, signal, timeoutMs }) {
+    return requestJson({ path: `/bot${token}/getMe`, signal, timeoutMs });
 }

@@ -10,6 +10,7 @@ process.env.SDK_RESET_CLEAN_TTL_MS = '300';
 process.env.SDK_RESET_NO_EXIT = '1'; // el restart del gateway no mata al runner
 
 const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'sdkbot-rcflow-'));
+process.env.SDK_CONVERSATIONS_DB_PATH = path.join(tmp, 'conversations.db');
 process.env.SDK_AUTH_DIR = path.join(tmp, 'auth_info_baileys');
 process.env.SDK_CONTACTS_DB_PATH = path.join(tmp, 'contacts_db.json');
 process.env.SDK_SETTINGS_DB_PATH = path.join(tmp, 'settings_db.json');
@@ -54,7 +55,7 @@ after(() => {
     fs.rmSync(tmp, { recursive: true, force: true });
     for (const k of [
         'SDK_RESET_CLEAN_READ_MS', 'SDK_RESET_CLEAN_TTL_MS', 'SDK_RESET_NO_EXIT',
-        'SDK_AUTH_DIR', 'SDK_CONTACTS_DB_PATH', 'SDK_SETTINGS_DB_PATH',
+        'SDK_CONVERSATIONS_DB_PATH', 'SDK_AUTH_DIR', 'SDK_CONTACTS_DB_PATH', 'SDK_SETTINGS_DB_PATH',
         'SDK_BROADCAST_DB_PATH', 'SDK_MESSAGE_QUEUE_PATH', 'BRAIN_MEMORY_DB',
         'SDK_ADMIN_WEB_LOG_GATEWAY', 'SDK_ADMIN_WEB_LOG_BRAIN',
         'SDK_GATEWAY_LOCK_PATH', 'SDK_BRAIN_LOCK_PATH'
@@ -143,4 +144,27 @@ test('expiración: el timer avisa y cancela el pedido solo', async () => {
     await sleep(380); // TTL 300ms + margen
     assert.ok(!hasPendingCleanReset(), 'pedido expirado');
     assert.ok(fakeSock.sent.some(m => /Tiempo agotado/.test(m.text)), 'aviso de expiración enviado');
+});
+test('reset closes archive before unlinking SQLite; closure failure aborts without wiping', async () => {
+    const { setBeforeReset } = require('../services/factoryReset');
+    const { createArchive } = require('../services/conversations');
+    populateState();
+    const dbPath = process.env.SDK_CONVERSATIONS_DB_PATH;
+    for (const suffix of ['', '-wal', '-shm']) fs.rmSync(dbPath + suffix, { force: true });
+    const archive = createArchive({ path: dbPath });
+    await archive.ready;
+    try {
+        setBeforeReset(async () => { throw new Error('fixture close failure'); });
+        requestCleanReset(makeSock(), JID); await sleep(70);
+        await tryCleanConfirm('BORRAR-TODO', fakeSock, JID);
+        assert.ok(fs.existsSync(dbPath)); assert.match(lastReply().text, /abortado/);
+        assert.ok(await archive.snapshot());
+        resetForTests();
+        let closed = false;
+        setBeforeReset(async () => { await archive.close(); closed = true; });
+        requestCleanReset(makeSock(), JID); await sleep(70);
+        await tryCleanConfirm('BORRAR-TODO', fakeSock, JID);
+        assert.ok(closed); assert.ok(!fs.existsSync(dbPath));
+        for (const suffix of ['-wal', '-shm']) assert.ok(!fs.existsSync(dbPath + suffix));
+    } finally { setBeforeReset(async () => {}); await archive.close(); }
 });

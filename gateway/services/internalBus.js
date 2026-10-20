@@ -1,4 +1,5 @@
 // @ts-check
+/* global AbortController */
 /**
  * 🔌 BUS INTERNO del gateway (tercer proceso: el panel web lo consume).
  *
@@ -11,7 +12,9 @@
  * comandos/pairing/reset. El gateway sigue siendo dueño del socket de
  * Baileys; el bus es solo el canal de transporte entre procesos.
  *
- * Endpoints (todos sin auth: es loopback local):
+ * Endpoints legacy (firma obligatoria al configurar SDK_PANEL_GATEWAY_SECRET;
+ * compatibilidad sin secreto solo para instalación local no expuesta):
+ *   API v1     → requiere actor firmado y capacidad; incluye sesión y lectura
  *   GET  /qr       → SSE estado del QR (data URL PNG o null) + sesión
  *   GET  /logs     → SSE stream del log del gateway (y /logs?component=brain)
  *   GET  /status   → JSON buildStatus()
@@ -27,6 +30,11 @@ const http = require('http');
 const fs = require('fs');
 const path = require('path');
 const { URL } = require('url');
+const { createVerifier } = require('../lib/panelContext');
+const { readBytes, sendError, BoundaryError } = require('../lib/httpBoundary');
+const { createSessionApi } = require('./sessionApi');
+const { getGlobalPolicy } = require('../config');
+const verifiedBodies = new WeakMap();
 const { spawn } = require('child_process');
 const QRCode = require('qrcode');
 const { buildStatus } = require('./statusServer');
@@ -35,13 +43,14 @@ const {
     importProfileFile, deleteProfileFile, reloadProfiles
 } = require('./brainService');
 const { getContactsDB, getSettingsDB, saveSettingsDB } = require('./db');
-const { sendTelegramMessage, testAndGetChatId } = require('./telegramService');
+const { sendTelegramMessage } = require('./telegramService');
+const { requestJson: telegramRequest, failure: telegramFailure } = require('./telegramHttp');
 const { runAdminCommand } = require('./adminCommandRunner');
 const { findKeyByDigits } = require('./contactsRepository');
 const { setNumberState, setContactProfile } = require('./stateService');
 const { num } = require('../tuning');
 const {
-    performFactoryReset, setWiping, restartGatewayProcess, restartBrainIfSystemd
+    performFactoryReset, prepareFactoryReset, setWiping, restartGatewayProcess, restartBrainIfSystemd
 } = require('./factoryReset');
 const { cat, errMsg } = require('./logger');
 
@@ -157,6 +166,8 @@ let resetReconnectCb = null;
 let pairingCodeRequester = null;
 /** @type {any} Callback que el gateway inyecta para reconectar Telegram tras cambiar la config. */
 let telegramReloader = null;
+/** @type {((token:string, options:{signal:AbortSignal}) => Promise<string>)|null} */
+let telegramChatIdResolver = null;
 /** Estado compartido para que el panel pueda restaurar el método pendiente. */
 /** @type {'qr'|'code'|null} */
 let pairingMethod = null;
@@ -454,6 +465,11 @@ function setTelegramReloader(cb) {
     telegramReloader = typeof cb === 'function' ? cb : null;
 }
 
+/** Read-only discovery port; only the configured transport owner observes chats. */
+function setTelegramChatIdResolver(cb) {
+    telegramChatIdResolver = typeof cb === 'function' ? cb : null;
+}
+
 /** Reconnecta el adaptador de Telegram si el gateway registró el reload. */
 async function reloadTelegramAdapter() {
     if (typeof telegramReloader !== 'function') return false;
@@ -589,6 +605,11 @@ async function performReset(clean = false) {
     resetInProgress = true;
     if (clean) {
         setWiping(true);
+        try { await prepareFactoryReset(); }
+        catch {
+            setWiping(false); resetInProgress = false;
+            return { success: false, message: 'No se pudo cerrar el archivo de conversaciones.' };
+        }
         const report = performFactoryReset();
         if (report.errors.length > 0) {
             setWiping(false);
@@ -756,6 +777,10 @@ function sendJson(res, code, obj) {
 }
 
 function readBody(req) {
+    if (verifiedBodies.has(req)) {
+        try { return Promise.resolve(JSON.parse(verifiedBodies.get(req).toString('utf8') || '{}')); }
+        catch { return Promise.resolve({}); }
+    }
     return new Promise((resolve) => {
         let data = '';
         req.on('data', (c) => { data += c; if (data.length > 1e6) req.destroy(); });
@@ -903,20 +928,31 @@ function routeApi(req, res, pathname, params) {
         return;
     }
     if (pathname === '/telegram/test' && req.method === 'POST') {
-        readBody(req).then(async (b) => {
-            try {
-                if (!b.token) throw new Error('Se requiere el token del bot');
-                // Si mandan un token nuevo pero sin chatId, lo buscamos
-                let chatId = b.chatId;
-                if (!chatId) {
-                    chatId = await testAndGetChatId(b.token);
-                }
-                await sendTelegramMessage('🤖 *Test de notificaciones SDK-Bot*\n\n¡La integración de Telegram se ha configurado con éxito!', b.token, chatId);
-                sendJson(res, 200, { success: true, chatId: chatId });
-            } catch (e) {
-                sendJson(res, 400, { success: false, message: errMsg(e) });
+        const controller = new AbortController();
+        const closed = () => { if (!res.writableEnded) controller.abort(); };
+        res.on('close', closed);
+        readBody(req).then(async b => {
+            if (typeof b.token !== 'string' || !b.token.trim()) throw telegramFailure('TG_TOKEN_REQUIRED', 'Se requiere el token del bot');
+            const token = b.token.trim();
+            if (!/^[a-zA-Z0-9:_-]{1,256}$/.test(token)) throw telegramFailure('TG_TOKEN_INVALID', 'El token tiene un formato inválido.');
+            let chatId = b.chatId;
+            if (!chatId) {
+                if (!telegramChatIdResolver) throw telegramFailure('TG_DISCOVERY_UNAVAILABLE', 'Guarda primero el token con el gateway activo, envía /start al bot y vuelve a probar.');
+                chatId = await telegramChatIdResolver(token, { signal: controller.signal });
             }
-        });
+            if (typeof chatId === 'number' && !Number.isSafeInteger(chatId)) throw telegramFailure('TG_CHAT_ID_INVALID', 'Introduce el Chat ID como texto decimal exacto.');
+            chatId = String(chatId);
+            if (!/^-?[1-9]\d*$/.test(chatId)) throw telegramFailure('TG_CHAT_ID_INVALID', 'El Chat ID debe ser un identificador decimal válido.');
+            if (controller.signal.aborted) return;
+            const result = await telegramRequest({ path: `/bot${token}/sendMessage`, method: 'POST',
+                body: { chat_id: chatId, text: '🤖 Test de notificaciones SDK-Bot. ¡La integración de Telegram se ha configurado con éxito!' },
+                signal: controller.signal, timeoutMs: 2000 });
+            if (!result?.ok) throw telegramFailure('TG_TEST_REJECTED', 'Telegram rechazó el mensaje de prueba. Revisa el token y el Chat ID.');
+            if (!controller.signal.aborted) sendJson(res, 200, { success: true, chatId });
+        }).catch(e => {
+            if (!controller.signal.aborted) sendJson(res, 400, { success: false,
+                message: typeof e.code === 'string' && e.code.startsWith('TG_') ? e.message : 'No se pudo procesar la prueba de Telegram.' });
+        }).finally(() => { res.removeListener('close', closed); });
         return;
     }
 
@@ -1050,14 +1086,35 @@ function routeApi(req, res, pathname, params) {
 function startInternalBus(opts = {}) {
     const port = opts.port ?? Number(process.env.INTERNAL_BUS_PORT || 5400);
     const host = process.env.INTERNAL_BUS_HOST || '127.0.0.1';
-    const server = http.createServer((req, res) => {
-        const u = new URL(req.url || '/', `http://${host}:${port}`);
+    const secret = process.env.SDK_PANEL_GATEWAY_SECRET || '';
+    const signedRequired = Boolean(secret) || process.env.NODE_ENV === 'production' ||
+        !['127.0.0.1', '::1', 'localhost'].includes(host);
+    const verify = createVerifier({ secret });
+    const sessionApi = createSessionApi(() => { getSettingsDB(); return getGlobalPolicy(); }, opts.archive,
+        getContactsDB, opts.getChannelStatus);
+    const server = http.createServer(async (req, res) => {
+        let u;
+        try { u = new URL(req.url || '/', 'http://gateway.local'); }
+        catch { sendError(res, new BoundaryError(422, 'VALIDATION_ERROR', 'URL inválida.')); return; }
         const params = u.searchParams;
         const pathname = u.pathname;
+        const v1 = pathname === '/v1' || pathname.startsWith('/v1/');
+        let requestId;
         try {
+            // v1 siempre exige firma. Al configurar secreto, también las rutas
+            // anteriores quedan protegidas sin cambiar su contrato de respuesta.
+            if (v1 || signedRequired) {
+                if (!secret) throw new BoundaryError(503, 'SERVICE_UNAVAILABLE', 'Frontera del panel sin configurar.');
+                const body = await readBytes(req);
+                const context = verify(req, body);
+                requestId = context.requestId;
+                verifiedBodies.set(req, body);
+                if (v1) { await sessionApi(req, res, context, pathname, verifiedBodies.get(req) || Buffer.alloc(0)); return; }
+            }
             routeApi(req, res, pathname, params);
         } catch (e) {
-            sendJson(res, 500, { error: errMsg(e) });
+            if (v1 || signedRequired) sendError(res, e, requestId);
+            else sendJson(res, 500, { error: errMsg(e) });
         }
     });
     server.on('error', (e) => logError.error(`🔌 [BUS] Error en bus interno: ${e && e.message}`));
@@ -1070,7 +1127,7 @@ function startInternalBus(opts = {}) {
 
 module.exports = {
     startInternalBus, setSock, clearSock, handleConnectionUpdate, setQrRefresh, setPairingCodeRequester,
-    setResetReconnect, setTelegramReloader, requestPairing, runAdminCommand, performReset, performRestart, wsReadyState,
+    setResetReconnect, setTelegramReloader, setTelegramChatIdResolver, requestPairing, runAdminCommand, performReset, performRestart, wsReadyState,
     qrPayload, resetInProgressForTests, setQrTtlForTests, resetQrForTests, setPairingCodeTimeoutForTests,
     isQrWindowOpen: () => qrWindowOpen && !!lastQrDataUrl && Date.now() < qrExpiresAt,
     notifyAdmin

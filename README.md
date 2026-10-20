@@ -2,6 +2,29 @@
 
 **Plataforma Multi-Canal (WhatsApp & Telegram) 100% Custom, Smart Sync & Automated Handoff** — Gateway de mensajería modular con arquitectura Adapter Hub en Node.js + Cerebro IA en Python FastAPI con router multi-proveedor (Groq → OpenRouter → Gemini).
 
+## Evolución: bandeja de conversaciones y atención humana
+
+La siguiente etapa propone historial persistente, una bandeja similar a WhatsApp
+Web y control humano con respuesta desde el chat. Es una **base de diseño y hoja
+de ruta**; contratos, sesión/frontera autenticada y captura WA/Telegram con cursor
+durable en SQLite ya están implementados. La bandeja y el control desde el chat siguen pendientes.
+
+- [Contratos v1 y comandos del workspace](packages/contracts/README.md)
+- [Sesión y frontera autenticada v1](docs/FRONTERA-AUTENTICADA-V1.md)
+- [Arquitectura y contratos de destino](docs/ARCHITECTURE.md)
+- [Decisión arquitectónica ADR-005](docs/adr/005-plataforma-conversaciones.md)
+- [Hoja de ruta por entregas](docs/ROADMAP.md)
+- [Estado y próxima tarea](docs/SESSION-STATE.md)
+- [Backlog de bugs y política de reparación](docs/BACKLOG.md)
+- [Archivo SQLite con worker y evidencia F2A](docs/ARCHIVO-CONVERSACIONES-F2A.md)
+- [Captura base WA live/history y límites F2B.2](docs/CAPTURA-WHATSAPP-F2B2.md)
+- [Transcripciones durables y multimedia F2B.3](docs/MULTIMEDIA-WHATSAPP-F2B3.md)
+- [Dueño único y descubrimiento Telegram F2C.1](docs/TELEGRAM-DUENO-UNICO-F2C1.md)
+- [Captura Telegram y cursor durable F2C.2](docs/TELEGRAM-CAPTURA-F2C2.md)
+- [Experimento SQLite probado y compatibilidad](docs/SQLITE-SPIKE.md)
+- [Especificación operativa v1](docs/SPEC-OPERATIVA-V1.md) y [criterios de validación](docs/VALIDACION-V1.md)
+- [Prompt para continuar en otra sesión](docs/PROMPT-CONTINUIDAD.md)
+
 ---
 
 ## 🎯 Características Principales
@@ -140,12 +163,12 @@ node index.js
 # Acceso en el navegador: http://localhost:5201 (o tu IP / Tailscale en el puerto 5201)
 ```
 
-#### 🔐 OAuth con Google (opcional, recomendado en producción)
+#### 🔐 OAuth con Google
 
-El panel soporta login con Google OAuth 2.0. Cuando están presentes las
-variables `PANEL_GOOGLE_CLIENT_ID` y `PANEL_GOOGLE_CLIENT_SECRET`, **todas las
-rutas (excepto `/auth/*`) exigen sesión Google**; sin ellas el panel queda
-abierto (comportamiento legacy).
+En producción o con PANEL_REQUIRE_AUTH=true, el panel exige Google OAuth 2.0.
+Requiere PANEL_GOOGLE_CLIENT_ID y PANEL_GOOGLE_CLIENT_SECRET; sin ambas falla
+cerrado. En desarrollo, legacy conserva acceso abierto; v1 requiere opt-in dev
+explícito o sesión OAuth forzada.
 
 - Crea un "ID de cliente de OAuth" (Aplicación web) en Google Cloud Console.
   - Orígenes autorizados JS: `https://panel.zer0x.org`
@@ -163,6 +186,11 @@ abierto (comportamiento legacy).
 - En el homelab el panel se expone vía Caddy + Cloudflare Tunnel en
   `https://panel.zer0x.org` (TLS en el borde; Caddy proxifica a
   `127.0.0.1:5201` / `host.docker.internal:5201`).
+- Gateway y panel requieren el mismo SDK_PANEL_GATEWAY_SECRET >=32 bytes para
+  la frontera firmada; Compose exige esa variable en su entorno. Es distinta del
+  secreto de cookie y de claves IA. Sin secreto solo queda compatibilidad legacy
+  de desarrollo en loopback, nunca v1. Configuración/grants y límites:
+  [FRONTERA-AUTENTICADA-V1](docs/FRONTERA-AUTENTICADA-V1.md).
 
 #### Canales y Pairing desde el panel
 
@@ -246,7 +274,12 @@ cd gateway
 npm run reset          # interactivo: pide confirmación y luego genera QR
 npm run reset -- --yes # no interactivo: borra la sesión y sale (el gateway ya corriendo regenera el QR)
 ```
-*(O usa `npm run clean -- --yes` para un reset limpio de fábrica F7 — borra TODO el estado de runtime excepto `brain/profiles/`)*
+`npm run clean -- --yes` hace un reset de fábrica: borra todo el estado runtime,
+incluido el archivo de conversaciones, y conserva `brain/profiles/`. Antes hay
+que detener supervisores y evitar arranques concurrentes. El CLI rechaza servicios
+supervisados detectados o una parada no verificable; `--yes` no omite esa guarda.
+Tras un reset correcto sale sin relanzar procesos. En Windows/Termux detén las
+instancias antes de usarlo. Alcance y límites: [reset seguro](docs/RESET-SEGURO-F2B1.md).
 
 ---
 

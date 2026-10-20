@@ -46,3 +46,7 @@ Thumbs.db
 
 # Gemini agent files
 .gemini/
+
+# Archivo operativo SQLite, WAL/SHM y backups locales
+gateway/data/
+gateway/panel/web/dist/

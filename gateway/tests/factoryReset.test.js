@@ -7,6 +7,7 @@ const path = require('path');
 // Env vars de TODAS las rutas de estado apuntando a temporales: el wipe
 // debe tocar exactamente esos archivos y NINGÚN otro (perfiles, otros).
 const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'sdkbot-freset-'));
+process.env.SDK_CONVERSATIONS_DB_PATH = path.join(tmp, 'conversations.db');
 process.env.SDK_AUTH_DIR = path.join(tmp, 'auth_info_baileys');
 process.env.SDK_CONTACTS_DB_PATH = path.join(tmp, 'contacts_db.json');
 process.env.SDK_SETTINGS_DB_PATH = path.join(tmp, 'settings_db.json');
@@ -33,7 +34,7 @@ const LOG_DIRS = new Set(getStatePaths().filter(e => /Logs/.test(e.label)).map(e
 after(() => {
     fs.rmSync(tmp, { recursive: true, force: true });
     for (const k of [
-        'SDK_AUTH_DIR', 'SDK_CONTACTS_DB_PATH', 'SDK_SETTINGS_DB_PATH',
+        'SDK_CONVERSATIONS_DB_PATH', 'SDK_AUTH_DIR', 'SDK_CONTACTS_DB_PATH', 'SDK_SETTINGS_DB_PATH',
         'SDK_BROADCAST_DB_PATH', 'SDK_MESSAGE_QUEUE_PATH', 'BRAIN_MEMORY_DB',
         'SDK_ADMIN_WEB_LOG_GATEWAY', 'SDK_ADMIN_WEB_LOG_BRAIN',
         'SDK_GATEWAY_LOCK_PATH', 'SDK_BRAIN_LOCK_PATH'
@@ -55,7 +56,7 @@ function populate() {
 
 test('getStatePaths resuelve todas las rutas con las env vars (temporales)', () => {
     const paths = getStatePaths();
-    assert.strictEqual(paths.length, 10);
+    assert.strictEqual(paths.length, 13);
     for (const entry of paths) {
         assert.ok(fs.existsSync(entry.path) || path.dirname(entry.path) === tmp || entry.path.startsWith(tmp),
             `ruta bajo el tmp: ${entry.label}`);

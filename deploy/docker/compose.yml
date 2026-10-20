@@ -68,6 +68,7 @@ services:
     environment:
       NODE_ENV: production
       BRAIN_API_BASE: http://brain:3400
+      SDK_PANEL_GATEWAY_SECRET: ${SDK_PANEL_GATEWAY_SECRET:?Define SDK_PANEL_GATEWAY_SECRET para gateway y panel}
       INTERNAL_BUS_HOST: 0.0.0.0
       INTERNAL_BUS_PORT: 3240
       STATUS_HOST: 127.0.0.1
@@ -75,6 +76,7 @@ services:
       SDK_ADMIN_WEB_ENABLED: 0
       SDK_AUTH_DIR: /var/lib/sdk-bot/auth_info_baileys
       SDK_CONTACTS_DB_PATH: /var/lib/sdk-bot/contacts_db.json
+      SDK_CONVERSATIONS_DB_PATH: /var/lib/sdk-bot/conversations.db
       SDK_SETTINGS_DB_PATH: /var/lib/sdk-bot/settings_db.json
       SDK_BROADCAST_DB_PATH: /var/lib/sdk-bot/broadcast_db.json
       SDK_MESSAGE_QUEUE_PATH: /var/lib/sdk-bot/queue/pending_messages.jsonl
@@ -120,6 +122,8 @@ services:
       ADMIN_WEB_PORT: 3005
       ADMIN_WEB_HOST: 0.0.0.0
       GATEWAY_INTERNAL_URL: http://gateway:3240
+      SDK_PANEL_GATEWAY_SECRET: ${SDK_PANEL_GATEWAY_SECRET:?Define SDK_PANEL_GATEWAY_SECRET para gateway y panel}
+      PANEL_CONVERSATIONS_UI_ENABLED: ${PANEL_CONVERSATIONS_UI_ENABLED:-false}
     volumes:
       - sdk_bot_gateway_logs:/app/gateway/logs
       - sdk_bot_brain_logs:/app/brain/logs

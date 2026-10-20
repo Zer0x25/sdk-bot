@@ -1,0 +1,11 @@
+{
+  "name": "sdk-bot-workspace",
+  "private": true,
+  "workspaces": ["packages/*"],
+  "engines": { "node": ">=22.13.0" },
+  "scripts": {
+    "check": "npm run check --workspaces --if-present",
+    "test": "npm test --workspaces --if-present",
+    "contracts:generate": "npm run generate --workspace=@sdk-bot/contracts"
+  }
+}

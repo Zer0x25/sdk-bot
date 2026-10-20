@@ -49,7 +49,7 @@ function noteFault(kind, err) {
 process.on('unhandledRejection', (err) => noteFault('unhandledRejection', err));
 process.on('uncaughtException', (err) => noteFault('uncaughtException', err));
 
-const GATEWAY_LOCK_FILE = path.join(__dirname, '.gateway.lock');
+const GATEWAY_LOCK_FILE = process.env.SDK_GATEWAY_LOCK_PATH || path.join(__dirname, '.gateway.lock');
 
 function isProcessAlive(pid) {
     if (!pid) return false;
@@ -108,6 +108,7 @@ async function ensureSingleInstance() {
         try { fs.unlinkSync(GATEWAY_LOCK_FILE); } catch (e) { /* ignorar */ }
     }
 
+    fs.mkdirSync(path.dirname(GATEWAY_LOCK_FILE), { recursive: true });
     fs.writeFileSync(GATEWAY_LOCK_FILE, String(process.pid));
     process.on('exit', removeLock);
 }
@@ -125,11 +126,30 @@ function getAdapter(channel) {
 }
 module.exports.getAdapter = getAdapter; // Expose for pipeline
 
+let conversationArchive;
+let archiveRetention;
+let legacyDispatchPump;
 async function startGateway() {
+    conversationArchive = require('./services/conversations').createArchive();
+    await conversationArchive.ready;
+    archiveRetention = await require('./services/conversations/retention').startRetention(conversationArchive,
+        () => log.error('Archivo: falló la purga diaria; revisar retención.'));
+    require('./services/factoryReset').setBeforeReset(async () => {
+        for (const adapter of adapters.values()) await adapter.disconnect();
+        await legacyDispatchPump?.close();
+        await archiveRetention.close();
+        await conversationArchive.close();
+    });
+    internalBus.startInternalBus({ archive: conversationArchive,
+        getChannelStatus: (channel, accountId) => {
+            const adapter = adapters.get(channel);
+            if (!adapter || adapter.accountId !== accountId) return 'disconnected';
+            return { status: adapter.status, detail: adapter.statusDetail || null };
+        } });
     log.info('Iniciando Hub de Canales del Gateway...');
 
     // 1. Iniciar WhatsApp
-    const whatsapp = new WhatsappAdapter();
+    const whatsapp = new WhatsappAdapter({ archive: conversationArchive });
     adapters.set('whatsapp', whatsapp);
 
     // Conectar eventos del adaptador de WhatsApp
@@ -152,12 +172,20 @@ async function startGateway() {
         channels.whatsapp.lastDisconnectReason = detail || null;
         if (status === 'open') {
             channels.whatsapp.lastConnectAt = new Date().toISOString();
+            void legacyDispatchPump.trigger();
         }
         internalBus.handleConnectionUpdate({ connection: status }, whatsapp);
     });
 
-    whatsapp.on('message', async stdMsg => {
-        await handleIncomingMessage(stdMsg);
+    whatsapp.on('message', stdMsg => {
+        if (stdMsg.archiveMessageId) { void legacyDispatchPump.trigger(); return; }
+        void handleIncomingMessage(stdMsg).catch(error => logError.error(`Mensaje administrativo WhatsApp falló: ${error?.message || error}`));
+    });
+
+    whatsapp.on('capture_status', status => { channels.whatsapp.capture = status; });
+    whatsapp.on('archived_message', ({ raw, source }) => {
+        if (source === 'live') chatStore.upsertMessage(raw);
+        else messageSyncQueue.push([raw]);
     });
 
     whatsapp.on('raw_message', async () => {
@@ -169,27 +197,32 @@ async function startGateway() {
         contactSyncQueue.push(contacts);
     });
 
-    whatsapp.on('history_sync', ({ messages }) => {
-        if (messages && messages.length) messageSyncQueue.push(messages);
-    });
-
     whatsapp.on('presence_update', ({ id, presences }) => {
         handlePresenceUpdate(id, presences);
     });
 
     // 2. Iniciar Telegram
-    const telegram = new TelegramAdapter();
+    const telegram = new TelegramAdapter({ archive: conversationArchive });
     adapters.set('telegram', telegram);
+    internalBus.setTelegramChatIdResolver((token, options) => telegram.discoverChatId(token, options));
+
+    legacyDispatchPump = require('./services/conversations/legacyDispatch').createLegacyDispatchPump({
+        archive: conversationArchive,
+        dispatch: (message, acknowledge) => handleIncomingMessage(message, { onDurableComplete: acknowledge }),
+        isReady: channel => channels[channel]?.connection === 'open',
+        onError: (error, messageId) => logError.error(`Replay durable ${messageId || ''} falló (${error?.code || error?.message || 'unknown'}); queda pendiente.`)
+    });
 
     telegram.on('ready', ({ adminLid }) => {
         log.info(`👑 ADMIN TG DETECTADO -> Chat ID: ${adminLid}`);
     });
 
-    telegram.on('message', async stdMsg => {
+    telegram.on('message', stdMsg => {
         // ÚNICO dueño de getUpdates: este adaptador. Todo (comandos del admin
         // y conversaciones) entra al pipeline; messageHandler trata el chat
         // del admin de Telegram como self-chat (mismas reglas que WhatsApp).
-        await handleIncomingMessage(stdMsg);
+        if (stdMsg.archiveMessageId) { void legacyDispatchPump.trigger(); return; }
+        void handleIncomingMessage(stdMsg).catch(error => logError.error(`Mensaje administrativo Telegram falló: ${error?.message || error}`));
     });
     
     telegram.on('connection', ({ status, detail }) => {
@@ -198,6 +231,7 @@ async function startGateway() {
         channels.telegram.lastDisconnectReason = detail || null;
         if (status === 'open') {
             channels.telegram.lastConnectAt = new Date().toISOString();
+            void legacyDispatchPump.trigger();
         }
     });
 
@@ -285,26 +319,32 @@ async function startGateway() {
     });
 }
 
-ensureSingleInstance().then(startGateway);
+ensureSingleInstance().then(startGateway).catch(() => {
+    log.error('No se pudo iniciar el gateway/archivo; se cierra sin admitir canales.');
+    void handleExit(1);
+});
 
 // Status server
 startStatusServer();
 require('./services/brainService').startBrainHealthWatch();
-internalBus.startInternalBus();
 
 // Compatibilidad: Estas colas asumen WhatsApp por ahora
 setInterval(() => messageQueue.scheduleFlush(), 30 * 1000).unref();
 broadcastService.setIsConnected(() => channels.whatsapp.connection === 'open' || channels.telegram.connection === 'open');
 setInterval(() => { broadcastService.tick(); }, 10 * 1000).unref();
 
-function handleExit() {
+let exiting = false;
+async function handleExit(exitCode = 0) {
+    if (exiting) return;
+    exiting = true;
     log.info('\n🛑 Señal de apagado recibida. Cerrando de forma segura...');
     for (const [, adapter] of adapters.entries()) {
-        adapter.disconnect().catch(() => {});
+        await adapter.disconnect().catch(() => {});
     }
     if (!isWiping()) flushToDisk();
-    process.exit(0);
+    try { await legacyDispatchPump?.close(); await archiveRetention?.close(); await conversationArchive?.close(); } catch { /* exit after worker terminates */ }
+    process.exit(exitCode);
 }
 
-process.on('SIGINT', handleExit);
-process.on('SIGTERM', handleExit);
+process.on('SIGINT', () => { void handleExit(); });
+process.on('SIGTERM', () => { void handleExit(); });
