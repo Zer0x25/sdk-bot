@@ -541,7 +541,7 @@ ausencia de Vite/CA. Commit separado de la UI.
   páginas y cargan snapshot tras completar el reset.
 - BUG-070 cerró el hueco visual con más de 50 mensajes tras una desconexión.
   Evidencia: [F4.3-STREAM-INBOX](F4.3-STREAM-INBOX.md).
-- PR #10 fusionada a main (commit `cf1a1cd`, commit final en rama `f7c3acc`). GitHub Actions run 39485070383 pasó los cinco jobs:
+- PR #10 fusionada a main (commit `cf1a1cd`, head del PR `a390c71`). GitHub Actions run 39485451344 pasó los cinco jobs:
   13 pruebas Vitest del panel, build/servido del artefacto, 269 pruebas Node,
   smoke, spike SQLite, contratos Node 22.13/24 y brain Ruff/pytest.
 - No se probaron canales reales ni E2E manual en navegador. La revisión visual del
