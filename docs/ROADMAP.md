@@ -27,7 +27,9 @@ F2C.1 completa dueño único del polling/descubrimiento Telegram.
 F2C.2 completa la captura base TG con cursor durable y namespace exacto.
 F2D completa replay durable hasta el handler tras el commit (BUG-045). F2E.1 ya
 registra salidas aceptadas y deduplica ecos WA; conserva autoría external_self.
-La siguiente unidad es ejecutar la carga sintética completa para cerrar F2.
+F2E.2 cierra la carga sintética completa y F3.1 implementa la API autenticada de
+lectura, filtros, páginas y cursor local de lectura. La siguiente unidad es F3.2:
+SSE, replay y resynchronización ante cursores fuera de retención.
 BUG-050 conserva salidas ambiguas; BUG-051 es puerta antes de usar archivos
 preexistentes reales. La atribución IA/operador queda en F5 junto a su outbox.
 Sin canales reales ni migración.
@@ -192,20 +194,27 @@ de control y atribución de autoría outbound quedan para F5.
 
 **Depende de:** Fase 2.
 
-- [ ] Listar conversaciones y mensajes con paginación por cursor, orden estable,
+- [x] F3.1: listar conversaciones y mensajes con paginación por cursor, orden estable,
   filtros y límites. Búsqueda de contacto; no prometer búsqueda de texto aún.
-- [ ] Detalle con cobertura de historial, autoría y capacidades del canal.
-- [ ] Cursor de lectura por actor separado de recibos remotos; no leídos fiables.
+- [x] F3.1: detalle con cobertura de historial, autoría y capacidades del canal;
+  etiqueta de contacto nullable sin exponer identidades del proveedor.
+- [x] F3.1: cursor de lectura monotónico por actor separado de recibos remotos;
+  conteo de no leídos respaldado por SQLite y durable tras reinicio.
 - [ ] SSE con eventos transaccionales, watermark, replay, deduplicación y
   resync.required. Cerrar carrera replay/vivo y soportar cursor fuera de retención.
-- [ ] Autorizar lectura/SSE por sesión; probar proxy, desconexión, cierre de recursos
-  y falta temporal de gateway. No exponer raw/secretos/rutas locales.
+- [x] F3.1: autorizar lectura por sesión firmada/capacidad y validar respuestas
+  JSON del proxy con contratos v1; no exponer raw/secretos/rutas locales.
+- [ ] F3.2: probar autorización SSE, proxy, desconexión, cierre de recursos y falta
+  temporal del gateway. Definir revocación/alcance de streams activos.
   Resolver BUG-024 antes de operadores limitados: grants v1 deben acompañarse de
-  autorización administrativa legacy. Definir revocación/alcance de streams activos.
+  autorización administrativa legacy.
 
-**Aceptación:** mismo resultado al leer y reanudar stream; no perder eventos entre
-snapshot y suscripción; páginas sin duplicados con timestamps iguales. Revisar
-actualización de lista cuando llegan mensajes durante paginación.
+**Aceptación F3.1:** respuestas de lectura conformes al contrato; páginas sin
+duplicados con timestamps iguales; cursores de lista se invalidan ante cambios de
+snapshot, agenda, política o lectura. **Aceptación F3.2:** mismo resultado al leer
+y reanudar stream; no perder eventos entre snapshot y suscripción; resync explícito
+al vencer la retención. Revisar actualización de lista ante mensajes nuevos.
+Evidencia F3.1: [lectura autenticada](F3.1-LECTURA-AUTENTICADA.md).
 
 ## Fase 4 — Bandeja de lectura y sistema visual
 

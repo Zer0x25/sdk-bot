@@ -149,11 +149,11 @@ test('F2C.2 migrates v1 archives and persists Telegram cursor per verified bot t
     const dbPath = path.join(dir, 'archive.db');
     const legacy = new DatabaseSync(dbPath);
     legacy.exec('PRAGMA foreign_keys=ON;'); legacy.exec(schema);
-    legacy.exec('DROP TABLE legacy_dispatch; DROP TABLE telegram_cursors; PRAGMA user_version=1;');
+    legacy.exec('DROP TABLE legacy_dispatch; DROP TABLE read_cursors; DROP TABLE telegram_cursors; DROP INDEX messages_unread; PRAGMA user_version=1;');
     legacy.prepare('INSERT INTO archive_meta VALUES(1,?,?)').run(randomUUID(), '0');
     legacy.close();
     const { archive } = await archiveFixture(t, dbPath);
-    assert.equal((await archive.ready).schemaVersion, 3);
+    assert.equal((await archive.ready).schemaVersion, 4);
     const account = await archive.registerAccount({ channel: 'telegram', providerKey: 'telegram_bot:42' });
     assert.equal(await archive.telegramCursor(account.id), null);
     const durableMessage = { identity: { accountId: account.id, channel: 'telegram', kind: 'telegram_chat_id', exactValue: CHAT_BIG },

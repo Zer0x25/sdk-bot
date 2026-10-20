@@ -403,7 +403,14 @@
           ]
         },
         "capturingSince": {
-          "$ref": "#/$defs/Timestamp"
+          "anyOf": [
+            {
+              "$ref": "#/$defs/Timestamp"
+            },
+            {
+              "type": "null"
+            }
+          ]
         }
       },
       "required": [
@@ -501,6 +508,18 @@
         },
         "contactId": {
           "$ref": "#/$defs/Id"
+        },
+        "displayName": {
+          "anyOf": [
+            {
+              "type": "string",
+              "maxLength": 200,
+              "format": "unicode-text"
+            },
+            {
+              "type": "null"
+            }
+          ]
         },
         "canonicalIdentityId": {
           "$ref": "#/$defs/Id"
@@ -967,12 +986,16 @@
         "conversation": {
           "$ref": "#/$defs/Conversation"
         },
+        "channelCapabilities": {
+          "$ref": "#/$defs/ChannelCapabilities"
+        },
         "snapshot": {
           "$ref": "#/$defs/EventCursor"
         }
       },
       "required": [
         "conversation",
+        "channelCapabilities",
         "snapshot"
       ],
       "additionalProperties": false

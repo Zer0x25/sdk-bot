@@ -9,6 +9,7 @@ class ChannelAdapter extends EventEmitter {
         super();
         this.channelName = channelName; // ej. 'whatsapp', 'telegram'
         this.status = 'disconnected';
+        this.statusDetail = null;
     }
 
     /**
@@ -58,6 +59,7 @@ class ChannelAdapter extends EventEmitter {
      */
     setStatus(status, detail) {
         this.status = status;
+        this.statusDetail = detail || null;
         this.emit('connection', { status, channel: this.channelName, detail: detail || null });
     }
 }

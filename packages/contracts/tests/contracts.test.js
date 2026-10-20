@@ -14,7 +14,7 @@ const key = { accountId: id(1), channel: 'telegram', kind: 'telegram_chat_id', e
 const identity = { id: id(2), contactId: id(3), canonicalIdentityId: id(2), key, verification: 'adapter', resolution: 'resolved' };
 const actor = { id: id(4), displayName: 'Operador sintético', capabilities: ['conversations:read','control:write'] };
 const conversation = {
-  id: id(5), accountId: id(1), contactId: id(3), canonicalIdentityId: id(2),
+  id: id(5), accountId: id(1), contactId: id(3), displayName: 'Contacto de prueba', canonicalIdentityId: id(2),
   control: { accessPolicy: 'neutral', automationMode: 'human', lifecycle: 'open',
     ownerId: null, controlVersion: '3', contextVersion: '1', status: 'confirmed', takenAt: null, handoffReason: 'legacy_import' },
   aggregateVersion: '9007199254740993', lastActivityAt: now,
@@ -155,7 +155,7 @@ test('entities and snapshots roundtrip JSON with explicit nullable fields', () =
     ['Conversation', conversation], ['Message', message], ['Operation', operation],
     ['SessionResponse', { actor, policy, snapshot: cursor }],
     ['ConversationsResponse', { items: [conversation], nextCursor: null, snapshot: cursor }],
-    ['ConversationResponse', { conversation, snapshot: cursor }],
+    ['ConversationResponse', { conversation, channelCapabilities: { historySync: false, attachments: false, reply: true, edit: false, deliveryReceipt: false, readReceipt: false }, snapshot: cursor }],
     ['MessagesResponse', { items: [message], nextCursor: null, snapshot: cursor }],
   ];
   for (const [name, value] of cases) accept(name, JSON.parse(JSON.stringify(value)));

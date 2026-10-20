@@ -183,7 +183,7 @@ limpiar memoria IA no borra el archivo de conversaciones.
 |---|---|
 | channel_accounts | ID interno estable, canal y referencia del proveedor. Nunca token en DTO. El teléfono no es PK mutable. |
 | contacts / contact_identities | ID estable y aliases exactos por cuenta/canal: JID, LID, teléfono, chat ID como texto. Unión solo con evidencia del adapter. |
-| conversations | UUID, accountId, identidad remota canónica, accessPolicy, automationMode, lifecycle, ownerId, controlVersion, handoffReason, takenAt, lastActivityAt, historyCoverage. |
+| conversations | UUID, accountId, identidad remota canónica, nombre visible opcional, accessPolicy, automationMode, lifecycle, ownerId, controlVersion, handoffReason, takenAt, lastActivityAt, historyCoverage. |
 | messages | ID local, conversationId, providerMessageId nullable, direction, authorKind, actorId nullable, type, text, transcript, occurredAt, ingestedAt, deliveryStatus, replyToId nullable, source. |
 | message_attempts / outbox | Mensaje local, idempotencyKey, payload validado/hash, intent, controlVersion, intentos, estado, error acotado, próximo intento. |
 | conversation_events | Secuencia durable, tipo, versión de esquema, aggregateVersion, fecha y payload mínimo; auditoría/replay en la misma transacción del cambio. |
@@ -326,6 +326,23 @@ no es una clave de proveedor IA. Comandos internos tienen principal comprobado;
 un token técnico tiene principal acotado. Dev usa actor local explícito, registrado
 y permitido solo en desarrollo. No confiar identidad a un campo del formulario
 ni a la red privada por sí sola.
+
+F3.1 implementa lectura autenticada de cuentas, conversaciones, detalle, mensajes
+y POST `/read`. `Conversation.displayName` es nullable y solo se completa con una
+coincidencia exacta de identidad WhatsApp con la agenda; el DTO nunca devuelve
+teléfono, JID, LID ni referencia del proveedor. Los estados de control actuales son
+una proyección de solo lectura de la agenda/settings heredados. Sus versiones
+wire comienzan en `1`; F5 trasladará autoridad y versionado al dominio SQLite.
+La cobertura indica `capturing_since`, `provider_sync_observed` o `partial_import`;
+`capturingSince` es null cuando el archivo no tiene un punto de observación.
+
+El archivo SQLite v4 conserva `read_cursors(actor_id, conversation_id,
+through_inbound_seq)` con avance monotónico y aislado por actor; no envía recibos
+remotos. El resumen calcula no leídos desde secuencias entrantes archivadas. Los
+cursores de mensajes usan `(occurredAt,id)`; los cursores de conversaciones llevan
+firma y se vinculan al actor, filtros, snapshot, agenda/settings y cursor de lectura.
+Si la bandeja cambia mientras se pagina, la API responde `410 CURSOR_EXPIRED` para
+que el cliente vuelva a cargar la primera página. La lectura SSE/replay sigue F3.2.
 
 Mantener OAuth state server-side, cookie HttpOnly/SameSite=Lax y Secure tras HTTPS.
 Autorizar también lecturas, SSE y adjuntos futuros; conservar validación de origen.

@@ -4,6 +4,17 @@ const { validate } = require('@sdk-bot/contracts');
 const { signContext } = require('../lib/panelContext');
 const { readBytes, BoundaryError, sendError } = require('../lib/httpBoundary');
 
+function responseContract(method, pathname, status) {
+    if (status >= 400) return 'ErrorResponse';
+    if (method === 'GET' && pathname === '/v1/session') return 'SessionResponse';
+    if (method === 'GET' && pathname === '/v1/accounts') return 'AccountsResponse';
+    if (method === 'GET' && pathname === '/v1/conversations') return 'ConversationsResponse';
+    if (method === 'GET' && /^\/v1\/conversations\/[^/]+$/.test(pathname)) return 'ConversationResponse';
+    if (method === 'GET' && /^\/v1\/conversations\/[^/]+\/messages$/.test(pathname)) return 'MessagesResponse';
+    if (method === 'POST' && /^\/v1\/conversations\/[^/]+\/read$/.test(pathname)) return 'ReadResponse';
+    return null;
+}
+
 // Lista positiva: nunca propagar Cookie/Authorization/X-Status-Token ni contexto
 // o firmas del navegador. Content-Length se calcula sobre los bytes firmados.
 function upstreamHeaders(req, target, body) {
@@ -76,7 +87,7 @@ async function proxy(req, res, targetPath, {
                     let value;
                     try { value = JSON.parse(Buffer.concat(chunks).toString('utf8')); } catch { /* saneado abajo */ }
                     const status = upstream.statusCode || 503;
-                    const contract = status >= 400 ? 'ErrorResponse' : target.pathname === '/v1/session' ? 'SessionResponse' : null;
+                    const contract = responseContract(req.method, target.pathname, status);
                     if (!contract || !validate(contract, value).valid) {
                         return fail(new BoundaryError(503, 'SERVICE_UNAVAILABLE', 'Respuesta inválida del gateway.'));
                     }
@@ -101,4 +112,4 @@ async function proxy(req, res, targetPath, {
     }
 }
 
-module.exports = { proxy, upstreamHeaders };
+module.exports = { proxy, upstreamHeaders, responseContract };

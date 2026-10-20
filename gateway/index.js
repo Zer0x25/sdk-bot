@@ -140,7 +140,12 @@ async function startGateway() {
         await archiveRetention.close();
         await conversationArchive.close();
     });
-    internalBus.startInternalBus({ archive: conversationArchive });
+    internalBus.startInternalBus({ archive: conversationArchive,
+        getChannelStatus: (channel, accountId) => {
+            const adapter = adapters.get(channel);
+            if (!adapter || adapter.accountId !== accountId) return 'disconnected';
+            return { status: adapter.status, detail: adapter.statusDetail || null };
+        } });
     log.info('Iniciando Hub de Canales del Gateway...');
 
     // 1. Iniciar WhatsApp

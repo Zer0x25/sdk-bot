@@ -59,7 +59,19 @@ export interface Archive {
     retryLegacyDispatch(input: { messageId: string; code?: string }): Promise<{ status: 'pending' | 'waiting' | 'dispatched' | 'skipped' | 'missing' }>;
     conversation(id: string): Promise<ArchiveConversation | null>;
     conversations(input?: { limit?: number; before?: { lastActivityAt: string; id: string } }): Promise<ArchiveConversation[]>;
+    conversationRows(input?: { actorId?: string; accountId?: string; channel?: 'whatsapp' | 'telegram'; limit?: number;
+        before?: { lastActivityAt: string | null; id: string } }): Promise<Array<ArchiveConversation & {
+        channel: 'whatsapp' | 'telegram'; identity_keys: Array<{ kind: string; exactValue: string }>;
+        first_ingested_at: string | null; unread_count: number;
+    }>>;
+    conversationView(input: { conversationId: string; actorId: string }): Promise<(ArchiveConversation & {
+        channel: 'whatsapp' | 'telegram'; identity_keys: Array<{ kind: string; exactValue: string }>;
+        first_ingested_at: string | null; unread_count: number;
+    }) | null>;
+    accounts(): Promise<Array<{ id: string; channel: 'whatsapp' | 'telegram' }>>;
     messages(input: { conversationId: string; limit?: number; before?: { occurredAt: string; id: string } }): Promise<Contract<'Message'>[]>;
+    messagePage(input: { conversationId: string; limit?: number; before?: { occurredAt: string; id: string } }): Promise<{ items: Contract<'Message'>[]; hasMore: boolean }>;
+    markRead(input: { conversationId: string; actorId: string; throughInboundSeq: string }): Promise<{ throughInboundSeq: string } | null>;
     events(input?: { after?: string; limit?: number }): Promise<Contract<'Event'>[]>;
     diagnostics(): Promise<Contract<'EventCursor'> & { messages: number; events: number; quarantine: number; aliases: number; provenance: number; legacyDispatchPending: number; legacyDispatchWaiting: number; integrity: string; foreignKeys: number }>;
     purge(input?: { now?: string; limit?: number }): Promise<{ bodies: number; events: number; fingerprints: number; remaining: boolean }>;

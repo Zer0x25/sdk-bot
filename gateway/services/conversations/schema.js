@@ -23,6 +23,7 @@ CREATE TABLE messages (id TEXT PRIMARY KEY, conversation_id TEXT NOT NULL REFERE
  occurred_at TEXT NOT NULL, ingested_at TEXT NOT NULL, inbound_seq TEXT, source TEXT NOT NULL,
  payload TEXT NOT NULL CHECK(json_valid(payload)));
 CREATE INDEX messages_page ON messages(conversation_id,occurred_at,id);
+CREATE INDEX messages_unread ON messages(conversation_id,inbound_seq) WHERE inbound_seq IS NOT NULL;
 CREATE INDEX messages_retention ON messages(ingested_at,id);
 CREATE TABLE fingerprints (account_id TEXT NOT NULL REFERENCES accounts(id),
  canonical_id TEXT NOT NULL REFERENCES identities(id), provider_id TEXT NOT NULL,
@@ -47,6 +48,13 @@ CREATE TABLE quarantine (id TEXT PRIMARY KEY, reason TEXT NOT NULL,
  conversation_id TEXT NOT NULL REFERENCES conversations(id), other_conversation_id TEXT REFERENCES conversations(id),
  created_at TEXT NOT NULL);
 CREATE INDEX conversations_page ON conversations(last_activity_at,id);
+CREATE TABLE read_cursors (
+ actor_id TEXT NOT NULL,
+ conversation_id TEXT NOT NULL REFERENCES conversations(id) ON DELETE CASCADE,
+ through_inbound_seq TEXT NOT NULL CHECK(through_inbound_seq='0' OR (through_inbound_seq NOT GLOB '*[^0-9]*' AND substr(through_inbound_seq,1,1) BETWEEN '1' AND '9')),
+ updated_at TEXT NOT NULL,
+ PRIMARY KEY(actor_id,conversation_id)
+);
 CREATE TABLE legacy_dispatch (
  seq INTEGER PRIMARY KEY AUTOINCREMENT,
  message_id TEXT NOT NULL UNIQUE REFERENCES messages(id) ON DELETE CASCADE,
@@ -58,5 +66,5 @@ CREATE TABLE legacy_dispatch (
  dispatched_at TEXT
 );
 CREATE INDEX legacy_dispatch_pending ON legacy_dispatch(status,seq);
-PRAGMA user_version=3;
+PRAGMA user_version=4;
 `;

@@ -24,6 +24,7 @@ class WhatsappAdapter extends ChannelAdapter {
     constructor({ archive, makeSocket = makeWASocket, loadAuth = useMultiFileAuthState, download = downloadMediaMessage, transcribe = transcribeAudio } = {}) {
         super('whatsapp');
         this.sock = null;
+        this.accountId = null;
         this.makeSocket = makeSocket;
         this.loadAuth = loadAuth;
         this.download = download;
@@ -111,6 +112,7 @@ class WhatsappAdapter extends ChannelAdapter {
         // tambien se protege (el refresh puede venir por otras vias).
         const pairingInFlight = this.sock && internalBus.isQrWindowOpen && internalBus.isQrWindowOpen();
         if (pairingInFlight) return;
+        this.accountId = null;
         if (this.sock) {
             const old = this.sock;
             this.sock = null;
@@ -214,6 +216,19 @@ class WhatsappAdapter extends ChannelAdapter {
                 this.reconnectAttempt = 0;
                 if (this.reconnectTimer) { clearTimeout(this.reconnectTimer); this.reconnectTimer = null; }
                 this.setStatus('open');
+
+                if (this.archive && sock.user) {
+                    try {
+                        const session = socketIdentity(sock.user);
+                        void this.archive.registerAccount({ channel: 'whatsapp', providerKey: session.providerKey })
+                            .then(account => {
+                                if (this.sock === sock && revision === this.connectRevision) this.accountId = account.id;
+                            })
+                            .catch(() => { if (this.sock === sock) this.captureFailure('WA_ACCOUNT_ARCHIVE_FAILED'); });
+                    } catch (error) {
+                        this.captureFailure(error?.code || 'WA_ACCOUNT_IDENTITY_INVALID');
+                    }
+                }
                 
                 let adminPhone = '';
                 let adminLid = '';
@@ -380,6 +395,7 @@ class WhatsappAdapter extends ChannelAdapter {
         if (this.reconnectTimer) { clearTimeout(this.reconnectTimer); this.reconnectTimer = null; }
         const sock = this.sock;
         this.sock = null;
+        this.accountId = null;
         this.transcriptions?.cancel();
         try { if (sock) sock.end(new Error('Manual disconnect')); }
         finally {

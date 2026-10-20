@@ -68,6 +68,8 @@ salvo indicación contraria. La evidencia detallada y líneas están en la basel
 | BUG-053 | P2 | Cerrado F2E.1: la autoría de un eco WA dependía de si el retorno de `sendMessage` o el evento `fromMe` ganaba una carrera. | Una correlación `sentIds` solo existía después del retorno del socket y cambiaba authorKind a `unknown`; antes del retorno quedaba `external_self`. | El resultado aceptado y los ecos conservan `external_self`; prueba fuerza eco antes del retorno, comprueba una sola fila y el mismo contenido. No atribuye origen IA/operador; eso sigue F5. Evidencia: [SALIDAS-ACEPTADAS-F2E1](SALIDAS-ACEPTADAS-F2E1.md). |
 | BUG-054 | P2 | Cerrado F2E.1: `sendMessage` Telegram decodificaba cada fragmento HTTP como texto y podía corromper Unicode dividido entre chunks. | La respuesta Bot API se concatenaba con `body += chunk`, distinto del parser acotado del polling. | El mock divide un emoji dentro de sus bytes UTF-8; el resultado archivado conserva texto exacto y el ID grande. Evidencia: [SALIDAS-ACEPTADAS-F2E1](SALIDAS-ACEPTADAS-F2E1.md). |
 | BUG-055 | P2 | Cerrado F2E.2: el log superaba los 50.000 eventos recientes después del backfill bajo tráfico nuevo. | El primer run completo terminó con 50.700 eventos al ingresar 2.700 mensajes desde un snapshot de 50.000. La poda se movió al final de cada transacción que agrega eventos. | La repetición de 1M más dos calentamientos/tres mediciones conserva exactamente 50.000 eventos con watermark `1.002.700`; [evidencia](F2E2-CARGA-COMPLETA.md). F3 debe responder `resync.required` a cursores anteriores a la ventana retenida. |
+| BUG-056 | P1 | Cerrado F3.1: los filtros opcionales de la lista llegaban como `null` al RPC y la lectura de todas las conversaciones respondía 503. | Prueba HTTP firmada reproduce la falla con `GET /v1/conversations?limit=20`; el archivo rechazaba `accountId:null` como ID inválido. La API pública omitía esos filtros, pero el objeto del RPC los conservaba. | El worker interpreta null opcional como ausencia; se probó lista sin filtros y con filtros de canal/cuenta, además de las suites de archivo/API. |
+| BUG-057 | P2 | Cerrado F3.1: la búsqueda de nombres no coincidía si el operador escribía distinta capitalización. | Regresión HTTP `search=ana` no encontraba el nombre visible `Ana`; la expresión se construía sensible a caja. | Búsqueda Unicode insensible a caja devuelve el contacto correcto, sin buscar texto del mensaje ni exponer identidades. Prueba F3.1. |
 
 ## Clasificación para la unidad activa
 
@@ -80,8 +82,10 @@ reciente; F3 debe detectar cursores expirados; BUG-046/F5 mantiene
 el inbox admin. BUG-043 y BUG-050 quedan P1/F5; BUG-051 es puerta antes de migrar
 un archivo preexistente. BUG-010 sigue parcial.
 F2B.3 conserva BUG-033/034/036 cerrados y BUG-037 P2/F8 antes de STT real.
-BUG-035 pairing queda F8; BUG-024 antes de operadores limitados F3 y BUG-014 antes
-de Python paralelo. El perfil de carga completo requiere repetición con 2 CPU/4 GiB;
+BUG-035 pairing queda F8; F3.1 cierra BUG-056/057. BUG-024 sigue antes de
+operadores limitados; BUG-014 antes de Python paralelo. F3.2 debe reparar cursores
+SSE expirados sin retener el archivo sin límite. El perfil de carga completo
+requiere repetición con 2 CPU/4 GiB;
 el host medido tenía 3 CPU/10,45 GiB. No extrapolar archivo/polling a control, roles, salida durable
 ni carga/aceptación completa F2.
 

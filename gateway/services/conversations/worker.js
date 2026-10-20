@@ -34,7 +34,7 @@ function initialize() {
     // SQLite owns the OS lock for the full connection lifetime; crash releases it.
     db.exec('BEGIN IMMEDIATE; COMMIT;');
     const version = one('PRAGMA user_version').user_version;
-    if (version > 3) fail('SCHEMA_TOO_NEW');
+    if (version > 4) fail('SCHEMA_TOO_NEW');
     if (version === 0) transaction(() => {
         db.exec(schema);
         run('INSERT INTO archive_meta VALUES(1,?,?)', randomUUID(), '0');
@@ -59,6 +59,16 @@ function initialize() {
             dispatched_at TEXT
         ); CREATE INDEX legacy_dispatch_pending ON legacy_dispatch(status,seq); PRAGMA user_version=3;`);
     });
+    if (one('PRAGMA user_version').user_version === 3) transaction(() => {
+        db.exec(`CREATE TABLE read_cursors (
+            actor_id TEXT NOT NULL,
+            conversation_id TEXT NOT NULL REFERENCES conversations(id) ON DELETE CASCADE,
+            through_inbound_seq TEXT NOT NULL CHECK(through_inbound_seq='0' OR (through_inbound_seq NOT GLOB '*[^0-9]*' AND substr(through_inbound_seq,1,1) BETWEEN '1' AND '9')),
+            updated_at TEXT NOT NULL,
+            PRIMARY KEY(actor_id,conversation_id)
+        ); CREATE INDEX messages_unread ON messages(conversation_id,inbound_seq) WHERE inbound_seq IS NOT NULL;
+        PRAGMA user_version=4;`);
+    });
     if (one('PRAGMA integrity_check').integrity_check !== 'ok' || all('PRAGMA foreign_key_check').length) fail('ARCHIVE_CORRUPT');
     if (workerData.restore) transaction(() => {
         while (purge({ now: new Date().toISOString(), limit: 1000 }).remaining) { /* bounded SQL batches before exposure */ }
@@ -74,7 +84,7 @@ function initialize() {
         transaction(() => pending.forEach(row => updateTranscription({ messageId: row.id, expectedStatus: 'pending', status: 'failed' })));
         after = pending[pending.length - 1].id;
     }
-    return { ...snapshot(), schemaVersion: 3, journalMode: one('PRAGMA journal_mode').journal_mode,
+    return { ...snapshot(), schemaVersion: 4, journalMode: one('PRAGMA journal_mode').journal_mode,
         synchronous: one('PRAGMA synchronous').synchronous, threadId: require('node:worker_threads').threadId };
 }
 function registerAccount(input) {
@@ -355,6 +365,97 @@ function conversationPage(input = {}) {
     }
     return all('SELECT * FROM conversations ORDER BY last_activity_at DESC,id DESC LIMIT ?', limit);
 }
+function conversationRows(input = {}) {
+    if (input.actorId !== undefined) assertValid('Id', input.actorId);
+    if (input.accountId !== undefined && input.accountId !== null) assertValid('Id', input.accountId);
+    if (input.channel !== undefined && input.channel !== null && !['whatsapp', 'telegram'].includes(input.channel)) fail('INVALID_CHANNEL');
+    const limit = input.limit ?? 250;
+    if (!Number.isInteger(limit) || limit < 1 || limit > 500) fail('INVALID_LIMIT');
+    const params = [input.actorId ?? ''];
+    let where = [];
+    if (input.accountId) { where.push('c.account_id=?'); params.push(input.accountId); }
+    if (input.channel) { where.push('a.channel=?'); params.push(input.channel); }
+    if (input.before) {
+        assertValid('Id', input.before.id);
+        if (input.before.lastActivityAt === null) {
+            where.push('c.last_activity_at IS NULL AND c.id<?'); params.push(input.before.id);
+        } else {
+            assertValid('Timestamp', input.before.lastActivityAt);
+            const beforeTime = new Date(input.before.lastActivityAt).toISOString();
+            where.push('(c.last_activity_at<? OR (c.last_activity_at=? AND c.id<?) OR c.last_activity_at IS NULL)');
+            params.push(beforeTime, beforeTime, input.before.id);
+        }
+    }
+    params.push(limit);
+    const rows = all(`SELECT c.*, a.channel,
+            (SELECT json_group_array(json_object('kind',i.kind,'exactValue',i.exact_value))
+                FROM identities i WHERE i.conversation_id=c.id) AS identity_keys,
+            (SELECT MIN(m.ingested_at) FROM messages m WHERE m.conversation_id=c.id) AS first_ingested_at,
+            (SELECT COUNT(*) FROM messages m WHERE m.conversation_id=c.id AND m.inbound_seq IS NOT NULL
+                AND (length(m.inbound_seq) > length(COALESCE(rc.through_inbound_seq,'0'))
+                    OR (length(m.inbound_seq) = length(COALESCE(rc.through_inbound_seq,'0'))
+                        AND m.inbound_seq > COALESCE(rc.through_inbound_seq,'0')))) AS unread_count
+        FROM conversations c JOIN accounts a ON a.id=c.account_id
+        LEFT JOIN read_cursors rc ON rc.conversation_id=c.id AND rc.actor_id=?
+        ${where.length ? `WHERE ${where.join(' AND ')}` : ''}
+        ORDER BY c.last_activity_at DESC,c.id DESC LIMIT ?`,
+    ...params);
+    return rows.map(row => ({ ...row, identity_keys: JSON.parse(row.identity_keys) }));
+}
+function conversationView(input) {
+    assertValid('Id', input?.conversationId);
+    assertValid('Id', input?.actorId);
+    // The list method is cursor-ordered; details must be looked up by ID without
+    // returning other conversations, so use a constrained query with the same DTO.
+    const row = one(`SELECT c.*, a.channel,
+            (SELECT json_group_array(json_object('kind',i.kind,'exactValue',i.exact_value))
+                FROM identities i WHERE i.conversation_id=c.id) AS identity_keys,
+            (SELECT MIN(m.ingested_at) FROM messages m WHERE m.conversation_id=c.id) AS first_ingested_at,
+            (SELECT COUNT(*) FROM messages m WHERE m.conversation_id=c.id AND m.inbound_seq IS NOT NULL AND (
+                length(m.inbound_seq) > length(COALESCE(rc.through_inbound_seq,'0'))
+                OR (length(m.inbound_seq) = length(COALESCE(rc.through_inbound_seq,'0'))
+                    AND m.inbound_seq > COALESCE(rc.through_inbound_seq,'0')))) AS unread_count
+        FROM conversations c JOIN accounts a ON a.id=c.account_id
+        LEFT JOIN read_cursors rc ON rc.conversation_id=c.id AND rc.actor_id=? WHERE c.id=?`,
+    input.actorId, input.conversationId);
+    if (!row) return null;
+    row.identity_keys = JSON.parse(row.identity_keys);
+    return row;
+}
+function listAccounts() {
+    return all('SELECT id,channel FROM accounts ORDER BY channel,id');
+}
+function messagePage(input) {
+    assertValid('Id', input.conversationId);
+    const limit = input.limit ?? 50;
+    if (!Number.isInteger(limit) || limit < 1 || limit > 100) fail('INVALID_LIMIT');
+    let rows;
+    if (input.before) {
+        assertValid('Timestamp', input.before.occurredAt); assertValid('Id', input.before.id);
+        const beforeTime = new Date(input.before.occurredAt).toISOString();
+        rows = all('SELECT payload FROM messages WHERE conversation_id=? AND (occurred_at<? OR (occurred_at=? AND id<?)) ORDER BY occurred_at DESC,id DESC LIMIT ?',
+            input.conversationId, beforeTime, beforeTime, input.before.id, limit + 1);
+    } else rows = all('SELECT payload FROM messages WHERE conversation_id=? ORDER BY occurred_at DESC,id DESC LIMIT ?', input.conversationId, limit + 1);
+    const hasMore = rows.length > limit;
+    const items = rows.slice(0, limit).reverse().map(row => JSON.parse(row.payload));
+    return { items, hasMore };
+}
+function markRead(input) {
+    assertValid('Id', input.conversationId); assertValid('Id', input.actorId);
+    assertValid('Sequence', input.throughInboundSeq);
+    const conversation = one('SELECT inbound_seq FROM conversations WHERE id=?', input.conversationId);
+    if (!conversation) return null;
+    const requested = BigInt(input.throughInboundSeq), latest = BigInt(conversation.inbound_seq);
+    if (requested > latest) fail('INVALID_READ_CURSOR');
+    const existing = one('SELECT through_inbound_seq FROM read_cursors WHERE actor_id=? AND conversation_id=?', input.actorId, input.conversationId);
+    const next = requested > BigInt(existing?.through_inbound_seq ?? '0') ? requested : BigInt(existing?.through_inbound_seq ?? '0');
+    if (!existing || next > BigInt(existing.through_inbound_seq)) {
+        run(`INSERT INTO read_cursors(actor_id,conversation_id,through_inbound_seq,updated_at) VALUES(?,?,?,?)
+            ON CONFLICT(actor_id,conversation_id) DO UPDATE SET through_inbound_seq=excluded.through_inbound_seq,updated_at=excluded.updated_at`,
+        input.actorId, input.conversationId, String(next), new Date().toISOString());
+    }
+    return { throughInboundSeq: String(next) };
+}
 function purge(input) {
     const now = input.now ?? new Date().toISOString();
     assertValid('Timestamp', now);
@@ -392,7 +493,12 @@ function dispatch(method, input) {
         case 'retryLegacyDispatch': return transaction(() => retryLegacyDispatch(input));
         case 'conversation': assertValid('Id', input); return one('SELECT * FROM conversations WHERE id=?', input) ?? null;
         case 'conversations': return conversationPage(input);
+        case 'conversationRows': return conversationRows(input);
+        case 'conversationView': return conversationView(input);
+        case 'accounts': return listAccounts();
         case 'messages': return page(input);
+        case 'messagePage': return messagePage(input);
+        case 'markRead': return transaction(() => markRead(input));
         case 'events': {
             const after = input.after ?? '0'; assertValid('Sequence', after);
             const limit = input.limit ?? 100;

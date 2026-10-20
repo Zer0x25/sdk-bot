@@ -408,15 +408,40 @@ La evidencia funcional y los límites de replay están en
   atribución outbound del backfill se mantiene `unknown` hasta el outbox F5.
   Sin canal real, credenciales ni DB de usuario.
 
-## Siguiente unidad exacta: F3.1 / API autenticada de lectura
+## Validación ejecutada: F3.1 / lectura autenticada
 
-F2 cierra captura/persistencia y su carga medida. La consulta estable base del
-archivo ya ofrece páginas de conversaciones por `(last_activity_at,id)`; falta
-exponerla como API v1 autenticada, proyectar contactos/capacidades/cobertura,
-completar filtros de contrato y devolver cursores opacos/snapshot. Completar además
-la página de mensajes por cursor y detalle. BUG-024 debe resolverse antes de abrir
-operadores con grants limitados. En F3.2, replay/SSE debe responder
-`resync.required` para cursores anteriores a los 50.000 eventos retenidos.
+Evidencia y contrato de la unidad: [F3.1-LECTURA-AUTENTICADA](F3.1-LECTURA-AUTENTICADA.md).
+
+- API v1 implementada para cuentas, lista y detalle de conversaciones, páginas de
+  mensajes y `POST /read`. Panel/gateway validan firma y capacidad; el proxy verifica
+  `AccountsResponse`, `ConversationsResponse`, `ConversationResponse`,
+  `MessagesResponse` y `ReadResponse`.
+- Los cursores son opacos y HMAC; la lista enlaza actor, filtros, época/watermark,
+  revisión de agenda/política y lectura local. Cambio concurrente devuelve 410 para
+  recargar. Mensajes usan keyset `(occurredAt,id)` y se devuelven cronológicamente.
+- `read_cursors` es durable por actor y conversación, monotónico, y no marca recibos
+  remotos. Los nombres se proyectan por coincidencia exacta con la agenda; identidad
+  no resuelta produce nombre null. Control sigue siendo una proyección de JSON hasta
+  F5, sin habilitar takeover ni operadores limitados.
+- Añadido BUG-056 (filtros opcionales null) y BUG-057 (búsqueda sensible a caja);
+  ambos bloqueaban lectura/filtros F3.1, se reprodujeron, corrigieron y cerraron con
+  prueba HTTP. La prueba de archivo también confirma cursor actor-local tras reopen.
+- Validación: `npm run check` raíz (contratos/generación/tipos/15 tests) y
+  `npm run check` gateway (lint, typecheck y 258 tests) en Node 24.19.0/Linux.
+  Prueba adicional de API firmada incluye filtros, empate de timestamps,
+  capacidades, historial parcial, rechazo 401/403/422/410 y aislamiento de lecturas.
+
+BUG-024 continúa como puerta antes de crear operadores limitados: este commit no
+introduce nueva UI ni roles, y una sesión solo se expone con la autorización de
+lectura existente. F3.2 debe implementar SSE/replay durable y `resync.required`
+para cursores anteriores a los 50.000 eventos retenidos.
+
+## Siguiente unidad exacta: F3.2 / SSE y replay
+
+Implementar stream autenticado tras watermark con replay durable, carrera replay/vivo
+cerrada, deduplicación y señal de resync al vencer retención; comprobar proxy,
+desconexión, recursos y falta temporal del gateway. Mantener BUG-024 como bloqueo
+para la exposición a operadores con grants limitados.
 
 ## Pendientes materiales
 

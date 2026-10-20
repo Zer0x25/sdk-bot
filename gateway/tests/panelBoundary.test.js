@@ -9,7 +9,7 @@ const { withTempDbPaths } = require('./helpers/tmpPaths');
 const temporary = withTempDbPaths();
 const { signContext, createVerifier, actorId, requireCapability } = require('../lib/panelContext');
 const { resolveActor } = require('../panel/identity');
-const { proxy } = require('../panel/proxy');
+const { proxy, responseContract } = require('../panel/proxy');
 const { readBytes, sendError } = require('../lib/httpBoundary');
 const { startInternalBus } = require('../services/internalBus');
 const { state, getGlobalPolicy } = require('../config');
@@ -308,6 +308,10 @@ test('proxy reconstruye headers y firma bytes; timeouts, respuesta inválida y m
         req.resume();
         req.on('end', () => {
             if (req.url === '/v1/invalid') { res.end('{"secret":"should-not-leak"}'); }
+            if (req.url === '/v1/conversations') {
+                res.setHeader('Content-Type', 'application/json');
+                res.end(JSON.stringify({ items: [], nextCursor: null, snapshot: { dataEpoch: crypto.randomUUID(), seq: '0' } }));
+            }
             // Los demás no responden; la llamada debe terminar sin repetir POST.
         });
     });
@@ -326,9 +330,20 @@ test('proxy reconstruye headers y firma bytes; timeouts, respuesta inválida y m
         for (const name of ['cookie', 'authorization', 'x-status-token', 'x-actor-id']) assert.equal(seen[name], undefined);
         assert.equal(seen['content-length'], '2');
         assert.notEqual(seen['x-sdkbot-context'], 'forged');
+        const page = await fetch(frontUrl + '/v1/conversations');
+        assert.equal(page.status, 200);
+        assertValid('ConversationsResponse', await page.json());
         const invalid = await errorResponse(await fetch(frontUrl + '/v1/invalid'), 503);
         assert.ok(!JSON.stringify(invalid).includes('should-not-leak'));
     } finally { await close(front); await close(upstream); }
+});
+
+test('proxy valida cada respuesta v1 con su contrato y no deja pasar rutas sin esquema', () => {
+    assert.equal(responseContract('GET', '/v1/accounts', 200), 'AccountsResponse');
+    assert.equal(responseContract('GET', '/v1/conversations/00000000-0000-4000-8000-000000000001', 200), 'ConversationResponse');
+    assert.equal(responseContract('GET', '/v1/conversations/00000000-0000-4000-8000-000000000001/messages', 200), 'MessagesResponse');
+    assert.equal(responseContract('POST', '/v1/conversations/00000000-0000-4000-8000-000000000001/read', 200), 'ReadResponse');
+    assert.equal(responseContract('GET', '/v1/unknown', 200), null);
 });
 
 test('proxy SSE transmite y cierra upstream al desconectar, sin actividad y al vencer sesión', async () => {

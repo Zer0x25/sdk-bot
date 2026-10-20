@@ -14,7 +14,7 @@
  *
  * Endpoints legacy (firma obligatoria al configurar SDK_PANEL_GATEWAY_SECRET;
  * compatibilidad sin secreto solo para instalación local no expuesta):
- *   GET  /v1/session → siempre requiere actor firmado con permiso de lectura
+ *   API v1     → requiere actor firmado y capacidad; incluye sesión y lectura
  *   GET  /qr       → SSE estado del QR (data URL PNG o null) + sesión
  *   GET  /logs     → SSE stream del log del gateway (y /logs?component=brain)
  *   GET  /status   → JSON buildStatus()
@@ -1090,7 +1090,8 @@ function startInternalBus(opts = {}) {
     const signedRequired = Boolean(secret) || process.env.NODE_ENV === 'production' ||
         !['127.0.0.1', '::1', 'localhost'].includes(host);
     const verify = createVerifier({ secret });
-    const sessionApi = createSessionApi(() => { getSettingsDB(); return getGlobalPolicy(); }, opts.archive);
+    const sessionApi = createSessionApi(() => { getSettingsDB(); return getGlobalPolicy(); }, opts.archive,
+        getContactsDB, opts.getChannelStatus);
     const server = http.createServer(async (req, res) => {
         let u;
         try { u = new URL(req.url || '/', 'http://gateway.local'); }
@@ -1108,7 +1109,7 @@ function startInternalBus(opts = {}) {
                 const context = verify(req, body);
                 requestId = context.requestId;
                 verifiedBodies.set(req, body);
-                if (v1) { await sessionApi(req, res, context, pathname); return; }
+                if (v1) { await sessionApi(req, res, context, pathname, verifiedBodies.get(req) || Buffer.alloc(0)); return; }
             }
             routeApi(req, res, pathname, params);
         } catch (e) {

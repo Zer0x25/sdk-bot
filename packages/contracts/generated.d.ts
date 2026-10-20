@@ -211,6 +211,7 @@ export interface components {
             canonicalIdentityId: components["schemas"]["Id"];
             contactId: components["schemas"]["Id"];
             control: components["schemas"]["ConversationControl"];
+            displayName?: string | null;
             historyCoverage: components["schemas"]["HistoryCoverage"];
             id: components["schemas"]["Id"];
             lastActivityAt: components["schemas"]["Timestamp"] | null;
@@ -231,6 +232,7 @@ export interface components {
             takenAt: components["schemas"]["Timestamp"] | null;
         };
         ConversationResponse: {
+            channelCapabilities: components["schemas"]["ChannelCapabilities"];
             conversation: components["schemas"]["Conversation"];
             snapshot: components["schemas"]["EventCursor"];
         };
@@ -370,7 +372,7 @@ export interface components {
         };
         /** @description Nunca certifica historial completo del proveedor. */
         HistoryCoverage: {
-            capturingSince: components["schemas"]["Timestamp"];
+            capturingSince: components["schemas"]["Timestamp"] | null;
             /** @enum {string} */
             kind: "capturing_since" | "partial_import" | "provider_sync_observed";
         };

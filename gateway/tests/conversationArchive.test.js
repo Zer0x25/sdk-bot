@@ -11,6 +11,7 @@ const { assertValid } = require('@sdk-bot/contracts');
 const { createArchive } = require('../services/conversations');
 const { retentionCutoff } = require('../services/conversations/eventRetention');
 const { signContext, actorId } = require('../lib/panelContext');
+const { saveContactsDB } = require('../services/db');
 const { withTempDbPaths } = require('./helpers/tmpPaths');
 const temporary = withTempDbPaths();
 require('node:test').after(() => temporary.restore());
@@ -65,7 +66,7 @@ test('event retention computes an exact 50,000-event replay window after each co
 test('worker: migration, WAL FULL, transaction, minimal event and durable session watermark after reopen', async t => {
     const { archive, dbPath } = await fixture(t);
     const info = await archive.ready;
-    assert.equal(info.schemaVersion, 3); assert.equal(info.journalMode, 'wal'); assert.equal(info.synchronous, 2);
+    assert.equal(info.schemaVersion, 4); assert.equal(info.journalMode, 'wal'); assert.equal(info.synchronous, 2);
     assert.ok(info.threadId > 0);
     const [created] = await archive.ingestBatch([message()]);
     assertValid('Message', created.message); assertValid('Event', created.event);
@@ -259,6 +260,121 @@ test('real signed session reads archive snapshot; unavailable archive fails with
     } finally {
         bus.closeAllConnections(); await new Promise(resolve => bus.close(resolve));
         if (old === undefined) delete process.env.SDK_PANEL_GATEWAY_SECRET; else process.env.SDK_PANEL_GATEWAY_SECRET = old;
+    }
+});
+
+test('v1 conversation reads project safe contacts, filter/paginate stably, and keep read cursors actor-local', async t => {
+    const { archive, dbPath } = await fixture(t);
+    const at = '2026-01-03T00:00:00.000Z';
+    const [alice1] = await archive.ingestBatch([message(key('111@s.whatsapp.net'), 'alice-1', { occurredAt: at })]);
+    await archive.ingestBatch([message(key('111@s.whatsapp.net'), 'alice-2', { occurredAt: at })]);
+    await archive.ingestBatch([message(key('222@s.whatsapp.net'), 'bea-1', { occurredAt: at })]);
+    await archive.ingestBatch([message(key('333@s.whatsapp.net'), 'unknown-1', { occurredAt: at, source: 'history' })]);
+    const empty = await archive.resolve(key('444@s.whatsapp.net'));
+    const historicalTelegram = await archive.registerAccount({ channel: 'telegram', providerKey: 'old-telegram-account' });
+    saveContactsDB({
+        alice: { phone: '111', lid: null, savedName: 'Ana', estado: 'permitido' },
+        bea: { phone: '222', lid: null, savedName: 'Bea', estado: 'handoff', handoffAt: new Date().toISOString() }
+    });
+    const oldSecret = process.env.SDK_PANEL_GATEWAY_SECRET;
+    const secret = 'test-session-api-boundary-secret-with-32-bytes';
+    process.env.SDK_PANEL_GATEWAY_SECRET = secret;
+    const bus = startInternalBus({ port: 0, archive, getChannelStatus: (_channel, id) => id === account ? { status: 'open' } : 'disconnected' });
+    await once(bus, 'listening');
+    const base = `http://127.0.0.1:${bus.address().port}`;
+    const actor = { id: actorId('operator:read-contract'), displayName: 'Operador', capabilities: ['conversations:read'] };
+    const otherActor = { id: actorId('operator:other-read-contract'), displayName: 'Otra persona', capabilities: ['conversations:read'] };
+    async function request(path, { method = 'GET', signedActor = actor, body = '' } = {}) {
+        const bytes = Buffer.from(body);
+        const headers = signContext({ secret, actor: signedActor, requestId: randomUUID(), method,
+            target: path, body: bytes });
+        if (body) headers['content-type'] = 'application/json';
+        return fetch(base + path, { method, headers, ...(body ? { body } : {}) });
+    }
+    try {
+        const listed = await request('/v1/conversations?limit=20');
+        assert.equal(listed.status, 200);
+        const response = assertValid('ConversationsResponse', await listed.json());
+        assert.equal(response.items.length, 4);
+        const ana = response.items.find(item => item.displayName === 'Ana');
+        const bea = response.items.find(item => item.displayName === 'Bea');
+        assert.ok(ana && bea);
+        assert.equal(ana.unreadCount, 2);
+        assert.equal(bea.control.automationMode, 'human');
+        assert.equal(response.items.find(item => item.id === empty.conversation_id).historyCoverage.capturingSince, null);
+        assert.ok(!JSON.stringify(response).includes('111@s.whatsapp.net'));
+        assert.ok(!JSON.stringify(response).includes('test-wa-account'));
+
+        const accounts = assertValid('AccountsResponse', await (await request('/v1/accounts')).json());
+        assert.equal(accounts.items.find(item => item.id === account).status, 'connected');
+        assert.equal(accounts.items.find(item => item.id === historicalTelegram.id).status, 'disconnected');
+        assert.equal(accounts.items.find(item => item.id === account).capabilities.readReceipt, false);
+
+        const named = assertValid('ConversationsResponse', await (await request('/v1/conversations?search=ana')).json());
+        assert.deepEqual(named.items.map(item => item.displayName), ['Ana']);
+        const noTextSearch = assertValid('ConversationsResponse', await (await request('/v1/conversations?search=private')).json());
+        assert.equal(noTextSearch.items.length, 0);
+        const human = assertValid('ConversationsResponse', await (await request('/v1/conversations?automationMode=human')).json());
+        assert.deepEqual(human.items.map(item => item.displayName), ['Bea']);
+
+        const first = assertValid('ConversationsResponse', await (await request('/v1/conversations?limit=1')).json());
+        assert.ok(first.nextCursor);
+        const tamperedCursor = `${first.nextCursor[0] === 'A' ? 'B' : 'A'}${first.nextCursor.slice(1)}`;
+        assert.equal((await request(`/v1/conversations?limit=1&cursor=${tamperedCursor}`)).status, 410);
+        assert.equal((await request(`/v1/conversations?limit=1&cursor=${first.nextCursor}`, { signedActor: otherActor })).status, 410);
+        const allIds = [...first.items.map(item => item.id)];
+        let cursor = first.nextCursor;
+        while (cursor) {
+            const page = assertValid('ConversationsResponse', await (await request(`/v1/conversations?limit=1&cursor=${cursor}`)).json());
+            allIds.push(...page.items.map(item => item.id));
+            cursor = page.nextCursor;
+        }
+        assert.equal(allIds.length, 4);
+        assert.equal(new Set(allIds).size, 4);
+
+        const detail = assertValid('ConversationResponse', await (await request(`/v1/conversations/${alice1.message.conversationId}`)).json());
+        assert.equal(detail.conversation.displayName, 'Ana');
+        assert.equal(detail.channelCapabilities.attachments, true);
+        const messagePage = assertValid('MessagesResponse', await (await request(`/v1/conversations/${alice1.message.conversationId}/messages?limit=1`)).json());
+        assert.equal(messagePage.items.length, 1);
+        assert.ok(messagePage.nextCursor);
+        const older = assertValid('MessagesResponse', await (await request(`/v1/conversations/${alice1.message.conversationId}/messages?limit=1&cursor=${messagePage.nextCursor}`)).json());
+        assert.equal(older.items.length, 1);
+        assert.notEqual(older.items[0].id, messagePage.items[0].id);
+
+        const mark = async (signedActor, seq) => request(`/v1/conversations/${alice1.message.conversationId}/read`, {
+            method: 'POST', signedActor, body: JSON.stringify({ throughInboundSeq: seq })
+        });
+        const marked = assertValid('ReadResponse', await (await mark(actor, '1')).json());
+        assert.equal(marked.throughInboundSeq, '1');
+        assert.equal(assertValid('ReadResponse', await (await mark(actor, '0')).json()).throughInboundSeq, '1');
+        const afterRead = assertValid('ConversationResponse', await (await request(`/v1/conversations/${alice1.message.conversationId}`)).json());
+        assert.equal(afterRead.conversation.unreadCount, 1);
+        const otherRead = assertValid('ConversationResponse', await (await request(`/v1/conversations/${alice1.message.conversationId}`, { signedActor: otherActor })).json());
+        assert.equal(otherRead.conversation.unreadCount, 2);
+        assert.equal((await mark(actor, '99')).status, 422);
+        assert.equal((await request(`/v1/conversations/${alice1.message.conversationId}/read?ignored=true`, {
+            method: 'POST', body: JSON.stringify({ throughInboundSeq: '1' })
+        })).status, 422);
+        assert.equal((await request('/v1/conversations/%25')).status, 422);
+
+        const stale = assertValid('ConversationsResponse', await (await request('/v1/conversations?limit=1')).json());
+        await archive.ingestBatch([message(key('555@s.whatsapp.net'), 'new-after-list', { occurredAt: '2026-01-04T00:00:00.000Z' })]);
+        assert.equal((await request(`/v1/conversations?limit=1&cursor=${stale.nextCursor}`)).status, 410);
+        assert.equal((await request('/v1/conversations?limit=0')).status, 422);
+        assert.equal((await request('/v1/conversations?limit=1&limit=2')).status, 422);
+        assert.equal((await request('/v1/conversations', { signedActor: { ...actor, capabilities: [] } })).status, 403);
+        await archive.close();
+        const reopened = createArchive({ path: dbPath }); t.after(() => reopened.close());
+        await reopened.ready;
+        const persisted = await reopened.conversationRows({ actorId: actor.id, accountId: account, channel: 'whatsapp' });
+        assert.equal(persisted.find(row => row.id === alice1.message.conversationId).unread_count, 1);
+        const otherPersisted = await reopened.conversationRows({ actorId: otherActor.id });
+        assert.equal(otherPersisted.find(row => row.id === alice1.message.conversationId).unread_count, 2);
+    } finally {
+        bus.closeAllConnections(); await new Promise(resolve => bus.close(resolve));
+        if (oldSecret === undefined) delete process.env.SDK_PANEL_GATEWAY_SECRET;
+        else process.env.SDK_PANEL_GATEWAY_SECRET = oldSecret;
     }
 });
 
