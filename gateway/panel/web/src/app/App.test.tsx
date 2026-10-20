@@ -336,7 +336,7 @@ describe('inbox shell and real API integration', () => {
     let includeLiveMessage = false;
     fetchMock.mockImplementation(async (input, init) => {
       const url = new URL(String(input), 'http://panel.local');
-      if (includeLiveMessage && url.pathname === `/api/v1/conversations/${conversationId}/messages') {
+      if (includeLiveMessage && url.pathname === `/api/v1/conversations/${conversationId}/messages`) {
         return jsonResponse({ items: [latestMessage, liveMessage], nextCursor: null, snapshot });
       }
       return fallback!(input, init);

@@ -43,6 +43,10 @@ export function useInboxEvents(conversationId?: string) {
   }, [conversationId]);
 
   useEffect(() => {
+    if (typeof EventSource === 'undefined') {
+      setStatus('reconnecting');
+      return;
+    }
     const source = new EventSource('/api/v1/events');
     let opened = false;
     let refreshTimer: number | undefined;
