@@ -52,6 +52,8 @@ callbacks obsoletos con captura SQLite; evidencia y límites en
 [CAPTURA-WHATSAPP-F2B2](CAPTURA-WHATSAPP-F2B2.md). F2C.1 conecta descubrimiento Telegram
 al adapter configurado, sin un getUpdates independiente. F2C.2 añade cuenta verificada,
 IDs exactos, captura/cursor transaccionales y resultado STT durable sobre el mismo mensaje.
+F2D añade `legacy_dispatch` atómico y replay post-commit al handler; véase
+[REPLAY-LEGACY-F2D](REPLAY-LEGACY-F2D.md).
 Referencias y alcance de las pruebas en
 [BASELINE-CONVERSACIONES.md](BASELINE-CONVERSACIONES.md).
 
@@ -70,7 +72,8 @@ flowchart LR
     TG[Telegram Bot API] <--> A
     A --> I[Ingesta normalizada]
     I --> D[(SQLite del gateway)]
-    I --> C[Casos de uso de conversaciones]
+    D --> R[Pump durable F2D]
+    R --> C[Pipeline legacy / casos de uso]
     C --> G[Generación y control IA]
     G --> B[Brain: perfiles y proveedores]
     A --> STT[STT local]
@@ -84,6 +87,10 @@ flowchart LR
     E --> P
     P --> UI
 ```
+
+En la transición actual, `legacy_dispatch` es una outbox de **entrada** para
+cerrar el corte commit→handler. El outbox de salida, la barrera de control y la
+idempotencia de proveedores siguen en F5; no confundirlos.
 
 - Solo el gateway mantiene sockets/polling y escribe su DB. Una réplica por cuenta
   de WhatsApp. Abrir el nuevo panel jamás inicia otro transporte.

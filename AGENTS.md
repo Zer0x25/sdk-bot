@@ -14,7 +14,9 @@
   (docs/ARCHIVO-CONVERSACIONES-F2A.md). F2B.2 conecta captura base WA live/history
   (docs/CAPTURA-WHATSAPP-F2B2.md); F2B.3 añade STT durable y captions multimedia
   (docs/MULTIMEDIA-WHATSAPP-F2B3.md). F2C.1 conecta descubrimiento TG al owner
-  (docs/TELEGRAM-DUENO-UNICO-F2C1.md); captura/cursor durable TG pendientes F2C.2. ADR-006 permite esperar admisión durable antes del handler legacy; no
+  (docs/TELEGRAM-DUENO-UNICO-F2C1.md); F2C.2 añade captura/cursor durable TG y
+  F2D replay outbox hacia el handler legacy (docs/REPLAY-LEGACY-F2D.md). ADR-006
+  permite esperar admisión durable antes del handler legacy; no
   añadir reglas de acceso/control al adapter. `apps/`, React y el resto de API v1
   siguen como **arquitectura de destino**. Las rutas y
   comandos de las secciones siguientes describen la estructura actual.

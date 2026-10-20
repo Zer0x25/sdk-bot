@@ -1,6 +1,6 @@
 # Estado de continuidad — SDK-Bot
 
-Actualización: 2026-10-20. Última unidad cerrada: **F2C.2; captura Telegram y cursor durable por bot**.
+Actualización: 2026-10-20. Última unidad cerrada: **F2D; replay durable de capturas al pipeline legacy**.
 
 ## Objetivo vigente
 
@@ -56,8 +56,15 @@ respuesta humana desde el chat y retorno seguro a IA con contexto actualizado.
   seguros; mensajes deduplican por bot/chat/message_id. Administración, grupos y
   tipos excluidos avanzan cursor transaccionalmente. El audio se archiva como
   marcador y STT actualiza el mismo mensaje antes del pipeline. BUG-005/009/044/047
-  y la porción TG de BUG-008 cerrados; BUG-045 replay post-commit y BUG-046 inbox
-  admin quedan diferidos. Evidencia: [TELEGRAM-CAPTURA-F2C2](TELEGRAM-CAPTURA-F2C2.md).
+  y la porción TG de BUG-008 cerrados; F2D cierra después BUG-045 y BUG-046 inbox
+  admin queda diferido. Evidencia: [TELEGRAM-CAPTURA-F2C2](TELEGRAM-CAPTURA-F2C2.md).
+- F2D: migración SQLite v3 agrega `legacy_dispatch` atómico con la captura WA/TG;
+  el pump reconstruye `StandardMessage` cuando el canal abre, trata eventos como
+  wake-up y persiste ACK. Audio espera STT; respond mantiene pendiente el ACK hasta
+  completar debounce/IA. BUG-045 cerrado para el corte post-commit→handler;
+  BUG-050 mantiene abierta la idempotencia de efectos externos y BUG-051 la
+  reconciliación antes de desplegar sobre archivos reales. Evidencia:
+  [REPLAY-LEGACY-F2D](REPLAY-LEGACY-F2D.md).
 - Sin migrar datos antiguos ni conectar cuentas reales. No hay bandeja nueva, páginas/SSE públicos,
   API de envío/control ni barrera de automatización v1.
 
@@ -101,9 +108,10 @@ Detalles de reproducción y logs efímeros están en la baseline.
   física tiene BUG-037 antes de aceptación STT real F8.
 - F2C.1 repara el descubridor paralelo testAndGetChatId y las carreras del request
   en reconnect; descubrimiento solo observa al owner configurado, sin nuevos offsets.
-- F2C.2 persiste captura y cursor Telegram antes de emitir al legacy. Sigue una
-  ventana de caída post-commit sin replay del pipeline (BUG-045); el comando admin
-  se confirma antes de ejecución y tampoco tiene inbox durable (BUG-046/F5).
+- F2C.2 persiste captura y cursor Telegram antes de emitir al legacy. F2D reanuda
+  clientes desde outbox hasta handler/IA; un resultado externo ambiguo aún puede
+  repetirse si falla antes del ACK (BUG-050/F5). El comando admin confirma cursor
+  antes de ejecución y tampoco tiene inbox durable (BUG-046/F5).
 - Handoff/pause no cancelan jobs admitidos ni protegen cada envío; flush de cola
   tampoco reevalúa el control. Brain guarda respuestas antes de entregarlas.
 - Identidades/anti-bucle usan índices o IDs sin namespace suficiente; comandos
@@ -350,22 +358,37 @@ La evidencia y límites de esta unidad están en
   no se copiaron DB, secretos ni estado local. No se llamaron proveedores/canales,
   STT real, Docker build, ni pruebas de carga de 1M mensajes.
 
-## Siguiente unidad exacta: F2D / replay de mensajes capturados
+## Validación ejecutada en F2D
 
-BUG-045 es P1 y deja incompleta la entrega de F2: una caída justo después del
-commit puede omitir el procesamiento heredado aunque el mensaje y cursor estén
-guardados. La siguiente unidad debe diseñar y probar replay/outbox idempotente desde
-archivo/eventos; inyectar caída entre commit y consumidor, reiniciar y demostrar
-recuperación sin pérdida ni doble despacho. Reconciliación de salidas humanas/IA y
-carga sintética de [VALIDACION-V1](VALIDACION-V1.md) siguen pendientes: medir 1M
-mensajes, 2.000 chats, 5 cuentas, duplicados/eventos, throughput, p95/p99, RSS,
-latencia del event loop, saturación FIFO y reapertura, sin estado real/proveedores.
+La evidencia funcional y los límites de replay están en
+[REPLAY-LEGACY-F2D](REPLAY-LEGACY-F2D.md).
+
+- `gateway npm run check` en Node 24.19.0: lint, typecheck y **247 pruebas** pasan.
+- Pruebas enfocadas de archivo, captura WA/TG y `legacyDispatch.test.js` pasan;
+  migraciones v1/v2→v3, commit/cursor/outbox atómicos, corte antes del wake, reopen,
+  ACK persistente, gating por canal, retry, debounce/IA diferido, y transcripción
+  audio completada/fallida. `git diff --check` no reporta espacios defectuosos.
+- Sin canal real, proveedores, STT real, DB de usuario ni carga de 1M. No se migran
+  filas pre-v3 a outbox porque no existe un recibo que pruebe si ya se procesaron.
+
+## Siguiente unidad exacta: F2E / cierre de salida y aceptación del archivo
+
+BUG-045 quedó cerrado para la entrega durable desde el commit hasta el pipeline.
+El siguiente trabajo de F2 debe fijar el contrato de reconciliación para mensajes
+de salida/envíos humanos desde teléfono, y luego ejecutar carga sintética de
+[VALIDACION-V1](VALIDACION-V1.md): 1M mensajes, 2.000 chats, 5 cuentas,
+duplicados/eventos, throughput, p95/p99, RSS, latencia del event loop, saturación
+FIFO y reapertura. No usar estado real ni proveedores. BUG-050 (F5) conserva la
+idempotencia de un efecto externo ante ACK ambiguo; BUG-051 debe resolverse antes
+de desplegar la migración sobre un archivo real. BUG-046 mantiene aparte el inbox
+durable de comandos admin.
 
 ## Pendientes materiales
 
-- Telegram ya archiva y confirma el cursor por bot: BUG-005/009/044 y la porción
-  de archivo de BUG-008 están cerrados. BUG-045 bloquea completar F2 hasta añadir
-  replay durable; BUG-046/F5 protege comandos admin ante caída. Bot API no permite
+- Telegram ya archiva, confirma cursor por bot y reanuda clientes: BUG-005/009/044/
+  045 y la porción de archivo de BUG-008 están cerrados. BUG-046/F5 protege comandos
+  admin ante caída; BUG-050/F5 protege salidas ambiguas y BUG-051 bloquea migración
+  de archivos preexistentes sin reconciliación. Bot API no permite
   recuperar historia arbitraria perdida antes de la retención de `getUpdates`.
 - Bandeja React/API de lectura/eventos F3/F4; control humano, cancelación de IA,
   corte/outbox/contexto y backups operativos F5/F8. external_self no suspende IA
@@ -384,12 +407,13 @@ latencia del event loop, saturación FIFO y reapertura, sin estado real/proveedo
 
 Actualizar estado y solo checkboxes demostrados; hacer commit probado e informar
 hash. El [prompt estable](PROMPT-CONTINUIDAD.md) consulta este estado sin reescritura.
-BUG-005/009/044/047 cerrados; BUG-006/007/008/010/011/012/014/024/035/037/043/045/046
-siguen abiertos o parciales según backlog. BUG-016 probado en repositorio/alias
+BUG-005/009/044/045/047 cerrados; BUG-006/007/008/010/011/012/014/024/035/037/043/
+046/050/051 siguen abiertos o parciales según backlog. BUG-016 probado en repositorio/alias
 del adapter, sin afirmar F2 completa.
 
 Cierre F2C.1: commit local `git log --grep="close F2C.1"`; BUG-004/038–042 cerrados.
 Cierre F2C.2: commit local `git log --grep="close F2C.2"`; BUG-005/009/044/047 cerrados.
+Cierre F2D: commit local de esta unidad; BUG-045 cerrado; BUG-050/051 permanecen abiertos con puertas F5/reconciliación.
 Cierre F2B.3: `42b8321`; BUG-033/034/036 cerrados.
 Cierre F2B.2: `7d99f36`; BUG-001/002/003/032 cerrados.
 Cierre F2B.1: `4bb4ec3`; BUG-029/031 cerrados.

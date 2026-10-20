@@ -25,8 +25,10 @@ autenticada probados. F2A completada (repositorios del archivo); F2B.1 cierra la
 F2B.2 conecta captura base WA y F2B.3 completa enriquecimiento multimedia durable.
 F2C.1 completa dueño único del polling/descubrimiento Telegram.
 F2C.2 completa la captura base TG con cursor durable y namespace exacto.
-Siguiente: replay idempotente de entrada post-commit (BUG-045), luego reconciliar
-salidas/eco externo y completar la carga de aceptación F2.
+F2D completa replay durable hasta el handler tras el commit (BUG-045).
+Siguiente: idempotencia de salidas (BUG-050), reconciliación de ecos externos y
+carga de aceptación restante para completar F2. BUG-051 es puerta antes de usar
+archivos preexistentes reales.
 Sin canales reales ni migración.
 
 ## Alcance y entregas
@@ -150,9 +152,12 @@ abort físico queda como puerta de aceptación STT real F8, sin prometerlo aquí
   distintos no colisiona y el STT de audio actualiza el mismo mensaje. Cierra
   BUG-005/009/044/047 y la parte de archivo TG de BUG-008; BUG-008 conserva su alcance
   legacy de resolución por dígitos. [Evidencia](TELEGRAM-CAPTURA-F2C2.md).
-- [ ] F2D Replay durable de mensajes archivados tras reinicio (BUG-045): recuperar
-  trabajo del pipeline desde eventos/outbox tras caída entre commit y emisión,
-  idempotencia y prueba de reinicio sin pérdida ni doble despacho.
+- [x] F2D Replay durable de mensajes archivados tras reinicio (BUG-045): outbox
+  SQLite v3 en la misma transacción que captura/cursor, reanudación cuando el canal
+  está conectado, ACK persistente y espera STT. Prueba cae entre commit y wake,
+  reinicia y confirma una entrega y ningún redespacho después del ACK. El retry es
+  at-least-once ante efectos/ACK ambiguos (BUG-050); la migración no reencola filas
+  pre-v3 (BUG-051). [Evidencia](REPLAY-LEGACY-F2D.md).
 - [ ] Persistir entrada aunque IA esté pausada, ignorando o en human. Reconciliar
   salida IA, humana desde teléfono y avisos por origen; separar chats administrativos.
 - [x] F2B.3 Multimedia durable: BUG-033/034/036 reparados. Mismo ID/huella;
@@ -166,8 +171,9 @@ abort físico queda como puerta de aceptación STT real F8, sin prometerlo aquí
 **Aceptación:** reinicio conserva mensajes; lote, reimportación y ecos no duplican;
 canales/cuentas/IDs con signo no colisionan; audio fallido sigue visible. Carga con
 miles de mensajes sin bloquear pings del transporte falso; progreso observable.
-F2C.2 prueba reapertura/cursor y redelivery. La reconciliación durable de salidas
-IA/humanas y la carga completa siguen pendientes antes de cerrar F2.
+F2C.2 prueba reapertura/cursor y redelivery; F2D prueba replay post-commit. La
+reconciliación durable de salidas IA/humanas y la carga completa siguen pendientes
+antes de cerrar F2.
 
 ## Fase 3 — API de lectura y eventos en vivo
 

@@ -29,6 +29,12 @@ CREATE TABLE fingerprints (account_id TEXT NOT NULL REFERENCES accounts(id),
  message_id TEXT NOT NULL, digest TEXT NOT NULL, ingested_at TEXT NOT NULL,
  PRIMARY KEY(account_id,canonical_id,provider_id));
 CREATE INDEX fingerprints_retention ON fingerprints(ingested_at);
+CREATE TABLE telegram_cursors (
+ account_id TEXT PRIMARY KEY REFERENCES accounts(id) ON DELETE CASCADE,
+ last_update_id TEXT CHECK(last_update_id IS NULL OR last_update_id='0' OR
+     (length(last_update_id)<=20 AND last_update_id NOT GLOB '*[^0-9]*' AND substr(last_update_id,1,1) BETWEEN '1' AND '9')),
+ updated_at TEXT NOT NULL
+);
 CREATE TABLE provenance (message_id TEXT NOT NULL REFERENCES messages(id) ON DELETE CASCADE,
  identity_id TEXT NOT NULL REFERENCES identities(id), source TEXT NOT NULL,
  PRIMARY KEY(message_id,identity_id,source));
@@ -41,5 +47,16 @@ CREATE TABLE quarantine (id TEXT PRIMARY KEY, reason TEXT NOT NULL,
  conversation_id TEXT NOT NULL REFERENCES conversations(id), other_conversation_id TEXT REFERENCES conversations(id),
  created_at TEXT NOT NULL);
 CREATE INDEX conversations_page ON conversations(last_activity_at,id);
-PRAGMA user_version=1;
+CREATE TABLE legacy_dispatch (
+ seq INTEGER PRIMARY KEY AUTOINCREMENT,
+ message_id TEXT NOT NULL UNIQUE REFERENCES messages(id) ON DELETE CASCADE,
+ status TEXT NOT NULL CHECK(status IN ('waiting','pending','dispatched','skipped')),
+ payload TEXT NOT NULL CHECK(json_valid(payload)),
+ attempts INTEGER NOT NULL DEFAULT 0 CHECK(attempts>=0),
+ last_error TEXT,
+ created_at TEXT NOT NULL,
+ dispatched_at TEXT
+);
+CREATE INDEX legacy_dispatch_pending ON legacy_dispatch(status,seq);
+PRAGMA user_version=3;
 `;

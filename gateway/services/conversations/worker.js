@@ -33,7 +33,7 @@ function initialize() {
     // SQLite owns the OS lock for the full connection lifetime; crash releases it.
     db.exec('BEGIN IMMEDIATE; COMMIT;');
     const version = one('PRAGMA user_version').user_version;
-    if (version > 2) fail('SCHEMA_TOO_NEW');
+    if (version > 3) fail('SCHEMA_TOO_NEW');
     if (version === 0) transaction(() => {
         db.exec(schema);
         run('INSERT INTO archive_meta VALUES(1,?,?)', randomUUID(), '0');
@@ -45,6 +45,18 @@ function initialize() {
                 (length(last_update_id)<=20 AND last_update_id NOT GLOB '*[^0-9]*' AND substr(last_update_id,1,1) BETWEEN '1' AND '9')),
             updated_at TEXT NOT NULL
         ); PRAGMA user_version=2;`);
+    });
+    if (one('PRAGMA user_version').user_version === 2) transaction(() => {
+        db.exec(`CREATE TABLE legacy_dispatch (
+            seq INTEGER PRIMARY KEY AUTOINCREMENT,
+            message_id TEXT NOT NULL UNIQUE REFERENCES messages(id) ON DELETE CASCADE,
+            status TEXT NOT NULL CHECK(status IN ('waiting','pending','dispatched','skipped')),
+            payload TEXT NOT NULL CHECK(json_valid(payload)),
+            attempts INTEGER NOT NULL DEFAULT 0 CHECK(attempts>=0),
+            last_error TEXT,
+            created_at TEXT NOT NULL,
+            dispatched_at TEXT
+        ); CREATE INDEX legacy_dispatch_pending ON legacy_dispatch(status,seq); PRAGMA user_version=3;`);
     });
     if (one('PRAGMA integrity_check').integrity_check !== 'ok' || all('PRAGMA foreign_key_check').length) fail('ARCHIVE_CORRUPT');
     if (workerData.restore) transaction(() => {
@@ -61,7 +73,7 @@ function initialize() {
         transaction(() => pending.forEach(row => updateTranscription({ messageId: row.id, expectedStatus: 'pending', status: 'failed' })));
         after = pending[pending.length - 1].id;
     }
-    return { ...snapshot(), schemaVersion: 2, journalMode: one('PRAGMA journal_mode').journal_mode,
+    return { ...snapshot(), schemaVersion: 3, journalMode: one('PRAGMA journal_mode').journal_mode,
         synchronous: one('PRAGMA synchronous').synchronous, threadId: require('node:worker_threads').threadId };
 }
 function registerAccount(input) {
@@ -162,6 +174,43 @@ function stable(value) {
     if (value === null || typeof value !== 'object') return JSON.stringify(value);
     return '{' + Object.keys(value).sort().map(k => JSON.stringify(k) + ':' + stable(value[k])).join(',') + '}';
 }
+const LEGACY_METADATA = new Set(['pushName','savedName','phoneNumber','lid','isBusiness','country','isFromMe','isAdminChannel']);
+function legacyDispatch(input, message) {
+    const value = input.legacyDispatch;
+    if (value == null) return null;
+    if (!value || typeof value !== 'object' || Array.isArray(value) || !value.message
+        || typeof value.message !== 'object' || Array.isArray(value.message)) fail('INVALID_LEGACY_DISPATCH');
+    const envelope = value.message, metadata = envelope.metadata;
+    if (envelope.channel !== input.identity.channel || !['whatsapp','telegram'].includes(envelope.channel)
+        || envelope.rawId !== input.identity.exactValue
+        || envelope.channel === 'whatsapp' && !['whatsapp_jid','whatsapp_lid'].includes(input.identity.kind)
+        || envelope.channel === 'telegram' && input.identity.kind !== 'telegram_chat_id'
+        || typeof envelope.rawId !== 'string' || !envelope.rawId.length || envelope.rawId.length > 256
+        || envelope.remoteId !== `${envelope.channel}:${envelope.rawId}`
+        || typeof envelope.text !== 'string' || !envelope.text.isWellFormed() || Buffer.byteLength(envelope.text) > 65536
+        || typeof envelope.transcript !== 'string' || !envelope.transcript.isWellFormed() || Buffer.byteLength(envelope.transcript) > 65536
+        || typeof envelope.isAudio !== 'boolean' || !metadata || typeof metadata !== 'object' || Array.isArray(metadata)
+        || Object.keys(metadata).some(key => !LEGACY_METADATA.has(key))
+        || metadata.isFromMe !== false || metadata.isAdminChannel !== false
+        || typeof value.waitForTranscription !== 'boolean') fail('INVALID_LEGACY_DISPATCH');
+    for (const key of ['pushName','savedName','phoneNumber','lid','country']) {
+        if (metadata[key] != null && (typeof metadata[key] !== 'string' || !metadata[key].isWellFormed() || metadata[key].length > 256)) fail('INVALID_LEGACY_DISPATCH');
+    }
+    for (const key of ['isBusiness','isFromMe','isAdminChannel']) if (metadata[key] !== undefined && typeof metadata[key] !== 'boolean') fail('INVALID_LEGACY_DISPATCH');
+    if (input.source !== 'live' || input.direction !== 'inbound' || input.authorKind !== 'customer'
+        || message.content.type === 'oversized' || message.content.type === 'unsupported') fail('INVALID_LEGACY_DISPATCH');
+    const waiting = value.waitForTranscription;
+    if (waiting && (message.content.type !== 'audio' || !envelope.isAudio || envelope.text || envelope.transcript)) fail('INVALID_LEGACY_DISPATCH');
+    if (!waiting) {
+        const storedText = message.content.type === 'text' ? message.content.text : message.content.caption || '';
+        if (!storedText || envelope.text !== storedText || envelope.transcript) fail('INVALID_LEGACY_DISPATCH');
+    }
+    // Message text/transcript already live in messages.payload. Keep only the
+    // small StandardMessage routing and contact envelope in this outbox.
+    const routing = { channel: envelope.channel, remoteId: envelope.remoteId, rawId: envelope.rawId,
+        isAudio: envelope.isAudio, metadata };
+    return { status: waiting ? 'waiting' : 'pending', payload: JSON.stringify(routing) };
+}
 function ingest(input) {
     const identity = resolve(input.identity);
     const c = one('SELECT * FROM conversations WHERE id=?', identity.conversation_id);
@@ -183,6 +232,7 @@ function ingest(input) {
     };
     assertValid('Message', draft);
     draft.occurredAt = new Date(draft.occurredAt).toISOString();
+    const dispatch = legacyDispatch(input, draft);
     const digest = createHash('sha256').update(draft.direction + ':' + stable(input.content)).digest('hex');
     const previous = providerId === null ? null : one('SELECT * FROM fingerprints WHERE account_id=? AND canonical_id=? AND provider_id=?', input.identity.accountId, identity.canonical_id, providerId);
     if (previous) {
@@ -199,6 +249,9 @@ function ingest(input) {
         history_observed=CASE WHEN ? IN ('history','import') THEN 1 ELSE history_observed END WHERE id=?`,
     aggregate, draft.inboundSeq ?? c.inbound_seq, draft.occurredAt, draft.source, now, draft.source, c.id);
     const event = appendMessageEvent(draft, aggregate, 'message.created', now);
+    if (dispatch && c.requires_review === 0) {
+        run('INSERT INTO legacy_dispatch(message_id,status,payload,created_at) VALUES(?,?,?,?)', draft.id, dispatch.status, dispatch.payload, now);
+    }
     return { status: 'created', message: draft, event };
 }
 function appendMessageEvent(message, aggregate, type, now) {
@@ -230,9 +283,43 @@ function updateTranscription(input) {
     const aggregate = String(BigInt(c.aggregate_version) + 1n);
     run('UPDATE messages SET payload=? WHERE id=?', JSON.stringify(message), message.id);
     run('UPDATE conversations SET aggregate_version=? WHERE id=?', aggregate, message.conversationId);
+    const pendingDispatch = one("SELECT status FROM legacy_dispatch WHERE message_id=? AND status='waiting'", message.id);
+    if (pendingDispatch) {
+        if (input.status === 'completed') {
+            run("UPDATE legacy_dispatch SET status='pending' WHERE message_id=? AND status='waiting'", message.id);
+        } else if (input.status === 'failed') {
+            run("UPDATE legacy_dispatch SET status='skipped',payload='{}' WHERE message_id=? AND status='waiting'", message.id);
+        }
+    }
     // Fingerprint, inboundSeq, activity and capture time refer to the original.
     const event = appendMessageEvent(message, aggregate, 'message.updated', new Date().toISOString());
     return { status: 'updated', message, event };
+}
+function pendingLegacyDispatches(input = {}) {
+    const limit = input.limit ?? 100;
+    if (!Number.isInteger(limit) || limit < 1 || limit > 1000) fail('INVALID_LIMIT');
+    return all(`SELECT d.message_id,d.status,d.payload,d.attempts,d.last_error,m.payload message_payload
+        FROM legacy_dispatch d JOIN messages m ON m.id=d.message_id
+        WHERE d.status='pending' ORDER BY d.seq LIMIT ?`, limit).map(row => {
+        const message = JSON.parse(row.payload), stored = JSON.parse(row.message_payload);
+        const text = message.isAudio ? stored.content.transcript || ''
+            : stored.content.type === 'text' ? stored.content.text : stored.content.caption || '';
+        return { messageId: row.message_id, status: row.status,
+            message: { ...message, text, transcript: message.isAudio ? text : '' },
+            attempts: row.attempts, lastError: row.last_error };
+    });
+}
+function markLegacyDispatched(input) {
+    assertValid('Id', input.messageId);
+    const now = new Date().toISOString();
+    const changed = run("UPDATE legacy_dispatch SET status='dispatched',payload='{}',dispatched_at=?,last_error=NULL WHERE message_id=? AND status='pending'", now, input.messageId).changes;
+    return { status: changed ? 'dispatched' : one('SELECT status FROM legacy_dispatch WHERE message_id=?', input.messageId)?.status ?? 'missing' };
+}
+function retryLegacyDispatch(input) {
+    assertValid('Id', input.messageId);
+    const code = typeof input.code === 'string' && /^[A-Z0-9_]{1,64}$/.test(input.code) ? input.code : 'HANDLER_FAILED';
+    const changed = run("UPDATE legacy_dispatch SET attempts=attempts+1,last_error=? WHERE message_id=? AND status='pending'", code, input.messageId).changes;
+    return { status: changed ? 'pending' : one('SELECT status FROM legacy_dispatch WHERE message_id=?', input.messageId)?.status ?? 'missing' };
 }
 function page(input) {
     assertValid('Id', input.conversationId);
@@ -274,6 +361,9 @@ function dispatch(method, input) {
             return transaction(() => input.map(ingest));
         }
         case 'updateTranscription': return transaction(() => updateTranscription(input));
+        case 'pendingLegacyDispatches': return pendingLegacyDispatches(input);
+        case 'markLegacyDispatched': return transaction(() => markLegacyDispatched(input));
+        case 'retryLegacyDispatch': return transaction(() => retryLegacyDispatch(input));
         case 'conversation': assertValid('Id', input); return one('SELECT * FROM conversations WHERE id=?', input) ?? null;
         case 'messages': return page(input);
         case 'events': {
@@ -285,6 +375,8 @@ function dispatch(method, input) {
         case 'diagnostics': return { ...snapshot(), messages: one('SELECT COUNT(*) n FROM messages').n,
             events: one('SELECT COUNT(*) n FROM events').n, quarantine: one('SELECT COUNT(*) n FROM quarantine').n,
             aliases: one('SELECT COUNT(*) n FROM aliases').n, provenance: one('SELECT COUNT(*) n FROM provenance').n,
+            legacyDispatchPending: one("SELECT COUNT(*) n FROM legacy_dispatch WHERE status='pending'").n,
+            legacyDispatchWaiting: one("SELECT COUNT(*) n FROM legacy_dispatch WHERE status='waiting'").n,
             integrity: one('PRAGMA integrity_check').integrity_check, foreignKeys: all('PRAGMA foreign_key_check').length };
         case 'backup': {
             if (typeof input !== 'string' || !path.isAbsolute(input)) fail('INVALID_BACKUP_PATH');

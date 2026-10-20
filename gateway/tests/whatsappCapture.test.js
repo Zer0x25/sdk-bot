@@ -94,6 +94,9 @@ test('BUG-001/002: full live batch, marker before STT, ignored/paused/handoff ca
     await settled(a.instance);
     assert.equal((await f.archive.diagnostics()).messages, 5);
     assert.equal(a.archived.length, 5); assert.equal(a.messages.length, 2);
+    const pendingDispatches = await f.archive.pendingLegacyDispatches();
+    assert.deepEqual(pendingDispatches.map(row => row.message.text), ['hola', 'hola']);
+    assert.deepEqual(pendingDispatches.map(row => row.message.rawId), ['200@s.whatsapp.net', '201@s.whatsapp.net']);
     assert.equal(chatStore.getRecent('200@s.whatsapp.net').length, 1);
     const audio = a.archived.find(e => e.raw.key.id === 'c').observation.result.message;
     assert.deepEqual(audio.content, { type: 'audio', availability: 'not_stored', transcript: null, transcriptionStatus: 'not_requested' });
@@ -105,6 +108,7 @@ test('BUG-001/002: full live batch, marker before STT, ignored/paused/handoff ca
     const capture = createWhatsappCapture(reopened);
     for (const item of batch) assert.equal((await capture.enqueue(item, socketIdentity({ ...own, id: '100:99@s.whatsapp.net' }), 'history')).result.status, 'duplicate');
     assert.equal((await reopened.diagnostics()).messages, 5);
+    assert.equal((await reopened.pendingLegacyDispatches()).length, 2);
     assert.equal((await reopened.conversation(audio.conversationId)).inbound_seq, '1');
     assert.equal((await reopened.messages({ conversationId: audio.conversationId }))[0].id, audio.id);
     await capture.close(); await reopened.close();
@@ -119,6 +123,7 @@ test('append/history never automate, live redelivery stays inert, same remote ID
     a.sockets[0].ev.emit('messages.upsert', { type: 'append', messages: [msg('old')] });
     a.sockets[0].ev.emit('messaging-history.set', { messages: [msg('history'), msg('shared')] });
     await settled(a.instance); assert.equal(a.messages.length, 2);
+    assert.equal((await f.archive.pendingLegacyDispatches()).length, 2);
     a.sockets[0].ev.emit('messages.upsert', { type: 'notify', messages: [msg('old'), msg('shared')] });
     await settled(a.instance); assert.equal(a.messages.length, 2);
     const b = await f.adapter({}, { id: '101:3@s.whatsapp.net' });
@@ -126,6 +131,7 @@ test('append/history never automate, live redelivery stays inert, same remote ID
     await settled(b.instance); assert.equal(b.messages.length, 1);
     assert.equal((await f.archive.diagnostics()).messages, 5);
     assert.equal((await f.archive.diagnostics()).provenance, 7);
+    assert.equal((await f.archive.pendingLegacyDispatches()).length, 3);
 });
 
 test('verified remoteJidAlt deduplicates aliases; conflicting histories quarantine without merging or future dispatch', async t => {

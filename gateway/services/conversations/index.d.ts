@@ -7,6 +7,22 @@ export interface ArchiveInput {
     authorKind: Contract<'Message'>['authorKind'];
     occurredAt: string;
     content: Contract<'MessageContent'>;
+    legacyDispatch?: {
+        waitForTranscription: boolean;
+        message: {
+            channel: 'whatsapp' | 'telegram'; remoteId: string; rawId: string; text: string;
+            transcript: string; isAudio: boolean;
+            metadata: { pushName?: string | null; savedName?: string | null; phoneNumber?: string | null;
+                lid?: string | null; isBusiness?: boolean; country?: string; isFromMe: false; isAdminChannel: false };
+        };
+    };
+}
+export interface PendingLegacyDispatch {
+    messageId: string;
+    status: 'pending';
+    message: NonNullable<ArchiveInput['legacyDispatch']>['message'];
+    attempts: number;
+    lastError: string | null;
 }
 export type IngestResult =
     | { status: 'created'; message: Contract<'Message'>; event: Contract<'Event'> }
@@ -38,14 +54,17 @@ export interface Archive {
     updateTranscription(input: { messageId: string; expectedStatus: 'not_requested' | 'pending'; status: 'pending' | 'completed' | 'failed'; transcript?: string | null }): Promise<
         { status: 'updated'; message: Contract<'Message'>; event: Contract<'Event'> } |
         { status: 'missing' | 'unchanged' }>;
+    pendingLegacyDispatches(input?: { limit?: number }): Promise<PendingLegacyDispatch[]>;
+    markLegacyDispatched(input: { messageId: string }): Promise<{ status: 'dispatched' | 'pending' | 'waiting' | 'skipped' | 'missing' }>;
+    retryLegacyDispatch(input: { messageId: string; code?: string }): Promise<{ status: 'pending' | 'waiting' | 'dispatched' | 'skipped' | 'missing' }>;
     conversation(id: string): Promise<ArchiveConversation | null>;
     messages(input: { conversationId: string; limit?: number; before?: { occurredAt: string; id: string } }): Promise<Contract<'Message'>[]>;
     events(input?: { after?: string; limit?: number }): Promise<Contract<'Event'>[]>;
-    diagnostics(): Promise<Contract<'EventCursor'> & { messages: number; events: number; quarantine: number; aliases: number; provenance: number; integrity: string; foreignKeys: number }>;
+    diagnostics(): Promise<Contract<'EventCursor'> & { messages: number; events: number; quarantine: number; aliases: number; provenance: number; legacyDispatchPending: number; legacyDispatchWaiting: number; integrity: string; foreignKeys: number }>;
     purge(input?: { now?: string; limit?: number }): Promise<{ bodies: number; events: number; fingerprints: number; remaining: boolean }>;
     backup(destination: string): Promise<Contract<'EventCursor'>>;
     close(): Promise<void>;
     queue(): { elements: number; bytes: number };
 }
-/** restore=true only for an offline restored copy: purge before exposure, rotate epoch, discard prior event timeline. No control/outbox recovery exists yet. */
+/** restore=true only for an offline restored copy: purge before exposure, rotate epoch, discard prior event timeline. */
 export function createArchive(options?: { path?: string; timeoutMs?: number; restore?: boolean }): Archive;

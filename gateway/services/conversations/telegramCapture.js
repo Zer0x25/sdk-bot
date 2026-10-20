@@ -50,7 +50,7 @@ function normalizedContent(message) {
 
 /** Build one durable message or mark the update as an intentionally excluded
  * Telegram event. Admin delivery remains a legacy pipeline action after commit. */
-function normalizeUpdate(update, accountId, adminChatId = '') {
+function normalizeUpdate(update, accountId, adminChatId = '', { includeAudio = false } = {}) {
     if (!update || typeof update !== 'object' || Array.isArray(update)) throw failure('TG_UPDATE_INVALID');
     const updateId = decimalId(update.update_id, { allowZero: true, max: UPDATE_MAX });
     if (updateId === null) throw failure('TG_UPDATE_ID_INVALID');
@@ -77,19 +77,31 @@ function normalizeUpdate(update, accountId, adminChatId = '') {
 
     const content = normalizedContent(message);
     const text = content.type === 'text' ? content.text : content.caption || '';
+    const waitForTranscription = content.type === 'audio' && includeAudio;
     const archiveInput = { identity: telegramIdentity(accountId, chatId), providerMessageId: messageId,
         source: 'live', direction: 'inbound', authorKind: 'customer', occurredAt, content };
+    if ((text && Buffer.byteLength(text) <= 65536 && !waitForTranscription) || waitForTranscription) {
+        const firstName = message.from?.first_name || 'Desconocido';
+        const username = message.from?.username;
+        archiveInput.legacyDispatch = { waitForTranscription, message: {
+            channel: 'telegram', remoteId: `telegram:${chatId}`, rawId: chatId,
+            text: waitForTranscription ? '' : text, transcript: '', isAudio: waitForTranscription,
+            metadata: { pushName: username ? `${firstName} (@${username})` : firstName,
+                savedName: null, phoneNumber: null, lid: chatId, isBusiness: false,
+                country: 'Desconocido', isFromMe: false, isAdminChannel: false }
+        } };
+    }
     return { updateId, message: archiveInput, legacy: { message, chatId, text, isAdminChannel: false,
         audio: content.type === 'audio' } };
 }
 
-function normalizeUpdates(updates, accountId, adminChatId = '') {
+function normalizeUpdates(updates, accountId, adminChatId = '', options = {}) {
     if (!Array.isArray(updates) || updates.length > MAX_BATCH) throw failure('TG_BATCH_INVALID');
     let bytes;
     try { bytes = Buffer.byteLength(JSON.stringify(updates)); }
     catch { throw failure('TG_BATCH_INVALID'); }
     if (bytes > MAX_BATCH_BYTES) throw failure('TG_BATCH_TOO_LARGE');
-    return updates.map(update => normalizeUpdate(update, accountId, adminChatId));
+    return updates.map(update => normalizeUpdate(update, accountId, adminChatId, options));
 }
 
 function createTelegramCapture(archive) {

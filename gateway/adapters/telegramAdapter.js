@@ -215,7 +215,9 @@ class TelegramAdapter extends ChannelAdapter {
                     const accountId = this.accountId;
                     if (!capture || !accountId) { this.stopForCapture('archivo_no_disponible'); return; }
                     try {
-                        observations = normalizeUpdates(updates.result, accountId, this.adminChatId || '');
+                        observations = normalizeUpdates(updates.result, accountId, this.adminChatId || '', {
+                            includeAudio: num('AUDIO_STT_ENABLED', 0) === 1
+                        });
                         for (const observation of observations) {
                             if (observation.legacy) this.observeChat({ chat: { id: observation.legacy.chatId } });
                         }
@@ -253,7 +255,8 @@ class TelegramAdapter extends ChannelAdapter {
                             }
                             continue;
                         }
-                        if (legacy.text) this.emitLegacyMessage(legacy.message, legacy.chatId, legacy.text, legacy.isAdminChannel);
+                        if (legacy.text) this.emitLegacyMessage(legacy.message, legacy.chatId, legacy.text,
+                            legacy.isAdminChannel, legacy.isAdminChannel ? null : stored?.id ?? null);
                     }
                     if (transcriptionFailure) this.stopForCapture('error_captura');
                 }
@@ -269,14 +272,15 @@ class TelegramAdapter extends ChannelAdapter {
         this.setStatus('standby', reason);
     }
 
-    emitLegacyMessage(msg, chatId, text, isAdminChannel) {
+    emitLegacyMessage(msg, chatId, text, isAdminChannel, archiveMessageId = null) {
         const pushName = msg.from?.first_name || 'Desconocido';
         const username = msg.from?.username;
         this.emit('message', new StandardMessage({
             channel: 'telegram', remoteId: `telegram:${chatId}`, rawId: chatId, text,
             metadata: { pushName: username ? `${pushName} (@${username})` : pushName,
                 savedName: null, phoneNumber: null, lid: chatId, isBusiness: false,
-                country: 'Desconocido', isFromMe: false, isAdminChannel }, raw: msg
+                country: 'Desconocido', isFromMe: false, isAdminChannel }, raw: msg,
+            archiveMessageId
         }));
     }
 
@@ -458,7 +462,8 @@ class TelegramAdapter extends ChannelAdapter {
             channel: 'telegram', remoteId: `telegram:${tgChatId}`, rawId: tgChatId,
             text: transcript, transcript, isAudio: true,
             metadata: { pushName: fullName, savedName: null, phoneNumber: null, lid: tgChatId,
-                isBusiness: false, country: 'Desconocido', isFromMe: false, isAdminChannel: isAdmin }, raw: msg
+                isBusiness: false, country: 'Desconocido', isFromMe: false, isAdminChannel: isAdmin }, raw: msg,
+            archiveMessageId: session.messageId
         }));
     }
 }

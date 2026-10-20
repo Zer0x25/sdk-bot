@@ -65,7 +65,7 @@ function key(accountId, jid) {
 
 /** Single FIFO, including in-flight work. Raw observations retained for the
  * legacy consumer count toward admission bytes. No blind write retry on error. */
-function createWhatsappCapture(archive) {
+function createWhatsappCapture(archive, { buildLegacyDispatch } = {}) {
     let tail = Promise.resolve(), elements = 0, bytes = 0, closed = false, failed = null;
     function enqueue(message, session, source, knownOwnEcho = false) {
         if (closed || failed) return Promise.reject(failure(failed || 'WA_CAPTURE_CLOSED'));
@@ -84,14 +84,20 @@ function createWhatsappCapture(archive) {
             if (failed) throw failure(failed);
             const account = await archive.registerAccount({ channel: 'whatsapp', providerKey: session.providerKey });
             const identity = key(account.id, observation.remote);
-            if (observation.alt) await archive.bindAlias({ canonical: identity, alias: key(account.id, observation.alt),
-                evidence: { kind: 'adapter', reference: 'baileys:key.remoteJidAlt' } });
+            let aliasConflict = false;
+            if (observation.alt) {
+                const aliasResult = await archive.bindAlias({ canonical: identity, alias: key(account.id, observation.alt),
+                    evidence: { kind: 'adapter', reference: 'baileys:key.remoteJidAlt' } });
+                aliasConflict = aliasResult.status === 'quarantined';
+            }
+            const legacyDispatch = !aliasConflict && buildLegacyDispatch ? buildLegacyDispatch(message, observation) : null;
             const [result] = await archive.ingestBatch([{ identity,
                 providerMessageId: observation.providerMessageId, source, direction: observation.direction,
-                authorKind: observation.authorKind, occurredAt: observation.occurredAt, content: observation.content }]);
+                authorKind: observation.authorKind, occurredAt: observation.occurredAt, content: observation.content,
+                ...(legacyDispatch ? { legacyDispatch } : {}) }]);
             const resolved = await archive.resolve(identity);
             const conversation = await archive.conversation(resolved.conversation_id);
-            return { ...observation, result, requiresReview: Boolean(conversation.requires_review) };
+            return { ...observation, result, legacyDispatch, requiresReview: Boolean(conversation.requires_review) };
         }).catch(error => {
             // An RPC timeout may have committed. Stop new admission until restart;
             // redelivery then consults durable fingerprints instead of resending.

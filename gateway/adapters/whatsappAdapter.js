@@ -28,7 +28,9 @@ class WhatsappAdapter extends ChannelAdapter {
         this.loadAuth = loadAuth;
         this.download = download;
         this.transcribe = transcribe;
-        this.capture = archive ? createWhatsappCapture(archive) : null;
+        this.capture = archive ? createWhatsappCapture(archive, {
+            buildLegacyDispatch: (msg, observation) => this.buildLegacyDispatch(msg, observation)
+        }) : null;
         this.archive = archive;
         this.transcriptions = archive ? createWhatsappTranscription(archive, code => this.captureFailure(code)) : null;
         this.connectRevision = 0;
@@ -320,6 +322,23 @@ class WhatsappAdapter extends ChannelAdapter {
         }
     }
 
+    buildLegacyDispatch(msg, observation) {
+        if (observation.source !== 'live' || observation.direction !== 'inbound' || observation.authorKind !== 'customer') return null;
+        const content = observation.content;
+        const text = content.type === 'text' ? content.text : content.caption || '';
+        if (Buffer.byteLength(text) > 65536) return null;
+        const waitForTranscription = content.type === 'audio' && !text && num('AUDIO_STT_ENABLED', 0) === 1;
+        if (!text && !waitForTranscription) return null;
+        const metadata = extractUserMetadata(msg);
+        return { waitForTranscription, message: {
+            channel: 'whatsapp', remoteId: `whatsapp:${observation.remote}`, rawId: observation.remote,
+            text, transcript: '', isAudio: waitForTranscription,
+            metadata: { pushName: metadata.pushName, savedName: metadata.savedName,
+                phoneNumber: metadata.phoneNumber, lid: metadata.lid, isBusiness: metadata.isBusiness,
+                country: metadata.country, isFromMe: false, isAdminChannel: false }
+        } };
+    }
+
     isOwnEcho(msg, session) {
         const remote = individualJid(msg.key?.remoteJid);
         const k = `${session.providerKey}|${remote}|${msg.key?.id}`;
@@ -335,7 +354,8 @@ class WhatsappAdapter extends ChannelAdapter {
         this.emit('message', new StandardMessage({
             channel: 'whatsapp', remoteId: `whatsapp:${metadata.remoteJid}`,
             rawId: metadata.remoteJid, text,
-            metadata: { ...metadata, isFromMe: msg.key.fromMe }, raw: msg
+            metadata: { ...metadata, isFromMe: msg.key.fromMe }, raw: msg,
+            archiveMessageId: observation?.result?.message?.id ?? null
         }));
     }
 
@@ -398,7 +418,8 @@ class WhatsappAdapter extends ChannelAdapter {
             this.emit('message', new StandardMessage({
                 channel: 'whatsapp', remoteId: `whatsapp:${remoteJid}`, rawId: remoteJid,
                 text: transcript, transcript, isAudio: true,
-                metadata: { ...metadata, isFromMe: msg.key.fromMe }, raw: msg
+                metadata: { ...metadata, isFromMe: msg.key.fromMe }, raw: msg,
+                archiveMessageId: messageId
             }));
         });
     }

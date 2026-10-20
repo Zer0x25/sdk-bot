@@ -1,8 +1,8 @@
 # Captura Telegram y cursor durable por bot — F2C.2
 
 Fecha: 2026-10-20. Esta unidad completa la captura base de Telegram y el ACK
-durable del polling. No habilita todavía la bandeja/API de historial, el control
-humano ni el despacho durable de IA.
+durable del polling. F2C.2 no habilitó la bandeja/API de historial ni el control
+humano; F2D añadió después el replay durable al handler legacy.
 
 ## Identidad de cuenta y cursor
 
@@ -34,10 +34,9 @@ Administración, grupos, callbacks y updates sin mensaje de cliente no entran al
 historial de conversaciones, pero sí pueden avanzar el cursor en la misma
 transacción. El handler administrativo heredado se ejecuta después de esa
 confirmación. Una redelivery con `update_id` ya confirmado se salta para no repetir
-el comando (BUG-047). Sigue una ventana de caída entre el cursor y el despacho;
-está registrada como BUG-046. También falta consumir/reconciliar mensajes ya
-archivados si el proceso cae entre el commit y su emisión al pipeline heredado
-(BUG-045).
+el comando (BUG-047). La ventana del comando admin sigue registrada como BUG-046.
+F2D añade una fila outbox en la transacción de captura y replay del mensaje de
+cliente; los detalles y límites están en [REPLAY-LEGACY-F2D](REPLAY-LEGACY-F2D.md).
 
 Los duplicados se resuelven dentro del namespace de cuenta/chat/ID del proveedor.
 Así, dos chats pueden usar el mismo `message_id` sin filtrarse entre sí ni con el
@@ -65,8 +64,8 @@ para archivo/captura/respuesta inválida.
   stale de comando admin).
 - BUG-008 queda cerrado solo para la identidad archivada de Telegram: signo y
   namespace exactos. La resolución legacy por dígitos continúa abierta.
-- BUG-045 deja pendiente el despacho/reconciliación durable de mensajes capturados
-  para que una caída entre commit y pipeline no deje trabajo sin procesar.
+- BUG-045 queda cerrado por F2D para el corte commit→pipeline; los efectos de
+  salida con resultado ambiguo siguen BUG-050/F5.
 - BUG-046 deja pendiente la recepción durable/idempotente de comandos admin antes
   de confirmar el cursor. No se promete ejecución exactly-once de comandos.
 - Bot API no ofrece importar un historial arbitrario anterior al polling retenido.

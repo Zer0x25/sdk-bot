@@ -1,7 +1,8 @@
 # ADR 006: admisión durable antes del consumidor legacy
 
 Fecha: 2026-10-20. Estado: aceptada para la transición F2.
-Complementa ADR-003/005; implementada para WA en F2B.2 y Telegram en F2C.2.
+Complementa ADR-003/005; implementada para WA en F2B.2, Telegram en F2C.2 y
+replay transaccional en F2D.
 
 ## Contexto
 
@@ -56,12 +57,18 @@ reapertura y composición del entry real en
 proceso de ADR-001/002 y el dueño único de ADR-003 se conservan.
 
 Telegram añade `getMe` para obtener un `providerKey` estable del bot sin persistir
-el token. La migración v2 crea cursores por cuenta; captura de cada lote, eventos,
-proyección y cursor se confirman en una sola transacción. Audio se archiva primero
-como marcador y el STT actualiza el mismo mensaje antes de emitir texto legacy.
-Updates admin/grupo/tipos excluidos pueden confirmar el cursor sin crear mensaje
-de conversación. El despacho del pipeline y de comandos admin ocurre después del
-commit y no es durable: F2D debe añadir replay idempotente de mensajes (BUG-045),
-y F5 un inbox durable de comandos (BUG-046). Redelivery stale de comando ya se
-filtra en F2C.2 (BUG-047). Evidencia, matriz de exclusiones y límites:
+el token. La migración v2 crea cursores por cuenta; la v3 agrega el outbox de
+entrada. Captura Telegram, evento, proyección, cursor y fila outbox se confirman
+en la misma transacción. WhatsApp añade el outbox en su transacción de ingestión.
+Los eventos de adapter solo despiertan el pump; este reconstruye el mensaje desde
+SQLite, espera a que el canal esté conectado y guarda el ACK al terminar. Las
+respuestas IA mantienen el ACK pendiente hasta que termina el procesamiento de
+debounce/IA. El audio con STT espera transcripción; el fallo lo marca omitido.
+
+BUG-045 cubre el corte entre commit y entrada al pipeline. El despacho es
+at-least-once ante fallos/ACK incierto dentro de ramas con efectos externos; la
+idempotencia de salidas permanece en F5 (BUG-050). Updates admin/grupo/tipos
+excluidos pueden confirmar cursor sin crear mensaje; el inbox durable de comandos
+admin sigue en F5 (BUG-046). Redelivery stale admin se filtra desde F2C.2
+(BUG-047). Evidencia y límites: [REPLAY-LEGACY-F2D](../REPLAY-LEGACY-F2D.md) y
 [TELEGRAM-CAPTURA-F2C2](../TELEGRAM-CAPTURA-F2C2.md).

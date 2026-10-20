@@ -128,6 +128,7 @@ module.exports.getAdapter = getAdapter; // Expose for pipeline
 
 let conversationArchive;
 let archiveRetention;
+let legacyDispatchPump;
 async function startGateway() {
     conversationArchive = require('./services/conversations').createArchive();
     await conversationArchive.ready;
@@ -135,6 +136,7 @@ async function startGateway() {
         () => log.error('Archivo: falló la purga diaria; revisar retención.'));
     require('./services/factoryReset').setBeforeReset(async () => {
         for (const adapter of adapters.values()) await adapter.disconnect();
+        await legacyDispatchPump?.close();
         await archiveRetention.close();
         await conversationArchive.close();
     });
@@ -165,12 +167,14 @@ async function startGateway() {
         channels.whatsapp.lastDisconnectReason = detail || null;
         if (status === 'open') {
             channels.whatsapp.lastConnectAt = new Date().toISOString();
+            void legacyDispatchPump.trigger();
         }
         internalBus.handleConnectionUpdate({ connection: status }, whatsapp);
     });
 
-    whatsapp.on('message', async stdMsg => {
-        await handleIncomingMessage(stdMsg);
+    whatsapp.on('message', stdMsg => {
+        if (stdMsg.archiveMessageId) { void legacyDispatchPump.trigger(); return; }
+        void handleIncomingMessage(stdMsg).catch(error => logError.error(`Mensaje administrativo WhatsApp falló: ${error?.message || error}`));
     });
 
     whatsapp.on('capture_status', status => { channels.whatsapp.capture = status; });
@@ -197,15 +201,23 @@ async function startGateway() {
     adapters.set('telegram', telegram);
     internalBus.setTelegramChatIdResolver((token, options) => telegram.discoverChatId(token, options));
 
+    legacyDispatchPump = require('./services/conversations/legacyDispatch').createLegacyDispatchPump({
+        archive: conversationArchive,
+        dispatch: (message, acknowledge) => handleIncomingMessage(message, { onDurableComplete: acknowledge }),
+        isReady: channel => channels[channel]?.connection === 'open',
+        onError: (error, messageId) => logError.error(`Replay durable ${messageId || ''} falló (${error?.code || error?.message || 'unknown'}); queda pendiente.`)
+    });
+
     telegram.on('ready', ({ adminLid }) => {
         log.info(`👑 ADMIN TG DETECTADO -> Chat ID: ${adminLid}`);
     });
 
-    telegram.on('message', async stdMsg => {
+    telegram.on('message', stdMsg => {
         // ÚNICO dueño de getUpdates: este adaptador. Todo (comandos del admin
         // y conversaciones) entra al pipeline; messageHandler trata el chat
         // del admin de Telegram como self-chat (mismas reglas que WhatsApp).
-        await handleIncomingMessage(stdMsg);
+        if (stdMsg.archiveMessageId) { void legacyDispatchPump.trigger(); return; }
+        void handleIncomingMessage(stdMsg).catch(error => logError.error(`Mensaje administrativo Telegram falló: ${error?.message || error}`));
     });
     
     telegram.on('connection', ({ status, detail }) => {
@@ -214,6 +226,7 @@ async function startGateway() {
         channels.telegram.lastDisconnectReason = detail || null;
         if (status === 'open') {
             channels.telegram.lastConnectAt = new Date().toISOString();
+            void legacyDispatchPump.trigger();
         }
     });
 
@@ -324,7 +337,7 @@ async function handleExit(exitCode = 0) {
         await adapter.disconnect().catch(() => {});
     }
     if (!isWiping()) flushToDisk();
-    try { await archiveRetention?.close(); await conversationArchive?.close(); } catch { /* exit after worker terminates */ }
+    try { await legacyDispatchPump?.close(); await archiveRetention?.close(); await conversationArchive?.close(); } catch { /* exit after worker terminates */ }
     process.exit(exitCode);
 }
 

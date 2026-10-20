@@ -201,7 +201,7 @@ function handlePresenceUpdate(id, presences) {
     }
 }
 
-async function handleIncomingMessage(stdMsg) {
+async function handleIncomingMessage(stdMsg, { onDurableComplete } = {}) {
     if (!stdMsg || !stdMsg.text) return;
 
     runtimeStats.receivedMessages += 1;
@@ -319,6 +319,7 @@ async function handleIncomingMessage(stdMsg) {
                 let inflightBuffer = messageBuffers.get(remoteJid);
                 if (inflightBuffer) {
                     inflightBuffer.messages.push(decision.text);
+                    if (onDurableComplete) (inflightBuffer.dispatchAcks ||= []).push(onDurableComplete);
                     inflightBuffer.lastActivity = Date.now();
                     inflightBuffer.onTimeout = createBufferTimeout(remoteJid, metadata, adapter);
                     if (inflightBuffer.timer) clearTimeout(inflightBuffer.timer);
@@ -327,6 +328,7 @@ async function handleIncomingMessage(stdMsg) {
                 } else {
                     messageBuffers.set(remoteJid, {
                         messages: [decision.text],
+                        dispatchAcks: onDurableComplete ? [onDurableComplete] : [],
                         isTyping: false,
                         lastTypingTime: null,
                         lastActivity: Date.now(),
@@ -336,7 +338,7 @@ async function handleIncomingMessage(stdMsg) {
                     });
                 }
                 logAI.info(`⏳ [IA EN CURSO] Cliente (${displayName}) escribió mientras la IA responde. ${messageBuffers.get(remoteJid).messages.length} msg(s) en espera.`);
-                return;
+                return onDurableComplete ? 'deferred' : undefined;
             }
 
             let existingBuffer = messageBuffers.get(remoteJid);
@@ -346,6 +348,7 @@ async function handleIncomingMessage(stdMsg) {
             if (existingBuffer) {
                 if (existingBuffer.timer) clearTimeout(existingBuffer.timer);
                 existingBuffer.messages.push(decision.text);
+                if (onDurableComplete) (existingBuffer.dispatchAcks ||= []).push(onDurableComplete);
                 existingBuffer.onTimeout = onTimeout;
                 existingBuffer.lastActivity = Date.now();
 
@@ -356,6 +359,7 @@ async function handleIncomingMessage(stdMsg) {
             } else {
                 const newBuffer = {
                     messages: [decision.text],
+                    dispatchAcks: onDurableComplete ? [onDurableComplete] : [],
                     isTyping: false,
                     lastTypingTime: null,
                     lastActivity: Date.now(),
@@ -369,7 +373,7 @@ async function handleIncomingMessage(stdMsg) {
                 messageBuffers.set(remoteJid, newBuffer);
                 log.info(`⏳ [DE-BOUNCE START] Primer mensaje de ${displayName}. Timer de ${(delayMs / 1000).toFixed(1)}s de silencio iniciado.`);
             }
-            return;
+            return onDurableComplete ? 'deferred' : undefined;
         }
 
         // @@PART2@@
@@ -425,6 +429,7 @@ function createBufferTimeout(remoteJid, metadata, adapter) {
 
         const fullBufferedText = buf.messages.join('\n');
         buf.messages = []; // Los mensajes procesados salen del buffer; no se borra el buffer aún
+        const dispatchAcks = buf.dispatchAcks?.splice(0) || [];
 
         log.info(`\n📦 [DE-BOUNCE BATCH FINAL] Silencio confirmado. Procesando mensaje(s) de ${displayName}:\n"${fullBufferedText}"`);
 
@@ -434,6 +439,10 @@ function createBufferTimeout(remoteJid, metadata, adapter) {
             const { active, queued } = poolStats();
             logAI.info(`🎯 [POOL AI] Esperando turno en cola global (activas: ${active}, en cola: ${queued})...`);
             await enqueueAI(() => processAIChat(fullBufferedText, remoteJid, metadata, adapter));
+            for (const acknowledge of dispatchAcks) await acknowledge();
+        } catch (error) {
+            for (const acknowledge of dispatchAcks) await acknowledge.retry?.(error);
+            logError.error(`⚠️ Error procesando mensaje durable de ${remoteJid}: ${error?.message || error}`);
         } finally {
             chatInFlight.delete(remoteJid);
 
