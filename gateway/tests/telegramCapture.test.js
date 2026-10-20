@@ -5,12 +5,13 @@ const assert = require('node:assert/strict');
 const fs = require('node:fs/promises');
 const os = require('node:os');
 const path = require('node:path');
+const { EventEmitter } = require('node:events');
 const { randomUUID } = require('node:crypto');
 const { DatabaseSync } = require('node:sqlite');
 const { createArchive } = require('../services/conversations');
 const schema = require('../services/conversations/schema');
 const { parseTelegramJson } = require('../services/telegramHttp');
-const { normalizeUpdates } = require('../services/conversations/telegramCapture');
+const { normalizeUpdates, normalizeSentMessage } = require('../services/conversations/telegramCapture');
 const TelegramAdapter = require('../adapters/telegramAdapter');
 const { saveSettingsDB } = require('../services/db');
 const { registerSentMessage } = require('../config');
@@ -63,11 +64,11 @@ function transport() {
     return { calls, getUpdates };
 }
 
-async function runAdapter(t, archive, { token = 'token_fixture_A', botId = 42, network = transport() } = {}) {
+async function runAdapter(t, archive, { token = 'token_fixture_A', botId = 42, network = transport(), sendHttpRequest } = {}) {
     saveSettingsDB({ telegramToken: token, telegramChatId: '555', globalMode: 'ignored_all' });
     const adapter = new TelegramAdapter({ archive, getMe: async () => ({ ok: true,
         result: { id: botId, is_bot: true } }), getUpdates: network.getUpdates,
-    updateMenu: async () => {}, retryMs: 10 });
+    updateMenu: async () => {}, retryMs: 10, sendHttpRequest });
     const seen = [];
     adapter.on('message', msg => seen.push(msg));
     await adapter.connect();
@@ -79,6 +80,68 @@ async function runAdapter(t, archive, { token = 'token_fixture_A', botId = 42, n
     });
     return { adapter, seen, network };
 }
+
+function sendTransport(body, statusCode = 200) {
+    const calls = [];
+    let responseBody = body, responseStatus = statusCode, splitByteAt = 0;
+    return { calls, setResponse(nextBody, nextStatus = 200, splitAt = 0) {
+        responseBody = nextBody; responseStatus = nextStatus; splitByteAt = splitAt;
+    }, request(options, callback) {
+        let payload = '';
+        const req = new EventEmitter();
+        req.write = chunk => { payload += chunk; };
+        req.end = chunk => {
+            if (chunk) payload += chunk;
+            calls.push({ options, payload: JSON.parse(payload) });
+            const res = new EventEmitter(); res.statusCode = responseStatus; callback(res);
+            process.nextTick(() => {
+                const bytes = Buffer.from(responseBody);
+                if (splitByteAt > 0) {
+                    res.emit('data', bytes.subarray(0, splitByteAt)); res.emit('data', bytes.subarray(splitByteAt));
+                } else res.emit('data', bytes);
+                res.emit('end'); req.emit('close');
+            });
+        };
+        return req;
+    } };
+}
+
+test('send result normalization requires the exact private chat and excludes admin/group destinations', () => {
+    const result = { message_id: MESSAGE_BIG, date: 1792368000, text: 'sent', chat: { id: '700', type: 'private' } };
+    assert.deepEqual(normalizeSentMessage(result, 'account', '700', '555'), {
+        identity: { accountId: 'account', channel: 'telegram', kind: 'telegram_chat_id', exactValue: '700' },
+        providerMessageId: MESSAGE_BIG, source: 'live', direction: 'outbound', authorKind: 'external_self',
+        occurredAt: '2026-10-19T00:00:00.000Z', content: { type: 'text', text: 'sent' }
+    });
+    assert.equal(normalizeSentMessage(result, 'account', '555', '555'), null);
+    assert.equal(normalizeSentMessage({ ...result, chat: { id: '700', type: 'supergroup' } }, 'account', '700'), null);
+    assert.equal(normalizeSentMessage(result, 'account', '701'), null);
+});
+
+test('accepted Telegram Bot API sends enter the archive; HTTP 200 ok:false is rejected without a message', async t => {
+    const { archive } = await archiveFixture(t);
+    const acceptedBody = `{"ok":true,"result":{"message_id":${MESSAGE_BIG},"date":1792368000,"text":"respuesta 😀","chat":{"id":700,"type":"private"}}}`;
+    const sender = sendTransport(acceptedBody);
+    sender.setResponse(acceptedBody, 200, Buffer.from(acceptedBody).indexOf(Buffer.from('😀')) + 2);
+    const { adapter } = await runAdapter(t, archive, { sendHttpRequest: sender.request });
+    const accepted = await adapter.sendMessage('telegram:700', 'respuesta 😀');
+    assert.equal(accepted.ok, true);
+    const identity = await archive.resolve({ accountId: adapter.accountId, channel: 'telegram', kind: 'telegram_chat_id', exactValue: '700' });
+    const [stored] = await archive.messages({ conversationId: identity.conversation_id });
+    assert.equal(stored.direction, 'outbound'); assert.equal(stored.authorKind, 'external_self');
+    assert.equal(stored.providerMessageId, MESSAGE_BIG); assert.equal(stored.content.text, 'respuesta 😀');
+
+    sender.setResponse('{"ok":false,"error_code":500}');
+    await assert.rejects(adapter.sendMessage('telegram:701', 'no enviado'), { code: 'TG_SEND_REJECTED' });
+    assert.equal((await archive.diagnostics()).messages, 1);
+
+    const previousCalls = sender.calls.length;
+    sender.setResponse("Bad Request: can't parse entities", 400);
+    await assert.rejects(adapter.sendMessage('telegram:702', 'markdown'), { code: 'TG_SEND_RESPONSE_INVALID' });
+    assert.equal(sender.calls.length - previousCalls, 2);
+    assert.equal(sender.calls[previousCalls].payload.parse_mode, 'Markdown');
+    assert.equal('parse_mode' in sender.calls[previousCalls + 1].payload, false);
+});
 
 test('F2C.2 migrates v1 archives and persists Telegram cursor per verified bot through reopen', async t => {
     const dir = await fs.mkdtemp(path.join(os.tmpdir(), 'sdkbot-telegram-migrate-'));

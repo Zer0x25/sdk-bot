@@ -8,7 +8,7 @@ const { cat } = require('../services/logger');
 const { isJunkJid } = require('../services/contactsRepository');
 const { extractUserMetadata } = require('../services/metadataService');
 const { extractTextMessage, decideReconnect } = require('../services/pipeline');
-const { createWhatsappCapture, socketIdentity, individualJid, unwrap } = require('../services/conversations/whatsappCapture');
+const { createWhatsappCapture, socketIdentity, individualJid, unwrap, acceptedOutbound } = require('../services/conversations/whatsappCapture');
 const { createWhatsappTranscription } = require('../services/conversations/whatsappTranscription');
 const internalBus = require('../services/internalBus');
 const { getSettingsDB, saveSettingsDB } = require('../services/db');
@@ -302,7 +302,7 @@ class WhatsappAdapter extends ChannelAdapter {
         // reaches legacy automation. No extra unbounded promise-chain queue.
         const reported = new Set();
         for (const msg of messages) {
-            this.capture.enqueue(msg, session, source, this.isOwnEcho(msg || {}, session)).then(observation => {
+            this.capture.enqueue(msg, session, source).then(observation => {
                 if (this.sock !== sock) return;
                 if (observation.scope === 'administration') {
                     if (source === 'live') return this.processLive(sock, msg, session);
@@ -343,6 +343,22 @@ class WhatsappAdapter extends ChannelAdapter {
         const remote = individualJid(msg.key?.remoteJid);
         const k = `${session.providerKey}|${remote}|${msg.key?.id}`;
         return msg.key?.fromMe && (this.sentIds.get(k) || 0) > Date.now();
+    }
+
+    async archiveAcceptedSend(session, targetJid, sentContent, result) {
+        if (!this.archive) return;
+        const outbound = acceptedOutbound(result, session, targetJid, sentContent);
+        if (!outbound) return;
+        try {
+            const account = await this.archive.registerAccount({ channel: 'whatsapp', providerKey: session.providerKey });
+            outbound.identity = { accountId: account.id, channel: 'whatsapp',
+                kind: outbound.remote.endsWith('@lid') ? 'whatsapp_lid' : 'whatsapp_jid', exactValue: outbound.remote };
+            delete outbound.remote;
+            const [stored] = await this.archive.ingestBatch([outbound]);
+            if (stored?.status === 'quarantined') this.captureFailure('WA_OUTBOUND_RECONCILIATION_CONFLICT');
+        } catch (error) {
+            this.captureFailure(error.code || 'WA_OUTBOUND_ARCHIVE_FAILED');
+        }
     }
 
     async processLive(sock, msg, session, observation) {
@@ -447,6 +463,7 @@ class WhatsappAdapter extends ChannelAdapter {
             if (this.sentIds.size >= 10000) this.sentIds.delete(this.sentIds.keys().next().value);
             this.sentIds.set(`${session.providerKey}|${individualJid(waJid)}|${result.key.id}`, now + 60000);
         }
+        await this.archiveAcceptedSend(session, waJid, content, result);
         return result;
     }
 

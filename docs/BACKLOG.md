@@ -34,7 +34,7 @@ salvo indicación contraria. La evidencia detallada y líneas están en la basel
 | BUG-007 | P1 | Respuesta generada se guarda en memoria antes de entregarse; cancelación/fallo/retry puede producir contexto fantasma. | brain /chat llama append_exchange antes de devolver; gateway puede reintentar POST. | F5: generación cancelada o entrega parcial solo confirma contexto de lo realmente enviado. |
 | BUG-008 | P1 | Parcial: F2C.2 cierra el namespace archivado TG, pero la resolución legacy aún usa dígitos/substrings e índices sin cuenta/canal. | `telegram_chat_id` conserva signo y se captura bajo cuenta verificada; stateService/findKeyByDigits siguen siendo la ruta legacy de comandos. | F2/F5 antes de mutaciones legacy: resolver identidades exactas por cuenta/canal; mismos sufijos en chats distintos no deben mutar otro contacto. |
 | BUG-009 | P1 | Cerrado F2C.2: filtro global Telegram descartaba por `message_id` sin chat. | Se retiró el registro/filtro global del adapter; dedup usa cuenta, chat canónico y `message_id`. Regresión repite ID en dos chats y en el registro global heredado. | Evidencia: [TELEGRAM-CAPTURA-F2C2](TELEGRAM-CAPTURA-F2C2.md). |
-| BUG-010 | P2 | Parcial: envíos/presencia/menú/helpers legacy TG aún sin timeout propio. Proxy F1B y poll/prueba de notificaciones F2C.1 acotados. | panel/proxy.js acotado; F2C.1 añade deadline/cancelación/cierre HTTP a poll y sendMessage de prueba, POST detenido con un intento. No generaliza al dispatcher/envíos legacy. | F5 envío: TG sin respuesta termina acotado; sin retry ciego de envío ambiguo. Evidencia F1B en FRONTERA-AUTENTICADA-V1. |
+| BUG-010 | P2 | Parcial: envíos/presencia/menú/helpers legacy TG aún sin timeout propio. Proxy F1B y poll/prueba de notificaciones F2C.1 acotados. F2E.1 valida `ok:true` y archiva la respuesta aceptada del método sendMessage, sin agregar deadline. | panel/proxy.js acotado; F2C.1 añade deadline/cancelación/cierre HTTP a poll y sendMessage de prueba. No generaliza al dispatcher/envíos legacy. | F5 envío: TG sin respuesta termina acotado; sin retry ciego de envío ambiguo. Evidencia F1B en FRONTERA-AUTENTICADA-V1 y salida aceptada en SALIDAS-ACEPTADAS-F2E1. |
 | BUG-011 | P2 | /humano rechaza un permitido en ignored_all; /ia establece neutro y puede dejarlo sin respuesta. | handlers/commands/chatControl.js, runHumano/runIa. | F5: control independiente de permisos; comandos legacy preservan elegibilidad o explican bloqueo. |
 | BUG-012 | P2 | /notify conserva payload/socket legacy aunque activeSock recibe adapter; compatibilidad no comprobada. | internalBus /notify frente a index.setSock(whatsapp) y adapter.sendMessage. | F5: prueba del payload real; reconducir al puerto de envío común sin pérdida ni duplicados. |
 | BUG-013 | P1 | Cerrado F1B: /history del brain eximía API key aunque contenía contexto privado. | main.require_api_key ya exige credencial; test_main verifica denegación y lectura autorizada. | 401 sin/con clave incorrecta, 200 con correcta; health público. Ver registro de cierre. |
@@ -64,13 +64,17 @@ salvo indicación contraria. La evidencia detallada y líneas están en la basel
 | BUG-047 | P1 | Cerrado F2C.2: el adapter podía ejecutar dos veces un comando admin si recibía de nuevo un `update_id` ya confirmado. | La rama admin emitía aunque el archivo devolviera `stale`, mientras los mensajes cliente sí se filtraban por resultado. Regresión vuelve a entregar el mismo update tras el commit. | Solo se ejecutan comandos admin para updates no stale; repetición deja un único despacho. Evidencia en [TELEGRAM-CAPTURA-F2C2](TELEGRAM-CAPTURA-F2C2.md). El inbox durable/crash gap sigue en BUG-046. |
 | BUG-050 | P1 | Abierto: si una rama del pipeline produce un efecto externo y el proceso cae/falla antes del ACK durable, el replay at-least-once puede repetir la salida. | El pump retiene el mensaje durante el procesamiento IA, pero no existe ledger/idempotency key compartido transaccionalmente con los envíos legacy; un timeout de proveedor puede dejar resultado ambiguo. | F5 antes de afirmar exactly-once de salida: intención/outbox con clave estable y reconciliación de resultado; fallar después del efecto y antes del ACK no vuelve a enviar, incluso tras reinicio. |
 | BUG-051 | P2 | Abierto: filas de mensajes creadas antes de SQLite v3 no tienen recibo de entrega y no se pueden reencolar con seguridad. | La migración v2→v3 crea outbox vacío; el archivo no registra si el handler legacy ya vio cada mensaje antiguo. Reproducir todo puede duplicar conversaciones/respuestas. | Antes de desplegar sobre un archivo real: reporte de candidatos y reconciliación revisable que determine pendientes sin repetir efectos; fixture pre-v3 probado sin auto-replay ciego. No bloquea este repo mientras no migre archivos reales. |
+| BUG-052 | P2 | Cerrado F2E.1: `sendMessage` de Telegram resolvía una respuesta HTTP 200 `{ok:false}` como éxito, aunque el proveedor había rechazado el envío. | La rama anterior comprobaba únicamente status 200 y analizaba JSON sin verificar `ok`. | Transporte falso devuelve `{ok:false}` con HTTP 200: se rechaza con `TG_SEND_REJECTED` y no aparece fila en SQLite; salida `{ok:true}` queda archivada. Evidencia: [SALIDAS-ACEPTADAS-F2E1](SALIDAS-ACEPTADAS-F2E1.md). |
+| BUG-053 | P2 | Cerrado F2E.1: la autoría de un eco WA dependía de si el retorno de `sendMessage` o el evento `fromMe` ganaba una carrera. | Una correlación `sentIds` solo existía después del retorno del socket y cambiaba authorKind a `unknown`; antes del retorno quedaba `external_self`. | El resultado aceptado y los ecos conservan `external_self`; prueba fuerza eco antes del retorno, comprueba una sola fila y el mismo contenido. No atribuye origen IA/operador; eso sigue F5. Evidencia: [SALIDAS-ACEPTADAS-F2E1](SALIDAS-ACEPTADAS-F2E1.md). |
+| BUG-054 | P2 | Cerrado F2E.1: `sendMessage` Telegram decodificaba cada fragmento HTTP como texto y podía corromper Unicode dividido entre chunks. | La respuesta Bot API se concatenaba con `body += chunk`, distinto del parser acotado del polling. | El mock divide un emoji dentro de sus bytes UTF-8; el resultado archivado conserva texto exacto y el ID grande. Evidencia: [SALIDAS-ACEPTADAS-F2E1](SALIDAS-ACEPTADAS-F2E1.md). |
 
 ## Clasificación para la unidad activa
 
 F2C.1 cierra BUG-004/038/039/040/041/042. Evidencia en
 [TELEGRAM-DUENO-UNICO-F2C1](TELEGRAM-DUENO-UNICO-F2C1.md). F2C.2 cierra
 BUG-005/009/044/047 y la porción de archivo Telegram de BUG-008; BUG-008 conserva
-la resolución legacy. F2D cierra BUG-045 para captura→handler; BUG-046/F5 mantiene
+la resolución legacy. F2D cierra BUG-045 para captura→handler. F2E.1 cierra
+BUG-052/053/054 para respuestas aceptadas/eco; BUG-046/F5 mantiene
 el inbox admin. BUG-043 y BUG-050 quedan P1/F5; BUG-051 es puerta antes de migrar
 un archivo preexistente. BUG-010 sigue parcial.
 F2B.3 conserva BUG-033/034/036 cerrados y BUG-037 P2/F8 antes de STT real.
@@ -216,8 +220,8 @@ SQLite real en F2A; falta captura de aliases live antes de cerrar F2 completa.
   de bundle/navegador; esa integración sigue en F4. Evidencia:
   [CONTRATOS-V1.md](CONTRATOS-V1.md). Commit F1A: `git log --grep=BUG-018`.
 
-BUG-005/009/044/045/047 están cerrados. BUG-006/007/008/010/011/012, BUG-014/024/
+BUG-005/009/044/045/047/052/053/054 están cerrados. BUG-006/007/008/010/011/012, BUG-014/024/
 035/037/043/046/050/051 siguen abiertos o parciales según sus puertas. BUG-050 y
-la carga/reconciliación restante siguen pendientes antes de completar F2; BUG-051
+la carga sintética completa siguen pendientes antes de completar F2; BUG-051
 se vuelve puerta antes de usar un archivo preexistente real. Checks verdes no
 demuestran los escenarios pendientes fuera de su alcance.

@@ -29,6 +29,20 @@ function telegramIdentity(accountId, chatId) {
     return { accountId, channel: 'telegram', kind: 'telegram_chat_id', exactValue: chatId };
 }
 
+/** Bot API send results are the only live observation of bot-authored output:
+ * getUpdates does not return the bot's own messages. */
+function normalizeSentMessage(message, accountId, targetChatId, adminChatId = '') {
+    const target = decimalId(targetChatId, { signed: true, max: MESSAGE_MAX });
+    const chatId = decimalId(message?.chat?.id, { signed: true, max: MESSAGE_MAX });
+    const admin = decimalId(adminChatId, { signed: true, max: MESSAGE_MAX });
+    const providerMessageId = decimalId(message?.message_id, { max: MESSAGE_MAX });
+    const occurredAt = timestamp(message?.date);
+    if (!accountId || !target || !chatId || chatId !== target || message?.chat?.type !== 'private'
+        || chatId === admin || !providerMessageId || !occurredAt) return null;
+    return { identity: telegramIdentity(accountId, chatId), providerMessageId, source: 'live',
+        direction: 'outbound', authorKind: 'external_self', occurredAt, content: normalizedContent(message) };
+}
+
 function timestamp(value) {
     const seconds = decimalId(value, { allowZero: true, max: 253402300799n });
     if (seconds === null) return null;
@@ -120,4 +134,4 @@ function createTelegramCapture(archive) {
     };
 }
 
-module.exports = { decimalId, verifiedBotId, telegramIdentity, normalizeUpdate, normalizeUpdates, createTelegramCapture };
+module.exports = { decimalId, verifiedBotId, telegramIdentity, normalizeSentMessage, normalizeUpdate, normalizeUpdates, createTelegramCapture };

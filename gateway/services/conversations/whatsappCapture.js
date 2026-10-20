@@ -63,19 +63,47 @@ function key(accountId, jid) {
     return { accountId, channel: 'whatsapp', kind: jid.endsWith('@lid') ? 'whatsapp_lid' : 'whatsapp_jid', exactValue: jid };
 }
 
+function outboundContent(payload) {
+    const mediaType = ['audio', 'image', 'video', 'document'].find(type => payload?.[type] != null);
+    if (mediaType) {
+        const media = payload[mediaType];
+        const caption = typeof payload.caption === 'string' ? payload.caption
+            : typeof media?.caption === 'string' ? media.caption : null;
+        return { type: mediaType, availability: 'not_stored', transcript: null, transcriptionStatus: 'not_requested',
+            ...(caption ? { caption } : {}) };
+    }
+    if (typeof payload === 'string' && payload.length) return { type: 'text', text: payload };
+    if (typeof payload?.text === 'string' && payload.text.length) return { type: 'text', text: payload.text };
+    return { type: 'unsupported', availability: 'not_stored', transcript: null, transcriptionStatus: 'not_requested' };
+}
+
+/** A successful provider response is a durable observation of an outbound
+ * message. Use the provider's ID so a later Baileys echo deduplicates with it. */
+function acceptedOutbound(input, session, targetJid, sentContent) {
+    const remote = individualJid(input?.key?.remoteJid) || individualJid(targetJid);
+    const providerMessageId = input?.key?.id;
+    if (!remote || session.self.includes(remote) || typeof providerMessageId !== 'string'
+        || !providerMessageId.length || Array.from(providerMessageId).length > 512) return null;
+    const seconds = String(input?.messageTimestamp ?? '');
+    const occurredAt = /^\d+$/.test(seconds) && BigInt(seconds) <= 253402300799n
+        ? new Date(Number(BigInt(seconds) * 1000n)).toISOString() : new Date().toISOString();
+    return { identity: null, providerMessageId, source: 'live', direction: 'outbound', authorKind: 'external_self',
+        occurredAt, content: outboundContent(sentContent), remote };
+}
+
 /** Single FIFO, including in-flight work. Raw observations retained for the
  * legacy consumer count toward admission bytes. No blind write retry on error. */
 function createWhatsappCapture(archive, { buildLegacyDispatch } = {}) {
     let tail = Promise.resolve(), elements = 0, bytes = 0, closed = false, failed = null;
-    function enqueue(message, session, source, knownOwnEcho = false) {
+    function enqueue(message, session, source) {
         if (closed || failed) return Promise.reject(failure(failed || 'WA_CAPTURE_CLOSED'));
         let observation, size;
         try {
             observation = normalize(message, session, source);
             if (observation.scope !== 'individual') return Promise.resolve(observation);
-            // The volatile adapter correlation proves a local echo, but does
-            // not prove ai/operator authorship. Durable attribution is F5.
-            if (knownOwnEcho && observation.direction === 'outbound') observation.authorKind = 'unknown';
+            // A live fromMe message stays external_self regardless of whether a
+            // local send response raced ahead of the provider echo. F5 will add
+            // durable intent IDs for AI/operator attribution.
             size = Buffer.byteLength(JSON.stringify(message, (_k, v) => typeof v === 'bigint' ? String(v) : v));
         } catch (error) { return Promise.reject(error); }
         if (elements >= 1000 || bytes + size > 32 * 1024 * 1024) return Promise.reject(failure('WA_CAPTURE_SATURATED'));
@@ -111,4 +139,4 @@ function createWhatsappCapture(archive, { buildLegacyDispatch } = {}) {
         async close() { closed = true; await tail; } };
 }
 
-module.exports = { individualJid, socketIdentity, normalize, unwrap, createWhatsappCapture };
+module.exports = { individualJid, socketIdentity, normalize, unwrap, outboundContent, acceptedOutbound, createWhatsappCapture };

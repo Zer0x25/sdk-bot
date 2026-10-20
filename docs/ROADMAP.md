@@ -25,10 +25,11 @@ autenticada probados. F2A completada (repositorios del archivo); F2B.1 cierra la
 F2B.2 conecta captura base WA y F2B.3 completa enriquecimiento multimedia durable.
 F2C.1 completa dueño único del polling/descubrimiento Telegram.
 F2C.2 completa la captura base TG con cursor durable y namespace exacto.
-F2D completa replay durable hasta el handler tras el commit (BUG-045).
-Siguiente: idempotencia de salidas (BUG-050), reconciliación de ecos externos y
-carga de aceptación restante para completar F2. BUG-051 es puerta antes de usar
-archivos preexistentes reales.
+F2D completa replay durable hasta el handler tras el commit (BUG-045). F2E.1 ya
+registra salidas aceptadas y deduplica ecos WA; conserva autoría external_self.
+La siguiente unidad es ejecutar la carga sintética completa para cerrar F2.
+BUG-050 conserva salidas ambiguas; BUG-051 es puerta antes de usar archivos
+preexistentes reales. La atribución IA/operador queda en F5 junto a su outbox.
 Sin canales reales ni migración.
 
 ## Alcance y entregas
@@ -118,11 +119,12 @@ alterado/vencido y desarrollo explícito, sin conectarse a canales reales.
 
 ## Fase 2 — Historial durable y captura completa
 
-**Depende de:** Fase 1. **Estado: F2A/F2B/F2C completadas; reconciliación y carga completa pendientes.**
+**Depende de:** Fase 1. **Estado: F2A/F2B/F2C/F2D y F2E.1 completadas; carga completa pendiente.**
 Evidencia: [ARCHIVO-CONVERSACIONES-F2A](ARCHIVO-CONVERSACIONES-F2A.md).
 F2B.1 completa la puerta BUG-029/031 del reset CLI; evidencia en
-[RESET-SEGURO-F2B1](RESET-SEGURO-F2B1.md). F2B integra WA; F2C Telegram/ack; carga
-completa antes de cerrar F2. Captura base WA probada en
+[RESET-SEGURO-F2B1](RESET-SEGURO-F2B1.md). F2B integra WA; F2C Telegram/cursor;
+F2D replay durable y F2E.1 salidas aceptadas/ecos; carga completa antes de cerrar F2.
+Captura base WA probada en
 [CAPTURA-WHATSAPP-F2B2](CAPTURA-WHATSAPP-F2B2.md); F2B.3 completa multimedia en
 [MULTIMEDIA-WHATSAPP-F2B3](MULTIMEDIA-WHATSAPP-F2B3.md). BUG-037 descarga sin
 abort físico queda como puerta de aceptación STT real F8, sin prometerlo aquí.
@@ -158,8 +160,16 @@ abort físico queda como puerta de aceptación STT real F8, sin prometerlo aquí
   reinicia y confirma una entrega y ningún redespacho después del ACK. El retry es
   at-least-once ante efectos/ACK ambiguos (BUG-050); la migración no reencola filas
   pre-v3 (BUG-051). [Evidencia](REPLAY-LEGACY-F2D.md).
-- [ ] Persistir entrada aunque IA esté pausada, ignorando o en human. Reconciliar
-  salida IA, humana desde teléfono y avisos por origen; separar chats administrativos.
+- [x] Persistir entrada live aunque IA esté pausada, ignorando o en handoff/human;
+  WA F2B.2 y TG F2C.2 archivan antes del pipeline. Chats administrativos/grupos
+  quedan fuera del archivo de clientes. Cobertura en CAPTURA-WHATSAPP-F2B2 y
+  TELEGRAM-CAPTURA-F2C2.
+- [x] F2E.1 Registrar salidas WA/TG aceptadas y deduplicar eco WA por ID de
+  proveedor; conservar `external_self` mientras no haya origen correlacionado.
+  HTTP 200 `{ok:false}` no se considera envío. [Evidencia](SALIDAS-ACEPTADAS-F2E1.md).
+- [ ] F2E.2 Ejecutar el dataset reproducible de [VALIDACION-V1](VALIDACION-V1.md):
+  1M mensajes/2.000 chats/5 cuentas, redelivery, concurrencia, métricas, saturación
+  y reapertura. F2 sigue abierta hasta que se informe evidencia completa.
 - [x] F2B.3 Multimedia durable: BUG-033/034/036 reparados. Mismo ID/huella;
   pending/completed/failed y message.updated antes de legacy, captions por tipo,
   purga sin recreación, recuperación de pendientes y trabajos acotados. Apagado
@@ -171,9 +181,9 @@ abort físico queda como puerta de aceptación STT real F8, sin prometerlo aquí
 **Aceptación:** reinicio conserva mensajes; lote, reimportación y ecos no duplican;
 canales/cuentas/IDs con signo no colisionan; audio fallido sigue visible. Carga con
 miles de mensajes sin bloquear pings del transporte falso; progreso observable.
-F2C.2 prueba reapertura/cursor y redelivery; F2D prueba replay post-commit. La
-reconciliación durable de salidas IA/humanas y la carga completa siguen pendientes
-antes de cerrar F2.
+F2C.2 prueba reapertura/cursor y redelivery; F2D prueba replay post-commit; F2E.1
+prueba salida aceptada y eco WA. La carga completa sigue pendiente antes de cerrar
+F2; autoría de origen y casos ambiguos requieren el outbox/control de F5.
 
 ## Fase 3 — API de lectura y eventos en vivo
 

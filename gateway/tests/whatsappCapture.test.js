@@ -100,6 +100,8 @@ test('BUG-001/002: full live batch, marker before STT, ignored/paused/handoff ca
     assert.equal(chatStore.getRecent('200@s.whatsapp.net').length, 1);
     const audio = a.archived.find(e => e.raw.key.id === 'c').observation.result.message;
     assert.deepEqual(audio.content, { type: 'audio', availability: 'not_stored', transcript: null, transcriptionStatus: 'not_requested' });
+    const phoneOutbound = a.archived.find(e => e.raw.key.id === 'e').observation.result.message;
+    assert.equal(phoneOutbound.direction, 'outbound'); assert.equal(phoneOutbound.authorKind, 'external_self');
     const conversation = await f.archive.conversation(audio.conversationId);
     assert.equal(conversation.inbound_seq, '1');
     await a.instance.disconnect(); await f.archive.close();
@@ -247,16 +249,37 @@ test('self/admin stays outside customer archive, scoped local echoes do not exec
     assert.equal((await f.archive.diagnostics()).messages, 1);
 });
 
-test('known local outbound echo is retained with unknown author until durable attribution; no provider ID remains explicitly unknown', async t => {
+test('accepted WhatsApp sends are archived and their later fromMe echoes deduplicate', async t => {
     const f = await fixture(t); const a = await f.adapter();
     await a.instance.sendMessage('whatsapp:200@s.whatsapp.net', 'sent text');
+    const identity = await f.archive.resolve({ accountId: (await f.archive.registerAccount({ channel: 'whatsapp', providerKey: session.providerKey })).id,
+        channel: 'whatsapp', kind: 'whatsapp_jid', exactValue: '200@s.whatsapp.net' });
+    const [sent] = await f.archive.messages({ conversationId: identity.conversation_id });
+    assert.equal(sent.direction, 'outbound'); assert.equal(sent.authorKind, 'external_self');
+    assert.equal(sent.content.text, 'sent text'); assert.equal(sent.providerMessageId, 'sent-1');
     const echo = msg('sent-1', undefined, { conversation: 'sent text' }); echo.key.fromMe = true;
     a.sockets[0].ev.emit('messages.upsert', { type: 'notify', messages: [echo, msg(null), msg(null)] });
     await settled(a.instance);
-    assert.equal(a.archived[0].observation.result.message.authorKind, 'unknown');
-    assert.equal(a.archived[0].observation.result.message.direction, 'outbound');
+    assert.equal(a.archived[0].observation.result.status, 'duplicate');
     assert.equal((await f.archive.diagnostics()).messages, 3); assert.equal(a.messages.length, 2);
     for (const item of a.archived.slice(1)) assert.equal(item.observation.result.message.deduplicationQuality, 'unknown');
+});
+
+test('WhatsApp echo racing the send response keeps one deterministic external_self message', async t => {
+    const f = await fixture(t); const a = await f.adapter(); const sock = a.sockets[0];
+    const provider = deferred();
+    sock.sendMessage = async () => provider.promise;
+    const send = a.instance.sendMessage('whatsapp:200@s.whatsapp.net', 'race text');
+    const echo = msg('race-id', '200@s.whatsapp.net', { conversation: 'race text' }); echo.key.fromMe = true;
+    sock.ev.emit('messages.upsert', { type: 'notify', messages: [echo] });
+    await settled(a.instance);
+    provider.resolve({ key: { id: 'race-id' }, messageTimestamp: '1792368000' });
+    await send;
+    const identity = await f.archive.resolve({ accountId: (await f.archive.registerAccount({ channel: 'whatsapp', providerKey: session.providerKey })).id,
+        channel: 'whatsapp', kind: 'whatsapp_jid', exactValue: '200@s.whatsapp.net' });
+    const messages = await f.archive.messages({ conversationId: identity.conversation_id });
+    assert.equal(messages.length, 1); assert.equal(messages[0].authorKind, 'external_self');
+    assert.equal(messages[0].content.text, 'race text');
 });
 
 test('overlapping connect attempts cannot install a socket from older asynchronous auth', async t => {

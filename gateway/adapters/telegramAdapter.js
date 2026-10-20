@@ -8,17 +8,17 @@ const { updateTelegramMenu, classifyPollResponse } = require('../services/telegr
 const { transcribeAudio } = require('../services/stt');
 const { num } = require('../tuning');
 const { cat } = require('../services/logger');
-const { requestJson, failure } = require('../services/telegramHttp');
-const { verifiedBotId, normalizeUpdates, createTelegramCapture, decimalId } = require('../services/conversations/telegramCapture');
+const { requestJson, failure, parseTelegramJson } = require('../services/telegramHttp');
+const { verifiedBotId, normalizeUpdates, createTelegramCapture, normalizeSentMessage, decimalId } = require('../services/conversations/telegramCapture');
 const { setTimeout: delay, setImmediate: yieldLoop } = require('node:timers/promises');
 
 const log = cat('TELEGRAM');
 const logError = cat('ERROR');
 
 class TelegramAdapter extends ChannelAdapter {
-    /** @param {{archive?:any, getMe?:(input:any)=>Promise<any>, getUpdates?:(input:any)=>Promise<any>, updateMenu?:(token:string)=>Promise<any>, transcribe?:(buffer:Buffer,name:string,options:any)=>Promise<any>, pollTimeoutMs?:number, retryMs?:number, discoveryTimeoutMs?:number}} [options] */
+    /** @param {{archive?:any, getMe?:(input:any)=>Promise<any>, getUpdates?:(input:any)=>Promise<any>, updateMenu?:(token:string)=>Promise<any>, transcribe?:(buffer:Buffer,name:string,options:any)=>Promise<any>, sendHttpRequest?:(options:any,callback:(response:any)=>void)=>any, pollTimeoutMs?:number, retryMs?:number, discoveryTimeoutMs?:number}} [options] */
     constructor({ archive, getMe = requestBotIdentity, getUpdates = requestUpdates, updateMenu = updateTelegramMenu, transcribe = transcribeAudio,
-        pollTimeoutMs = 35000, retryMs = 5000, discoveryTimeoutMs = 1500 } = {}) {
+        sendHttpRequest = (...args) => https.request(...args), pollTimeoutMs = 35000, retryMs = 5000, discoveryTimeoutMs = 1500 } = {}) {
         super('telegram');
         this.pollerActive = false;
         this.lastUpdateId = null;
@@ -33,6 +33,7 @@ class TelegramAdapter extends ChannelAdapter {
         this.capture = archive ? createTelegramCapture(archive) : null;
         this.getMe = getMe;
         this.getUpdates = getUpdates;
+        this.sendHttpRequest = sendHttpRequest;
         this.updateMenu = updateMenu;
         this.transcribe = transcribe;
         this.pollTimeoutMs = pollTimeoutMs;
@@ -284,6 +285,19 @@ class TelegramAdapter extends ChannelAdapter {
         }));
     }
 
+    async archiveAcceptedSend(chatId, message) {
+        if (!this.archive || !this.accountId) return;
+        const input = normalizeSentMessage(message, this.accountId, chatId, this.adminChatId);
+        if (!input) return;
+        try {
+            const [stored] = await this.trackArchive(this.archive.ingestBatch([input]));
+            if (stored?.status === 'quarantined') logError.error('Telegram: conflicto al reconciliar una salida aceptada con su eco.');
+        } catch (error) {
+            const code = /** @type {any} */ (error)?.code || 'TG_OUTBOUND_ARCHIVE_FAILED';
+            logError.error(`Telegram: salida aceptada sin confirmación local (${code}).`);
+        }
+    }
+
     async sendMessage(normalizedJid, text, options = {}) {
         if (!this.token) throw new Error('Telegram token no configurado');
         const tgChatId = normalizedJid.replace('telegram:', '');
@@ -294,7 +308,7 @@ class TelegramAdapter extends ChannelAdapter {
             if (useMarkdown) payload.parse_mode = 'Markdown';
 
             const data = JSON.stringify(payload);
-            const req = https.request({
+            const req = this.sendHttpRequest({
                 hostname: 'api.telegram.org',
                 family: 4,
                 port: 443,
@@ -305,19 +319,28 @@ class TelegramAdapter extends ChannelAdapter {
                     'Content-Length': Buffer.byteLength(data)
                 }
             }, (res) => {
-                let body = '';
-                res.on('data', chunk => body += chunk);
-                res.on('end', () => {
-                    if (res.statusCode === 200) {
-                        const bodyJson = JSON.parse(body);
-                        resolve(bodyJson);
-                    } else if (useMarkdown && res.statusCode === 400 && body.includes("can't parse entities")) {
-                        // Retry without markdown
+                const chunks = [];
+                res.on('data', chunk => chunks.push(Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk)));
+                res.on('end', async () => {
+                    let body;
+                    try { body = new TextDecoder('utf-8', { fatal: true }).decode(Buffer.concat(chunks)); }
+                    catch { reject(failure('TG_SEND_RESPONSE_INVALID')); return; }
+                    if (useMarkdown && res.statusCode === 400 && body.includes("can't parse entities")) {
+                        // Retry without markdown, even when the provider body is not valid JSON.
                         this.sendMessage(normalizedJid, text, { ...options, useMarkdown: false })
                             .then(resolve)
                             .catch(reject);
+                        return;
+                    }
+                    let bodyJson;
+                    try { bodyJson = parseTelegramJson(body); }
+                    catch { reject(failure('TG_SEND_RESPONSE_INVALID')); return; }
+                    if (res.statusCode === 200 && bodyJson?.ok === true) {
+                        await this.archiveAcceptedSend(tgChatId, bodyJson.result);
+                        resolve(bodyJson);
                     } else {
-                        reject(new Error(`Telegram error ${res.statusCode}: ${body}`));
+                        reject(failure(bodyJson?.ok === false ? 'TG_SEND_REJECTED' : 'TG_SEND_HTTP_ERROR',
+                            `Telegram rechazó el envío (${res.statusCode}).`));
                     }
                 });
             });
