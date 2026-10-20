@@ -818,3 +818,14 @@ Cierres históricos: commits F2C.1/F2C.2/F2D/F2E.1 están en el log local; F2B.3
 - F6.3 completada. Próximo: F6.4, smoke manual con cuenta WA/TG de prueba cuando
   esté disponible. La presentación del hilo en navegador tampoco se validó aquí;
   registrar ese límite junto al smoke. Fase 6 sigue incompleta.
+
+## F6.4: Smoke manual de canal
+
+- El estado del entorno cloud confirmó ejecución y conectividad, sin identidades de
+  salida WA/TG ni variables runtime de canal. No se inició un adaptador, no se
+  contactó un proveedor y no se hizo reset para fabricar datos.
+- Se dejó el procedimiento de una instancia, takeover, mensaje humano, entrada
+  durante human, release explícito, teclado/móvil y reinicio seguro en
+  [F6.4](F6.4-SMOKE-CANAL.md). La simulación F6.3 permanece separada del smoke real.
+- **F6.4 pendiente** hasta disponer de una cuenta de prueba conectada. Por tanto,
+  Fase 6 aún no queda cerrada y no se pasa a Fase 7 hasta completar ese smoke.

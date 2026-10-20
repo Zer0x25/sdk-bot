@@ -329,9 +329,10 @@ Compositor todavía no ofrece enviar.
 - [x] **F6.3** Flujo integrado: entrada -> hilo -> takeover -> mensaje humano ->
   recepción de cliente durante human -> release explícito -> respuesta IA con
   contexto correcto. Evidencia y límites: [F6.3](F6.3-FLUJO-CONVERSACION.md).
-- [ ] **F6.4** Smoke manual documentado en cuenta de prueba WA/TG cuando esté disponible;
-  una única instancia y resultados separados de simulación. No ejecutar reset para
-  fabricar datos. Registrar si la validación externa queda pendiente.
+- [ ] **F6.4** Smoke manual en cuenta de prueba WA/TG cuando esté disponible; una
+  única instancia y resultados separados de simulación. No ejecutar reset para
+  fabricar datos. Estado y procedimiento: [F6.4](F6.4-SMOKE-CANAL.md). Validación
+  externa pendiente porque el entorno no tiene una identidad de prueba configurada.
 
 **Aceptación:** flujo operativo completo, reinicios/reconexión, móvil y teclado.
 Esta es la v1 útil; publicar/desplegar es una acción separada, no automática.
