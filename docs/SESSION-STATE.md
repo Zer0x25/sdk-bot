@@ -1,6 +1,10 @@
 # Estado de continuidad — SDK-Bot
 
-Actualización: 2026-10-20. F4.2 publicada en origin/work; sigue F4.3.
+Actualización: 2026-10-20. F4.2 publicada en origin/work; PR #4 hacia main.
+BUG-064 de compatibilidad Node/jsdom en Gateway CI corregido: matrix Gateway usa
+22.22.2/24, contratos conserva 22.13/24 y el runtime mínimo no cambia. Suite
+completa de Gateway pasó localmente en Node 22.22.2; push y reejecución de Actions
+pendientes. Sigue F4.3 después de cerrar la PR.
 
 ## Objetivo vigente
 

@@ -123,8 +123,10 @@ Tras cambiar contracts, generar/verificar en raíz y repetir npm ci en gateway.
 Launchers Linux/Termux/Windows detectan ausencia/cambio de index/schema.
 Updater Termux detecta también cambios del paquete/lock/tipos de contracts y
 repite npm ci antes de reiniciar runit, que arranca node directamente.
-CI instala checkout y verifica gateway Node 22.13.0/24. Windows/Termux tienen
-scripts actualizados, sin afirmar ejecución en esas plataformas.
+CI verifica gateway en Node 22.22.2/24, necesario para la versión de jsdom
+usada por las pruebas del panel. El runtime de producción sigue compatible con
+Node 22.13.0. Windows/Termux tienen scripts actualizados, sin afirmar ejecución
+en esas plataformas.
 
 Verificación en copia temporal de versionados actuales más nuevos explícitos,
 sin .env, sesiones ni DB originales. npm ci limpio. Brain usa ejecutable de venv
