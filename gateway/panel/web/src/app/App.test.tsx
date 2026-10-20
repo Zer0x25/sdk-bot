@@ -383,6 +383,63 @@ describe('inbox shell and real API integration', () => {
     expect(screen.queryByText('1 mensaje nuevo')).not.toBeInTheDocument();
   });
 
+  it('recovers every replayed message across pages before the cached history anchor', async () => {
+    const fetchMock = installApiMock();
+    const fallback = fetchMock.getMockImplementation();
+    expect(fallback).toBeDefined();
+    let includeReplay = false;
+    const replayMessages = Array.from({ length: 51 }, (_, index) => ({
+      ...message(
+        '90000000-0000-4000-8000-' + String(index + 1).padStart(12, '0'),
+        'Mensaje recuperado ' + String(index + 1),
+        new Date(Date.parse(timestamp) + (index + 1) * 1000).toISOString()
+      ),
+      inboundSeq: String(index + 2)
+    }));
+    fetchMock.mockImplementation(async (input, init) => {
+      const url = new URL(String(input), 'http://panel.local');
+      if (includeReplay && url.pathname === '/api/v1/conversations/' + conversationId + '/messages') {
+        if (url.searchParams.get('cursor') === 'replay-page-2') {
+          return jsonResponse({ items: [replayMessages[0], latestMessage], nextCursor: null, snapshot });
+        }
+        return jsonResponse({ items: replayMessages.slice(1), nextCursor: 'replay-page-2', snapshot });
+      }
+      return fallback!(input, init);
+    });
+    const sources = installEventSourceMock();
+    renderApp('/inbox/' + conversationId);
+
+    const log = await screen.findByRole('log', { name: 'Mensajes del chat' });
+    await within(log).findByText('¿En qué puedo ayudarte?');
+    const history = document.querySelector('.message-history') as HTMLDivElement;
+    Object.defineProperty(history, 'scrollHeight', { configurable: true, value: 1200 });
+    Object.defineProperty(history, 'clientHeight', { configurable: true, value: 300 });
+    history.scrollTop = 200;
+    fireEvent.scroll(history);
+
+    const source = sources[0];
+    act(() => source.open());
+    await screen.findByText('En vivo');
+    includeReplay = true;
+    act(() => {
+      replayMessages.forEach((entry, index) => {
+        source.dispatch('message.created', streamEvent('message.created', {
+          conversationId,
+          messageId: entry.id,
+          aggregateVersion: String(index + 3)
+        }, String(index + 3)), snapshot.dataEpoch + ':' + String(index + 3));
+      });
+    });
+
+    await waitFor(() => expect(within(log).getAllByText(/Mensaje recuperado/)).toHaveLength(51));
+    expect(screen.getByText('51 mensajes nuevos')).toBeInTheDocument();
+    expect(history.scrollTop).toBe(200);
+    expect(fetchMock.mock.calls.some(([input]) => {
+      const url = new URL(String(input), 'http://panel.local');
+      return url.pathname.endsWith('/messages') && url.searchParams.get('cursor') === 'replay-page-2';
+    })).toBe(true);
+  });
+
   it('resets paginated snapshots when the stream reports that its cursor needs resynchronization', async () => {
     const fetchMock = installApiMock({ pagination: true, listPagination: true });
     const sources = installEventSourceMock();
