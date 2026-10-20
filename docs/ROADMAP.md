@@ -258,10 +258,11 @@ Compositor todavía no ofrece enviar.
   y aggregateVersion junto con el evento/auditoría en una transacción. Los defaults
   de migración son neutrales y con IA apagada. JSON sigue alimentando las lecturas
   hasta el corte verificable. Evidencia: [F5.1](F5.1-CONTROL-DURABLE.md).
-- [ ] **F5.2 — Importación dry-run:** leer JSON sin mutarlo; checksum por origen,
+- [x] **F5.2 — Importación dry-run:** leer JSON sin mutarlo; checksum por origen,
   reglas conservadoras de handoff/permisos, identidades exactas, conflictos y
   cuarentena. El informe cuadra origen/importado/cuarentena/exclusiones y permite
-  revisión; no cambia autoridad ni inicia IA.
+  revisión; no cambia autoridad ni inicia IA. CLI de solo lectura, bloquea gateway
+  activo/WAL pendiente. Evidencia: [F5.2](F5.2-IMPORT-DRY-RUN.md).
 - [ ] **F5.3 — Staging y corte de autoridad:** importar idempotentemente con
   migrationId, snapshot, mantenimiento, delta y recuperación por lote. Verificar
   antes de cambiar la autoridad a SQLite; conservar JSON para export/rollback y

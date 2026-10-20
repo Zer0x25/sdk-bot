@@ -582,8 +582,28 @@ ausencia de Vite/CA. Commit separado de la UI.
   lint, typecheck, 13 Vitest, build/serving del panel y 273 pruebas Node en Node
   24.19.0/Linux.
 - Commit local por F5.1: incluido en el historial de esta rama; sin push mientras
-  F5 siga abierta. Siguiente unidad exacta: **F5.2, dry-run verificable de la
-  importación JSON**, sin mutar fuentes ni cambiar autoridad.
+  F5 siga abierta: `2ac25ca`. F5.2 también está cerrada y committeada localmente;
+  el siguiente punto es F5.3.
+
+## F5.2: Dry-run verificable de importación
+
+- `npm run conversations:control-dry-run` lee contactos/settings JSON y el
+  inventario de perfiles, consulta solo conversaciones SQLite y emite checksum
+  por archivo/registro, target exacto, recuentos y motivo de revisión/cuarentena.
+- Mapea `phone`/`lid` solo por identidad WhatsApp exacta. Ambigüedad entre cuentas,
+  identidades faltantes y reglas contradictorias se ponen en cuarentena; grupos
+  conocidos se excluyen. Handoff importado sigue en human aunque su TTL legacy
+  haya vencido. Settings de proveedor no se imprimen ni migran aquí.
+- La CLI bloquea el lock del gateway activo, sidecars WAL/SHM/journal y esquemas
+  distintos de v5. SQLite abre immutable/read-only; prueba no cambia bytes de JSON
+  ni DB y no crea sidecars. No se leyó ningún contacts/settings real ni se ejecutó
+  un corte. Un informe con blockers devuelve exit 2; `cutoverAllowed` queda falso.
+- Evidencia: [F5.2](F5.2-IMPORT-DRY-RUN.md). `cd gateway && npm run check` pasó:
+  lint, typecheck, 13 Vitest, build/serving del panel y 275 pruebas Node en Node
+  24.19.0/Linux. Las dos pruebas F5.2 cubren la política y la CLI read-only.
+- No aparecieron bugs de producto nuevos para backlog. El siguiente punto exacto
+  es **F5.3: staging idempotente, corte de autoridad y recuperación**, todavía sin
+  ejecutar contra datos del entorno.
 
 ## Pendientes materiales
 

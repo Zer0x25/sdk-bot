@@ -9,7 +9,8 @@ function unavailable(code = 'ARCHIVE_UNAVAILABLE') {
  * a timed-out write may have committed; callers must deduplicate on redelivery. */
 function createArchive(options = {}) {
     const worker = new Worker(path.join(__dirname, 'worker.js'), {
-        workerData: { path: options.path || databasePath(), restore: options.restore === true }
+        workerData: { path: options.path || databasePath(), restore: options.restore === true,
+            readOnly: options.readOnly === true }
     });
     const pending = new Map();
     const eventListeners = new Set();

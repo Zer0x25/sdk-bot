@@ -40,7 +40,7 @@ export interface ArchiveIdentity {
     canonical_id: string; conversation_id: string;
 }
 export interface Archive {
-    ready: Promise<Contract<'EventCursor'> & { schemaVersion: number; journalMode: string; synchronous: number; threadId: number }>;
+    ready: Promise<Contract<'EventCursor'> & { schemaVersion: number; journalMode: string; synchronous: number; threadId: number; readOnly?: boolean }>;
     snapshot(): Promise<Contract<'EventCursor'>>;
     registerAccount(input: { id?: string; channel: 'whatsapp' | 'telegram'; providerKey: string }): Promise<{ id: string; channel: string; provider_key: string }>;
     telegramCursor(accountId: string): Promise<string | null>;
@@ -90,4 +90,4 @@ export interface Archive {
     queue(): { elements: number; bytes: number };
 }
 /** restore=true only for an offline restored copy: purge before exposure, rotate epoch, discard prior event timeline. */
-export function createArchive(options?: { path?: string; timeoutMs?: number; restore?: boolean }): Archive;
+export function createArchive(options?: { path?: string; timeoutMs?: number; restore?: boolean; readOnly?: boolean }): Archive;

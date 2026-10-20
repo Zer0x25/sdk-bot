@@ -2,12 +2,16 @@ const { parentPort, workerData, isMainThread } = require('node:worker_threads');
 if (isMainThread) throw new Error('Archive SQL requires a worker.');
 const fs = require('node:fs');
 const path = require('node:path');
+const { pathToFileURL } = require('node:url');
 const { randomUUID, createHash } = require('node:crypto');
 const { DatabaseSync } = require('node:sqlite');
 const { assertValid } = require('@sdk-bot/contracts');
 const { retentionCutoff } = require('./eventRetention');
 const schema = require('./schema');
 let db;
+const READ_ONLY_METHODS = new Set(['snapshot','telegramCursor','pendingLegacyDispatches','controlState',
+    'conversation','conversations','conversationRows','conversationView','accounts','messages','messagePage',
+    'events','eventsPage','diagnostics','close']);
 function fail(code) { throw Object.assign(new Error(code), { code }); }
 function one(sql, ...params) { return db.prepare(sql).get(...params); }
 function run(sql, ...params) { return db.prepare(sql).run(...params); }
@@ -23,6 +27,27 @@ function snapshot() {
 }
 function initialize() {
     const requested = path.resolve(workerData.path);
+    if (workerData.readOnly) {
+        if (!fs.existsSync(requested)) fail('ARCHIVE_NOT_FOUND');
+        const parent = fs.realpathSync(path.dirname(requested));
+        const file = path.join(parent, path.basename(requested));
+        for (const candidate of [file, `${file}-wal`, `${file}-shm`, `${file}-journal`]) {
+            if (fs.existsSync(candidate) && fs.lstatSync(candidate).isSymbolicLink()) fail('UNSAFE_PATH');
+        }
+        if (fs.existsSync(`${file}-wal`) || fs.existsSync(`${file}-shm`) || fs.existsSync(`${file}-journal`)) {
+            fail('ARCHIVE_NOT_QUIESCENT');
+        }
+        // immutable=1 reads only the closed main database and does not create
+        // WAL/SHM companions. Refuse sidecars above rather than risk missing
+        // committed WAL records or touching another process's snapshot.
+        db = new DatabaseSync(`${pathToFileURL(file).href}?immutable=1`, { readOnly: true });
+        const schemaVersion = one('PRAGMA user_version').user_version;
+        if (schemaVersion !== 5) fail('SCHEMA_VERSION_REQUIRED');
+        if (one('PRAGMA integrity_check').integrity_check !== 'ok' || all('PRAGMA foreign_key_check').length) fail('ARCHIVE_CORRUPT');
+        return { ...snapshot(), schemaVersion, journalMode: one('PRAGMA journal_mode').journal_mode,
+            synchronous: one('PRAGMA synchronous').synchronous, threadId: require('node:worker_threads').threadId,
+            readOnly: true };
+    }
     fs.mkdirSync(path.dirname(requested), { recursive: true, mode: 0o700 });
     const file = path.join(fs.realpathSync(path.dirname(requested)), path.basename(requested));
     for (const candidate of [file, `${file}-wal`, `${file}-shm`]) {
@@ -541,6 +566,7 @@ function eventPage(input) {
     return { items, snapshot: current, oldestSeq };
 }
 function dispatch(method, input) {
+    if (workerData.readOnly && !READ_ONLY_METHODS.has(method)) fail('READ_ONLY_ARCHIVE');
     switch (method) {
         case 'purge': return transaction(() => purge(input));
         case 'snapshot': return snapshot();
