@@ -24,6 +24,7 @@ const crypto = require('crypto');
 const { URL } = require('url');
 const { proxy: proxyRequest } = require('./proxy');
 const { resolveActor } = require('./identity');
+const { serveConversationsApp } = require('./webApp');
 const { actorId } = require('../lib/panelContext');
 const { BoundaryError, sendError } = require('../lib/httpBoundary');
 
@@ -39,6 +40,7 @@ if (fs.existsSync(DOTENV)) {
 }
 
 const WEB_DIR = path.join(__dirname, 'public');
+const CONVERSATIONS_UI_ENABLED = process.env.PANEL_CONVERSATIONS_UI_ENABLED === 'true';
 
 // Si se define, el redirect_uri de OAuth SIEMPRE usa esta URL canónica
 // (evita que entrar por IP/Tailscale genere un redirect_uri no autorizado en Google).
@@ -406,6 +408,7 @@ const server = http.createServer(async (req, res) => {
             const busPath = (u.pathname + u.search).replace(/^\/api/, '') || '/';
             return proxy(req, res, busPath);
         }
+        if (serveConversationsApp(res, pathname, { enabled: CONVERSATIONS_UI_ENABLED })) return;
         return serveStatic(req, res, pathname);
     }
 
@@ -434,6 +437,7 @@ const server = http.createServer(async (req, res) => {
         const busPath = (u.pathname + u.search).replace(/^\/api/, '') || '/';
         return proxy(req, res, busPath);
     }
+    if (serveConversationsApp(res, pathname, { enabled: CONVERSATIONS_UI_ENABLED })) return;
     return serveStatic(req, res, pathname);
 });
 

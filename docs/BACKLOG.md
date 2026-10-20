@@ -70,6 +70,11 @@ salvo indicación contraria. La evidencia detallada y líneas están en la basel
 | BUG-055 | P2 | Cerrado F2E.2: el log superaba los 50.000 eventos recientes después del backfill bajo tráfico nuevo. | El primer run completo terminó con 50.700 eventos al ingresar 2.700 mensajes desde un snapshot de 50.000. La poda se movió al final de cada transacción que agrega eventos. | La repetición de 1M más dos calentamientos/tres mediciones conserva exactamente 50.000 eventos con watermark `1.002.700`; [evidencia](F2E2-CARGA-COMPLETA.md). F3 debe responder `resync.required` a cursores anteriores a la ventana retenida. |
 | BUG-056 | P1 | Cerrado F3.1: los filtros opcionales de la lista llegaban como `null` al RPC y la lectura de todas las conversaciones respondía 503. | Prueba HTTP firmada reproduce la falla con `GET /v1/conversations?limit=20`; el archivo rechazaba `accountId:null` como ID inválido. La API pública omitía esos filtros, pero el objeto del RPC los conservaba. | El worker interpreta null opcional como ausencia; se probó lista sin filtros y con filtros de canal/cuenta, además de las suites de archivo/API. |
 | BUG-057 | P2 | Cerrado F3.1: la búsqueda de nombres no coincidía si el operador escribía distinta capitalización. | Regresión HTTP `search=ana` no encontraba el nombre visible `Ana`; la expresión se construía sensible a caja. | Búsqueda Unicode insensible a caja devuelve el contacto correcto, sin buscar texto del mensaje ni exponer identidades. Prueba F3.1. |
+| BUG-058 | P2 | Cerrado F4.1: el primer typecheck de la nueva bandeja encontró un icono de ficha sin importar en `InboxPage`. | `UsersRound` se usaba en el panel contextual, pero no estaba en la importación de `lucide-react`; el check TS falló antes del build. | Import agregado; `panel:typecheck`, pruebas Vitest y build Vite pasan. Es un defecto de compilación de la fase actual, cerrado antes del commit F4.1. |
+| BUG-059 | P2 | Cerrado F4.1: el check global de ESLint fallaba después de compilar la bandeja. | El lint recorría `panel/web/dist` y analizaba el bundle ES module como CommonJS; también detectó escapes innecesarios en la prueba de servido del build. | Se excluyó el artefacto generado y se simplificó la expresión de prueba. `npm run check` completo y build Docker de la fase pasan. |
+| BUG-060 | P2 | Cerrado F4.1: el runner Node incluía el setup de Vitest como si fuera otra prueba del gateway. | La carpeta `panel/web/src/test` hizo que `node --test` descubriera `setup.ts`, que solo instala matchers y generaba un warning de formato ESM. | El setup se movió a `src/vitestSetup.ts`; Vitest lo carga explícitamente y `node --test` deja de ejecutarlo como prueba. |
+| BUG-061 | P2 | Cerrado F4.1: el build Docker fallaba al instalar paquetes detrás del CA de red de este entorno. | `npm ci` falló dentro de la imagen base con `Exit handler never called` a los 73 s, incluso serial; el host resuelve npm y confía en `NODE_EXTRA_CA_CERTS`, pero la imagen limpia no tiene ese CA. | El builder acepta un BuildKit secret opcional y lo asigna a `NODE_EXTRA_CA_CERTS` solo durante `npm ci`. Build se valida con TLS verificado y el cert no queda en capas ni en la imagen. |
+| BUG-062 | P1 | Abierto: dependencias de medios transitivas de Baileys tienen avisos DoS/proceso-crash; `sharp@0.35.3` (high) y `music-metadata@11.14.0` (moderate). | `npm audit --omit=dev`; árbol `npm ls` los ubica bajo `@whiskeysockets/baileys@7.0.0-rc14`. No los introduce la UI F4.1. `npm audit fix --dry-run` ofrece versiones corregidas sin cambiar dependencias directas. | Remediar en unidad aislada antes de continuar bandeja: actualizar lockfile dentro de rangos existentes, `npm audit --omit=dev` limpio y full gateway checks + Docker runtime probado. |
 
 ## Clasificación para la unidad activa
 
@@ -84,8 +89,9 @@ un archivo preexistente. BUG-010 sigue parcial.
 F2B.3 conserva BUG-033/034/036 cerrados y BUG-037 P2/F8 antes de STT real.
 BUG-035 pairing queda F8; F3.1 cierra BUG-056/057. BUG-024 sigue antes de
 operadores limitados; BUG-014 antes de Python paralelo. F3.2 implementa replay SSE
-y `resync.required` para cursores expirados sin retener el archivo sin límite; no
-se encontraron nuevos bugs funcionales. El perfil de carga completo
+y `resync.required` para cursores expirados sin retener el archivo sin límite. F4.1
+cierra BUG-058/059/060 de UI y BUG-061 de instalación Docker detrás de CA. BUG-062
+es una alerta abierta P1 de dependencias transitivas para medios. El perfil de carga completo
 requiere repetición con 2 CPU/4 GiB;
 el host medido tenía 3 CPU/10,45 GiB. No extrapolar archivo/polling a control, roles, salida durable
 ni carga/aceptación completa F2.

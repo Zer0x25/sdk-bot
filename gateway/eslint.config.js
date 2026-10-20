@@ -4,6 +4,7 @@ module.exports = [
     {
         ignores: [
             'node_modules/**',
+            'panel/web/dist/**',
             'logs/**',
             'auth_info_baileys/**',
             'contacts_db.json',

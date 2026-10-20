@@ -108,6 +108,7 @@ async function panelFixture(options = {}) {
         PANEL_GOOGLE_CLIENT_SECRET: 'fake-google-secret', PANEL_SESSION_SECRET: cookieSecret,
         SDK_PANEL_GATEWAY_SECRET: secret, PANEL_REQUIRE_AUTH: undefined, PANEL_DEV_ACTOR: undefined,
         PANEL_ACTOR_GRANTS: undefined, PANEL_PUBLIC_URL: undefined, PANEL_ALLOWED_EMAILS: undefined,
+        PANEL_CONVERSATIONS_UI_ENABLED: undefined,
         STATUS_TOKEN: 'fake-status-token', ...options
     });
     delete require.cache[require.resolve('../panel/index')];
@@ -236,6 +237,26 @@ test('panel: dev requiere opt-in y producción sin OAuth nunca recibe actor v1',
         assert.equal(response.status, 200);
         assert.equal((await response.json()).actor.id, actorId('dev:local'));
     } finally { await panel.close(); await close(upstream); }
+});
+
+test('la nueva bandeja sigue oculta por defecto y el panel anterior conserva su ruta raíz', async () => {
+    const panel = await panelFixture({ NODE_ENV: 'development', PANEL_GOOGLE_CLIENT_ID: '', PANEL_GOOGLE_CLIENT_SECRET: '' });
+    try {
+        const inbox = await fetch(panel.url + '/inbox');
+        assert.equal(inbox.status, 404);
+        const legacy = await fetch(panel.url + '/');
+        assert.equal(legacy.status, 200);
+        assert.match(await legacy.text(), /SDK-Bot · Panel/);
+    } finally { await panel.close(); }
+});
+
+test('habilitar la nueva bandeja no omite la sesión OAuth del panel', async () => {
+    const panel = await panelFixture({ PANEL_CONVERSATIONS_UI_ENABLED: 'true' });
+    try {
+        const response = await fetch(panel.url + '/inbox', { redirect: 'manual' });
+        assert.equal(response.status, 302);
+        assert.equal(response.headers.get('location'), '/');
+    } finally { await panel.close(); }
 });
 
 test('OAuth conserva state server-side de un uso y cookie Lax/Secure; rechaza correo no verificado', async () => {

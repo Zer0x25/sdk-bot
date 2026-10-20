@@ -49,3 +49,4 @@ Thumbs.db
 
 # Archivo operativo SQLite, WAL/SHM y backups locales
 gateway/data/
+gateway/panel/web/dist/

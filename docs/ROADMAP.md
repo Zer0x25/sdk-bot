@@ -28,8 +28,10 @@ F2C.2 completa la captura base TG con cursor durable y namespace exacto.
 F2D completa replay durable hasta el handler tras el commit (BUG-045). F2E.1 ya
 registra salidas aceptadas y deduplica ecos WA; conserva autoría external_self.
 F2E.2 cierra la carga sintética completa y F3.1 implementa la API autenticada de
-lectura, filtros, páginas y cursor local de lectura. La siguiente unidad es F3.2:
-SSE, replay y resynchronización ante cursores fuera de retención.
+lectura, filtros, páginas y cursor local de lectura. F3.2 completa SSE, replay y
+resynchronización ante cursores fuera de retención. F4.1 ya entrega el shell visual
+de la bandeja. Antes de F4.2 se cierra BUG-062, una alerta P1 de dependencias media
+heredadas vía Baileys; luego se conecta lista e historial reales.
 BUG-050 conserva salidas ambiguas; BUG-051 es puerta antes de usar archivos
 preexistentes reales. La atribución IA/operador queda en F5 junto a su outbox.
 Sin canales reales ni migración.
@@ -222,15 +224,20 @@ Evidencia F3.1: [lectura autenticada](F3.1-LECTURA-AUTENTICADA.md). F3.2:
 
 **Depende de:** Fase 3.
 
-- [ ] Crear app React/TS/Vite y layout con tokens, navegación lateral, controles
-  accesibles, router y cliente TanStack Query; feature flag/ruta de transición.
-- [ ] Vista escritorio de tres columnas y móvil de una; chat activo en URL.
-- [ ] Lista, filtros, historial paginado, marcadores multimedia y ficha contextual
-  usando API real. Mocks exclusivamente para desarrollo/pruebas.
-- [ ] Integrar SSE con caché, ancla de scroll, contador de novedades, carga, vacío,
-  error, reconexión y cobertura parcial. Sin reconstruir todo el hilo por evento.
-- [ ] Configurar build servido por panel y tests de componentes/E2E de lectura.
-  Mantener panel antiguo accesible hasta completar sustitución.
+- [x] **F4.1 — shell visual:** app React/TS/Vite, tokens, navegación lateral,
+  controles accesibles, router, TanStack Query y feature flag/ruta de transición.
+  Layout de tres columnas en escritorio, una en móvil; conserva el chat activo en
+  URL. No inventa conversaciones. Evidencia: [F4.1](F4.1-SHELL-VISUAL.md).
+- [ ] **F4.2 — lectura HTTP real:** lista y filtros de conversaciones, selección
+  enlazada a URL, detalle, historial paginado, estados de carga/error/vacío y ficha
+  contextual desde la API. Mocks exclusivamente en pruebas/desarrollo.
+- [ ] **F4.3 — actualización en vivo:** SSE integrado con caché, ancla de scroll,
+  contador de novedades, reconexión y resync. No reconstruir el hilo entero por
+  evento.
+- [x] Build Vite servido por el proceso existente bajo `/inbox`; pruebas de
+  componentes y del artefacto servido. Mantener el panel antiguo en `/` hasta
+  completar sustitución. La validación visual de viewport real se registra por
+  separado; el shell tiene CSS responsive y una prueba de acceso por teclado.
 
 **Aceptación:** leer hilos largos y reconectar sin saltos ni mensajes duplicados;
 recorrido con teclado y viewport móvil. Compositor todavía no ofrece enviar.

@@ -166,6 +166,13 @@ Vite funciona en desarrollo/build. En producción el proceso del panel sirve el
 build: no se agrega un servicio de frontend. CI puede distribuir artefactos a
 Termux. No se requiere SSR para esta consola privada.
 
+La transición comienza en `gateway/panel/web`: el bundle se sirve en `/inbox` por
+el mismo proceso OAuth del panel y requiere `PANEL_CONVERSATIONS_UI_ENABLED=true`.
+El valor por defecto es apagado; `/` conserva el panel anterior. Docker compila el
+bundle en una etapa con dependencias de desarrollo y lo copia a la imagen runtime,
+que instala solo dependencias de producción. F4.1 entrega el shell navegable; lista,
+historial y eventos reales se conectan en las unidades siguientes de F4.
+
 Resultado y límites del experimento de almacenamiento:
 [SQLITE-SPIKE.md](SQLITE-SPIKE.md). F2A ya implementa worker y repositorios
 operativos, con snapshot en sesión; F2B.2 los conecta a captura base WA y F2B.3

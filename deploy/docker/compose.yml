@@ -123,6 +123,7 @@ services:
       ADMIN_WEB_HOST: 0.0.0.0
       GATEWAY_INTERNAL_URL: http://gateway:3240
       SDK_PANEL_GATEWAY_SECRET: ${SDK_PANEL_GATEWAY_SECRET:?Define SDK_PANEL_GATEWAY_SECRET para gateway y panel}
+      PANEL_CONVERSATIONS_UI_ENABLED: ${PANEL_CONVERSATIONS_UI_ENABLED:-false}
     volumes:
       - sdk_bot_gateway_logs:/app/gateway/logs
       - sdk_bot_brain_logs:/app/brain/logs

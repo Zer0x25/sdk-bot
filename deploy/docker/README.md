@@ -28,6 +28,13 @@ Contratos se empaquetan como dependencia local del gateway, sin workspace raíz
 instalado en la imagen. Configuración y límites:
 [frontera F1B](../../docs/FRONTERA-AUTENTICADA-V1.md).
 
+La nueva base React/Vite se construye en una etapa Docker separada y el mismo
+proceso del panel puede servirla en `/inbox`. Para verla durante esta transición,
+define `PANEL_CONVERSATIONS_UI_ENABLED=true` en el entorno de Compose; por defecto
+permanece apagada y la interfaz legacy sigue en `/`. Esta primera entrega es solo
+el sistema visual y la navegación: todavía no conecta el historial ni habilita
+filtros, envío o control humano.
+
 ## Estado Y Operación
 
 - `sdk-bot-production-state` conserva la sesión de WhatsApp, agenda, settings,

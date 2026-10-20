@@ -1,6 +1,6 @@
 # Estado de continuidad — SDK-Bot
 
-Actualización: 2026-10-20. Última unidad cerrada: **F2E.2; carga sintética completa del archivo**. La referencia 2 CPU/4 GiB queda pendiente de repetir en ese perfil.
+Actualización: 2026-10-20. Última unidad cerrada: **F4.1; shell visual React/Vite servido bajo `/inbox`**. El historial real continúa sin conectar.
 
 ## Objetivo vigente
 
@@ -454,13 +454,40 @@ proxy vuelve a resolver y firmar actor/capacidad al reconectar.
   TypeScript y 15 pruebas. Node 24.19.0/Linux. No se encontraron bugs funcionales
   nuevos; BUG-024 permanece como puerta de autorización administrativa legacy.
 
-## Siguiente unidad exacta: F4.1 / base visual de bandeja
+## F4.1 completada: shell visual de bandeja
 
-Inspeccionar estructura/dependencias del panel actual; crear la aplicación
-React/TypeScript/Vite en transición, instalar solo las dependencias de la bandeja,
-definir tokens visuales, layout accesible y navegación con feature flag. Mantener
-el panel existente disponible y probar build servido por el proceso actual antes
-de integrar datos reales.
+- App React/TypeScript/Vite en `gateway/panel/web`, servida por el proceso de panel
+  existente bajo `/inbox` solo con `PANEL_CONVERSATIONS_UI_ENABLED=true`. La ruta
+  legacy `/` y OAuth se conservan; la UI permanece apagada por defecto.
+- Shell adaptable de navegación, conversaciones, hilo y contexto, tokens visuales,
+  router y cliente TanStack Query. El ID de chat vive en URL; filtros, búsqueda y
+  envío están deshabilitados hasta integrar comportamiento real. No hay fixtures
+  de conversación en la interfaz.
+- Docker tiene etapa de build separada para Vite y copia el artefacto al runtime,
+  que conserva `npm ci --omit=dev`. No se abre un servicio/canal adicional.
+- BUG-058/059/060 se reprodujeron y cerraron en esta unidad: import de icono,
+  ESLint sobre bundle generado y setup Vitest descubierto como test de Node.
+- Evidencia: [F4.1-SHELL-VISUAL](F4.1-SHELL-VISUAL.md). `gateway npm ci` limpio y
+  `gateway npm run check`: ESLint/TypeScript pasan; 3 pruebas Vitest, build Vite,
+  prueba HTTP del build y 269 pruebas Node gateway pasan en Node 24.19.0/Linux.
+- Imagen Docker Node 22 construida con CA temporal vía BuildKit Secret; una prueba
+  dentro de la imagen confirma bundle/contratos presentes y Vite ausente del runtime.
+  El CA solo se monta durante `npm ci`, no queda en capas. BUG-061 cierra la
+  adaptación del builder a instalaciones detrás de CA corporativo.
+- `npm audit --omit=dev` encontró BUG-062 P1 en `sharp@0.35.3` y
+  `music-metadata@11.14.0`, ambos transitivos de Baileys. `npm audit fix --dry-run`
+  propone versiones corregidas bajo el rango actual; se remedian en un commit
+  independiente antes de continuar F4.2.
+- No hubo navegador E2E con viewport ni prueba visual manual; queda como límite
+  registrado, junto con la conexión de API pendiente. El CSS incluye breakpoints,
+  y Vitest verifica regiones, navegación y foco por teclado.
+
+## Siguiente unidad exacta: remediar BUG-062 P1; después F4.2
+
+Primero actualizar las dependencias transitivas vulnerables sin cambiar el rango
+directo de Baileys; ejecutar auditoría, suite y build Docker y cerrar BUG-062 con un
+commit propio. Después conectar lista, selección en URL, detalle e historial
+paginado con la API autenticada; envío y control humano siguen fuera de F4.2.
 
 ## Pendientes materiales
 
