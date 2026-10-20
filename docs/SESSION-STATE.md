@@ -4,9 +4,9 @@ Actualización: 2026-10-20. F4.2 publicada en origin/work; PR #4 hacia main.
 BUG-064 de compatibilidad Node/jsdom corregido en 9555029: Gateway CI usa
 22.22.2/24, contratos conserva 22.13/24 y el runtime mínimo no cambia. Actions
 detectó BUG-065, una carrera en una prueba de eventos; la prueba ahora espera la
-notificación del worker y usa un RPC como barrera. Gateway pasó localmente en
-Node 22.22.2 y 24.22.0; al registrar este estado, falta publicar el arreglo y
-esperar Actions. Sigue F4.3 después de cerrar la PR.
+notificación del worker y usa un RPC como barrera. El arreglo está publicado en
+ea8cbef y GitHub Actions pasó los cinco jobs en el run 39416446833. PR #4 sigue
+abierta hacia main; después del merge sigue F4.3.
 
 ## Objetivo vigente
 
