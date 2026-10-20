@@ -57,6 +57,12 @@ export interface Archive {
     pendingLegacyDispatches(input?: { limit?: number }): Promise<PendingLegacyDispatch[]>;
     markLegacyDispatched(input: { messageId: string }): Promise<{ status: 'dispatched' | 'pending' | 'waiting' | 'skipped' | 'missing' }>;
     retryLegacyDispatch(input: { messageId: string; code?: string }): Promise<{ status: 'pending' | 'waiting' | 'dispatched' | 'skipped' | 'missing' }>;
+    controlState(conversationId: string): Promise<Contract<'ConversationControl'> | null>;
+    writeControlState(input: { conversationId: string; actorId: string; expectedVersion: Contract<'Version'>;
+        state: Omit<Contract<'ConversationControl'>, 'controlVersion' | 'contextVersion'> }): Promise<
+        { status: 'updated'; control: Contract<'ConversationControl'>; event: Contract<'Event'> } |
+        { status: 'conflict' | 'unchanged'; control: Contract<'ConversationControl'> } |
+        { status: 'missing' }>;
     conversation(id: string): Promise<ArchiveConversation | null>;
     conversations(input?: { limit?: number; before?: { lastActivityAt: string; id: string } }): Promise<ArchiveConversation[]>;
     conversationRows(input?: { actorId?: string; accountId?: string; channel?: 'whatsapp' | 'telegram'; limit?: number;

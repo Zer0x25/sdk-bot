@@ -339,11 +339,14 @@ y POST `/read`. `Conversation.displayName` es nullable y solo se completa con un
 coincidencia exacta de identidad WhatsApp con la agenda; el DTO nunca devuelve
 teléfono, JID, LID ni referencia del proveedor. Los estados de control actuales son
 una proyección de solo lectura de la agenda/settings heredados. Sus versiones
-wire comienzan en `1`; F5 trasladará autoridad y versionado al dominio SQLite.
+wire comienzan en `1`. F5.1 añadió columnas de control versionado y auditoría a
+SQLite v5, con defaults neutrales e IA apagada; son estado de staging, no la
+autoridad de lectura. El corte a SQLite espera el informe/importación verificable
+de F5.2/F5.3.
 La cobertura indica `capturing_since`, `provider_sync_observed` o `partial_import`;
 `capturingSince` es null cuando el archivo no tiene un punto de observación.
 
-El archivo SQLite v4 conserva `read_cursors(actor_id, conversation_id,
+El archivo SQLite v5 conserva `read_cursors(actor_id, conversation_id,
 through_inbound_seq)` con avance monotónico y aislado por actor; no envía recibos
 remotos. El resumen calcula no leídos desde secuencias entrantes archivadas. Los
 cursores de mensajes usan `(occurredAt,id)`; los cursores de conversaciones llevan

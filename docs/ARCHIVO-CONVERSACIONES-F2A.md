@@ -58,8 +58,9 @@ Tablas: archive_meta, accounts, contacts, conversations, identities, aliases,
 messages, fingerprints, provenance, events y quarantine. Índices para fecha/id,
 retención y orden decimal de eventos; FK, unicidad y checks protegen relaciones.
 Contactos son anclas internas del archivo; no copian permisos ni agenda JSON.
-Conversación tampoco tiene accessPolicy/automationMode/controlVersion: JSON sigue
-siendo autoridad de control hasta F5.
+En la entrega F2A, conversación aún no tenía accessPolicy/automationMode/
+controlVersion. F5.1 añade esas columnas en SQLite v5 como staging durable con
+defaults conservadores; JSON sigue siendo autoridad de lectura hasta el corte F5.3.
 
 - registerAccount conserva ID por `(channel, providerKey)`; puede generarlo al
   primer registro. Un ID existente no puede adoptar otra cuenta/canal. providerKey

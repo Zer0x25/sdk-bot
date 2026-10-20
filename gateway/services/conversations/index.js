@@ -80,6 +80,8 @@ function createArchive(options = {}) {
         pendingLegacyDispatches: (input = {}) => call('pendingLegacyDispatches', input),
         markLegacyDispatched: input => call('markLegacyDispatched', input),
         retryLegacyDispatch: input => call('retryLegacyDispatch', input),
+        controlState: id => call('controlState', id),
+        writeControlState: input => call('writeControlState', input),
         conversation: id => call('conversation', id),
         conversations: (input = {}) => call('conversations', input),
         conversationRows: (input = {}) => call('conversationRows', input),

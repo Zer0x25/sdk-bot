@@ -253,28 +253,39 @@ Compositor todavía no ofrece enviar.
 
 **Depende de:** Fases 2–4.
 
-- [ ] Introducir coordinación por conversación, controlVersion y jobs cancelables
-  en debounce, pool global, petición, typing, pausas, reintentos y cola persistente.
-  Migrar o invalidar explícitamente trabajos JSONL previos y operaciones pendientes;
-  no reproducir trabajos con permisos/versiones obsoletos tras reinicio.
-- [ ] Migrar autoridad de acceso/control a SQLite mediante importación verificable
-  de contactos/handoff. JSON queda como fuente previa de rollback/exportación,
-  sin doble autoridad. Mapeo conservador: handoff -> human sin autorizar IA;
-  accessPolicy previa desconocida -> neutral. Confirmar la nueva semántica de TTL.
-- [ ] Comandos legacy y endpoints de estado llaman al mismo servicio de control;
-  reemplazar búsqueda ambigua de dígitos con identidad exacta por canal/cuenta.
-  Conservar aliases y explicar el cambio a control explícito sin caducidad.
-- [ ] Implementar takeover/release/operaciones con versión, propietario y auditoría;
-  estado tomando control mientras se drenan envíos ya iniciados con timeout.
-- [ ] Outbox y SendMessage comunes a humano/IA/avisos; reconducir `/notify` y
-  envíos directos. Campañas usan el puerto común conservando su política/intent.
-- [ ] Idempotencia de mensajes, intento antes de red, estados reales y
-  delivery_unknown. Recuperación tras crash sin reenvío automático de ambiguos.
-- [ ] Brain GenerateReply con generationId y contexto explícito/versionado o
-  protocolo equivalente de confirmación. Incluir mensajes humanos; invalidar
-  memoria de respuestas canceladas; confirmar solo globos realmente enviados.
-- [ ] Release future_only por defecto; no resucitar buffers viejos. Pausa global
-  corta IA pero conserva archivo y respuesta manual autorizada.
+- [x] **F5.1 — Estado de control durable:** SQLite v5 conserva acceso, modo,
+  lifecycle, propietario y versiones por conversación. CAS actualiza controlVersion
+  y aggregateVersion junto con el evento/auditoría en una transacción. Los defaults
+  de migración son neutrales y con IA apagada. JSON sigue alimentando las lecturas
+  hasta el corte verificable. Evidencia: [F5.1](F5.1-CONTROL-DURABLE.md).
+- [ ] **F5.2 — Importación dry-run:** leer JSON sin mutarlo; checksum por origen,
+  reglas conservadoras de handoff/permisos, identidades exactas, conflictos y
+  cuarentena. El informe cuadra origen/importado/cuarentena/exclusiones y permite
+  revisión; no cambia autoridad ni inicia IA.
+- [ ] **F5.3 — Staging y corte de autoridad:** importar idempotentemente con
+  migrationId, snapshot, mantenimiento, delta y recuperación por lote. Verificar
+  antes de cambiar la autoridad a SQLite; conservar JSON para export/rollback y
+  evitar writers simultáneos. Handoff vencido se importa como human explícito.
+- [ ] **F5.4 — Servicio de control compartido:** takeover/release/resolver y
+  cambios de acceso con expectedVersion, actor/propietario, auditoría y operación
+  recuperable mientras drena una salida ya iniciada. API, comandos legacy y estado
+  llaman el mismo dominio; resolución exacta por canal/cuenta, sin dígitos ambiguos.
+- [ ] **F5.5 — Barrera y coordinación de jobs:** serializar por conversación y
+  comprobar controlVersion, policyVersion y contextVersion en debounce, pool,
+  generación, typing, pausas, retries y cada globo. Cancelar trabajos obsoletos;
+  migrar/inutilizar JSONL y operaciones antiguas sin replay tras reiniciar.
+- [ ] **F5.6 — Outbox y salida común:** SendMessage para persona/IA/avisos y puerto
+  de campañas con su intent/política. Persistir intención antes de red, usar
+  idempotencia local, estados reales y delivery_unknown; una respuesta ambigua
+  tras crash queda para reconciliar, sin retry automático ciego. Reconducir `/notify`
+  y envíos directos.
+- [ ] **F5.7 — Contexto y reanudación IA:** GenerateReply con generationId y
+  contexto explícito/versionado, incluir mensajes humanos, invalidar respuestas
+  canceladas y confirmar solo globos enviados. Release usa `future_only`; la pausa
+  global conserva captura y respuesta humana autorizada.
+- [ ] **F5.8 — Aceptación integrada:** ejecutar la matriz siguiente con transportes
+  falsos, incluyendo reinicios y fallos entre commit/red/ACK. Los defectos que no
+  bloqueen la unidad se registran en backlog con prioridad y fase límite.
 
 **Aceptación obligatoria con transportes/proveedores falsos:**
 

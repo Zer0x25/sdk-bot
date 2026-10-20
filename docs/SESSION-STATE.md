@@ -65,7 +65,8 @@ respuesta humana desde el chat y retorno seguro a IA con contexto actualizado.
   BUG-037 descarga Baileys sin abort físico queda puerta F8 antes de STT real.
 - F2C.1: descubrimiento TG observa el adapter configurado sin getUpdates extra;
   HTTP cancelable/cierre antes de reemplazo, offset RAM separado al cambiar token,
-  backoff/4xx y setup parcial. BUG-004/038–042 cerrados; BUG-043 salida diferido F5.
+  backoff/4xx y setup parcial. BUG-004/038–043 cerrados; el retry Telegram quedó
+  ligado a la cuenta de origen antes de continuar con control F5.
   [TELEGRAM-DUENO-UNICO-F2C1](TELEGRAM-DUENO-UNICO-F2C1.md).
 - F2C.2: `getMe` verifica el bot y deriva `telegram_bot:<id>` estable; la migración
   v2 añade cursores por cuenta. Cada lote confirma mensajes, huellas, eventos,
@@ -353,8 +354,9 @@ Detalles de reproducción y logs efímeros están en la baseline.
   aplican pausa cancelable. POST de prueba de notificación acotado y sin retry.
 - Reproducción 42b8321 confirma dos lectores, petición A viva al abrir B, offset
   124 heredado, retry inmediato de 500, UTF-8 corrupto y UI parcial bloqueada.
-  BUG-004/038/039/040/041/042 cerrados. BUG-043 inspeccionado y diferido F5:
-  retry Markdown de salida relee token mutable; no se presenta como reparado.
+  BUG-004/038/039/040/041/042 cerrados. Esa revisión detectó BUG-043, que se
+  cerró posteriormente con una guarda de cuenta/generación en el retry Telegram;
+  ver la sección F5 anterior. El hallazgo original fue reparado.
 - Docker sdkbot-f2b3:local con dependencias de producción, código afectado/tests
   actuales readonly y profiles como Compose: **97 tests** pasan Node22.23.3,
   --network none. No imagen nueva, compose up ni despliegue.
@@ -561,10 +563,27 @@ ausencia de Vite/CA. Commit separado de la UI.
   24.19.0/Linux.
 - Commit local de código y regresiones: `8a84f8c`. F5 no está completada; este
   cierre solo elimina una puerta de seguridad del dispatcher Telegram.
-- Siguiente unidad exacta: F5.1, crear persistencia SQLite de control por
-  conversación con transiciones versionadas (`controlVersion`) y eventos atómicos.
-  Mantener la autoridad JSON actual hasta que exista el informe dry-run de
-  importación exigido por la especificación.
+
+## F5.1: Estado de control durable
+
+- SQLite v5 añade acceso, modo, lifecycle, propietario, versiones, estado de
+  operación y metadatos de handoff por conversación. Migrar v4 conserva filas y
+  asigna defaults neutrales con IA apagada.
+- `writeControlState` aplica CAS con expectedVersion, registra actor en auditoría,
+  incrementa controlVersion/aggregateVersion y añade control.changed de forma
+  atómica. Conflicto obsoleto no cambia estado/seq; estado y auditoría sobreviven
+  una reapertura.
+- La bandeja sigue proyectando contactos/settings JSON; los campos SQLite son
+  staging hasta completar el informe y corte. No hay endpoints de control ni
+  barrera de envíos conectados todavía. Sin bugs de producto nuevos en esta unidad;
+  los fallos iniciales fueron fixtures v1/v2 que simulaban versiones antiguas con
+  columnas v5 presentes; se corrigieron y sus migraciones pasan.
+- Evidencia: [F5.1](F5.1-CONTROL-DURABLE.md). `cd gateway && npm run check` pasó:
+  lint, typecheck, 13 Vitest, build/serving del panel y 273 pruebas Node en Node
+  24.19.0/Linux.
+- Commit local por F5.1: incluido en el historial de esta rama; sin push mientras
+  F5 siga abierta. Siguiente unidad exacta: **F5.2, dry-run verificable de la
+  importación JSON**, sin mutar fuentes ni cambiar autoridad.
 
 ## Pendientes materiales
 

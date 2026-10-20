@@ -34,7 +34,7 @@ function initialize() {
     // SQLite owns the OS lock for the full connection lifetime; crash releases it.
     db.exec('BEGIN IMMEDIATE; COMMIT;');
     const version = one('PRAGMA user_version').user_version;
-    if (version > 4) fail('SCHEMA_TOO_NEW');
+    if (version > 5) fail('SCHEMA_TOO_NEW');
     if (version === 0) transaction(() => {
         db.exec(schema);
         run('INSERT INTO archive_meta VALUES(1,?,?)', randomUUID(), '0');
@@ -69,6 +69,19 @@ function initialize() {
         ); CREATE INDEX messages_unread ON messages(conversation_id,inbound_seq) WHERE inbound_seq IS NOT NULL;
         PRAGMA user_version=4;`);
     });
+    if (one('PRAGMA user_version').user_version === 4) transaction(() => {
+        db.exec(`ALTER TABLE conversations ADD COLUMN access_policy TEXT NOT NULL DEFAULT 'neutral' CHECK(access_policy IN ('allowed','ignored','neutral'));
+        ALTER TABLE conversations ADD COLUMN automation_mode TEXT NOT NULL DEFAULT 'off' CHECK(automation_mode IN ('ai','human','off'));
+        ALTER TABLE conversations ADD COLUMN lifecycle TEXT NOT NULL DEFAULT 'open' CHECK(lifecycle IN ('open','resolved'));
+        ALTER TABLE conversations ADD COLUMN owner_id TEXT;
+        ALTER TABLE conversations ADD COLUMN control_version TEXT NOT NULL DEFAULT '1' CHECK(control_version NOT GLOB '*[^0-9]*' AND substr(control_version,1,1) BETWEEN '1' AND '9');
+        ALTER TABLE conversations ADD COLUMN context_version TEXT NOT NULL DEFAULT '1' CHECK(context_version NOT GLOB '*[^0-9]*' AND substr(context_version,1,1) BETWEEN '1' AND '9');
+        ALTER TABLE conversations ADD COLUMN control_status TEXT NOT NULL DEFAULT 'confirmed' CHECK(control_status IN ('confirmed','taking_control'));
+        ALTER TABLE conversations ADD COLUMN taken_at TEXT;
+        ALTER TABLE conversations ADD COLUMN handoff_reason TEXT CHECK(handoff_reason IS NULL OR handoff_reason IN ('operator','customer_request','external_self','legacy_import','identity_conflict'));
+        ALTER TABLE events ADD COLUMN actor_id TEXT;
+        PRAGMA user_version=5;`);
+    });
     if (one('PRAGMA integrity_check').integrity_check !== 'ok' || all('PRAGMA foreign_key_check').length) fail('ARCHIVE_CORRUPT');
     if (workerData.restore) transaction(() => {
         while (purge({ now: new Date().toISOString(), limit: 1000 }).remaining) { /* bounded SQL batches before exposure */ }
@@ -84,7 +97,7 @@ function initialize() {
         transaction(() => pending.forEach(row => updateTranscription({ messageId: row.id, expectedStatus: 'pending', status: 'failed' })));
         after = pending[pending.length - 1].id;
     }
-    return { ...snapshot(), schemaVersion: 4, journalMode: one('PRAGMA journal_mode').journal_mode,
+    return { ...snapshot(), schemaVersion: 5, journalMode: one('PRAGMA journal_mode').journal_mode,
         synchronous: one('PRAGMA synchronous').synchronous, threadId: require('node:worker_threads').threadId };
 }
 function registerAccount(input) {
@@ -271,9 +284,51 @@ function appendMessageEvent(message, aggregate, type, now) {
     cursor.seq = String(BigInt(cursor.seq) + 1n);
     const event = assertValid('Event', { schemaVersion: 1, cursor, type, occurredAt: now,
         data: { conversationId: message.conversationId, messageId: message.id, aggregateVersion: aggregate } });
-    run('INSERT INTO events VALUES(?,?,?,?,?)', cursor.seq, message.conversationId, message.id, now, JSON.stringify(event));
+    run('INSERT INTO events(seq,conversation_id,message_id,created_at,actor_id,payload) VALUES(?,?,?,?,?,?)',
+        cursor.seq, message.conversationId, message.id, now, null, JSON.stringify(event));
     run('UPDATE archive_meta SET seq=? WHERE id=1', cursor.seq);
     return event;
+}
+function controlStateFromRow(row) {
+    return { accessPolicy: row.access_policy, automationMode: row.automation_mode,
+        lifecycle: row.lifecycle, ownerId: row.owner_id, controlVersion: row.control_version,
+        contextVersion: row.context_version, status: row.control_status, takenAt: row.taken_at,
+        handoffReason: row.handoff_reason };
+}
+function controlState(conversationId) {
+    assertValid('Id', conversationId);
+    const row = one('SELECT * FROM conversations WHERE id=?', conversationId);
+    return row ? controlStateFromRow(row) : null;
+}
+function writeControlState(input) {
+    assertValid('Id', input?.conversationId);
+    assertValid('Id', input?.actorId);
+    assertValid('Version', input?.expectedVersion);
+    if (!input.state || typeof input.state !== 'object' || Array.isArray(input.state)) fail('INVALID_CONTROL_STATE');
+    const row = one('SELECT * FROM conversations WHERE id=?', input.conversationId);
+    if (!row) return { status: 'missing' };
+    const current = controlStateFromRow(row);
+    if (input.expectedVersion !== current.controlVersion) return { status: 'conflict', control: current };
+    const nextVersion = String(BigInt(current.controlVersion) + 1n);
+    const next = { ...input.state, controlVersion: nextVersion, contextVersion: current.contextVersion };
+    assertValid('ConversationControl', next);
+    const keys = ['accessPolicy','automationMode','lifecycle','ownerId','status','takenAt','handoffReason'];
+    if (keys.every(key => next[key] === current[key])) return { status: 'unchanged', control: current };
+    const aggregate = String(BigInt(row.aggregate_version) + 1n);
+    const now = new Date().toISOString();
+    run(`UPDATE conversations SET access_policy=?,automation_mode=?,lifecycle=?,owner_id=?,control_version=?,
+        control_status=?,taken_at=?,handoff_reason=?,aggregate_version=? WHERE id=? AND control_version=?`,
+    next.accessPolicy, next.automationMode, next.lifecycle, next.ownerId, next.controlVersion,
+    next.status, next.takenAt, next.handoffReason, aggregate, input.conversationId, current.controlVersion);
+    const cursor = snapshot();
+    cursor.seq = String(BigInt(cursor.seq) + 1n);
+    const event = assertValid('Event', { schemaVersion: 1, cursor, type: 'control.changed', occurredAt: now,
+        data: { conversationId: input.conversationId, aggregateVersion: aggregate, controlVersion: nextVersion } });
+    run('INSERT INTO events(seq,conversation_id,message_id,created_at,actor_id,payload) VALUES(?,?,?,?,?,?)',
+        cursor.seq, input.conversationId, null, now, input.actorId, JSON.stringify(event));
+    run('UPDATE archive_meta SET seq=? WHERE id=1', cursor.seq);
+    pruneRetainedEvents();
+    return { status: 'updated', control: next, event };
 }
 function pruneRetainedEvents() {
     const cutoff = retentionCutoff(snapshot().seq);
@@ -509,6 +564,8 @@ function dispatch(method, input) {
         case 'pendingLegacyDispatches': return pendingLegacyDispatches(input);
         case 'markLegacyDispatched': return transaction(() => markLegacyDispatched(input));
         case 'retryLegacyDispatch': return transaction(() => retryLegacyDispatch(input));
+        case 'controlState': return controlState(input);
+        case 'writeControlState': return transaction(() => writeControlState(input));
         case 'conversation': assertValid('Id', input); return one('SELECT * FROM conversations WHERE id=?', input) ?? null;
         case 'conversations': return conversationPage(input);
         case 'conversationRows': return conversationRows(input);
@@ -546,6 +603,7 @@ function committedEvents(method, value) {
         return value.results.map(result => result?.result?.event).filter(Boolean);
     }
     if (method === 'updateTranscription' && value?.event) return [value.event];
+    if (method === 'writeControlState' && value?.event) return [value.event];
     return [];
 }
 try {

@@ -1,4 +1,5 @@
-// No control/access columns: JSON remains the only policy authority until F5.
+// Control columns are durable staging state; JSON remains the read authority
+// until the F5 import report and cutover have been verified.
 module.exports = `
 CREATE TABLE archive_meta (id INTEGER PRIMARY KEY CHECK(id=1), epoch TEXT NOT NULL, seq TEXT NOT NULL CHECK(seq='0' OR (seq NOT GLOB '*[^0-9]*' AND substr(seq,1,1) BETWEEN '1' AND '9')));
 CREATE TABLE accounts (id TEXT PRIMARY KEY, channel TEXT NOT NULL CHECK(channel IN ('whatsapp','telegram')),
@@ -7,6 +8,15 @@ CREATE TABLE contacts (id TEXT PRIMARY KEY, account_id TEXT NOT NULL REFERENCES 
 CREATE TABLE conversations (id TEXT PRIMARY KEY, account_id TEXT NOT NULL REFERENCES accounts(id),
  contact_id TEXT NOT NULL UNIQUE REFERENCES contacts(id), canonical_id TEXT NOT NULL UNIQUE REFERENCES identities(id) DEFERRABLE INITIALLY DEFERRED,
  aggregate_version TEXT NOT NULL DEFAULT '1' CHECK(aggregate_version NOT GLOB '*[^0-9]*' AND substr(aggregate_version,1,1) BETWEEN '1' AND '9'),
+ access_policy TEXT NOT NULL DEFAULT 'neutral' CHECK(access_policy IN ('allowed','ignored','neutral')),
+ automation_mode TEXT NOT NULL DEFAULT 'off' CHECK(automation_mode IN ('ai','human','off')),
+ lifecycle TEXT NOT NULL DEFAULT 'open' CHECK(lifecycle IN ('open','resolved')),
+ owner_id TEXT,
+ control_version TEXT NOT NULL DEFAULT '1' CHECK(control_version NOT GLOB '*[^0-9]*' AND substr(control_version,1,1) BETWEEN '1' AND '9'),
+ context_version TEXT NOT NULL DEFAULT '1' CHECK(context_version NOT GLOB '*[^0-9]*' AND substr(context_version,1,1) BETWEEN '1' AND '9'),
+ control_status TEXT NOT NULL DEFAULT 'confirmed' CHECK(control_status IN ('confirmed','taking_control')),
+ taken_at TEXT,
+ handoff_reason TEXT CHECK(handoff_reason IS NULL OR handoff_reason IN ('operator','customer_request','external_self','legacy_import','identity_conflict')),
  inbound_seq TEXT NOT NULL DEFAULT '0' CHECK(inbound_seq='0' OR (inbound_seq NOT GLOB '*[^0-9]*' AND substr(inbound_seq,1,1) BETWEEN '1' AND '9')),
  last_activity_at TEXT, capturing_since TEXT, history_observed INTEGER NOT NULL DEFAULT 0,
  requires_review INTEGER NOT NULL DEFAULT 0 CHECK(requires_review IN (0,1)));
@@ -40,7 +50,7 @@ CREATE TABLE provenance (message_id TEXT NOT NULL REFERENCES messages(id) ON DEL
  identity_id TEXT NOT NULL REFERENCES identities(id), source TEXT NOT NULL,
  PRIMARY KEY(message_id,identity_id,source));
 CREATE TABLE events (seq TEXT PRIMARY KEY CHECK(seq NOT GLOB '*[^0-9]*' AND substr(seq,1,1) BETWEEN '1' AND '9'), conversation_id TEXT NOT NULL REFERENCES conversations(id),
- message_id TEXT REFERENCES messages(id) ON DELETE SET NULL, created_at TEXT NOT NULL,
+ message_id TEXT REFERENCES messages(id) ON DELETE SET NULL, created_at TEXT NOT NULL, actor_id TEXT,
  payload TEXT NOT NULL CHECK(json_valid(payload)));
 CREATE INDEX events_order ON events(length(seq),seq);
 CREATE INDEX events_retention ON events(created_at);
@@ -66,5 +76,5 @@ CREATE TABLE legacy_dispatch (
  dispatched_at TEXT
 );
 CREATE INDEX legacy_dispatch_pending ON legacy_dispatch(status,seq);
-PRAGMA user_version=4;
+PRAGMA user_version=5;
 `;

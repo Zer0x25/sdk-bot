@@ -217,11 +217,22 @@ test('F2C.2 migrates v1 archives and persists Telegram cursor per verified bot t
     const dbPath = path.join(dir, 'archive.db');
     const legacy = new DatabaseSync(dbPath);
     legacy.exec('PRAGMA foreign_keys=ON;'); legacy.exec(schema);
-    legacy.exec('DROP TABLE legacy_dispatch; DROP TABLE read_cursors; DROP TABLE telegram_cursors; DROP INDEX messages_unread; PRAGMA user_version=1;');
+    legacy.exec(`ALTER TABLE conversations DROP COLUMN handoff_reason;
+        ALTER TABLE conversations DROP COLUMN taken_at;
+        ALTER TABLE conversations DROP COLUMN control_status;
+        ALTER TABLE conversations DROP COLUMN context_version;
+        ALTER TABLE conversations DROP COLUMN control_version;
+        ALTER TABLE conversations DROP COLUMN owner_id;
+        ALTER TABLE conversations DROP COLUMN lifecycle;
+        ALTER TABLE conversations DROP COLUMN automation_mode;
+        ALTER TABLE conversations DROP COLUMN access_policy;
+        ALTER TABLE events DROP COLUMN actor_id;
+        DROP TABLE legacy_dispatch; DROP TABLE read_cursors; DROP TABLE telegram_cursors;
+        DROP INDEX messages_unread; PRAGMA user_version=1;`);
     legacy.prepare('INSERT INTO archive_meta VALUES(1,?,?)').run(randomUUID(), '0');
     legacy.close();
     const { archive } = await archiveFixture(t, dbPath);
-    assert.equal((await archive.ready).schemaVersion, 4);
+    assert.equal((await archive.ready).schemaVersion, 5);
     const account = await archive.registerAccount({ channel: 'telegram', providerKey: 'telegram_bot:42' });
     assert.equal(await archive.telegramCursor(account.id), null);
     const durableMessage = { identity: { accountId: account.id, channel: 'telegram', kind: 'telegram_chat_id', exactValue: CHAT_BIG },
