@@ -1,97 +1,174 @@
+import { useEffect, useMemo, useRef, useState } from 'react';
+import { useInfiniteQuery, useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { useParams } from 'react-router-dom';
-import { Archive, Bell, CircleHelp, MessageSquareText, Search, UsersRound } from 'lucide-react';
-import { BrandLabel } from '../../app/AppShell';
+import { ConversationDetails } from './ConversationDetails';
+import { ConversationList, type InboxFilter } from './ConversationList';
+import { ConversationThread } from './ConversationThread';
+import {
+  getAccounts,
+  getConversation,
+  getConversations,
+  getMessages,
+  PanelApiError,
+  markConversationRead,
+  type Channel,
+  type PageCursor
+} from './api';
+
+function asError(value: unknown) {
+  return value instanceof Error ? value : new Error('No se pudo cargar el contenido.');
+}
 
 export function InboxPage() {
   const { conversationId } = useParams();
+  const queryClient = useQueryClient();
+  const readAttempt = useRef<string | null>(null);
+  const [filter, setFilter] = useState<InboxFilter>('all');
+  const [channel, setChannel] = useState<Channel | ''>('');
+  const [searchInput, setSearchInput] = useState('');
+  const [search, setSearch] = useState('');
+
+  useEffect(() => {
+    const timer = window.setTimeout(() => setSearch(searchInput.trim()), 250);
+    return () => window.clearTimeout(timer);
+  }, [searchInput]);
+
+  const filters = useMemo(() => ({
+    search: search || undefined,
+    unreadOnly: filter === 'unread' || undefined,
+    lifecycle: filter === 'open' ? 'open' as const : undefined,
+    channel: channel || undefined
+  }), [search, filter, channel]);
+
+  const accountsQuery = useQuery({
+    queryKey: ['inbox', 'accounts'],
+    queryFn: ({ signal }) => getAccounts(signal),
+    staleTime: 30_000
+  });
+
+  const conversationsQuery = useInfiniteQuery({
+    queryKey: ['inbox', 'conversations', filters],
+    initialPageParam: undefined as PageCursor | undefined,
+    queryFn: ({ pageParam, signal }) => getConversations({ ...filters, cursor: pageParam }, signal),
+    getNextPageParam: page => page.nextCursor ?? undefined,
+    staleTime: 5_000
+  });
+
+  const conversationQuery = useQuery({
+    queryKey: ['inbox', 'conversation', conversationId],
+    queryFn: ({ signal }) => getConversation(conversationId!, signal),
+    enabled: Boolean(conversationId),
+    staleTime: 5_000
+  });
+
+  const messagesQuery = useInfiniteQuery({
+    queryKey: ['inbox', 'messages', conversationId],
+    initialPageParam: undefined as PageCursor | undefined,
+    queryFn: ({ pageParam, signal }) => getMessages(conversationId!, { cursor: pageParam }, signal),
+    getNextPageParam: page => page.nextCursor ?? undefined,
+    enabled: Boolean(conversationId),
+    staleTime: 5_000
+  });
+
+  const conversations = conversationsQuery.data?.pages.flatMap(page => page.items) ?? [];
+  const messagePages = messagesQuery.data?.pages ?? [];
+  // The first page is the newest window; older pages are appended by cursor.
+  const messages = [...messagePages].reverse().flatMap(page => page.items);
+  const selectedConversation = conversationQuery.data?.conversation;
+  const accounts = accountsQuery.data?.items ?? [];
+  const selectedAccount = accounts.find(account => account.id === selectedConversation?.accountId);
+  const conversationError = conversationQuery.isError ? asError(conversationQuery.error) : null;
+  const messageError = messagesQuery.isError ? asError(messagesQuery.error) : null;
+  const listError = !conversationsQuery.data && conversationsQuery.isError
+    ? asError(conversationsQuery.error)
+    : null;
+  const moreError = conversationsQuery.isFetchNextPageError ? asError(conversationsQuery.error) : null;
+  const latestInboundSeq = messages.reduce<string | null>((latest, message) => {
+    if (message.direction !== 'inbound' || !message.inboundSeq) return latest;
+    return latest === null || BigInt(message.inboundSeq) > BigInt(latest) ? message.inboundSeq : latest;
+  }, null);
+
+  const readMutation = useMutation({
+    mutationFn: (input: { conversationId: string; throughInboundSeq: string }) => markConversationRead(input.conversationId, input.throughInboundSeq),
+    onSuccess: (_result, input) => {
+      void queryClient.invalidateQueries({ queryKey: ['inbox', 'conversation', input.conversationId] });
+      void queryClient.invalidateQueries({ queryKey: ['inbox', 'conversations'] });
+    },
+    onError: (_error, input) => {
+      const key = `${input.conversationId}:${input.throughInboundSeq}`;
+      if (readAttempt.current === key) readAttempt.current = null;
+    }
+  });
+
+  function sendReadCursor() {
+    if (!conversationId || !latestInboundSeq) return;
+    const key = `${conversationId}:${latestInboundSeq}`;
+    readAttempt.current = key;
+    readMutation.mutate({ conversationId, throughInboundSeq: latestInboundSeq });
+  }
+
+  useEffect(() => {
+    if (!conversationId || !selectedConversation || selectedConversation.unreadCount === 0
+      || !latestInboundSeq || messagesQuery.isLoading) return;
+    const key = `${conversationId}:${latestInboundSeq}`;
+    if (readAttempt.current === key) return;
+    sendReadCursor();
+  }, [conversationId, selectedConversation?.unreadCount, latestInboundSeq, messagesQuery.isLoading]);
+
+  const readError = readMutation.isError && readMutation.variables?.conversationId === conversationId
+    ? asError(readMutation.error)
+    : null;
 
   return (
-    <div className="inbox-layout">
-      <section className="conversation-column" aria-label="Conversaciones">
-        <header className="conversation-header">
-          <div className="conversation-title-row">
-            <div>
-              <BrandLabel />
-              <h1>Bandeja</h1>
-              <p className="header-subtitle">Tus conversaciones, en un solo lugar.</p>
-            </div>
-            <button className="icon-button quiet-icon" type="button" aria-label="Ayuda de la bandeja" title="Ayuda">
-              <CircleHelp aria-hidden="true" size={19} />
-            </button>
-          </div>
-          <div className="search-placeholder" aria-label="Búsqueda de conversaciones próximamente">
-            <Search aria-hidden="true" size={17} />
-            <span>Buscar conversaciones</span>
-            <span className="search-shortcut" aria-hidden="true">⌘ K</span>
-          </div>
-          <div className="list-tools" aria-label="Filtros previstos; se habilitarán al conectar el historial" aria-disabled="true">
-            <span className="filter-pill is-selected">Todas</span>
-            <span className="filter-pill">No leídas</span>
-            <span className="filter-pill">Abiertas</span>
-          </div>
-        </header>
-
-        <div className="conversation-empty" role="status">
-          <div className="empty-icon-wrap"><Archive aria-hidden="true" size={20} /></div>
-          <h2>El historial aparecerá aquí</h2>
-          <p>La próxima entrega conectará esta bandeja con tus conversaciones reales. No mostramos datos de ejemplo.</p>
-        </div>
-        <footer className="conversation-footer">
-          <span>Vista preliminar</span>
-          <span className="footer-divider" aria-hidden="true">·</span>
-          <span>Datos reales en la siguiente entrega</span>
-        </footer>
-      </section>
-
-      <section className="thread-column" aria-label="Historial del chat">
-        <header className="thread-header">
-          <div className="thread-contact">
-            <div className="contact-avatar neutral-avatar" aria-hidden="true"><MessageSquareText size={20} /></div>
-            <div>
-              <h2>{conversationId ? 'Conversación' : 'Selecciona un chat'}</h2>
-              <p>{conversationId ? 'El historial se conectará en la siguiente entrega.' : 'Elige una conversación para ver el historial'}</p>
-            </div>
-          </div>
-          <div className="thread-actions">
-            <button className="icon-button" type="button" aria-label="Buscar en el chat" disabled><Search aria-hidden="true" size={19} /></button>
-            <button className="icon-button" type="button" aria-label="Notificaciones del chat" disabled><Bell aria-hidden="true" size={19} /></button>
-          </div>
-        </header>
-        <div className="thread-empty" role="status">
-          <div className="thread-empty-orbit"><MessageSquareText aria-hidden="true" size={29} strokeWidth={1.6} /></div>
-          <h2>Un espacio para conversar mejor</h2>
-          <p>Aquí tendrás el historial completo y el contexto de cada chat.</p>
-          <div className="thread-capabilities" aria-label="Canales compatibles">
-            <span><i className="channel-mark whatsapp-mark" aria-hidden="true" /> WhatsApp</span>
-            <span><i className="channel-mark telegram-mark" aria-hidden="true" /> Telegram</span>
-          </div>
-        </div>
-        <footer className="composer-preview" aria-label="Compositor disponible en una próxima entrega">
-          <span>Responder desde el chat estará disponible al conectar el historial.</span>
-          <button className="send-preview" type="button" disabled aria-label="Enviar mensaje próximamente">↗</button>
-        </footer>
-      </section>
-
-      <aside className="context-column" aria-label="Información del contacto">
-        <header className="context-header">
-          <div>
-            <span className="eyebrow">DETALLES</span>
-            <h2>Información</h2>
-          </div>
-          <button className="icon-button quiet-icon" type="button" aria-label="Ayuda con la ficha" title="Ayuda">
-            <CircleHelp aria-hidden="true" size={18} />
-          </button>
-        </header>
-        <div className="context-empty">
-          <div className="context-avatar-placeholder" aria-hidden="true"><UsersRound size={22} /></div>
-          <h3>Sin chat seleccionado</h3>
-          <p>La ficha mostrará los datos disponibles del contacto y la cobertura del historial.</p>
-        </div>
-        <div className="context-note">
-          <span className="note-mark" aria-hidden="true">i</span>
-          <p>Los nombres y datos visibles dependerán de la información disponible en cada canal.</p>
-        </div>
-      </aside>
+    <div className={`inbox-layout${conversationId ? ' has-selected-chat' : ''}`}>
+      <ConversationList
+        conversationId={conversationId}
+        conversations={conversations}
+        accounts={accounts}
+        loading={conversationsQuery.isLoading}
+        error={listError}
+        moreError={moreError}
+        hasMore={Boolean(conversationsQuery.hasNextPage)}
+        loadingMore={conversationsQuery.isFetchingNextPage}
+        filter={filter}
+        channel={channel}
+        search={searchInput}
+        onFilterChange={setFilter}
+        onChannelChange={setChannel}
+        onSearchChange={setSearchInput}
+        onLoadMore={() => { void conversationsQuery.fetchNextPage(); }}
+        onRetry={() => { void conversationsQuery.refetch(); }}
+        onRetryMore={() => {
+          if (moreError instanceof PanelApiError && (moreError.code === 'CURSOR_EXPIRED' || moreError.code === 'DATA_EPOCH_MISMATCH')) {
+            void conversationsQuery.refetch();
+          } else {
+            void conversationsQuery.fetchNextPage();
+          }
+        }}
+      />
+      <ConversationThread
+        conversationId={conversationId}
+        conversation={selectedConversation}
+        detailLoading={Boolean(conversationId) && conversationQuery.isLoading}
+        detailError={conversationError}
+        messages={messages}
+        messagePageCount={messagePages.length}
+        messagesLoading={Boolean(conversationId) && messagesQuery.isLoading}
+        messagesError={messageError}
+        hasOlder={Boolean(messagesQuery.hasNextPage)}
+        loadingOlder={messagesQuery.isFetchingNextPage}
+        readError={readError}
+        onLoadOlder={() => messagesQuery.fetchNextPage()}
+        onRetryDetail={() => { void conversationQuery.refetch(); }}
+        onRetryMessages={() => { void messagesQuery.refetch(); }}
+        onRetryRead={sendReadCursor}
+      />
+      <ConversationDetails
+        conversation={selectedConversation}
+        account={selectedAccount}
+        selected={Boolean(conversationId)}
+        loading={Boolean(conversationId) && conversationQuery.isLoading}
+      />
     </div>
   );
 }

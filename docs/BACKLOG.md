@@ -75,6 +75,7 @@ salvo indicación contraria. La evidencia detallada y líneas están en la basel
 | BUG-060 | P2 | Cerrado F4.1: el runner Node incluía el setup de Vitest como si fuera otra prueba del gateway. | La carpeta `panel/web/src/test` hizo que `node --test` descubriera `setup.ts`, que solo instala matchers y generaba un warning de formato ESM. | El setup se movió a `src/vitestSetup.ts`; Vitest lo carga explícitamente y `node --test` deja de ejecutarlo como prueba. |
 | BUG-061 | P2 | Cerrado F4.1: el build Docker fallaba al instalar paquetes detrás del CA de red de este entorno. | `npm ci` falló dentro de la imagen base con `Exit handler never called` a los 73 s, incluso serial; el host resuelve npm y confía en `NODE_EXTRA_CA_CERTS`, pero la imagen limpia no tiene ese CA. | El builder acepta un BuildKit secret opcional y lo asigna a `NODE_EXTRA_CA_CERTS` solo durante `npm ci`. Build se valida con TLS verificado y el cert no queda en capas ni en la imagen. |
 | BUG-062 | P1 | Cerrado en unidad de seguridad después de F4.1: dependencias de medios transitivas de Baileys tenían avisos DoS/proceso-crash; `sharp@0.35.3` (high) y `music-metadata@11.14.0` (moderate). | `npm audit --omit=dev` y `npm ls` los ubicaron bajo `@whiskeysockets/baileys@7.0.0-rc14`; no los introdujo la UI. | `npm audit fix` movió solo el lockfile a `sharp@0.35.5` y `music-metadata@11.16.1` sin cambiar rangos directos. Auditoría completa y de producción limpias; suites y Docker verificadas. Evidencia: [DEPENDENCY-SECURITY-BUG-062](DEPENDENCY-SECURITY-BUG-062.md). |
+| BUG-063 | P2 | Cerrado F4.2: reintentar una página con cursor vencido podía repetir el mismo 410 y dejar la lista sin salida. | Al rastrear los estados de paginación, la acción de error volvía a pedir `nextCursor`. | CURSOR_EXPIRED/DATA_EPOCH_MISMATCH ahora vuelven a leer la primera página; una prueba de UI simula 410 y verifica la recarga sin cursor. |
 
 ## Clasificación para la unidad activa
 
@@ -91,7 +92,8 @@ BUG-035 pairing queda F8; F3.1 cierra BUG-056/057. BUG-024 sigue antes de
 operadores limitados; BUG-014 antes de Python paralelo. F3.2 implementa replay SSE
 y `resync.required` para cursores expirados sin retener el archivo sin límite. F4.1
 cierra BUG-058/059/060 de UI y BUG-061 de instalación Docker detrás de CA. La
-unidad de seguridad cerró BUG-062 sin cambiar versiones directas. El perfil de carga completo
+unidad de seguridad cerró BUG-062; F4.2 cierra BUG-063 al recuperar cursores de
+lista vencidos. El perfil de carga completo
 requiere repetición con 2 CPU/4 GiB;
 el host medido tenía 3 CPU/10,45 GiB. No extrapolar archivo/polling a control, roles, salida durable
 ni carga/aceptación completa F2.

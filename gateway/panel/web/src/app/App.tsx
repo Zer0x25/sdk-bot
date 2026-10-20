@@ -4,13 +4,17 @@ import { AppShell } from './AppShell';
 import { InboxPage } from '../features/inbox/InboxPage';
 import { SectionPlaceholder } from '../features/navigation/SectionPlaceholder';
 
-const queryClient = new QueryClient({
-  defaultOptions: {
-    queries: { retry: false, refetchOnWindowFocus: false }
-  }
-});
+export function createAppQueryClient() {
+  return new QueryClient({
+    defaultOptions: {
+      queries: { retry: false, refetchOnWindowFocus: false }
+    }
+  });
+}
 
-export default function App() {
+const defaultQueryClient = createAppQueryClient();
+
+export default function App({ queryClient = defaultQueryClient }: { queryClient?: QueryClient } = {}) {
   return (
     <QueryClientProvider client={queryClient}>
       <BrowserRouter basename="/inbox">

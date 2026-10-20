@@ -29,9 +29,10 @@ F2D completa replay durable hasta el handler tras el commit (BUG-045). F2E.1 ya
 registra salidas aceptadas y deduplica ecos WA; conserva autoría external_self.
 F2E.2 cierra la carga sintética completa y F3.1 implementa la API autenticada de
 lectura, filtros, páginas y cursor local de lectura. F3.2 completa SSE, replay y
-resynchronización ante cursores fuera de retención. F4.1 ya entrega el shell visual
-de la bandeja y la unidad de seguridad cerró BUG-062 en dependencias de medios.
-La siguiente unidad es F4.2: conectar lista e historial reales.
+resynchronización ante cursores fuera de retención. F4.1 entrega el shell visual,
+la unidad de seguridad cerró BUG-062 en dependencias de medios y F4.2 conecta la
+lista e historial reales. Sigue F4.3: integrar eventos SSE con caché, scroll y
+recuperación.
 BUG-050 conserva salidas ambiguas; BUG-051 es puerta antes de usar archivos
 preexistentes reales. La atribución IA/operador queda en F5 junto a su outbox.
 Sin canales reales ni migración.
@@ -228,9 +229,11 @@ Evidencia F3.1: [lectura autenticada](F3.1-LECTURA-AUTENTICADA.md). F3.2:
   controles accesibles, router, TanStack Query y feature flag/ruta de transición.
   Layout de tres columnas en escritorio, una en móvil; conserva el chat activo en
   URL. No inventa conversaciones. Evidencia: [F4.1](F4.1-SHELL-VISUAL.md).
-- [ ] **F4.2 — lectura HTTP real:** lista y filtros de conversaciones, selección
+- [x] **F4.2 — lectura HTTP real:** lista y filtros de conversaciones, selección
   enlazada a URL, detalle, historial paginado, estados de carga/error/vacío y ficha
-  contextual desde la API. Mocks exclusivamente en pruebas/desarrollo.
+  contextual desde la API autenticada del panel. Mocks exclusivamente en pruebas.
+  Cursor de lectura local por secuencia inbound; no envía recibos remotos.
+  Evidencia: [F4.2](F4.2-LECTURA-HTTP-REAL.md). BUG-063 corregido.
 - [ ] **F4.3 — actualización en vivo:** SSE integrado con caché, ancla de scroll,
   contador de novedades, reconexión y resync. No reconstruir el hilo entero por
   evento.

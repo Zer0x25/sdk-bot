@@ -1,6 +1,6 @@
 # Estado de continuidad — SDK-Bot
 
-Actualización: 2026-10-20. Última unidad cerrada: **BUG-062; seguridad de dependencias transitivas**. F4.1 está cerrada; sigue F4.2.
+Actualización: 2026-10-20. F4.2 probada; commit pendiente por filesystem lleno. Sigue F4.3.
 
 ## Objetivo vigente
 
@@ -72,8 +72,9 @@ respuesta humana desde el chat y retorno seguro a IA con contexto actualizado.
   `external_self` hasta tener origen correlacionado en F5. Respuesta TG con UTF-8
   dividido conserva contenido e IDs >2^53. BUG-052/053/054 cerrados.
   Evidencia: [SALIDAS-ACEPTADAS-F2E1](SALIDAS-ACEPTADAS-F2E1.md).
-- Sin migrar datos antiguos ni conectar cuentas reales. No hay bandeja nueva, páginas/SSE públicos,
-  API de envío/control ni barrera de automatización v1.
+- Sin migrar datos antiguos ni conectar cuentas reales. La bandeja web consulta
+  páginas/SSE autenticados existentes, pero la UI aún no integra SSE ni ofrece API
+  de envío/control; la barrera de automatización v1 sigue pendiente de F5.
 
 ## Validación ejecutada en F0.1
 
@@ -490,47 +491,42 @@ dan cero vulnerabilidades; gateway check conserva 269 pruebas y 3 Vitest. Docker
 Node 22 se reconstruyó con el CA temporal y probó runtime, bundle, contrato y
 ausencia de Vite/CA. Commit separado de la UI.
 
-## Siguiente unidad exacta: F4.2 / lista e historial reales
+## F4.2 completada: lectura HTTP real de la bandeja
 
-Conectar la lista de conversaciones, selección en URL, detalle y mensajes paginados
-con la API autenticada existente. Agregar estados de carga, vacío, error y cobertura
-parcial, ficha contextual segura y paginación hacia atrás. No habilitar envío ni
-control humano en esta unidad; F4.3 aborda SSE y resynchronización.
+- La app consulta cuentas, lista filtrada, detalle e historial paginado a través de
+  `/api/v1` del panel OAuth. La selección queda en la URL. Búsqueda por contacto,
+  filtros no leídos/abiertas/canal y páginas siguientes usan cursores de la API.
+- El hilo carga primero los mensajes recientes, ordena cronológicamente las páginas
+  anteriores y conserva el ancla de scroll. Representa contenido multimedia y su
+  disponibilidad; la ficha contextual presenta canal/estado, automatización,
+  ciclo, no leídos y cobertura sin mostrar IDs del proveedor.
+- Al abrir mensajes entrantes actualiza el cursor local monotónico por
+  `inboundSeq`; esto no manda recibos remotos. Carga, vacío, errores, reintentos y
+  cursor vencido tienen estados explícitos. BUG-063 se cerró: al vencer un cursor
+  de lista, “Actualizar lista” vuelve a la primera página.
+- Evidencia: [F4.2-LECTURA-HTTP-REAL](F4.2-LECTURA-HTTP-REAL.md). `gateway npm run
+  check` pasa en Node 24.19/Linux: 9 pruebas Vitest, build Vite y verificación HTTP
+  del artefacto, además de 269 pruebas Node. El build Docker Node 22 pasa con CA
+  temporal BuildKit. El contenedor de sondeo no pudo arrancar porque el filesystem
+  llegó al 100% y Docker no pudo crear la capa escribible; el build y las pruebas
+  locales sí finalizaron.
+- La UI no implementa envío ni toma de control. F4.3 conecta SSE, caché,
+  reconexión, ancla de scroll y resync.
 
 ## Pendientes materiales
 
-- Telegram ya archiva entradas/cursor por bot, reanuda clientes y persiste la salida
-  aceptada del Bot API para chats privados: BUG-005/009/044/045/052 y la porción de
-  archivo de BUG-008 están cerrados. BUG-046/F5 protege comandos
-  admin ante caída; BUG-050/F5 protege salidas ambiguas y BUG-051 bloquea migración
-  de archivos preexistentes sin reconciliación. Bot API no permite
-  recuperar historia arbitraria perdida antes de la retención de `getUpdates`.
-- Bandeja React/API de lectura/eventos F3/F4; control humano, cancelación de IA,
-  corte/outbox/contexto y backups operativos F5/F8. external_self no suspende IA
-  con garantía v1. Purga del archivo inicial/diaria ya conectada.
-- BUG-043 salida con token mutable requiere barrera de cuenta/despacho F5;
-  BUG-010 timeout de envío/presencia/menú legacy TG sigue parcial, aunque poll y
-  prueba de notificación ya están acotados. No prometer aislamiento de salida v1.
-- BUG-035 pairing y BUG-037 descarga Baileys antes de aceptación real F8. Driver
-  probado Linux; Windows/Termux y cuenta real única pendientes. Historial previo
-  íntegro no garantizado por proveedores ni recuperación WA rechazada.
-- Caption antiguo pierde tipo: sigue legible, nueva forma incompatible queda en
-  revisión sin inventar tipo. Descubrir Chat ID no concede admin: guardar explícito.
-- BUG-024 antes de operadores limitados F3; BUG-014 antes de Python paralelo.
+- F4.3 integra SSE en la bandeja. F5 aborda toma de control, cancelación de IA,
+  contexto y outbox; BUG-043/046/050 son puertas de esa entrega y BUG-051 antes de
+  migrar archivos preexistentes.
+- BUG-010 sigue parcial; BUG-035/037 quedan para F8. Windows/Termux y canales reales
+  no están validados; la historia previa que conservan los proveedores es limitada.
+- BUG-024 antes de operadores limitados; BUG-014 antes de Python paralelo.
 
 ## Regla de cierre para la siguiente sesión
 
 Actualizar estado y solo checkboxes demostrados; hacer commit probado e informar
-hash. El [prompt estable](PROMPT-CONTINUIDAD.md) consulta este estado sin reescritura.
-BUG-005/009/044/045/047/052/053/054/055 cerrados; BUG-006/007/008/010/011/012/014/024/
-035/037/043/046/050/051 siguen abiertos o parciales según backlog. BUG-016 probado en repositorio/alias
-del adapter, sin afirmar F2 completa.
+hash. Consultar [BACKLOG.md](BACKLOG.md) para el estado y aceptación de cada bug.
 
-Cierre F2C.1: commit local `git log --grep="close F2C.1"`; BUG-004/038–042 cerrados.
-Cierre F2C.2: commit local `git log --grep="close F2C.2"`; BUG-005/009/044/047 cerrados.
-Cierre F2D: commit local de esta unidad; BUG-045 cerrado; BUG-050/051 permanecen abiertos con puertas F5/reconciliación.
-Cierre F2E.1: commit local de esta unidad; BUG-052/053/054 cerrados; no cierra F2, falta carga sintética completa.
-Cierre F2B.3: `42b8321`; BUG-033/034/036 cerrados.
-Cierre F2B.2: `7d99f36`; BUG-001/002/003/032 cerrados.
-Cierre F2B.1: `4bb4ec3`; BUG-029/031 cerrados.
-Cierre F2A: `37525a1`; BUG-026/027/028/030 cerrados.
+BUG-005/009/044/045/047/052/053/054/055 están cerrados; BUG-006/007/008/010/011/012/014/024/035/037/043/046/050/051 siguen abiertos o parciales según el backlog. BUG-016 fue probado en repositorio y alias del adapter, sin afirmar F2 completa.
+
+Cierres históricos: commits F2C.1/F2C.2/F2D/F2E.1 están en el log local; F2B.3 `42b8321`, F2B.2 `7d99f36`, F2B.1 `4bb4ec3`, F2A `37525a1`.
