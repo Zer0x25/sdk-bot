@@ -431,17 +431,36 @@ Evidencia y contrato de la unidad: [F3.1-LECTURA-AUTENTICADA](F3.1-LECTURA-AUTEN
   Prueba adicional de API firmada incluye filtros, empate de timestamps,
   capacidades, historial parcial, rechazo 401/403/422/410 y aislamiento de lecturas.
 
-BUG-024 continúa como puerta antes de crear operadores limitados: este commit no
-introduce nueva UI ni roles, y una sesión solo se expone con la autorización de
-lectura existente. F3.2 debe implementar SSE/replay durable y `resync.required`
-para cursores anteriores a los 50.000 eventos retenidos.
+BUG-024 continúa como puerta antes de crear operadores limitados: esta unidad no
+introduce nueva UI ni roles. El SSE exige sesión firmada y `conversations:read`;
+cada conexión dura como máximo los 30 segundos del grant firmado, por lo que el
+proxy vuelve a resolver y firmar actor/capacidad al reconectar.
 
-## Siguiente unidad exacta: F3.2 / SSE y replay
+## F3.2 completada: SSE, replay y resync
 
-Implementar stream autenticado tras watermark con replay durable, carrera replay/vivo
-cerrada, deduplicación y señal de resync al vencer retención; comprobar proxy,
-desconexión, recursos y falta temporal del gateway. Mantener BUG-024 como bloqueo
-para la exposición a operadores con grants limitados.
+- `GET /v1/events` publica eventos mínimos tras commit desde el worker SQLite.
+  El subscriber se instala antes de leer watermark; el replay se pagina hasta ese
+  watermark y se deduplica con la cola viva. Sin cursor se entrega un checkpoint
+  id-only y el cliente obtiene el snapshot tras abrir el stream.
+- Cambio de época o hueco de retención/purga emite `resync.required` en el
+  watermark actual. Replay no extiende la ventana de 50.000 eventos. Cola por
+  conexión limitada a 1.000 eventos/1 MiB, heartbeat de 15 s y reconexión a 3 s.
+- Proxy conserva `Last-Event-ID`, transmite SSE y cierra upstream al desconectar.
+  Pruebas cubren auth 401/403, cursor malformado/futuro, cambio de época,
+  expiración, carrera determinista replay/live, publicación solo tras commit,
+  duplicado silencioso, respuesta de archivo no disponible y cleanup.
+- Evidencia: [F3.2-STREAM-SSE-REPLAY](F3.2-STREAM-SSE-REPLAY.md). `gateway npm run
+  check`: lint, TypeScript y 264 pruebas; `npm run check` raíz: generación,
+  TypeScript y 15 pruebas. Node 24.19.0/Linux. No se encontraron bugs funcionales
+  nuevos; BUG-024 permanece como puerta de autorización administrativa legacy.
+
+## Siguiente unidad exacta: F4.1 / base visual de bandeja
+
+Inspeccionar estructura/dependencias del panel actual; crear la aplicación
+React/TypeScript/Vite en transición, instalar solo las dependencias de la bandeja,
+definir tokens visuales, layout accesible y navegación con feature flag. Mantener
+el panel existente disponible y probar build servido por el proceso actual antes
+de integrar datos reales.
 
 ## Pendientes materiales
 

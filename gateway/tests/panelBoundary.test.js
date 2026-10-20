@@ -373,6 +373,37 @@ test('proxy SSE transmite y cierra upstream al desconectar, sin actividad y al v
     } finally { await close(front); await close(upstream); }
 });
 
+test('proxy v1 conserva Last-Event-ID y cierra el stream de eventos al desconectar el navegador', async () => {
+    let seenCursor;
+    let seenContext;
+    let resolveUpstreamClosed;
+    const upstreamClosed = new Promise(resolve => { resolveUpstreamClosed = resolve; });
+    const upstream = http.createServer((req, res) => {
+        seenCursor = req.headers['last-event-id'];
+        seenContext = req.headers['x-sdkbot-context'];
+        res.on('close', resolveUpstreamClosed);
+        res.writeHead(200, { 'Content-Type': 'text/event-stream; charset=utf-8' });
+        res.write('retry: 3000\n\ndata: connected\n\n');
+    });
+    const upstreamUrl = await listen(upstream);
+    const front = http.createServer((req, res) => proxy(req, res, req.url, {
+        internal: upstreamUrl, secret, actor, requestId: crypto.randomUUID(), v1: true,
+        sessionExpiresAt: Date.now() + 5000, timeoutMs: 500
+    }));
+    const frontUrl = await listen(front);
+    try {
+        const response = await fetch(frontUrl + '/v1/events', { headers: { 'last-event-id': '00000000-0000-4000-8000-000000000001:12' } });
+        assert.equal(response.status, 200);
+        assert.match(response.headers.get('content-type'), /^text\/event-stream/);
+        const reader = response.body.getReader();
+        assert.match(new TextDecoder().decode((await reader.read()).value), /data: connected/);
+        assert.equal(seenCursor, '00000000-0000-4000-8000-000000000001:12');
+        assert.equal(typeof seenContext, 'string');
+        await reader.cancel();
+        await upstreamClosed;
+    } finally { await close(front); await close(upstream); }
+});
+
 test('una URL absoluta del cliente nunca cambia el upstream configurado', async () => {
     let outsideHits = 0;
     const outside = http.createServer((_req, res) => { outsideHits += 1; res.end('outside'); });

@@ -119,7 +119,7 @@ export interface paths {
             path?: never;
             cookie?: never;
         };
-        /** @description SSE durable futuro; event: type, id: dataEpoch:seq, data: JSON Event. Publicar tras commit. Saltos globales válidos; cambio epoch/retención exige resync. El servidor verifica coherencia entre id/cursor/type. */
+        /** @description SSE autenticado y durable. Sin Last-Event-ID emite un checkpoint id-only del watermark actual; el cliente carga un snapshot después de abrir el stream. Cada reconexión con Last-Event-ID reproduce eventos retenidos después del cursor. Si cambia epoch o hay un hueco por retención, emite resync.required en el watermark actual. Los eventos se publican tras commit, cada data es JSON Event validado y no contiene cuerpos. El stream termina al expirar el grant firmado para volver a validar permisos. */
         get: operations["subscribeEvents"];
         put?: never;
         post?: never;
@@ -976,7 +976,7 @@ export interface operations {
         };
         requestBody?: never;
         responses: {
-            /** @description Stream; cada data JSON se valida con Event. No es un JSON array ni contiene cuerpos. */
+            /** @description Stream SSE. Puede incluir líneas id-only de checkpoint sin data; cada frame con data contiene un Event válido. No es un JSON array ni contiene cuerpos. */
             200: {
                 headers: {
                     [name: string]: unknown;

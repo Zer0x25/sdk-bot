@@ -73,6 +73,10 @@ export interface Archive {
     messagePage(input: { conversationId: string; limit?: number; before?: { occurredAt: string; id: string } }): Promise<{ items: Contract<'Message'>[]; hasMore: boolean }>;
     markRead(input: { conversationId: string; actorId: string; throughInboundSeq: string }): Promise<{ throughInboundSeq: string } | null>;
     events(input?: { after?: string; limit?: number }): Promise<Contract<'Event'>[]>;
+    eventsPage(input?: { after?: string; through?: string; limit?: number }): Promise<{
+        items: Contract<'Event'>[]; snapshot: Contract<'EventCursor'>; oldestSeq: string | null;
+    }>;
+    onEvent(listener: (event: Contract<'Event'>) => void): () => void;
     diagnostics(): Promise<Contract<'EventCursor'> & { messages: number; events: number; quarantine: number; aliases: number; provenance: number; legacyDispatchPending: number; legacyDispatchWaiting: number; integrity: string; foreignKeys: number }>;
     purge(input?: { now?: string; limit?: number }): Promise<{ bodies: number; events: number; fingerprints: number; remaining: boolean }>;
     backup(destination: string): Promise<Contract<'EventCursor'>>;

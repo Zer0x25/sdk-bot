@@ -83,8 +83,9 @@ el inbox admin. BUG-043 y BUG-050 quedan P1/F5; BUG-051 es puerta antes de migra
 un archivo preexistente. BUG-010 sigue parcial.
 F2B.3 conserva BUG-033/034/036 cerrados y BUG-037 P2/F8 antes de STT real.
 BUG-035 pairing queda F8; F3.1 cierra BUG-056/057. BUG-024 sigue antes de
-operadores limitados; BUG-014 antes de Python paralelo. F3.2 debe reparar cursores
-SSE expirados sin retener el archivo sin límite. El perfil de carga completo
+operadores limitados; BUG-014 antes de Python paralelo. F3.2 implementa replay SSE
+y `resync.required` para cursores expirados sin retener el archivo sin límite; no
+se encontraron nuevos bugs funcionales. El perfil de carga completo
 requiere repetición con 2 CPU/4 GiB;
 el host medido tenía 3 CPU/10,45 GiB. No extrapolar archivo/polling a control, roles, salida durable
 ni carga/aceptación completa F2.

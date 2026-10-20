@@ -12,6 +12,7 @@ function createArchive(options = {}) {
         workerData: { path: options.path || databasePath(), restore: options.restore === true }
     });
     const pending = new Map();
+    const eventListeners = new Set();
     let nextId = 0, elements = 0, bytes = 0, stopped = false, closing = false, closePromise;
     let resolveReady, rejectReady;
     const ready = new Promise((resolve, reject) => { resolveReady = resolve; rejectReady = reject; });
@@ -29,6 +30,12 @@ function createArchive(options = {}) {
     worker.on('message', message => {
         if (message.ready) { clearTimeout(startupTimer); resolveReady(message.ready); return; }
         if (message.startupError) { clearTimeout(startupTimer); stop(unavailable(message.startupError.code)); return; }
+        if (message.committedEvent) {
+            for (const listener of eventListeners) {
+                try { listener(message.committedEvent); } catch { /* One subscriber cannot affect archive writes. */ }
+            }
+            return;
+        }
         const entry = pending.get(message.id);
         if (!entry) return;
         pending.delete(message.id); clearTimeout(entry.timer); elements -= entry.elements; bytes -= entry.bytes;
@@ -82,6 +89,12 @@ function createArchive(options = {}) {
         messagePage: input => call('messagePage', input),
         markRead: input => call('markRead', input),
         events: (input = {}) => call('events', input),
+        eventsPage: (input = {}) => call('eventsPage', input),
+        onEvent(listener) {
+            if (typeof listener !== 'function' || stopped || closing) return () => {};
+            eventListeners.add(listener);
+            return () => eventListeners.delete(listener);
+        },
         diagnostics: () => call('diagnostics'),
         purge: (input = {}) => call('purge', input),
         backup: destination => call('backup', destination),

@@ -122,6 +122,243 @@ function requireEpoch(payload, snapshot) {
     }
 }
 
+function lastEventCursor(req) {
+    const rawHeaders = Array.isArray(req.rawHeaders) ? req.rawHeaders : [];
+    let occurrences = 0;
+    for (let index = 0; index < rawHeaders.length; index += 2) {
+        if (String(rawHeaders[index]).toLowerCase() === 'last-event-id') occurrences += 1;
+    }
+    const value = req.headers['last-event-id'];
+    if (occurrences > 1 || value !== undefined && typeof value !== 'string') throw invalid('Last-Event-ID inválido.');
+    if (value === undefined) return null;
+    if (!validate('EventId', value).valid) throw invalid('Last-Event-ID inválido.');
+    const separator = value.indexOf(':');
+    const cursor = { dataEpoch: value.slice(0, separator), seq: value.slice(separator + 1) };
+    if (!validate('EventCursor', cursor).valid) throw invalid('Last-Event-ID inválido.');
+    return cursor;
+}
+
+const LIVE_QUEUE_MAX_EVENTS = 1000;
+const LIVE_QUEUE_MAX_BYTES = 1024 * 1024;
+const EVENT_REPLAY_PAGE_SIZE = 1000;
+
+function sseFrame(event) {
+    assertValid('Event', event);
+    const id = `${event.cursor.dataEpoch}:${event.cursor.seq}`;
+    return `id: ${id}\nevent: ${event.type}\ndata: ${JSON.stringify(event)}\n\n`;
+}
+
+function resyncEvent(snapshot, reason) {
+    return assertValid('Event', { schemaVersion: 1, cursor: snapshot,
+        type: 'resync.required', occurredAt: new Date().toISOString(), data: { reason } });
+}
+
+function streamEvents(req, res, context, archive) {
+    rejectQuery(req);
+    const resume = lastEventCursor(req);
+    if (!archive || typeof archive.onEvent !== 'function' || typeof archive.eventsPage !== 'function') {
+        throw new BoundaryError(503, 'SERVICE_UNAVAILABLE', 'Stream de conversaciones no disponible.');
+    }
+
+    return startEventStream(req, res, context, archive, resume);
+}
+
+async function startEventStream(req, res, context, archive, resume) {
+    let closed = false;
+    let replaying = true;
+    let draining = false;
+    let queue = [];
+    let queueBytes = 0;
+    let epoch = null;
+    let lastSent = 0n;
+    /** @type {ReturnType<typeof setInterval>|null} */
+    let heartbeat = null;
+    /** @type {ReturnType<typeof setTimeout>|null} */
+    let authExpiry = null;
+    let unsubscribe = () => {};
+
+    function cleanup() {
+        if (closed) return;
+        closed = true;
+        if (heartbeat) clearInterval(heartbeat);
+        if (authExpiry) clearTimeout(authExpiry);
+        unsubscribe();
+        queue = [];
+        queueBytes = 0;
+    }
+    function end() {
+        cleanup();
+        if (!res.destroyed && !res.writableEnded) res.end();
+    }
+    function abort() {
+        cleanup();
+        if (!res.destroyed) res.destroy();
+    }
+    function writeText(text) {
+        if (closed || res.destroyed || res.writableEnded) return Promise.reject(new Error('SSE_CLOSED'));
+        if (res.write(text)) return Promise.resolve();
+        return new Promise((resolve, reject) => {
+            const done = () => { cleanupWait(); resolve(undefined); };
+            const failed = () => { cleanupWait(); reject(new Error('SSE_CLOSED')); };
+            const cleanupWait = () => {
+                res.off('drain', done); res.off('close', failed); res.off('error', failed);
+            };
+            res.once('drain', done); res.once('close', failed); res.once('error', failed);
+        });
+    }
+    async function writeEvent(event) {
+        const frame = sseFrame(event);
+        await writeText(frame);
+        epoch = event.cursor.dataEpoch;
+        lastSent = BigInt(event.cursor.seq);
+    }
+    async function writeResync(snapshot, reason) {
+        await writeEvent(resyncEvent(snapshot, reason));
+        queue = queue.filter(event => event.cursor.dataEpoch === epoch && BigInt(event.cursor.seq) > lastSent);
+        queueBytes = queue.reduce((size, event) => size + Buffer.byteLength(JSON.stringify(event)), 0);
+    }
+    async function resyncAtLatest(reason) {
+        const current = await archive.snapshot();
+        assertValid('EventCursor', current);
+        await writeResync(current, current.dataEpoch === epoch ? reason : 'epoch_changed');
+    }
+    function queueLive(event) {
+        if (closed) return;
+        let bytes;
+        try { bytes = Buffer.byteLength(JSON.stringify(event)); }
+        catch { abort(); return; }
+        if (queue.length >= LIVE_QUEUE_MAX_EVENTS || queueBytes + bytes > LIVE_QUEUE_MAX_BYTES) {
+            // Reconnect replays from the last frame that reached the response.
+            // Closing is safer than letting a slow client grow memory without bound.
+            abort();
+            return;
+        }
+        queue.push(event);
+        queueBytes += bytes;
+        if (!replaying) void drainLive();
+    }
+    async function drainLive() {
+        if (closed || replaying || draining) return;
+        draining = true;
+        try {
+            while (!closed && queue.length) {
+                const event = queue.shift();
+                queueBytes -= Buffer.byteLength(JSON.stringify(event));
+                assertValid('Event', event);
+                if (event.cursor.dataEpoch !== epoch) {
+                    await resyncAtLatest('epoch_changed');
+                    continue;
+                }
+                const sequence = BigInt(event.cursor.seq);
+                if (sequence <= lastSent) continue;
+                if (sequence !== lastSent + 1n) {
+                    await resyncAtLatest('cursor_expired');
+                    continue;
+                }
+                await writeEvent(event);
+            }
+        } catch {
+            if (!closed) abort();
+        } finally {
+            draining = false;
+            if (!closed && !replaying && queue.length) void drainLive();
+        }
+    }
+
+    res.on('close', cleanup);
+    res.on('error', cleanup);
+    try {
+        // Subscribe before reading the watermark. Events committed during the
+        // snapshot/replay window queue here and are drained after durable replay.
+        unsubscribe = archive.onEvent(queueLive);
+        const watermark = await archive.snapshot();
+        assertValid('EventCursor', watermark);
+        if (resume && resume.dataEpoch === watermark.dataEpoch && BigInt(resume.seq) > BigInt(watermark.seq)) {
+            throw invalid('Last-Event-ID está por delante del archivo.');
+        }
+        if (res.destroyed) { cleanup(); return; }
+
+        res.writeHead(200, {
+            'Content-Type': 'text/event-stream; charset=utf-8',
+            'Cache-Control': 'no-cache, no-transform',
+            Connection: 'keep-alive',
+            'X-Accel-Buffering': 'no',
+            'X-Request-Id': context.requestId
+        });
+        const authLifetime = Number.isSafeInteger(context.expiresAt)
+            ? Math.max(1, context.expiresAt - Date.now()) : 25000;
+        heartbeat = setInterval(() => {
+            if (!closed && !res.writableNeedDrain) res.write(': ping\n\n');
+        }, 15000);
+        heartbeat.unref?.();
+        // The proxy signs each reconnect again. Ending no later than this signed
+        // grant makes permission revocation effective on the next connection.
+        authExpiry = setTimeout(end, authLifetime);
+        authExpiry.unref?.();
+        await writeText('retry: 3000\n\n');
+
+        if (resume && resume.dataEpoch !== watermark.dataEpoch) {
+            await writeResync(watermark, 'epoch_changed');
+        } else if (resume) {
+            epoch = watermark.dataEpoch;
+            lastSent = BigInt(resume.seq);
+            const through = BigInt(watermark.seq);
+            let replayed = lastSent;
+            let expired = false;
+            while (!closed && replayed < through) {
+                const page = await archive.eventsPage({ after: String(replayed), through: watermark.seq, limit: EVENT_REPLAY_PAGE_SIZE });
+                assertValid('EventCursor', page.snapshot);
+                if (page.snapshot.dataEpoch !== watermark.dataEpoch) {
+                    await resyncAtLatest('epoch_changed');
+                    expired = true;
+                    break;
+                }
+                if (page.oldestSeq === null || BigInt(page.oldestSeq) > replayed + 1n) {
+                    await resyncAtLatest('cursor_expired');
+                    expired = true;
+                    break;
+                }
+                if (!page.items.length) {
+                    await resyncAtLatest('cursor_expired');
+                    expired = true;
+                    break;
+                }
+                for (const event of page.items) {
+                    assertValid('Event', event);
+                    const sequence = BigInt(event.cursor.seq);
+                    if (event.cursor.dataEpoch !== watermark.dataEpoch || sequence !== replayed + 1n) {
+                        await resyncAtLatest(event.cursor.dataEpoch !== watermark.dataEpoch ? 'epoch_changed' : 'cursor_expired');
+                        expired = true;
+                        break;
+                    }
+                    await writeEvent(event);
+                    replayed = sequence;
+                }
+                if (expired) break;
+                if (replayed < through && page.items.length < EVENT_REPLAY_PAGE_SIZE) {
+                    await resyncAtLatest('cursor_expired');
+                    expired = true;
+                    break;
+                }
+            }
+        } else {
+            // The id-only checkpoint lets EventSource preserve this watermark
+            // even if the connection drops before the first domain event. The
+            // client loads a fresh snapshot after opening the stream.
+            epoch = watermark.dataEpoch;
+            lastSent = BigInt(watermark.seq);
+            await writeText(`id: ${epoch}:${lastSent}\n\n`);
+        }
+        if (closed) return;
+        replaying = false;
+        void drainLive();
+    } catch (error) {
+        cleanup();
+        if (res.headersSent) { if (!res.destroyed) res.destroy(); return; }
+        throw error;
+    }
+}
+
 function safeString(value) {
     if (typeof value !== 'string') return null;
     const input = value.trim().normalize('NFC');
@@ -288,6 +525,9 @@ function createSessionApi(getPolicy, archive, getContacts = () => ({}), getChann
                     status: accountStatus(getChannelStatus(row.channel, row.id)), capabilities: CAPABILITIES[row.channel]
                 })) });
                 return send(res, 200, body, context.requestId);
+            }
+            if (req.method === 'GET' && pathname === '/v1/events') {
+                return await streamEvents(req, res, context, archive);
             }
             if (req.method === 'GET' && pathname === '/v1/conversations') {
                 const query = parseQuery(req, 'ConversationsQuery');

@@ -467,6 +467,24 @@ function purge(input) {
     const fingerprints = run('DELETE FROM fingerprints WHERE rowid IN (SELECT rowid FROM fingerprints WHERE ingested_at<? LIMIT ?)', cutoff(180), limit).changes;
     return { bodies, events, fingerprints, remaining: bodies === limit || events === limit || fingerprints === limit };
 }
+function eventPage(input) {
+    const after = input.after ?? '0';
+    assertValid('Sequence', after);
+    const current = snapshot();
+    const through = input.through ?? current.seq;
+    assertValid('Sequence', through);
+    const afterValue = BigInt(after), throughValue = BigInt(through), currentValue = BigInt(current.seq);
+    if (afterValue > throughValue || throughValue > currentValue) fail('INVALID_EVENT_RANGE');
+    const limit = input.limit ?? 1000;
+    if (!Number.isInteger(limit) || limit < 1 || limit > 1000) fail('INVALID_LIMIT');
+    const oldestSeq = one('SELECT seq FROM events ORDER BY length(seq),seq LIMIT 1')?.seq ?? null;
+    const items = all(`SELECT payload FROM events
+        WHERE (length(seq)>length(?) OR (length(seq)=length(?) AND seq>?))
+        AND (length(seq)<length(?) OR (length(seq)=length(?) AND seq<=?))
+        ORDER BY length(seq),seq LIMIT ?`, after, after, after, through, through, through, limit)
+        .map(row => JSON.parse(row.payload));
+    return { items, snapshot: current, oldestSeq };
+}
 function dispatch(method, input) {
     switch (method) {
         case 'purge': return transaction(() => purge(input));
@@ -505,6 +523,7 @@ function dispatch(method, input) {
             if (!Number.isInteger(limit) || limit < 1 || limit > 1000) fail('INVALID_LIMIT');
             return all('SELECT payload FROM events WHERE length(seq)>length(?) OR (length(seq)=length(?) AND seq>?) ORDER BY length(seq),seq LIMIT ?', after, after, after, limit).map(r => JSON.parse(r.payload));
         }
+        case 'eventsPage': return eventPage(input ?? {});
         case 'diagnostics': return { ...snapshot(), messages: one('SELECT COUNT(*) n FROM messages').n,
             events: one('SELECT COUNT(*) n FROM events').n, quarantine: one('SELECT COUNT(*) n FROM quarantine').n,
             aliases: one('SELECT COUNT(*) n FROM aliases').n, provenance: one('SELECT COUNT(*) n FROM provenance').n,
@@ -521,12 +540,23 @@ function dispatch(method, input) {
         default: fail('UNKNOWN_OPERATION');
     }
 }
+function committedEvents(method, value) {
+    if (method === 'ingestBatch' && Array.isArray(value)) return value.map(result => result?.event).filter(Boolean);
+    if (method === 'captureTelegramBatch' && Array.isArray(value?.results)) {
+        return value.results.map(result => result?.result?.event).filter(Boolean);
+    }
+    if (method === 'updateTranscription' && value?.event) return [value.event];
+    return [];
+}
 try {
     parentPort.postMessage({ ready: initialize() });
     parentPort.on('message', ({ id, method, input }) => {
         try {
             const value = dispatch(method, input);
             parentPort.postMessage({ id, value });
+            // dispatch() commits each write transaction before returning. Publish
+            // only those committed event rows, after the RPC result is queued.
+            for (const event of committedEvents(method, value)) parentPort.postMessage({ committedEvent: event });
             if (method === 'close') parentPort.close();
         } catch (error) {
             parentPort.postMessage({ id, error: { code: error.code || 'ARCHIVE_OPERATION_FAILED' } });

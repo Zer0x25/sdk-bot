@@ -200,12 +200,13 @@ de control y atribución de autoría outbound quedan para F5.
   etiqueta de contacto nullable sin exponer identidades del proveedor.
 - [x] F3.1: cursor de lectura monotónico por actor separado de recibos remotos;
   conteo de no leídos respaldado por SQLite y durable tras reinicio.
-- [ ] SSE con eventos transaccionales, watermark, replay, deduplicación y
+- [x] F3.2: SSE con eventos tras commit, watermark, replay, deduplicación y
   resync.required. Cerrar carrera replay/vivo y soportar cursor fuera de retención.
 - [x] F3.1: autorizar lectura por sesión firmada/capacidad y validar respuestas
   JSON del proxy con contratos v1; no exponer raw/secretos/rutas locales.
-- [ ] F3.2: probar autorización SSE, proxy, desconexión, cierre de recursos y falta
-  temporal del gateway. Definir revocación/alcance de streams activos.
+- [x] F3.2: probar autorización SSE, proxy, desconexión, cierre de recursos y falta
+  temporal del gateway. Los grants activos duran como máximo 30 s y se revalidan
+  al reconectar.
   Resolver BUG-024 antes de operadores limitados: grants v1 deben acompañarse de
   autorización administrativa legacy.
 
@@ -214,7 +215,8 @@ duplicados con timestamps iguales; cursores de lista se invalidan ante cambios d
 snapshot, agenda, política o lectura. **Aceptación F3.2:** mismo resultado al leer
 y reanudar stream; no perder eventos entre snapshot y suscripción; resync explícito
 al vencer la retención. Revisar actualización de lista ante mensajes nuevos.
-Evidencia F3.1: [lectura autenticada](F3.1-LECTURA-AUTENTICADA.md).
+Evidencia F3.1: [lectura autenticada](F3.1-LECTURA-AUTENTICADA.md). F3.2:
+[SSE, replay y resync](F3.2-STREAM-SSE-REPLAY.md).
 
 ## Fase 4 — Bandeja de lectura y sistema visual
 
