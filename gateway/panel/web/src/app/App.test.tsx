@@ -440,6 +440,61 @@ describe('inbox shell and real API integration', () => {
     })).toBe(true);
   });
 
+  it('runs another message refresh when an event arrives during an in-flight fetch', async () => {
+    const fetchMock = installApiMock();
+    const fallback = fetchMock.getMockImplementation();
+    expect(fallback).toBeDefined();
+    const secondLiveMessage = {
+      ...message('aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa', 'Mensaje recibido durante la actualización', '2026-10-20T12:02:00.000Z'),
+      inboundSeq: '3'
+    };
+    let includeReplay = false;
+    let liveResponses = 0;
+    let signalFirstFetchStarted!: () => void;
+    const firstFetchStarted = new Promise<void>(resolve => { signalFirstFetchStarted = resolve; });
+    let releaseFirstFetch!: () => void;
+    fetchMock.mockImplementation(async (input, init) => {
+      const url = new URL(String(input), 'http://panel.local');
+      if (includeReplay && url.pathname === '/api/v1/conversations/' + conversationId + '/messages') {
+        liveResponses += 1;
+        if (liveResponses === 1) {
+          const waitForRelease = new Promise<void>(resolve => { releaseFirstFetch = resolve; });
+          signalFirstFetchStarted();
+          await waitForRelease;
+          return jsonResponse({ items: [latestMessage, liveMessage], nextCursor: null, snapshot });
+        }
+        return jsonResponse({ items: [latestMessage, liveMessage, secondLiveMessage], nextCursor: null, snapshot });
+      }
+      return fallback!(input, init);
+    });
+    const sources = installEventSourceMock();
+    renderApp('/inbox/' + conversationId);
+    await screen.findByText('¿En qué puedo ayudarte?');
+
+    const source = sources[0];
+    act(() => source.open());
+    await screen.findByText('En vivo');
+    includeReplay = true;
+    act(() => source.dispatch('message.created', streamEvent('message.created', {
+      conversationId,
+      messageId: liveMessage.id,
+      aggregateVersion: '3'
+    }, '3'), snapshot.dataEpoch + ':3'));
+    await firstFetchStarted;
+
+    act(() => source.dispatch('message.created', streamEvent('message.created', {
+      conversationId,
+      messageId: secondLiveMessage.id,
+      aggregateVersion: '4'
+    }, '4'), snapshot.dataEpoch + ':4'));
+    await new Promise(resolve => window.setTimeout(resolve, 140));
+    releaseFirstFetch();
+
+    expect(await screen.findByText('Mensaje recibido durante la actualización')).toBeInTheDocument();
+    expect(liveResponses).toBeGreaterThan(1);
+    expect(screen.getByText('2 mensajes nuevos')).toBeInTheDocument();
+  });
+
   it('resets paginated snapshots when the stream reports that its cursor needs resynchronization', async () => {
     const fetchMock = installApiMock({ pagination: true, listPagination: true });
     const sources = installEventSourceMock();
