@@ -8,6 +8,7 @@ class ChannelAdapter extends EventEmitter {
     constructor(channelName) {
         super();
         this.channelName = channelName; // ej. 'whatsapp', 'telegram'
+        this.archive = null;
         this.status = 'disconnected';
         this.statusDetail = null;
     }
@@ -32,7 +33,12 @@ class ChannelAdapter extends EventEmitter {
      * @param {string} _text
      * @returns {Promise<any>} Objeto resultado de envío para registrar
      */
-    async sendMessage(_normalizedJid, _text) {
+    async sendMessage(normalizedJid, text, options = {}) {
+        return require('../services/outbound/sendMessage').sendMessage(this, normalizedJid, text, options);
+    }
+
+    /** Envío del proveedor, invocado por el SendMessage común tras guardar el intent. */
+    async sendMessageRaw(_normalizedJid, _text, _options = {}) {
         throw new Error('Not implemented');
     }
 

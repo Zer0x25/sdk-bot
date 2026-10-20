@@ -88,9 +88,10 @@ flowchart LR
     P --> UI
 ```
 
-En la transición actual, `legacy_dispatch` es una outbox de **entrada** para
-cerrar el corte commit→handler. El outbox de salida, la barrera de control y la
-idempotencia de proveedores siguen en F5; no confundirlos.
+`legacy_dispatch` es una outbox de **entrada** para cerrar el corte commit→handler.
+F5.6 agrega `outbound_intents` como outbox de **salida**, delante de ambos
+adaptadores; no confundir los dos ledgers. El estado local de salida no sustituye
+la idempotencia del proveedor: los resultados ambiguos requieren conciliación.
 
 - Solo el gateway mantiene sockets/polling y escribe su DB. Una réplica por cuenta
   de WhatsApp. Abrir el nuevo panel jamás inicia otro transporte.

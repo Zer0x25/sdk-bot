@@ -298,12 +298,15 @@ class TelegramAdapter extends ChannelAdapter {
         }
     }
 
-    async sendMessage(normalizedJid, text, options = {}) {
+    async sendMessageRaw(normalizedJid, text, options = {}) {
         const token = this.token;
         const accountId = this.accountId;
         const adminChatId = this.adminChatId;
         const generation = this.pollGeneration;
-        if (!token) throw new Error('Telegram token no configurado');
+        if (!token) throw Object.assign(new Error('Telegram token no configurado'), { code: 'TG_TOKEN_MISSING', outboundOutcome: 'rejected' });
+        if (options._outboundAccountId && options._outboundAccountId !== accountId) {
+            throw Object.assign(failure('TG_CONNECTION_CHANGED', 'La cuenta de Telegram cambió antes del envío.'), { outboundOutcome: 'rejected' });
+        }
         const tgChatId = normalizedJid.replace('telegram:', '');
         const send = useMarkdown => new Promise((resolve, reject) => {
             const payload = { chat_id: tgChatId, text: text };
@@ -330,7 +333,7 @@ class TelegramAdapter extends ChannelAdapter {
                     if (useMarkdown && res.statusCode === 400 && body.includes("can't parse entities")) {
                         const sameSession = this.isGeneration(generation, token) && this.accountId === accountId;
                         if (!sameSession) {
-                            reject(failure('TG_CONNECTION_CHANGED', 'La conexión de Telegram cambió antes del reintento.'));
+                            reject(Object.assign(failure('TG_CONNECTION_CHANGED', 'La conexión de Telegram cambió antes del reintento.'), { outboundOutcome: 'rejected' }));
                             return;
                         }
                         // Retry only while the original token/account still owns the adapter.
@@ -344,8 +347,9 @@ class TelegramAdapter extends ChannelAdapter {
                         await this.archiveAcceptedSend(accountId, tgChatId, bodyJson.result, adminChatId);
                         resolve(bodyJson);
                     } else {
-                        reject(failure(bodyJson?.ok === false ? 'TG_SEND_REJECTED' : 'TG_SEND_HTTP_ERROR',
-                            `Telegram rechazó el envío (${res.statusCode}).`));
+                        const definite = bodyJson?.ok === false || (res.statusCode >= 400 && res.statusCode < 500);
+                        reject(Object.assign(failure(definite ? 'TG_SEND_REJECTED' : 'TG_SEND_HTTP_ERROR',
+                            `Telegram rechazó el envío (${res.statusCode}).`), { outboundOutcome: definite ? 'rejected' : 'unknown' }));
                     }
                 });
             });

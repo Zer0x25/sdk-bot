@@ -45,6 +45,16 @@ class WhatsappAdapter extends ChannelAdapter {
     getKnownAdminPhone() {
         try { return getSettingsDB().lastKnownAdminPhone || ''; } catch (e) { return ''; }
     }
+
+    async ensureOutboundAccountId() {
+        const sock = this.sock;
+        if (!sock?.user || !this.archive) throw Object.assign(new Error('WhatsApp no conectado.'), { code: 'WA_NOT_CONNECTED' });
+        const session = socketIdentity(sock.user);
+        const account = await this.archive.registerAccount({ channel: 'whatsapp', providerKey: session.providerKey });
+        if (this.sock !== sock) throw Object.assign(new Error('Socket WhatsApp reemplazado.'), { code: 'WA_SOCKET_REPLACED' });
+        this.accountId = account.id;
+        return account.id;
+    }
     /** Persiste el numero admin conocido en settings DB. */
     setKnownAdminPhone(phone) {
         try {
@@ -456,22 +466,31 @@ class WhatsappAdapter extends ChannelAdapter {
         });
     }
 
-    async sendMessage(normalizedJid, text, options = {}) {
-        if (!this.sock) throw new Error('WhatsApp no conectado');
+    async sendMessageRaw(normalizedJid, text, options = {}) {
+        if (!this.sock) throw Object.assign(new Error('WhatsApp no conectado'), { code: 'WA_NOT_CONNECTED', outboundOutcome: 'rejected' });
         const sock = this.sock;
         const waJid = normalizedJid.replace('whatsapp:', '');
         const session = socketIdentity(sock.user);
-        const remote = individualJid(waJid);
-        if (this.archive && remote && !session.self.includes(remote)) {
-            const identity = await this.archive.resolve({ accountId: (await this.archive.registerAccount({
-                channel: 'whatsapp', providerKey: session.providerKey })).id, channel: 'whatsapp',
-            kind: remote.endsWith('@lid') ? 'whatsapp_lid' : 'whatsapp_jid', exactValue: remote });
-            if ((await this.archive.conversation(identity.conversation_id)).requires_review) {
-                throw Object.assign(new Error('Identidad pendiente de revisión.'), { code: 'WA_IDENTITY_REVIEW_REQUIRED' });
-            }
+        if (options._outboundAccountId && options._outboundAccountId !== this.accountId) {
+            throw Object.assign(new Error('La cuenta WhatsApp cambió antes del envío.'), { code: 'OUTBOUND_ACCOUNT_CHANGED', outboundOutcome: 'rejected' });
         }
-        if (this.sock !== sock) throw new Error('Socket WhatsApp reemplazado');
-        const content = (text && typeof text === 'object') ? { ...text, ...options } : { text, ...options };
+        const remote = individualJid(waJid);
+        try {
+            if (this.archive && remote && !session.self.includes(remote)) {
+                const identity = await this.archive.resolve({ accountId: (await this.archive.registerAccount({
+                    channel: 'whatsapp', providerKey: session.providerKey })).id, channel: 'whatsapp',
+                kind: remote.endsWith('@lid') ? 'whatsapp_lid' : 'whatsapp_jid', exactValue: remote });
+                if ((await this.archive.conversation(identity.conversation_id)).requires_review) {
+                    throw Object.assign(new Error('Identidad pendiente de revisión.'), { code: 'WA_IDENTITY_REVIEW_REQUIRED' });
+                }
+            }
+        } catch (error) {
+            error.outboundOutcome = 'rejected';
+            throw error;
+        }
+        if (this.sock !== sock) throw Object.assign(new Error('Socket WhatsApp reemplazado'), { code: 'WA_SOCKET_REPLACED', outboundOutcome: 'rejected' });
+        const providerOptions = require('../services/outbound/sendMessage').withoutOutboundOptions(options);
+        const content = (text && typeof text === 'object') ? { ...text, ...providerOptions } : { text, ...providerOptions };
         const result = await sock.sendMessage(waJid, content);
         if (result?.key?.id) {
             const now = Date.now();

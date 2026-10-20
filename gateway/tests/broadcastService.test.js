@@ -268,6 +268,27 @@ test('un broadcast a medias se retoma tras recargar el módulo (cursor persistid
     }
 });
 
+test('un broadcast legacy que quedó enviando se pausa como incierto y no se reproduce', async () => {
+    const t = setupEnv();
+    try {
+        process.env.SDK_BROADCAST_ENABLED = '1';
+        writeContacts({ '56911111111': contact({ phone: '56911111111', savedName: 'A' }) });
+        fs.writeFileSync(process.env.SDK_BROADCAST_DB_PATH, JSON.stringify({ enabled: true,
+            dailySends: {}, broadcasts: [{ id: 'legacy', text: 'mensaje', scheduledAt: null, status: 'sending',
+                cursor: 0, eligible: 1, sent: 0, skipped: 0, failed: 0, createdAt: new Date().toISOString() }] }));
+        const bs = freshModules();
+        let calls = 0;
+        bs.setSock({ sendMessage: async () => { calls += 1; return {}; } });
+        bs.setIsConnected(() => true);
+        assert.equal(bs.getBroadcasts()[0].status, 'delivery_unknown');
+        await bs.tick();
+        assert.equal(calls, 0);
+        assert.equal(bs.getBroadcastStats().deliveryUnknown, 1);
+    } finally {
+        t.restore();
+    }
+});
+
 test('broadcast desactivado por defecto: enqueue rechaza y tick no envía', async () => {
     const t = setupEnv();
     try {

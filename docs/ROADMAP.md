@@ -283,11 +283,12 @@ Compositor todavía no ofrece enviar.
   generación, typing, pausas, retries y cada globo. Cancelar trabajos obsoletos;
   al activar SQLite se archiva la cola JSONL heredada para impedir replay tras
   reiniciar. Evidencia: [F5.5](F5.5-JOB-BARRIER.md).
-- [ ] **F5.6 — Outbox y salida común:** SendMessage para persona/IA/avisos y puerto
+- [x] **F5.6 — Outbox y salida común:** SendMessage para persona/IA/avisos y puerto
   de campañas con su intent/política. Persistir intención antes de red, usar
   idempotencia local, estados reales y delivery_unknown; una respuesta ambigua
   tras crash queda para reconciliar, sin retry automático ciego. Reconducir `/notify`
-  y envíos directos.
+  y envíos directos. Evidencia: [F5.6](F5.6-OUTBOX.md); outbox SQLite v8, pruebas
+  de concurrencia/reinicio y campañas heredadas pausadas ante ambigüedad.
 - [ ] **F5.7 — Contexto y reanudación IA:** GenerateReply con generationId y
   contexto explícito/versionado, incluir mensajes humanos, invalidar respuestas
   canceladas y confirmar solo globos enviados. Release usa `future_only`; la pausa

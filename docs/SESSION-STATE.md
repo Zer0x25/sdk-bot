@@ -672,7 +672,7 @@ ausencia de Vite/CA. Commit separado de la UI.
   inspeccionó ni modificó la cola runtime; la prueba usa un archivo temporal.
 - Evidencia: [F5.5](F5.5-JOB-BARRIER.md). 2 pruebas de barrera IA, 7 de servicio y
   12 de queue/dispatch pasan; también pasan 12 pruebas Telegram, lint y typecheck.
-  BUG-050 sigue abierto para el outbox F5.6.
+  BUG-050 quedó abierto al cerrar F5.5 y se cerró después en F5.6.
 - F5.5 queda validada y con commit local; sin push hasta cerrar F5. Sigue **F5.6:
   outbox y salida común**.
 
@@ -689,6 +689,32 @@ ausencia de Vite/CA. Commit separado de la UI.
 Actualizar estado y solo checkboxes demostrados; hacer commit probado e informar
 hash. Consultar [BACKLOG.md](BACKLOG.md) para el estado y aceptación de cada bug.
 
-BUG-005/009/043/044/045/047/052/053/054/055/070 están cerrados; BUG-006/007/008/010/011/012/014/024/035/037/046/050/051 siguen abiertos o parciales según el backlog. BUG-016 fue probado en repositorio y alias del adapter, sin afirmar F2 completa.
+BUG-005/009/012/043/044/045/047/050/052/053/054/055/070 están cerrados; BUG-006/007/008/010/011/014/024/035/037/046/051/071/072 siguen abiertos o parciales según el backlog. BUG-016 fue probado en repositorio y alias del adapter, sin afirmar F2 completa.
 
 Cierres históricos: commits F2C.1/F2C.2/F2D/F2E.1 están en el log local; F2B.3 `42b8321`, F2B.2 `7d99f36`, F2B.1 `4bb4ec3`, F2A `37525a1`.
+
+## F5.6: Outbox y salida común
+
+- `ChannelAdapter.sendMessage` ahora es el puerto común; WhatsApp y Telegram
+  implementan `sendMessageRaw` detrás de él. La migración SQLite v7→v8 agrega
+  intents con idempotency key/fingerprint, cuenta/destino, actor/origen/política,
+  control snapshot y estados `intent`, `sending`, `accepted`, `rejected` y
+  `delivery_unknown`.
+- El intent se confirma antes de la llamada de red. Duplicados aceptados devuelven
+  el resultado persistido; claves con contenido distinto fallan. Un `sending` al
+  iniciar se convierte en `delivery_unknown`; no hay retry automático y se añadió
+  API interna de consulta/conciliación con actor y nota obligatorios. El claim IA
+  verifica control/contexto/política en la transacción de SQLite.
+- La IA guarda clave por globo; una salida fallida/ambigua no vuelve a encolar toda
+  la generación. La cola antigua usa su UUID durable. Campañas usan una clave por
+  broadcast/destino y escriben la clave antes del proveedor. Campañas anteriores
+  que quedaron `sending` sin recibo se pausan para revisión. `/notify` requiere una
+  clave y usa el adaptador; avisos Telegram usan el mismo puerto.
+- BUG-012 y BUG-050 se cerraron con pruebas. BUG-072 anota que `/telegram/test`
+  conserva una sonda directa para tokens borrador aún no conectados. BUG-071 sigue
+  como defecto de resumen no bloqueante.
+- Evidencia: [F5.6](F5.6-OUTBOX.md); migración/concurrencia/reinicio, transportes
+  WA/TG y campañas pasan. `gateway npm run check` pasa con lint, tipos, 13 pruebas
+  Vitest, build y 301 pruebas Node. No se leyeron ni modificaron archivos runtime.
+- F5.6 queda validada; sigue F5.7: contexto explícito,
+  generationId/reanudación y confirmación solo de globos enviados.

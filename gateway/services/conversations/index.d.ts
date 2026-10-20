@@ -56,6 +56,16 @@ export interface ControlTarget {
     identities: Array<{ kind: string; exactValue: string }>; control: Contract<'ConversationControl'>;
 }
 export interface ControlOperation extends Contract<'Operation'> {}
+export interface OutboundIntent {
+    id: string; idempotencyKey: string; requestFingerprint: string; accountId: string | null;
+    conversationId: string | null; channel: 'whatsapp' | 'telegram'; destination: string; actorId: string;
+    source: 'human' | 'ai' | 'notice' | 'campaign' | 'command' | 'system'; payload: Record<string, unknown>;
+    controlSnapshot: { conversationId: string; controlVersion: string; contextVersion: string; policyVersion: string } | null;
+    policy: Record<string, unknown> | null; state: 'intent' | 'sending' | 'accepted' | 'rejected' | 'delivery_unknown';
+    providerMessageId: string | null; providerResult: unknown | null; errorCode: string | null;
+    reconciliationNote: string | null; reconciledBy: string | null; reconciledAt: string | null;
+    createdAt: string; updatedAt: string; sendingAt: string | null; completedAt: string | null;
+}
 export interface ControlPolicy {
     globalMode: 'allowed_all' | 'ignored_all'; globalProfileKey: string | null; policyVersion: string;
     requiresReview: boolean; reviewReason: string | null;
@@ -78,6 +88,20 @@ export interface Archive {
     pendingLegacyDispatches(input?: { limit?: number }): Promise<PendingLegacyDispatch[]>;
     markLegacyDispatched(input: { messageId: string }): Promise<{ status: 'dispatched' | 'pending' | 'waiting' | 'skipped' | 'missing' }>;
     retryLegacyDispatch(input: { messageId: string; code?: string }): Promise<{ status: 'pending' | 'waiting' | 'dispatched' | 'skipped' | 'missing' }>;
+    beginOutboundIntent(input: { idempotencyKey: string; accountId?: string | null; conversationId?: string | null;
+        channel: 'whatsapp' | 'telegram'; destination: string; actorId: string;
+        source: OutboundIntent['source']; payload: Record<string, unknown>;
+        controlSnapshot?: OutboundIntent['controlSnapshot']; policy?: Record<string, unknown> | null }):
+        Promise<{ status: 'created' | 'existing'; intent: OutboundIntent }>;
+    claimOutboundIntent(input: { idempotencyKey: string }): Promise<
+        { status: 'claimed' | 'intent' | 'sending' | 'accepted' | 'rejected' | 'delivery_unknown'; intent: OutboundIntent | null; errorCode?: string }>;
+    finishOutboundIntent(input: { idempotencyKey: string; state: 'accepted' | 'rejected' | 'delivery_unknown';
+        providerMessageId?: string | null; providerResult?: unknown; errorCode?: string | null }): Promise<OutboundIntent>;
+    outboundIntent(idempotencyKey: string): Promise<OutboundIntent | null>;
+    outboundIntents(input?: { conversationId?: string; state?: OutboundIntent['state'];
+        after?: { createdAt: string; id: string }; limit?: number }): Promise<OutboundIntent[]>;
+    reconcileOutboundIntent(input: { idempotencyKey: string; actorId: string; state: 'accepted' | 'rejected';
+        note: string; providerMessageId?: string | null }): Promise<{ status: 'reconciled' | 'existing'; intent: OutboundIntent }>;
     controlState(conversationId: string): Promise<Contract<'ConversationControl'> | null>;
     writeControlState(input: { conversationId: string; actorId: string; expectedVersion: Contract<'Version'>;
         state: Omit<Contract<'ConversationControl'>, 'controlVersion' | 'contextVersion'> }): Promise<

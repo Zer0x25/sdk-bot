@@ -43,7 +43,6 @@ const {
     importProfileFile, deleteProfileFile, reloadProfiles
 } = require('./brainService');
 const { getContactsDB, getSettingsDB, saveSettingsDB } = require('./db');
-const { sendTelegramMessage } = require('./telegramService');
 const { requestJson: telegramRequest, failure: telegramFailure } = require('./telegramHttp');
 const { runAdminCommand } = require('./adminCommandRunner');
 const { findKeyByDigits } = require('./contactsRepository');
@@ -231,8 +230,9 @@ function notifyAdmin(message) {
     try {
         const s = getSettingsDB();
         if (s.telegramToken && s.telegramChatId) {
-            // sendTelegramMessage lee token/chatId de settings si no se pasan overrides.
-            sendTelegramMessage(`🔔 *SDK-Bot*\n\n${message}`)
+            const adapter = require('../index').getAdapter('telegram');
+            if (!adapter) return;
+            adapter.sendMessage(`telegram:${s.telegramChatId}`, `🔔 *SDK-Bot*\n\n${message}`, { source: 'notice' })
                 .catch((/** @type {any} */ e) => logError.error(`🔔 [ADMIN] No se pudo avisar por Telegram: ${e && e.message ? e.message : e}`));
         }
     } catch (/** @type {any} */ e) {
@@ -965,11 +965,21 @@ function routeApi(req, res, pathname, params) {
         readBody(req).then(async (b) => {
             if (!activeSock) return sendJson(res, 500, { success: false, message: 'No socket activo' });
             if (!b.jid || !b.message) return sendJson(res, 400, { success: false, message: 'Falta jid o message' });
+            const idempotencyKey = b.idempotencyKey || req.headers['idempotency-key'];
+            if (typeof idempotencyKey !== 'string' || !idempotencyKey.length || idempotencyKey.length > 256) {
+                return sendJson(res, 400, { success: false, code: 'IDEMPOTENCY_KEY_REQUIRED',
+                    message: 'Falta idempotencyKey para evitar envíos duplicados ante un timeout.' });
+            }
             try {
-                await activeSock.sendMessage(b.jid, b.message);
-                sendJson(res, 200, { success: true });
+                const sent = await activeSock.sendMessage(b.jid, b.message, {
+                    source: 'notice', idempotencyKey,
+                    policy: { kind: 'internal_notify' }
+                });
+                sendJson(res, 200, { success: true, outbound: sent?._outbox || null });
             } catch (e) {
-                sendJson(res, 500, { success: false, message: errMsg(e) });
+                const error = /** @type {any} */ (e);
+                sendJson(res, 500, { success: false, code: error?.code || 'NOTIFY_FAILED',
+                    idempotencyKey, outboundState: error?.outboundState || null, message: errMsg(error) });
             }
         });
         return;

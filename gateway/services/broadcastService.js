@@ -35,13 +35,19 @@ const CONFIRMATION_TTL_MS = num('GATEWAY_BROADCAST_CONFIRMATION_TTL_MS', 60000);
  * @property {string} id
  * @property {string} text
  * @property {string|null} scheduledAt   // ISO; null = inmediato
- * @property {('pending'|'sending'|'done'|'cancelled')} status
+ * @property {('pending'|'sending'|'done'|'cancelled'|'delivery_unknown')} status
  * @property {number} cursor             // índice del próximo contacto a enviar
  * @property {number} eligible           // total de contactos aptos al inicio
  * @property {number} sent
  * @property {number} skipped            // omitidos por límite diario
  * @property {number} failed             // errores de envío
  * @property {string} createdAt
+ * @property {number} [sendProtocolVersion]
+ * @property {string} [currentTarget]
+ * @property {string} [currentIdempotencyKey]
+ * @property {string} [deliveryUnknownTarget]
+ * @property {string} [deliveryUnknownIdempotencyKey]
+ * @property {string} [deliveryUnknownAt]
  */
 
 /**
@@ -76,9 +82,18 @@ function load() {
             db = JSON.parse(fs.readFileSync(DB_FILE, 'utf8'));
             if (!Array.isArray(db.broadcasts)) db.broadcasts = [];
             if (!db.dailySends || typeof db.dailySends !== 'object') db.dailySends = {};
-            // Un broadcast que quedó a medias vuelve a 'pending' para retomarse
+            // Solo se reanuda un envío si su clave durable ya está ligada al
+            // outbox. Las filas antiguas no tienen prueba de envío y se aíslan.
             for (const b of db.broadcasts) {
-                if (b.status === 'sending') b.status = 'pending';
+                if (b.status === 'sending') {
+                    if (!b.sendProtocolVersion) {
+                        b.status = 'delivery_unknown';
+                        b.deliveryUnknownTarget = b.currentTarget || 'legacy_unknown';
+                        b.deliveryUnknownAt = new Date().toISOString();
+                    } else if (!b.currentIdempotencyKey) {
+                        b.status = 'pending';
+                    }
+                }
             }
             const pending = db.broadcasts.filter(b => b.status === 'pending').length;
             if (pending > 0) log.warn(`📢 [BROADCAST] ${pending} broadcast(s) pendiente(s) retomados de disco.`);
@@ -231,6 +246,7 @@ function enqueueBroadcast(text, scheduledAt = null) {
         sent: 0,
         skipped: 0,
         failed: 0,
+        sendProtocolVersion: 1,
         createdAt: new Date().toISOString()
     });
     db.broadcasts.push(entry);
@@ -265,6 +281,7 @@ function buildStatusText() {
         .filter(([, e]) => e.date === date)
         .reduce((acc, [, e]) => acc + e.count, 0);
     const pending = db.broadcasts.filter(b => b.status === 'pending');
+    const uncertain = db.broadcasts.filter(b => b.status === 'delivery_unknown');
     const lines = [];
     for (const b of pending) {
         const when = b.scheduledAt
@@ -279,6 +296,7 @@ function buildStatusText() {
         (pending.length
             ? `• *Pendientes:* ${pending.length}\n${lines.join('\n')}`
             : '• *Pendientes:* ninguno\n') +
+        (uncertain.length ? `• *Envío incierto:* ${uncertain.length} — requiere reconciliación manual\n` : '') +
         `\n📝 Uso: \`/broadcast <texto>\` o \`/programar <HH:MM> <texto>\`. Confirma con *si*.`;
 }
 
@@ -298,7 +316,8 @@ function setSock(activeSock) {
 function getBroadcastStats() {
     const pending = db.broadcasts.filter(b => b.status === 'pending').length;
     const sending = db.broadcasts.filter(b => b.status === 'sending').length;
-    return { enabled: isEnabled(), pending, sending, total: db.broadcasts.length, dailyLimit: DAILY_LIMIT };
+    const deliveryUnknown = db.broadcasts.filter(b => b.status === 'delivery_unknown').length;
+    return { enabled: isEnabled(), pending, sending, deliveryUnknown, total: db.broadcasts.length, dailyLimit: DAILY_LIMIT };
 }
 
 /**
@@ -306,14 +325,14 @@ function getBroadcastStats() {
  * Resume-safe: el cursor se persiste tras cada envío. No hace nada si los
  * broadcasts están desactivados.
  */
-async function sendMessageSafe(targetJid, text) {
+async function sendMessageSafe(targetJid, text, options = {}) {
     if (!sock) return null;
     // Si sock es un ChannelAdapter que espera (normalizedJid, text)
     if (typeof sock.channelName === 'string') {
         const normalized = targetJid.startsWith('whatsapp:') || targetJid.startsWith('telegram:')
             ? targetJid
             : `whatsapp:${targetJid}`;
-        return await sock.sendMessage(normalized, text);
+        return await sock.sendMessage(normalized, text, options);
     }
     // Socket raw de Baileys o mock de test
     return await sock.sendMessage(targetJid, { text });
@@ -324,6 +343,7 @@ let tickRunning = false;
 async function tickUnsafe() {
     if (!isEnabled()) return;
     if (!sock || !isConnectedFn()) return;
+    if (db.broadcasts.some(b => b.status === 'delivery_unknown')) return;
 
     const now = new Date();
     let active = db.broadcasts.find(b => b.status === 'sending');
@@ -344,7 +364,6 @@ async function tickUnsafe() {
             return;
         }
         log.warn(`📢 [BROADCAST] Comenzando envío a ${due.eligible} contactos: "${due.text.slice(0, 60)}"`);
-        persist();
     }
 
     const contacts = getEligibleContacts();
@@ -366,16 +385,47 @@ async function tickUnsafe() {
         return; // sin envío; el próximo tick continúa
     }
 
+    const intentKey = active.currentIdempotencyKey || `campaign:${active.id}:${target.jid}`;
+    if (active.currentTarget && active.currentTarget !== target.jid) {
+        active.status = 'delivery_unknown';
+        active.deliveryUnknownTarget = active.currentTarget;
+        active.deliveryUnknownAt = new Date().toISOString();
+        persist();
+        logError.error(`📢 [BROADCAST] Cambió la agenda durante un envío reanudado; campaña pausada para reconciliar.`);
+        return;
+    }
+    active.currentTarget = target.jid;
+    active.currentIdempotencyKey = intentKey;
+    persist(); // Escribe destino y clave antes de entrar al proveedor.
+
     try {
-        const sentMsg = await sendMessageSafe(target.jid, active.text);
+        const sentMsg = await sendMessageSafe(target.jid, active.text, {
+            source: 'campaign', idempotencyKey: intentKey,
+            policy: { kind: 'agenda_broadcast', dailyLimit: DAILY_LIMIT, targetPhone: target.phone }
+        });
         if (sentMsg) registerSentMessage(sentMsg);
         active.sent += 1;
+        delete active.currentTarget;
+        delete active.currentIdempotencyKey;
         markSent(target.phone, db.dailySends);
         log.info(`📢 [BROADCAST] (${active.sent}/${active.eligible}) → ${target.jid}`);
     } catch (e) {
+        const error = /** @type {any} */ (e);
+        if (error?.outboundState === 'delivery_unknown' || error?.outboundState === 'sending'
+            || ['OUTBOUND_DELIVERY_UNKNOWN','OUTBOUND_IN_PROGRESS','OUTBOUND_CLAIM_UNCERTAIN'].includes(error?.code)) {
+            active.status = 'delivery_unknown';
+            active.deliveryUnknownTarget = target.jid;
+            active.deliveryUnknownIdempotencyKey = intentKey;
+            active.deliveryUnknownAt = new Date().toISOString();
+            persist();
+            logError.error(`📢 [BROADCAST] Envío incierto a ${target.jid}; campaña pausada para reconciliar.`);
+            return;
+        }
         // Contacto problemático: se salta (evita bucles infinitos) y se cuenta
         active.failed += 1;
-        logError.error(`📢 [BROADCAST] Fallo al enviar a ${target.jid}: ` + errMsg(e));
+        delete active.currentTarget;
+        delete active.currentIdempotencyKey;
+        logError.error(`📢 [BROADCAST] Fallo al enviar a ${target.jid}: ` + errMsg(error));
     }
     active.cursor += 1;
     persist();

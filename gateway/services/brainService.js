@@ -13,6 +13,7 @@
  * en el proceso Python del brain.
  */
 const { BRAIN_API_BASE, BRAIN_API_URL, BRAIN_API_KEY, state, registerSentMessage } = require('../config');
+const { randomUUID } = require('node:crypto');
 const { cat, errMsg } = require("../services/logger");
 const { num } = require('../tuning');
 const { enqueue, scheduleFlush } = require("./messageQueue");
@@ -174,6 +175,7 @@ async function processAIChat(textMessage, remoteJid, metadata, adapter, opts = {
     brainStats.aiCalls += 1;
     brainStats.lastAiAt = new Date().toISOString();
     const displayName = metadata.savedName || metadata.pushName || 'Usuario';
+    const generationId = opts.generationId || randomUUID();
     const langLog = metadata.language ? ` | Idioma: ${metadata.language}` : '';
     log.info(`\n[ENVIANDO A IA] De: ${displayName} (${remoteJid}) | País: ${metadata.country}${langLog}`);
     
@@ -241,7 +243,12 @@ async function processAIChat(textMessage, remoteJid, metadata, adapter, opts = {
                 await waitForJob(typingDelay, opts.signal);
                 await assertJobCurrent(opts);
 
-                const sentMsg = await adapter.sendMessage(remoteJid, bubble);
+                const sentMsg = await adapter.sendMessage(remoteJid, bubble, {
+                    source: 'ai', generationId, bubbleIndex: i,
+                    idempotencyKey: `${generationId}:bubble:${i}`,
+                    ...(opts.controlSnapshot ? { controlSnapshot: opts.controlSnapshot,
+                        conversationId: opts.controlSnapshot.conversationId } : {})
+                });
                 registerSentMessage(sentMsg);
 
                 // ☕ Pausa humana entre globos consecutivos
@@ -269,6 +276,13 @@ async function processAIChat(textMessage, remoteJid, metadata, adapter, opts = {
         brainStats.lastErrorAt = new Date().toISOString();
         brainStats.lastErrorMsg = errMsg(error);
         logError.error("Error al conectar con el cerebro: " + errMsg(error));
+        if (hasOutboundAttempt(error)) {
+            const outboundError = /** @type {any} */ (error);
+            const detail = isAmbiguousOutbound(error) ? 'incierta' : 'fallida';
+            logError.error(`Salida IA ${detail} (${outboundError?.outboundIntentId || 'sin id'}); se suspende el replay automático de la generación.`);
+            if (opts.fromQueue) throw error;
+            return;
+        }
         await handleBrainFailure(error, textMessage, remoteJid, metadata, adapter, opts);
         // 📥 F4-P4: en modo cola, el error debe llegar al flush (que marca el intento
         // y reintenta después). En el flujo normal, el error queda manejado aquí.
@@ -276,6 +290,15 @@ async function processAIChat(textMessage, remoteJid, metadata, adapter, opts = {
     } finally {
         await adapter.sendPresenceUpdate('paused', remoteJid).catch(() => {});
     }
+}
+
+function isAmbiguousOutbound(error) {
+    return error?.outboundState === 'delivery_unknown' || error?.outboundState === 'sending'
+        || ['OUTBOUND_DELIVERY_UNKNOWN','OUTBOUND_IN_PROGRESS','OUTBOUND_CLAIM_UNCERTAIN'].includes(error?.code);
+}
+
+function hasOutboundAttempt(error) {
+    return Boolean(error?.outboundIntentId || error?.outboundState);
 }
 
 // ⏱️ Alerta al admin como máximo cada 15 minutos (F4-P4: evita spam de mensajes

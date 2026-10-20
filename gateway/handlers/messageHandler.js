@@ -658,13 +658,21 @@ async function flushQueuedMessages() {
         activeGenerationControllers.set(bufferKey, controller);
         try {
             const jobOptions = item.controlSnapshot ? { fromQueue: true, controlSnapshot: item.controlSnapshot,
-                signal: controller.signal, isCurrent: () => controlService.isSnapshotCurrent(item.controlSnapshot) }
-                : { fromQueue: true, signal: controller.signal };
+                generationId: item.id, signal: controller.signal,
+                isCurrent: () => controlService.isSnapshotCurrent(item.controlSnapshot) }
+                : { fromQueue: true, generationId: item.id, signal: controller.signal };
             await enqueueAI(() => processAIChat(item.text, item.jid, item.metadata, adapter, jobOptions));
             messageQueue.removeHead();
             // ⏱️ Pausa humana entre mensajes encolados (2-5s)
             await new Promise(r => setTimeout(r, 2000 + Math.random() * 3000));
-        } catch {
+        } catch (error) {
+            if (error?.outboundIntentId || error?.outboundState
+                || error?.outboundState === 'delivery_unknown' || error?.outboundState === 'sending'
+                || ['OUTBOUND_DELIVERY_UNKNOWN','OUTBOUND_IN_PROGRESS','OUTBOUND_CLAIM_UNCERTAIN'].includes(error?.code)) {
+                messageQueue.removeHead();
+                logError.error(`📥 [COLA] ${item.id} tiene una salida incierta; se retira para impedir un reenvío automático.`);
+                continue;
+            }
             // processAIChat gestiona sus propios errores internos; aquí solo se
             // marca el intento y se detiene el flush (el brain sigue caído).
             item.attempts += 1;
