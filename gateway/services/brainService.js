@@ -292,6 +292,7 @@ async function processAIChat(textMessage, remoteJid, metadata, adapter, opts = {
 
                 const sentMsg = await adapter.sendMessage(remoteJid, bubble, {
                     source: 'ai', generationId, bubbleIndex: i,
+                    ...(sourceMessageIds.length ? { policy: { handledMessageIds: sourceMessageIds } } : {}),
                     idempotencyKey: `${generationId}:bubble:${i}`,
                     isCurrent: async () => !state.IS_BOT_PAUSED && (!opts.isCurrent || await opts.isCurrent()),
                     ...(opts.controlSnapshot ? { controlSnapshot: opts.controlSnapshot,

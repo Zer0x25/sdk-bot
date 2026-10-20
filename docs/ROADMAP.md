@@ -322,9 +322,10 @@ Compositor todavía no ofrece enviar.
   `clientMessageId`, reconciliación de archivo/evento y borrador conservado; un
   resultado incierto exige confirmación informada para generar otro envío. Evidencia
   y límites: [F6.1](F6.1-ENVIO-HUMANO.md).
-- [ ] **F6.2** Devolver a IA conserva la política de acceso y permite elegir
+- [x] **F6.2** Devolver a IA conserva la política de acceso y permite elegir
   explícitamente `future_only` o seleccionar entradas pendientes verificables para
-  procesarlas; nunca reanudar pendientes sin elección.
+  procesarlas; nunca reanudar pendientes sin elección. Evidencia y límites:
+  [F6.2](F6.2-REANUDACION-PENDIENTES.md).
 - [ ] **F6.3** E2E completo: entrada -> hilo -> takeover -> mensaje humano -> recepción
   de cliente durante human -> release -> siguiente respuesta IA con contexto correcto.
 - [ ] **F6.4** Smoke manual documentado en cuenta de prueba WA/TG cuando esté disponible;

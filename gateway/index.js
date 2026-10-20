@@ -136,6 +136,7 @@ async function startGateway() {
     await conversationArchive.ready;
     conversationControl = require('./services/conversations/controlService').createControlService(conversationArchive, {
         drainConversation,
+        onResumePending: () => legacyDispatchPump?.trigger(),
         validateProfile: async profileKey => {
             const profiles = await require('./services/brainService').getAvailableProfiles();
             return Array.isArray(profiles) && profiles.some(profile => profile.key === profileKey);

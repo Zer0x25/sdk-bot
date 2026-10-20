@@ -26,6 +26,7 @@ export interface PendingLegacyDispatch {
     attempts: number;
     lastError: string | null;
 }
+export interface PendingResumeMessages extends Contract<'PendingResumeResponse'> {}
 export type IngestResult =
     | { status: 'created'; message: Contract<'Message'>; event: Contract<'Event'> }
     | { status: 'duplicate'; messageId: string; conversationId: string }
@@ -88,6 +89,8 @@ export interface Archive {
         { status: 'updated'; message: Contract<'Message'>; event: Contract<'Event'> } |
         { status: 'missing' | 'unchanged' }>;
     pendingLegacyDispatches(input?: { limit?: number }): Promise<PendingLegacyDispatch[]>;
+    pendingResumeMessages(input: { conversationId: string }): Promise<PendingResumeMessages | null>;
+    shouldProcessArchivedInbound(input: { messageId: string }): Promise<boolean>;
     markLegacyDispatched(input: { messageId: string }): Promise<{ status: 'dispatched' | 'pending' | 'waiting' | 'skipped' | 'missing' }>;
     retryLegacyDispatch(input: { messageId: string; code?: string }): Promise<{ status: 'pending' | 'waiting' | 'dispatched' | 'skipped' | 'missing' }>;
     beginOutboundIntent(input: { idempotencyKey: string; accountId?: string | null; conversationId?: string | null;
@@ -112,6 +115,11 @@ export interface Archive {
         state: Omit<Contract<'ConversationControl'>, 'controlVersion' | 'contextVersion'> }): Promise<
         { status: 'updated'; control: Contract<'ConversationControl'>; event: Contract<'Event'> } |
         { status: 'conflict' | 'unchanged' | 'human_send_in_flight'; control: Contract<'ConversationControl'> } |
+        { status: 'missing' }>;
+    releaseControl(input: { conversationId: string; actorId: string; expectedVersion: Contract<'Version'>;
+        overrideOwner: boolean; resumePolicy?: 'future_only' | 'process_pending'; pendingInboundIds?: string[]; selectionVersion?: string }): Promise<
+        { status: 'updated'; control: Contract<'ConversationControl'>; event: Contract<'Event'>; resumedMessageIds: string[] } |
+        { status: 'conflict' | 'owner_conflict' | 'human_send_in_flight' | 'selection_stale' | 'message_not_eligible' | 'resume_unavailable'; control: Contract<'ConversationControl'> } |
         { status: 'missing' }>;
     beginControlTakeover(input: { conversationId: string; actorId: string; expectedVersion: Contract<'Version'>;
         overrideOwner: boolean; idempotencyKey: string }): Promise<

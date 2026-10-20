@@ -47,7 +47,7 @@ function createLegacyDispatchPump({ archive, dispatch, isReady, onError = () => 
                         try {
                             const result = await archive.markLegacyDispatched({ messageId: entry.messageId });
                             active.delete(entry.messageId);
-                            if (result.status === 'dispatched') {
+                            if (result.status === 'dispatched' || result.status === 'skipped') {
                                 progressed++;
                                 void trigger();
                             } else {

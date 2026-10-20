@@ -313,6 +313,35 @@
         }
       }
     },
+    "/conversations/{conversationId}/pending-resume": {
+      "get": {
+        "operationId": "listPendingResumeMessages",
+        "responses": {
+          "200": {
+            "description": "Entradas live no atendidas, recientes y verificables que pueden elegirse al devolver el control.",
+            "content": {
+              "application/json": {
+                "schema": { "$ref": "#/components/schemas/PendingResumeResponse" }
+              }
+            }
+          },
+          "401": { "$ref": "#/components/responses/401" },
+          "403": { "$ref": "#/components/responses/403" },
+          "404": { "$ref": "#/components/responses/404" },
+          "409": { "$ref": "#/components/responses/409" },
+          "422": { "$ref": "#/components/responses/422" },
+          "503": { "$ref": "#/components/responses/503" }
+        },
+        "parameters": [
+          {
+            "name": "conversationId",
+            "in": "path",
+            "required": true,
+            "schema": { "$ref": "#/components/schemas/Id" }
+          }
+        ]
+      }
+    },
     "/conversations/{conversationId}/messages": {
       "get": {
         "operationId": "listMessages",
@@ -943,6 +972,9 @@
       },
       "ReleaseRequest": {
         "$ref": "./schema.json#/$defs/ReleaseRequest"
+      },
+      "PendingResumeResponse": {
+        "$ref": "./schema.json#/$defs/PendingResumeResponse"
       },
       "SendMessageRequest": {
         "$ref": "./schema.json#/$defs/SendMessageRequest"

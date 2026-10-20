@@ -13,7 +13,7 @@ const CAPABILITIES = {
 };
 
 function capabilityFor(method, pathname) {
-    if (method === 'GET' && /^\/v1\/(session|accounts|conversations(?:\/[^/]+(?:\/messages)?)?|operations\/[^/]+|events)$/.test(pathname)) return 'conversations:read';
+    if (method === 'GET' && /^\/v1\/(session|accounts|conversations(?:\/[^/]+(?:\/(?:messages|pending-resume))?)?|operations\/[^/]+|events)$/.test(pathname)) return 'conversations:read';
     if (method === 'POST' && /^\/v1\/conversations\/[^/]+\/(takeover|release)$/.test(pathname)) return 'control:write';
     if (method === 'POST' && /^\/v1\/conversations\/[^/]+\/messages$/.test(pathname)) return 'messages:send';
     if (method === 'POST' && /^\/v1\/conversations\/[^/]+\/read$/.test(pathname)) return 'conversations:read';
@@ -518,6 +518,12 @@ function accountStatus(statusValue) {
 function archiveBoundary(error) {
     if (error instanceof BoundaryError) return error;
     if (['INVALID_LIMIT', 'INVALID_CHANNEL', 'INVALID_READ_CURSOR', 'INVALID_INPUT'].includes(error?.code)) return invalid();
+    const pendingResumeErrors = {
+        PENDING_RESUME_NOT_AVAILABLE: 'La conversación no está disponible para reanudar entradas pendientes.',
+        PENDING_RESUME_SELECTION_STALE: 'La lista cambió. Actualiza las entradas pendientes y vuelve a seleccionarlas.',
+        PENDING_RESUME_MESSAGE_NOT_ELIGIBLE: 'Una entrada seleccionada ya no es elegible. Actualiza la lista.'
+    };
+    if (pendingResumeErrors[error?.code]) return new BoundaryError(409, error.code, pendingResumeErrors[error.code]);
     if (error?.name === 'ControlServiceError') {
         const status = error.status || 409;
         const code = status === 422 ? 'VALIDATION_ERROR' : error.code || 'CONTROL_CONFLICT';
@@ -527,6 +533,9 @@ function archiveBoundary(error) {
             CONTROL_VERSION_CONFLICT: 'La conversación cambió; vuelve a cargarla.',
             CONTROL_OWNER_CONFLICT: 'La conversación pertenece a otro operador.',
             CONTROL_HUMAN_SEND_IN_FLIGHT: 'Espera a que termine el envío humano antes de cambiar el control.',
+            PENDING_RESUME_NOT_AVAILABLE: 'La conversación no está disponible para reanudar entradas pendientes.',
+            PENDING_RESUME_SELECTION_STALE: 'La lista cambió. Actualiza las entradas pendientes y vuelve a seleccionarlas.',
+            PENDING_RESUME_MESSAGE_NOT_ELIGIBLE: 'Una entrada seleccionada ya no es elegible. Actualiza la lista.',
             IDENTITY_AMBIGUOUS: 'La identidad tiene más de una coincidencia; revisa canal y cuenta.',
             CONVERSATION_NOT_FOUND: 'Conversación no encontrada.',
             CONTROL_TARGET_NOT_FOUND: 'No se encontró una identidad exacta para ese contacto.'
@@ -667,6 +676,18 @@ function createSessionApi(getPolicy, archive, getContacts = () => ({}), getChann
                     conversation, channelCapabilities: CAPABILITIES[row.channel], snapshot
                 }), context.requestId);
             }
+            const pendingResume = /^\/v1\/conversations\/([^/]+)\/pending-resume$/.exec(pathname);
+            if (req.method === 'GET' && pendingResume) {
+                rejectQuery(req);
+                if (!archive) throw new BoundaryError(503, 'SERVICE_UNAVAILABLE', 'Archivo de conversaciones no disponible.');
+                const conversationId = conversationPathId(pendingResume[1]);
+                const authority = await archive.controlAuthority();
+                if (authority.mode !== 'sqlite') throw new BoundaryError(503, 'CONTROL_AUTHORITY_NOT_ACTIVE', 'El control de conversaciones aún no está activo.');
+                if (!authority.serviceReady) throw new BoundaryError(503, 'CONTROL_SERVICE_NOT_READY', 'El servicio de control no está listo.');
+                const result = await archive.pendingResumeMessages({ conversationId });
+                if (!result) throw new BoundaryError(404, 'NOT_FOUND', 'Conversación no encontrada.');
+                return send(res, 200, assertValid('PendingResumeResponse', result), context.requestId);
+            }
             const messages = /^\/v1\/conversations\/([^/]+)\/messages$/.exec(pathname);
             if (req.method === 'GET' && messages) {
                 const conversationId = conversationPathId(messages[1]);
@@ -749,6 +770,10 @@ function createSessionApi(getPolicy, archive, getContacts = () => ({}), getChann
                 if (!row || !address || address.accountId !== row.account_id || address.channel !== row.channel) {
                     throw new BoundaryError(409, 'IDENTITY_AMBIGUOUS', 'No hay una identidad canónica segura para enviar a este chat.');
                 }
+                if (request.handledThroughInboundSeq !== undefined
+                    && BigInt(request.handledThroughInboundSeq) > BigInt(row.inbound_seq)) {
+                    throw new BoundaryError(409, 'CONTROL_VERSION_CONFLICT', 'Los mensajes visibles cambiaron. Actualiza el chat antes de responder.');
+                }
                 if (!CAPABILITIES[address.channel].reply || accountStatus(getChannelStatus(address.channel, address.accountId)) !== 'connected') {
                     throw new BoundaryError(409, 'CHANNEL_NOT_READY', 'Conecta la cuenta del canal antes de enviar.');
                 }
@@ -763,7 +788,9 @@ function createSessionApi(getPolicy, archive, getContacts = () => ({}), getChann
                 try {
                     result = await adapter.sendMessage(`${address.channel}:${address.exactValue}`, request.text, {
                         source: 'human', actorId: context.actor.id, idempotencyKey, conversationId,
-                        controlSnapshot, policy: { clientMessageId: request.clientMessageId, overrideOwner }, useMarkdown: false
+                        controlSnapshot, policy: { clientMessageId: request.clientMessageId, overrideOwner,
+                            ...(request.handledThroughInboundSeq !== undefined
+                                ? { handledThroughInboundSeq: request.handledThroughInboundSeq } : {}) }, useMarkdown: false
                     });
                 } catch (error) { throw archiveBoundary(error); }
                 const intent = result?._outbox;
@@ -820,12 +847,10 @@ function createSessionApi(getPolicy, archive, getContacts = () => ({}), getChann
                         return send(res, 202, assertValid('TakeoverPendingResponse', { operation: result.operation }), context.requestId);
                     }
                 } else {
-                    if (request.resumePolicy === 'process_pending') {
-                        throw new BoundaryError(409, 'PENDING_RESUME_NOT_AVAILABLE',
-                            'La selección de mensajes pendientes llegará con el compositor de F6; esta liberación solo acepta mensajes futuros.');
-                    }
                     await controlService.release({ conversationId, actorId: context.actor.id,
-                        expectedVersion: request.expectedVersion, overrideOwner: request.overrideOwner === true });
+                        expectedVersion: request.expectedVersion, overrideOwner: request.overrideOwner === true,
+                        resumePolicy: request.resumePolicy || 'future_only',
+                        pendingInboundIds: request.pendingInboundIds || [], selectionVersion: request.selectionVersion });
                 }
                 const row = await archive.conversationView({ conversationId, actorId: context.actor.id });
                 if (!row) throw new BoundaryError(404, 'NOT_FOUND', 'Conversación no encontrada.');

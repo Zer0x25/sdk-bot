@@ -274,6 +274,11 @@ async function handleIncomingMessage(stdMsg, { onDurableComplete } = {}) {
                 conversationByRemote.set(remoteJid, result.target.conversationId);
                 if (conversationByRemote.size > 5000) conversationByRemote.delete(conversationByRemote.keys().next().value);
                 const control = result.target.control;
+                if (sourceMessageId && control.automationMode === 'ai'
+                    && !await adapter.archive.shouldProcessArchivedInbound({ messageId: sourceMessageId })) {
+                    await onDurableComplete?.();
+                    return;
+                }
                 let estado = 'neutro';
                 if (control.requiresReview || control.lifecycle === 'resolved' || control.accessPolicy === 'ignored'
                     || (control.accessPolicy === 'allowed' && control.automationMode === 'off')) estado = 'ignorado';

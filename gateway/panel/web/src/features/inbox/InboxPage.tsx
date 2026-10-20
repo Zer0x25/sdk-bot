@@ -9,6 +9,7 @@ import {
   getAccounts,
   getConversation,
   getConversations,
+  getPendingResumeMessages,
   getOperation,
   getSession,
   markConversationRead,
@@ -46,6 +47,9 @@ export function InboxPage() {
   }>>([]);
   const [pendingTakeoverId, setPendingTakeoverId] = useState<string | null>(null);
   const [controlNotice, setControlNotice] = useState<string | null>(null);
+  const [releaseOptionsOpen, setReleaseOptionsOpen] = useState(false);
+  const [showPendingResume, setShowPendingResume] = useState(false);
+  const [selectedPendingIds, setSelectedPendingIds] = useState<string[]>([]);
 
   const sessionQuery = useQuery({
     queryKey: ['inbox', 'session'],
@@ -58,6 +62,13 @@ export function InboxPage() {
     queryFn: ({ signal }) => getOperation(pendingTakeoverId!, signal),
     enabled: Boolean(pendingTakeoverId),
     refetchInterval: query => !query.state.data || query.state.data.status === 'taking_control' ? 1000 : false
+  });
+
+  const pendingResumeQuery = useQuery({
+    queryKey: ['inbox', 'pending-resume', conversationId],
+    queryFn: ({ signal }) => getPendingResumeMessages(conversationId!, signal),
+    enabled: Boolean(conversationId && releaseOptionsOpen && showPendingResume),
+    staleTime: 0
   });
 
   useEffect(() => {
@@ -150,7 +161,14 @@ export function InboxPage() {
     setDraft('');
     setPendingTakeoverId(null);
     setControlNotice(null);
+    setReleaseOptionsOpen(false);
+    setShowPendingResume(false);
+    setSelectedPendingIds([]);
   }, [conversationId]);
+
+  useEffect(() => {
+    setSelectedPendingIds([]);
+  }, [pendingResumeQuery.data?.selectionVersion]);
 
   useEffect(() => {
     const operation = pendingTakeoverQuery.data;
@@ -203,14 +221,23 @@ export function InboxPage() {
 
   const controlMutation = useMutation<ControlResponse, Error, {
     action: 'takeover' | 'release' | 'resolve' | 'reopen'; conversationId: string; expectedVersion: string; overrideOwner: boolean;
+    resumePolicy?: 'future_only' | 'process_pending'; pendingInboundIds?: string[]; selectionVersion?: string;
   }>({
     mutationFn: async input => {
       if (input.action === 'takeover') return takeoverConversation(input.conversationId, input.expectedVersion, input.overrideOwner);
-      if (input.action === 'release') return releaseConversation(input.conversationId, input.expectedVersion, input.overrideOwner);
+      if (input.action === 'release') return releaseConversation(input.conversationId, input.expectedVersion, {
+        overrideOwner: input.overrideOwner,
+        resumePolicy: input.resumePolicy,
+        pendingInboundIds: input.pendingInboundIds,
+        selectionVersion: input.selectionVersion
+      });
       return updateConversationLifecycle(input.conversationId, input.expectedVersion, input.action === 'resolve' ? 'resolved' : 'open');
     },
     onSuccess: async result => {
       setControlNotice(null);
+      setReleaseOptionsOpen(false);
+      setShowPendingResume(false);
+      setSelectedPendingIds([]);
       if ('operation' in result) {
         setPendingTakeoverId(result.operation.id);
         setControlNotice('La toma de control está esperando que terminen los envíos anteriores.');
@@ -221,17 +248,52 @@ export function InboxPage() {
           queryClient.invalidateQueries({ queryKey: ['inbox', 'conversations'] })
         ]);
       }
+    },
+    onError: (_error, input) => {
+      void queryClient.invalidateQueries({ queryKey: ['inbox', 'conversation', input.conversationId] });
+      void queryClient.invalidateQueries({ queryKey: ['inbox', 'conversations'] });
+      if (input.action === 'release' && input.resumePolicy === 'process_pending') {
+        void queryClient.invalidateQueries({ queryKey: ['inbox', 'pending-resume', input.conversationId] });
+      }
     }
   });
 
-  function runControlAction(action: 'takeover' | 'release' | 'resolve' | 'reopen') {
+  function runControlAction(action: 'takeover' | 'release' | 'resolve' | 'reopen', resume?: {
+    policy: 'future_only' | 'process_pending'; pendingInboundIds?: string[]; selectionVersion?: string;
+  }) {
     if (!conversationId || !selectedConversation) return;
     controlMutation.reset();
     controlMutation.mutate({ action, conversationId, expectedVersion: selectedConversation.control.controlVersion,
       overrideOwner: Boolean((action === 'takeover' || action === 'release')
         && selectedConversation.control.ownerId
         && selectedConversation.control.ownerId !== sessionQuery.data?.actor.id
-        && sessionQuery.data?.actor.capabilities.includes('control:override')) });
+        && sessionQuery.data?.actor.capabilities.includes('control:override')),
+      ...(action === 'release' && resume ? { resumePolicy: resume.policy,
+        pendingInboundIds: resume.pendingInboundIds, selectionVersion: resume.selectionVersion } : {}) });
+  }
+
+  function openReleaseOptions() {
+    setControlNotice(null);
+    setReleaseOptionsOpen(true);
+    setShowPendingResume(false);
+    setSelectedPendingIds([]);
+  }
+
+  function choosePendingResume() {
+    setSelectedPendingIds([]);
+    setShowPendingResume(true);
+    void queryClient.invalidateQueries({ queryKey: ['inbox', 'pending-resume', conversationId] });
+  }
+
+  function releaseFutureOnly() {
+    runControlAction('release', { policy: 'future_only' });
+  }
+
+  function releaseSelectedPending() {
+    const preview = pendingResumeQuery.data;
+    if (!preview || !selectedPendingIds.length || preview.uncertainOutboundCount) return;
+    runControlAction('release', { policy: 'process_pending', pendingInboundIds: selectedPendingIds,
+      selectionVersion: preview.selectionVersion });
   }
 
   const sendMutation = useMutation<Awaited<ReturnType<typeof sendConversationMessage>>, Error,
@@ -352,6 +414,7 @@ export function InboxPage() {
   const currentControlBusy = controlMutation.isPending && controlMutation.variables?.conversationId === conversationId;
   const currentControlError = controlMutation.isError && controlMutation.variables?.conversationId === conversationId
     ? asError(controlMutation.error) : null;
+  const pendingResumeError = pendingResumeQuery.isError ? asError(pendingResumeQuery.error) : null;
   const canTakeover = Boolean(actor?.capabilities.includes('control:write') && controlConfirmed
     && control?.lifecycle === 'open' && control?.accessPolicy !== 'ignored'
     && !selectedConversation?.requiresReview && ownerCanAct && !currentControlBusy);
@@ -435,8 +498,19 @@ export function InboxPage() {
         controlBusy={currentControlBusy || Boolean(pendingTakeoverId)}
         controlError={currentControlError}
         controlNotice={controlNotice}
+        releaseOptionsOpen={releaseOptionsOpen}
+        pendingResume={pendingResumeQuery.data}
+        pendingResumeLoading={pendingResumeQuery.isLoading || pendingResumeQuery.isFetching}
+        pendingResumeError={pendingResumeError}
+        selectedPendingIds={selectedPendingIds}
         onTakeover={() => runControlAction('takeover')}
-        onRelease={() => runControlAction('release')}
+        onRelease={openReleaseOptions}
+        onOpenPendingResume={choosePendingResume}
+        onTogglePendingResume={messageId => setSelectedPendingIds(previous => previous.includes(messageId)
+          ? previous.filter(id => id !== messageId) : [...previous, messageId])}
+        onReleaseFutureOnly={releaseFutureOnly}
+        onReleaseSelectedPending={releaseSelectedPending}
+        onCancelReleaseOptions={() => { setReleaseOptionsOpen(false); setShowPendingResume(false); setSelectedPendingIds([]); }}
         onResolve={() => runControlAction('resolve')}
         onReopen={() => runControlAction('reopen')}
         draft={draft}

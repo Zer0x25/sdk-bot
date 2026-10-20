@@ -17,9 +17,10 @@ class ControlServiceError extends Error {
 
 function fail(code, status) { throw new ControlServiceError(code, status); }
 
-/** @param {any} archive @param {{drainConversation?: ((conversationId:string) => any) | null, onPolicyChanged?: (policy:any) => any,
+/** @param {any} archive @param {{drainConversation?: ((conversationId:string) => any) | null, onResumePending?: ((conversationId:string) => any) | null, onPolicyChanged?: (policy:any) => any,
  * validateProfile?: (profileKey:string) => boolean | Promise<boolean>}} [options] @returns {any} */
-function createControlService(archive, { drainConversation = null, onPolicyChanged = () => {}, validateProfile = async () => false } = {}) {
+function createControlService(archive, { drainConversation = null, onResumePending = null,
+    onPolicyChanged = () => {}, validateProfile = async () => false } = {}) {
     if (!archive || typeof archive.controlState !== 'function' || typeof archive.writeControlState !== 'function') {
         throw new TypeError('CONTROL_ARCHIVE_REQUIRED');
     }
@@ -183,12 +184,22 @@ function createControlService(archive, { drainConversation = null, onPolicyChang
             if (result.status === 'send_in_flight') fail('CONTROL_HUMAN_SEND_IN_FLIGHT', 409);
             return continueTakeover(result.operation, result.control);
         },
-        async release({ conversationId, actorId, expectedVersion, overrideOwner = false }) {
-            return writeState({ conversationId, actorId, expectedVersion, mutate: current => {
-                if (current.ownerId && current.ownerId !== actorId && !overrideOwner) fail('CONTROL_OWNER_CONFLICT', 409);
-                return { ...current, automationMode: 'ai', ownerId: null, status: 'confirmed',
-                    takenAt: null, handoffReason: null };
-            } });
+        async release({ conversationId, actorId, expectedVersion, overrideOwner = false,
+            resumePolicy = 'future_only', pendingInboundIds = [], selectionVersion = undefined }) {
+            await assertAuthority();
+            const result = await archive.releaseControl({ conversationId, actorId, expectedVersion, overrideOwner,
+                resumePolicy, pendingInboundIds, selectionVersion });
+            if (result.status === 'missing') fail('CONVERSATION_NOT_FOUND', 404);
+            if (result.status === 'conflict') fail('CONTROL_VERSION_CONFLICT', 409);
+            if (result.status === 'owner_conflict') fail('CONTROL_OWNER_CONFLICT', 409);
+            if (result.status === 'human_send_in_flight') fail('CONTROL_HUMAN_SEND_IN_FLIGHT', 409);
+            if (result.status === 'selection_stale') fail('PENDING_RESUME_SELECTION_STALE', 409);
+            if (result.status === 'message_not_eligible') fail('PENDING_RESUME_MESSAGE_NOT_ELIGIBLE', 409);
+            if (result.status === 'resume_unavailable') fail('PENDING_RESUME_NOT_AVAILABLE', 409);
+            if (result.status === 'updated' && result.resumedMessageIds?.length && onResumePending) {
+                Promise.resolve().then(() => onResumePending(conversationId)).catch(() => {});
+            }
+            return result;
         },
         async operation(operationId) {
             await assertAuthority();

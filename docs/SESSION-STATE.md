@@ -776,6 +776,28 @@ Cierres históricos: commits F2C.1/F2C.2/F2D/F2E.1 están en el log local; F2B.3
   gateway && npm ci`, `npm run lint`, `npm run typecheck` y `npm run panel:typecheck`
   completados; lint y tipos limpios. No se ejecutaron suites de pruebas en esta
   entrega. No se usó una cuenta de canal real.
-- Próximo: **F6.2**, exponer una elección explícita entre `future_only` y procesar
-  entradas pendientes verificables; luego F6.3 E2E y F6.4 smoke de cuenta de prueba
-  cuando esté disponible. Fase 6 sigue incompleta.
+
+## F6.2: Selección explícita de entradas al devolver el control
+
+- La migración SQLite v9→v10 agrega watermarks de entrada atendida y corte de
+  reanudación. En bases existentes ambos parten del `inbound_seq` actual, así que
+  una actualización no ofrece mensajes históricos como pendientes por accidente.
+- `future_only` conserva acceso/perfil y fija el corte en la transacción que
+  devuelve el control; los despachos antiguos pendientes quedan omitidos. La
+  ruta de despacho vuelve a comprobar el corte antes de iniciar automatización.
+- `process_pending` presenta como máximo 100 entradas live, recientes (24 h), no
+  atendidas y con texto/transcripción/caption procesable. El operador marca IDs
+  explícitos. La selección lleva una huella de control, política, watermarks e
+  integridad del payload; el servidor valida esa huella y la lista dentro de la
+  transacción que cambia el control. Entradas excluidas permanecen en el historial.
+- La aceptación durable de una salida humana o IA avanza el watermark según la
+  entrada declarada. Una entrega `sending` o `delivery_unknown` bloquea
+  `process_pending`; `future_only` sigue disponible. BUG-075 deja la conciliación
+  autenticada de entregas inciertas para F7. BUG-076 registra los metadatos de
+  contacto que no están disponibles al reconstruir ciertos replays antiguos.
+- Evidencia: [F6.2](F6.2-REANUDACION-PENDIENTES.md). `gateway` lint, typecheck y
+  panel typecheck; contratos generados y typecheck pasan. No se ejecutaron suites
+  de pruebas ni se usó una cuenta real.
+- Próximo: **F6.3**, recorrido E2E de entrada, takeover, respuesta humana, entrada
+  durante human, release y respuesta IA con contexto; después F6.4 smoke en cuenta
+  de prueba cuando esté disponible. Fase 6 sigue incompleta.

@@ -11,6 +11,7 @@ const schema = require('./schema');
 let db;
 const READ_ONLY_METHODS = new Set(['snapshot','telegramCursor','pendingLegacyDispatches','controlState','controlAuthority','controlImportStatus','controlImportEntries',
     'controlPolicy','controlOperation','pendingControlOperations','controlTargets','controlByIdentity',
+    'pendingResumeMessages','shouldProcessArchivedInbound',
     'outboundIntent','outboundIntents',
     'conversation','conversations','conversationRows','conversationView','conversationAddress','accounts','messages','messagePage','messageByProviderId','aiContext',
     'events','eventsPage','diagnostics','close']);
@@ -44,7 +45,7 @@ function initialize() {
         // committed WAL records or touching another process's snapshot.
         db = new DatabaseSync(`${pathToFileURL(file).href}?immutable=1`, { readOnly: true });
         const schemaVersion = one('PRAGMA user_version').user_version;
-        if (![6, 7, 8, 9].includes(schemaVersion)) fail('SCHEMA_VERSION_REQUIRED');
+        if (![6, 7, 8, 9, 10].includes(schemaVersion)) fail('SCHEMA_VERSION_REQUIRED');
         if (one("SELECT migration_id FROM control_import_migrations WHERE status IN ('cutover_applying','rolling_back') LIMIT 1")) {
             fail('CONTROL_CUTOVER_RECOVERY_REQUIRED');
         }
@@ -64,7 +65,7 @@ function initialize() {
     // SQLite owns the OS lock for the full connection lifetime; crash releases it.
     db.exec('BEGIN IMMEDIATE; COMMIT;');
     const version = one('PRAGMA user_version').user_version;
-    if (version > 9) fail('SCHEMA_TOO_NEW');
+    if (version > 10) fail('SCHEMA_TOO_NEW');
     if (version === 0) transaction(() => {
         db.exec(schema);
         run('INSERT INTO archive_meta VALUES(1,?,?)', randomUUID(), '0');
@@ -257,6 +258,12 @@ function initialize() {
         PRAGMA user_version=9;`);
     });
     if (one('PRAGMA user_version').user_version === 9) transaction(() => {
+        db.exec(`ALTER TABLE conversations ADD COLUMN handled_inbound_seq TEXT NOT NULL DEFAULT '0'
+            CHECK(handled_inbound_seq='0' OR (handled_inbound_seq NOT GLOB '*[^0-9]*' AND substr(handled_inbound_seq,1,1) BETWEEN '1' AND '9'));
+        ALTER TABLE conversations ADD COLUMN resume_after_inbound_seq TEXT NOT NULL DEFAULT '0'
+            CHECK(resume_after_inbound_seq='0' OR (resume_after_inbound_seq NOT GLOB '*[^0-9]*' AND substr(resume_after_inbound_seq,1,1) BETWEEN '1' AND '9'));
+        UPDATE conversations SET handled_inbound_seq=inbound_seq,resume_after_inbound_seq=inbound_seq;
+        PRAGMA user_version=10;`);
         run(`UPDATE outbound_intents SET state='delivery_unknown',error_code='PROCESS_RESTARTED_DURING_SEND',
             updated_at=?,completed_at=? WHERE state='sending'`, new Date().toISOString(), new Date().toISOString());
     });
@@ -277,7 +284,7 @@ function initialize() {
         transaction(() => pending.forEach(row => updateTranscription({ messageId: row.id, expectedStatus: 'pending', status: 'failed' })));
         after = pending[pending.length - 1].id;
     }
-    return { ...snapshot(), schemaVersion: 9, journalMode: one('PRAGMA journal_mode').journal_mode,
+    return { ...snapshot(), schemaVersion: 10, journalMode: one('PRAGMA journal_mode').journal_mode,
         synchronous: one('PRAGMA synchronous').synchronous, threadId: require('node:worker_threads').threadId };
 }
 function registerAccount(input) {
@@ -496,6 +503,165 @@ function controlState(conversationId) {
     const row = one('SELECT * FROM conversations WHERE id=?', conversationId);
     return row ? controlStateFromRow(row) : null;
 }
+function resumeCandidateText(message) {
+    const content = message.content;
+    if (content.type === 'text') return content.text;
+    return content.transcript || content.caption || '';
+}
+function pendingResumeSnapshot(conversationId) {
+    assertValid('Id', conversationId);
+    const conversation = one(`SELECT c.*,a.channel FROM conversations c
+        JOIN accounts a ON a.id=c.account_id WHERE c.id=?`, conversationId);
+    if (!conversation) return null;
+    const control = controlStateFromRow(conversation);
+    if (control.automationMode !== 'human' || control.status !== 'confirmed' || control.lifecycle !== 'open') {
+        fail('PENDING_RESUME_NOT_AVAILABLE');
+    }
+    const policy = controlPolicy();
+    const cutoff = new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString();
+    const unhandled = `(length(m.inbound_seq)>length(c.handled_inbound_seq)
+        OR (length(m.inbound_seq)=length(c.handled_inbound_seq) AND m.inbound_seq>c.handled_inbound_seq))`;
+    const recentLive = `m.conversation_id=? AND m.source='live' AND m.inbound_seq IS NOT NULL
+        AND ${unhandled} AND m.ingested_at>=? AND json_extract(m.payload,'$.direction')='inbound'
+        AND json_extract(m.payload,'$.authorKind')='customer'`;
+    const unresolved = one(`SELECT COUNT(*) n FROM outbound_intents
+        WHERE conversation_id=? AND source IN ('ai','human') AND state IN ('sending','delivery_unknown')`, conversationId).n;
+    const excludedPendingDispatchCount = one(`SELECT COUNT(*) n FROM messages m
+        JOIN conversations c ON c.id=m.conversation_id JOIN legacy_dispatch d ON d.message_id=m.id
+        WHERE ${recentLive} AND d.status IN ('pending','waiting')`, conversationId, cutoff).n;
+    const excludedUnprocessableCount = one(`SELECT COUNT(*) n FROM messages m
+        JOIN conversations c ON c.id=m.conversation_id JOIN legacy_dispatch d ON d.message_id=m.id
+        WHERE ${recentLive} AND d.status='dispatched' AND NOT (
+            (json_extract(m.payload,'$.content.type')='text' AND length(json_extract(m.payload,'$.content.text'))>0)
+            OR (json_extract(m.payload,'$.content.type')='audio'
+                AND json_extract(m.payload,'$.content.transcriptionStatus')='completed'
+                AND length(json_extract(m.payload,'$.content.transcript'))>0)
+            OR (json_extract(m.payload,'$.content.type') IN ('image','video','document')
+                AND length(json_extract(m.payload,'$.content.caption'))>0))`, conversationId, cutoff).n;
+    const eligibleWhere = `${recentLive} AND d.status='dispatched' AND (
+        (json_extract(m.payload,'$.content.type')='text' AND length(json_extract(m.payload,'$.content.text'))>0)
+        OR (json_extract(m.payload,'$.content.type')='audio'
+            AND json_extract(m.payload,'$.content.transcriptionStatus')='completed'
+            AND length(json_extract(m.payload,'$.content.transcript'))>0)
+        OR (json_extract(m.payload,'$.content.type') IN ('image','video','document')
+            AND length(json_extract(m.payload,'$.content.caption'))>0))`;
+    const candidateCount = unresolved ? 0 : one(`SELECT COUNT(*) n FROM messages m
+        JOIN conversations c ON c.id=m.conversation_id JOIN legacy_dispatch d ON d.message_id=m.id
+        WHERE ${eligibleWhere}`, conversationId, cutoff).n;
+    const rows = candidateCount ? all(`SELECT m.payload,m.inbound_seq,m.ingested_at FROM messages m
+        JOIN conversations c ON c.id=m.conversation_id JOIN legacy_dispatch d ON d.message_id=m.id
+        WHERE ${eligibleWhere} ORDER BY length(m.inbound_seq),m.inbound_seq LIMIT 100`, conversationId, cutoff) : [];
+    const candidates = rows.map(row => {
+        const message = JSON.parse(row.payload);
+        const text = resumeCandidateText(message);
+        return { messageId: message.id, inboundSeq: row.inbound_seq, occurredAt: message.occurredAt,
+            ingestedAt: row.ingested_at, contentType: message.content.type,
+            preview: Array.from(text).slice(0, 240).join('') };
+    });
+    const pendingIds = candidates.map(item => item.messageId);
+    const selectionVersion = createHash('sha256').update(stable({ conversationId,
+        controlVersion: control.controlVersion, contextVersion: control.contextVersion,
+        policyVersion: policy.policyVersion,
+        inboundSeq: conversation.inbound_seq, handledInboundSeq: conversation.handled_inbound_seq,
+        candidateCount, candidateIds: pendingIds,
+        candidatePayloads: rows.map(row => createHash('sha256').update(row.payload).digest('hex')),
+        excludedPendingDispatchCount, excludedUnprocessableCount, unresolved })).digest('hex');
+    return { conversationId, control, policy, inboundSeq: conversation.inbound_seq,
+        handledInboundSeq: conversation.handled_inbound_seq, selectionVersion, candidates,
+        candidateCount, truncated: candidateCount > candidates.length,
+        excludedPendingDispatchCount, excludedUnprocessableCount,
+        uncertainOutboundCount: unresolved,
+        automationMayBeBlocked: policy.globalMode === 'ignored_all' || policy.requiresReview
+            || conversation.access_policy === 'ignored' || conversation.requires_review === 1 };
+}
+function pendingResumeMessages(input) {
+    const snapshot = pendingResumeSnapshot(input?.conversationId);
+    if (!snapshot) return null;
+    return { conversationId: snapshot.conversationId, controlVersion: snapshot.control.controlVersion,
+        selectionVersion: snapshot.selectionVersion, candidates: snapshot.candidates,
+        candidateCount: snapshot.candidateCount, truncated: snapshot.truncated,
+        excludedPendingDispatchCount: snapshot.excludedPendingDispatchCount,
+        excludedUnprocessableCount: snapshot.excludedUnprocessableCount,
+        uncertainOutboundCount: snapshot.uncertainOutboundCount,
+        automationMayBeBlocked: snapshot.automationMayBeBlocked };
+}
+function shouldProcessArchivedInbound(input) {
+    assertValid('Id', input?.messageId);
+    const row = one(`SELECT m.inbound_seq,m.source,c.automation_mode,c.resume_after_inbound_seq,d.status
+        FROM messages m JOIN conversations c ON c.id=m.conversation_id
+        LEFT JOIN legacy_dispatch d ON d.message_id=m.id WHERE m.id=?`, input.messageId);
+    if (!row || row.source !== 'live' || row.inbound_seq == null) return false;
+    if (controlAuthority().mode !== 'sqlite' || row.automation_mode !== 'ai') return true;
+    const sequence = BigInt(row.inbound_seq), resumeAfter = BigInt(row.resume_after_inbound_seq);
+    return sequence > resumeAfter || row.status === 'pending';
+}
+function legacyResumeRouting(message, conversationId) {
+    const identity = one(`SELECT a.channel,i.kind,i.exact_value AS rawId FROM conversations c
+        JOIN accounts a ON a.id=c.account_id JOIN identities i ON i.id=c.canonical_id WHERE c.id=?`, conversationId);
+    if (!identity) fail('PENDING_RESUME_MESSAGE_NOT_ELIGIBLE');
+    const content = message.content;
+    const text = resumeCandidateText(message);
+    if (!text) fail('PENDING_RESUME_MESSAGE_NOT_ELIGIBLE');
+    const metadata = { isFromMe: false, isAdminChannel: false };
+    if (identity.kind === 'whatsapp_jid' && identity.rawId.endsWith('@s.whatsapp.net')) {
+        metadata.phoneNumber = identity.rawId.slice(0, -'@s.whatsapp.net'.length);
+    } else if (identity.kind === 'whatsapp_lid') metadata.lid = identity.rawId.replace(/@lid$/, '');
+    return JSON.stringify({ channel: identity.channel, remoteId: `${identity.channel}:${identity.rawId}`,
+        rawId: identity.rawId, isAudio: content.type === 'audio', metadata });
+}
+function releaseControl(input) {
+    assertValid('Id', input?.conversationId); assertValid('Id', input?.actorId);
+    assertValid('Version', input?.expectedVersion);
+    const resumePolicy = input.resumePolicy ?? 'future_only';
+    if (!['future_only','process_pending'].includes(resumePolicy) || typeof input.overrideOwner !== 'boolean') fail('INVALID_RELEASE_REQUEST');
+    const selectedIds = input.pendingInboundIds ?? [];
+    if (!Array.isArray(selectedIds) || selectedIds.length > 100 || new Set(selectedIds).size !== selectedIds.length
+        || selectedIds.some(id => typeof id !== 'string')) fail('INVALID_PENDING_RESUME_SELECTION');
+    if (resumePolicy === 'process_pending') {
+        if (!selectedIds.length || typeof input.selectionVersion !== 'string' || !/^[0-9a-f]{64}$/.test(input.selectionVersion)) {
+            fail('INVALID_PENDING_RESUME_SELECTION');
+        }
+    } else if (selectedIds.length || input.selectionVersion != null) fail('INVALID_PENDING_RESUME_SELECTION');
+
+    const row = one('SELECT * FROM conversations WHERE id=?', input.conversationId);
+    if (!row) return { status: 'missing' };
+    const current = controlStateFromRow(row);
+    if (input.expectedVersion !== current.controlVersion) return { status: 'conflict', control: current };
+    if (current.ownerId && current.ownerId !== input.actorId && !input.overrideOwner) return { status: 'owner_conflict', control: current };
+    if (current.automationMode !== 'human' || current.status !== 'confirmed'
+        || (resumePolicy === 'process_pending' && current.lifecycle !== 'open')) {
+        return { status: 'resume_unavailable', control: current };
+    }
+    if (resumePolicy === 'process_pending') {
+        const selection = pendingResumeSnapshot(input.conversationId);
+        if (selection.selectionVersion !== input.selectionVersion) return { status: 'selection_stale', control: current };
+        if (selection.uncertainOutboundCount) return { status: 'resume_unavailable', control: current };
+        const allowed = new Set(selection.candidates.map(item => item.messageId));
+        if (selectedIds.some(id => !allowed.has(id))) return { status: 'message_not_eligible', control: current };
+    }
+    const changed = writeControlState({ conversationId: input.conversationId, actorId: input.actorId,
+        expectedVersion: input.expectedVersion, state: { ...current, automationMode: 'ai', ownerId: null,
+            status: 'confirmed', takenAt: null, handoffReason: null } });
+    if (changed.status !== 'updated') return changed;
+    const inboundSeq = row.inbound_seq;
+    run('UPDATE conversations SET resume_after_inbound_seq=? WHERE id=?', inboundSeq, input.conversationId);
+    run(`UPDATE legacy_dispatch SET status='skipped',payload='{}'
+        WHERE status IN ('pending','waiting') AND message_id IN (
+            SELECT id FROM messages WHERE conversation_id=? AND inbound_seq IS NOT NULL
+                AND (length(inbound_seq)<length(?) OR (length(inbound_seq)=length(?) AND inbound_seq<=?)))`,
+    input.conversationId, inboundSeq, inboundSeq, inboundSeq);
+    const resumedMessageIds = [];
+    for (const messageId of selectedIds) {
+        const messageRow = one('SELECT payload FROM messages WHERE id=? AND conversation_id=?', messageId, input.conversationId);
+        if (!messageRow) fail('PENDING_RESUME_MESSAGE_NOT_ELIGIBLE');
+        const payload = legacyResumeRouting(JSON.parse(messageRow.payload), input.conversationId);
+        const scheduled = run(`UPDATE legacy_dispatch SET status='pending',payload=?,attempts=0,last_error=NULL,dispatched_at=NULL
+            WHERE message_id=? AND status='dispatched'`, payload, messageId);
+        if (scheduled.changes !== 1) fail('PENDING_RESUME_MESSAGE_NOT_ELIGIBLE');
+        resumedMessageIds.push(messageId);
+    }
+    return { status: 'updated', control: changed.control, event: changed.event, resumedMessageIds };
+}
 function clearAIContext(input) {
     assertValid('Id', input?.conversationId);
     assertValid('Id', input?.actorId);
@@ -664,6 +830,44 @@ function aiContext(input) {
     return { conversationId: input.conversationId, contextVersion: conversation.context_version,
         throughMessageId: through.id, messages: contextual };
 }
+function normalizeOutboundPolicy(input) {
+    if (input.policy == null) return null;
+    if (!input.policy || typeof input.policy !== 'object' || Array.isArray(input.policy)) fail('INVALID_OUTBOUND_POLICY');
+    const policy = JSON.parse(stable(input.policy));
+    if (policy.handledMessageIds !== undefined) {
+        if (input.source !== 'ai' || !Array.isArray(policy.handledMessageIds)
+            || !policy.handledMessageIds.length || policy.handledMessageIds.length > 200
+            || !input.conversationId) fail('INVALID_HANDLED_MESSAGE_IDS');
+        let through = 0n;
+        for (const messageId of new Set(policy.handledMessageIds)) {
+            assertValid('Id', messageId);
+            const message = one(`SELECT inbound_seq,source,payload FROM messages WHERE id=? AND conversation_id=?`,
+                messageId, input.conversationId);
+            if (!message || message.source !== 'live' || message.inbound_seq == null
+                || JSON.parse(message.payload).direction !== 'inbound') fail('INVALID_HANDLED_MESSAGE_IDS');
+            if (BigInt(message.inbound_seq) > through) through = BigInt(message.inbound_seq);
+        }
+        if (new Set(policy.handledMessageIds).size !== policy.handledMessageIds.length) fail('INVALID_HANDLED_MESSAGE_IDS');
+        delete policy.handledMessageIds;
+        policy.handledThroughInboundSeq = String(through);
+    }
+    if (policy.handledThroughInboundSeq !== undefined) {
+        if (!['ai','human'].includes(input.source) || !input.conversationId) fail('INVALID_HANDLED_SEQUENCE');
+        assertValid('Sequence', policy.handledThroughInboundSeq);
+        const conversation = one('SELECT inbound_seq FROM conversations WHERE id=?', input.conversationId);
+        if (!conversation || BigInt(policy.handledThroughInboundSeq) > BigInt(conversation.inbound_seq)) fail('INVALID_HANDLED_SEQUENCE');
+    }
+    return policy;
+}
+function markInboundHandled(intent) {
+    const through = intent.policy?.handledThroughInboundSeq;
+    if (through === undefined || !intent.conversationId) return;
+    const row = one('SELECT inbound_seq,handled_inbound_seq FROM conversations WHERE id=?', intent.conversationId);
+    if (!row || BigInt(through) > BigInt(row.inbound_seq)) fail('INVALID_HANDLED_SEQUENCE');
+    if (BigInt(through) > BigInt(row.handled_inbound_seq)) {
+        run('UPDATE conversations SET handled_inbound_seq=? WHERE id=?', through, intent.conversationId);
+    }
+}
 function beginOutboundIntent(input) {
     if (!input || !['whatsapp','telegram'].includes(input.channel)) fail('INVALID_OUTBOUND_CHANNEL');
     if (typeof input.idempotencyKey !== 'string' || !input.idempotencyKey.length || input.idempotencyKey.length > 256) fail('INVALID_IDEMPOTENCY_KEY');
@@ -681,7 +885,8 @@ function beginOutboundIntent(input) {
     if (!input.payload || typeof input.payload !== 'object' || Array.isArray(input.payload)) fail('INVALID_OUTBOUND_PAYLOAD');
     const payload = stable(input.payload);
     const controlSnapshot = input.controlSnapshot == null ? null : stable(input.controlSnapshot);
-    const policy = input.policy == null ? null : stable(input.policy);
+    const normalizedPolicy = normalizeOutboundPolicy(input);
+    const policy = normalizedPolicy == null ? null : stable(normalizedPolicy);
     if (Buffer.byteLength(payload) > 8 * 1024 * 1024 || (controlSnapshot && Buffer.byteLength(controlSnapshot) > 4096)
         || (policy && Buffer.byteLength(policy) > 4096)) fail('OUTBOUND_PAYLOAD_TOO_LARGE');
     if (input.controlSnapshot != null) {
@@ -693,7 +898,7 @@ function beginOutboundIntent(input) {
     const fingerprint = createHash('sha256').update(stable({ accountId: input.accountId ?? null,
         actorId: input.actorId, channel: input.channel, controlSnapshot: input.controlSnapshot ?? null,
         conversationId: input.conversationId ?? null, destination: input.destination, payload: input.payload,
-        policy: input.policy ?? null, source: input.source })).digest('hex');
+        policy: normalizedPolicy ?? null, source: input.source })).digest('hex');
     const prior = one('SELECT * FROM outbound_intents WHERE idempotency_key=?', input.idempotencyKey);
     if (prior) {
         if (prior.request_fingerprint !== fingerprint) fail('OUTBOUND_IDEMPOTENCY_CONFLICT');
@@ -780,12 +985,20 @@ function finishOutboundIntent(input) {
         input.state, providerMessageId, providerResult, errorCode, now, now, row.id);
     const updated = outboundIntentFromRow(one('SELECT * FROM outbound_intents WHERE id=?', row.id));
     if (input.state === 'accepted' && updated.source === 'human') materializeHumanOutbound(updated, providerMessageId, now);
+    if (input.state === 'accepted' && ['human','ai'].includes(updated.source)) markInboundHandled(updated);
     return updated;
 }
 function materializeHumanOutbound(intent, providerMessageId, now) {
     const clientMessageId = intent.policy?.clientMessageId;
     if (!providerMessageId || typeof clientMessageId !== 'string') fail('OUTBOUND_MESSAGE_CORRELATION_REQUIRED');
     assertValid('Id', clientMessageId);
+    materializeConversationOutbound(intent, providerMessageId, now, 'operator', 'panel', clientMessageId);
+}
+function materializeAutomationOutbound(intent, providerMessageId, now) {
+    materializeConversationOutbound(intent, providerMessageId, now, 'ai', 'automation', null);
+}
+function materializeConversationOutbound(intent, providerMessageId, now, authorKind, source, clientMessageId) {
+    assertValid('ProviderMessageId', providerMessageId);
     const kind = intent.channel === 'telegram' ? 'telegram_chat_id'
         : intent.destination.endsWith('@lid') ? 'whatsapp_lid' : 'whatsapp_jid';
     const identityKey = { accountId: intent.accountId, channel: intent.channel, kind, exactValue: intent.destination };
@@ -801,7 +1014,7 @@ function materializeHumanOutbound(intent, providerMessageId, now) {
         if (message.direction !== 'outbound' || message.content?.type !== 'text' || message.content.text !== text) {
             fail('OUTBOUND_ARCHIVE_RECONCILIATION_FAILED');
         }
-        const next = { ...message, clientMessageId, authorKind: 'operator', actorId: intent.actorId, source: 'panel' };
+        const next = { ...message, clientMessageId, authorKind, actorId: intent.actorId, source };
         assertValid('Message', next);
         if (JSON.stringify(next) !== JSON.stringify(message)) {
             const conversation = one('SELECT aggregate_version FROM conversations WHERE id=?', intent.conversationId);
@@ -813,8 +1026,8 @@ function materializeHumanOutbound(intent, providerMessageId, now) {
         return;
     }
     if (typeof intent.payload?.text !== 'string') fail('OUTBOUND_ARCHIVE_RECONCILIATION_FAILED');
-    const result = ingest({ identity: identityKey, providerMessageId, source: 'panel', direction: 'outbound',
-        authorKind: 'operator', actorId: intent.actorId, clientMessageId, occurredAt: now,
+    const result = ingest({ identity: identityKey, providerMessageId, source, direction: 'outbound',
+        authorKind, actorId: intent.actorId, clientMessageId, occurredAt: now,
         content: { type: 'text', text: intent.payload.text } });
     if (result.status === 'quarantined') fail('OUTBOUND_ARCHIVE_RECONCILIATION_FAILED');
 }
@@ -830,11 +1043,20 @@ function reconcileOutboundIntent(input) {
         fail('OUTBOUND_RECONCILIATION_CONFLICT');
     }
     const now = new Date().toISOString();
+    const original = outboundIntentFromRow(row);
+    const providerMessageId = input.providerMessageId == null ? null : String(input.providerMessageId).slice(0, 256);
+    if (input.state === 'accepted' && original.conversationId && ['human','ai'].includes(original.source)) {
+        if (!providerMessageId) fail('OUTBOUND_MESSAGE_CORRELATION_REQUIRED');
+        if (original.source === 'human') materializeHumanOutbound(original, providerMessageId, now);
+        else materializeAutomationOutbound(original, providerMessageId, now);
+    }
     run(`UPDATE outbound_intents SET state=?,provider_message_id=?,error_code=NULL,reconciliation_note=?,reconciled_by=?,
         reconciled_at=?,updated_at=?,completed_at=? WHERE id=? AND state='delivery_unknown'`,
-        input.state, input.providerMessageId == null ? null : String(input.providerMessageId).slice(0, 256),
+        input.state, providerMessageId,
         input.note.trim(), input.actorId, now, now, now, row.id);
-    return { status: 'reconciled', intent: outboundIntentFromRow(one('SELECT * FROM outbound_intents WHERE id=?', row.id)) };
+    const intent = outboundIntentFromRow(one('SELECT * FROM outbound_intents WHERE id=?', row.id));
+    if (input.state === 'accepted' && ['human','ai'].includes(intent.source)) markInboundHandled(intent);
+    return { status: 'reconciled', intent };
 }
 function writeControlPolicy(input) {
     assertValid('Id', input?.actorId);
@@ -1694,11 +1916,14 @@ function dispatch(method, input) {
         }
         case 'updateTranscription': return transaction(() => updateTranscription(input));
         case 'pendingLegacyDispatches': return pendingLegacyDispatches(input);
+        case 'pendingResumeMessages': return pendingResumeMessages(input);
+        case 'shouldProcessArchivedInbound': return shouldProcessArchivedInbound(input);
         case 'markLegacyDispatched': return transaction(() => markLegacyDispatched(input));
         case 'retryLegacyDispatch': return transaction(() => retryLegacyDispatch(input));
         case 'controlState': return controlState(input);
         case 'clearAIContext': return transaction(() => clearAIContext(input));
         case 'writeControlState': return transaction(() => writeControlState(input));
+        case 'releaseControl': return transaction(() => releaseControl(input));
         case 'beginControlTakeover': return transaction(() => beginControlTakeover(input));
         case 'completeControlTakeover': return transaction(() => completeControlTakeover(input));
         case 'controlOperation': return controlOperation(input);

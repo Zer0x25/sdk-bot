@@ -18,6 +18,7 @@ export type SessionResponse = Contract<'SessionResponse'>;
 export type Operation = Contract<'Operation'>;
 export type SendMessageResponse = Contract<'SendMessageResponse'>;
 export type SendMessageRequest = Contract<'SendMessageRequest'>;
+export type PendingResumeResponse = Contract<'PendingResumeResponse'>;
 
 export type ControlResponse = Contract<'TakeoverConfirmedResponse'> | Contract<'TakeoverPendingResponse'>;
 
@@ -160,12 +161,22 @@ export function takeoverConversation(conversationId: string, expectedVersion: Co
   }, `panel_takeover_${crypto.randomUUID()}`);
 }
 
-export function releaseConversation(conversationId: string, expectedVersion: ConversationControl['controlVersion'], overrideOwner = false) {
+export function releaseConversation(conversationId: string, expectedVersion: ConversationControl['controlVersion'], options: {
+  overrideOwner?: boolean; resumePolicy?: 'future_only' | 'process_pending'; pendingInboundIds?: string[]; selectionVersion?: string;
+} = {}) {
   return postJson<ControlResponse>(`/conversations/${encodeURIComponent(conversationId)}/release`, {
     expectedVersion,
-    ...(overrideOwner ? { overrideOwner: true } : {}),
-    resumePolicy: 'future_only'
+    ...(options.overrideOwner ? { overrideOwner: true } : {}),
+    resumePolicy: options.resumePolicy ?? 'future_only',
+    ...(options.resumePolicy === 'process_pending' ? {
+      pendingInboundIds: options.pendingInboundIds,
+      selectionVersion: options.selectionVersion
+    } : {})
   }, `panel_release_${crypto.randomUUID()}`);
+}
+
+export function getPendingResumeMessages(conversationId: string, signal?: AbortSignal) {
+  return getJson<PendingResumeResponse>(`/conversations/${encodeURIComponent(conversationId)}/pending-resume`, signal);
 }
 
 export function updateConversationLifecycle(conversationId: string, expectedVersion: ConversationControl['controlVersion'], lifecycle: Lifecycle) {

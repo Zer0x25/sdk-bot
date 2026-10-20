@@ -2,7 +2,7 @@ import { useLayoutEffect, useRef } from 'react';
 import type { KeyboardEvent } from 'react';
 import { Link } from 'react-router-dom';
 import { ArrowLeft, Bell, Bot, MessageSquareText, Search, SendHorizontal, UserRound } from 'lucide-react';
-import type { Account, Actor, Conversation, Message } from './api';
+import type { Account, Actor, Conversation, Message, PendingResumeResponse } from './api';
 import { PanelApiError } from './api';
 
 interface Props {
@@ -34,8 +34,18 @@ interface Props {
   controlBusy: boolean;
   controlError: Error | null;
   controlNotice: string | null;
+  releaseOptionsOpen: boolean;
+  pendingResume?: PendingResumeResponse;
+  pendingResumeLoading: boolean;
+  pendingResumeError: Error | null;
+  selectedPendingIds: string[];
   onTakeover(): void;
   onRelease(): void;
+  onOpenPendingResume(): void;
+  onTogglePendingResume(messageId: string): void;
+  onReleaseFutureOnly(): void;
+  onReleaseSelectedPending(): void;
+  onCancelReleaseOptions(): void;
   onResolve(): void;
   onReopen(): void;
   draft: string;
@@ -109,7 +119,9 @@ export function ConversationThread(props: Props) {
     messagesLoading, messagesError, hasOlder, loadingOlder, readError, newMessagesCount,
     onMessagesSeen, onAtLatestChange, onLoadOlder, onRetryDetail, onRetryMessages, onRetryRead,
     actor, account, canTakeover, canRelease, canResolve, canReopen, canSend, controlBusy, controlError,
-    controlNotice, onTakeover, onRelease, onResolve, onReopen, draft, onDraftChange, sendBusy, sendError,
+    controlNotice, releaseOptionsOpen, pendingResume, pendingResumeLoading, pendingResumeError, selectedPendingIds,
+    onTakeover, onRelease, onOpenPendingResume, onTogglePendingResume, onReleaseFutureOnly,
+    onReleaseSelectedPending, onCancelReleaseOptions, onResolve, onReopen, draft, onDraftChange, sendBusy, sendError,
     uncertainSend, onSubmitMessage, onRetryUncertainSend, onRestoreUncertainDraft
   } = props;
   const historyRef = useRef<HTMLDivElement>(null);
@@ -261,6 +273,75 @@ export function ConversationThread(props: Props) {
           </div>
           {controlNotice && <div className="thread-inline-status" role="status">{controlNotice}</div>}
           {controlError && <div className="thread-inline-error" role="alert">{controlError.message}</div>}
+          {releaseOptionsOpen && (
+            <section className="release-policy-panel" aria-label="Elegir cómo devolver el control a la IA">
+              <h3>Devolver el control a la IA</h3>
+              <p>Elige si la IA atenderá solo mensajes nuevos o si procesará entradas recientes que todavía no tienen respuesta confirmada.</p>
+              <div className="release-policy-actions">
+                <button className="thread-control-button" type="button" onClick={onReleaseFutureOnly} disabled={controlBusy}>
+                  Solo mensajes futuros
+                </button>
+                <button className="thread-control-button" type="button" onClick={onOpenPendingResume} disabled={controlBusy}>
+                  Revisar entradas pendientes
+                </button>
+                <button className="text-button" type="button" onClick={onCancelReleaseOptions} disabled={controlBusy}>Cancelar</button>
+              </div>
+              {pendingResumeLoading && <p role="status">Buscando entradas verificables…</p>}
+              {pendingResumeError && <div className="thread-inline-error" role="alert">{pendingResumeError.message}</div>}
+              {pendingResume && (
+                <>
+                  {pendingResume.uncertainOutboundCount > 0 && (
+                    <p className="release-policy-warning" role="alert">
+                      Hay {pendingResume.uncertainOutboundCount} salida(s) de IA o del operador sin confirmar. No se habilita el reenvío de entradas pendientes hasta revisar esas entregas.
+                    </p>
+                  )}
+                  {pendingResume.automationMayBeBlocked && (
+                    <p className="release-policy-warning" role="status">
+                      La política de acceso, la revisión de identidad o la pausa global puede impedir que la IA responda.
+                    </p>
+                  )}
+                  <p className="release-policy-summary">
+                    {pendingResume.candidateCount === 0
+                      ? 'No hay entradas pendientes verificables para seleccionar.'
+                      : `${pendingResume.candidateCount} entrada(s) elegible(s); elige cuáles procesar.`}
+                    {pendingResume.truncated ? ' Se muestran las primeras 100.' : ''}
+                  </p>
+                  {(pendingResume.excludedPendingDispatchCount > 0 || pendingResume.excludedUnprocessableCount > 0) && (
+                    <p className="release-policy-summary">
+                      Se excluyen {pendingResume.excludedPendingDispatchCount} entrada(s) cuyo despacho sigue pendiente y {pendingResume.excludedUnprocessableCount} sin contenido procesable.
+                    </p>
+                  )}
+                  <ul className="pending-resume-list">
+                    {pendingResume.candidates.map(candidate => (
+                      <li key={candidate.messageId}>
+                        <label>
+                          <input
+                            type="checkbox"
+                            checked={selectedPendingIds.includes(candidate.messageId)}
+                            disabled={controlBusy || pendingResume.uncertainOutboundCount > 0}
+                            onChange={() => onTogglePendingResume(candidate.messageId)}
+                          />
+                          <span>
+                            <code>{candidate.messageId}</code>
+                            <small>Entrada {candidate.inboundSeq} · {formatTime(candidate.occurredAt)} · {candidate.contentType}</small>
+                            <span>{candidate.preview || 'Sin texto de vista previa'}</span>
+                          </span>
+                        </label>
+                      </li>
+                    ))}
+                  </ul>
+                  {pendingResume.candidateCount > 0 && (
+                    <button className="thread-control-button is-primary" type="button"
+                      onClick={onReleaseSelectedPending}
+                      disabled={controlBusy || !selectedPendingIds.length || pendingResume.uncertainOutboundCount > 0}>
+                      Procesar {selectedPendingIds.length} seleccionada(s) y devolver a IA
+                    </button>
+                  )}
+                  <p className="release-policy-summary">Las entradas antiguas no seleccionadas permanecen en el historial y no se reproducen automáticamente.</p>
+                </>
+              )}
+            </section>
+          )}
           <div className="message-history" ref={historyRef} onScroll={handleHistoryScroll} aria-busy={messagesLoading || loadingOlder}>
             {newMessagesCount > 0 && (
               <div className="new-messages-banner" role="status">
