@@ -1,6 +1,7 @@
 # Estado de continuidad — SDK-Bot
 
-Actualización: 2026-10-20. F4.2 se fusionó en main en 7526edc (PR #4).
+Actualización: 2026-10-20. El checkout se sincronizó con `origin/main` en
+`df1f111` antes de iniciar F5. F4.2 se fusionó en main en 7526edc (PR #4).
 BUG-064 y BUG-065 están cerrados y sus arreglos pasaron CI. Release PR #2 actualizó
 el manifiesto a 0.3.0 en 9b0d0b5; PR #6 fusionó la versión 0.4.0 en bfe3fa9.
 
@@ -547,9 +548,27 @@ ausencia de Vite/CA. Commit separado de la UI.
 - No se probaron canales reales ni E2E manual en navegador. La revisión visual del
   viewport móvil sigue pendiente; F4.3 se validó con pruebas de componente/CI.
 
+## F5: BUG-043 cerrado — reintento Telegram ligado a la cuenta de origen
+
+- `TelegramAdapter.sendMessage` captura token, accountId, adminChatId y generación
+  al iniciar el envío. Si llega un 400 de formato después de una rotación, el
+  reintento se detiene con `TG_CONNECTION_CHANGED`; no usa el token nuevo.
+- Una respuesta aceptada que llega tarde se archiva bajo la cuenta y configuración
+  admin capturadas por esa intención, aunque el adapter ya esté conectado a otra.
+- Evidencia: regresiones con transporte controlado en
+  `gateway/tests/telegramCapture.test.js`; `cd gateway && npm run check` pasó con
+  lint, typecheck, 13 pruebas Vitest, build servido y 271 pruebas Node en Node
+  24.19.0/Linux.
+- Commit local de código y regresiones: `8a84f8c`. F5 no está completada; este
+  cierre solo elimina una puerta de seguridad del dispatcher Telegram.
+- Siguiente unidad exacta: F5.1, crear persistencia SQLite de control por
+  conversación con transiciones versionadas (`controlVersion`) y eventos atómicos.
+  Mantener la autoridad JSON actual hasta que exista el informe dry-run de
+  importación exigido por la especificación.
+
 ## Pendientes materiales
 
-- F5 aborda toma de control, cancelación de IA, contexto y outbox; BUG-043/046/050
+- F5 aborda toma de control, cancelación de IA, contexto y outbox; BUG-046/050
   son puertas de esa entrega y BUG-051 antes de migrar archivos preexistentes.
 - BUG-010 sigue parcial; BUG-035/037 quedan para F8. Windows/Termux y canales reales
   no están validados; la historia previa que conservan los proveedores es limitada.
@@ -560,6 +579,6 @@ ausencia de Vite/CA. Commit separado de la UI.
 Actualizar estado y solo checkboxes demostrados; hacer commit probado e informar
 hash. Consultar [BACKLOG.md](BACKLOG.md) para el estado y aceptación de cada bug.
 
-BUG-005/009/044/045/047/052/053/054/055/070 están cerrados; BUG-006/007/008/010/011/012/014/024/035/037/043/046/050/051 siguen abiertos o parciales según el backlog. BUG-016 fue probado en repositorio y alias del adapter, sin afirmar F2 completa.
+BUG-005/009/043/044/045/047/052/053/054/055/070 están cerrados; BUG-006/007/008/010/011/012/014/024/035/037/046/050/051 siguen abiertos o parciales según el backlog. BUG-016 fue probado en repositorio y alias del adapter, sin afirmar F2 completa.
 
 Cierres históricos: commits F2C.1/F2C.2/F2D/F2E.1 están en el log local; F2B.3 `42b8321`, F2B.2 `7d99f36`, F2B.1 `4bb4ec3`, F2A `37525a1`.

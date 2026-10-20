@@ -34,7 +34,8 @@ la unidad de seguridad cerró BUG-062 en dependencias de medios y F4.2 conecta l
 lista e historial reales. F4.3 añade conexión SSE, actualización paginada sin
 huecos, ancla de scroll, contador de novedades, reconexión y resync. Evidencia:
 [F4.3](F4.3-STREAM-INBOX.md); BUG-070 cerrado.
-BUG-050 conserva salidas ambiguas; BUG-051 es puerta antes de usar archivos
+BUG-043 quedó cerrado con una guarda de reintento ligada a la cuenta Telegram de
+origen. BUG-050 conserva salidas ambiguas; BUG-051 es puerta antes de usar archivos
 preexistentes reales. La atribución IA/operador queda en F5 junto a su outbox.
 Sin canales reales ni migración.
 
