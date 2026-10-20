@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
 import { useQueryClient } from '@tanstack/react-query';
-import { getMessages } from './api';
+import { getMessages, type MessagesResponse, type PageCursor } from './api';
 
 const EVENT_TYPES = [
   'conversation.updated',
@@ -31,6 +31,32 @@ function parseEvent(data: string): ConversationEvent | null {
   return { type: event.type as EventName, data: event.data as Record<string, unknown> };
 }
 
+async function getLiveMessages(
+  queryClient: ReturnType<typeof useQueryClient>,
+  conversationId: string,
+  signal?: AbortSignal
+): Promise<MessagesResponse> {
+  const history = queryClient.getQueryData<{ pages?: MessagesResponse[] }>(['inbox', 'messages', conversationId]);
+  const cachedLatestIds = new Set(history?.pages?.[0]?.items.map(message => message.id) ?? []);
+  const pages: MessagesResponse[] = [];
+  const visitedCursors = new Set<PageCursor>();
+  let cursor: PageCursor | undefined;
+
+  while (true) {
+    const page = await getMessages(conversationId, { cursor }, signal);
+    pages.push(page);
+    if (cachedLatestIds.size === 0 || page.items.some(message => cachedLatestIds.has(message.id)) || !page.nextCursor) break;
+    if (visitedCursors.has(page.nextCursor)) {
+      throw new Error('No se pudo completar la actualización del historial.');
+    }
+    visitedCursors.add(page.nextCursor);
+    cursor = page.nextCursor;
+  }
+
+  const items = [...new Map(pages.flatMap(page => page.items).map(message => [message.id, message] as const)).values()];
+  return { ...pages[0], items };
+}
+
 export function useInboxEvents(conversationId?: string) {
   const queryClient = useQueryClient();
   const conversationRef = useRef(conversationId);
@@ -54,7 +80,9 @@ export function useInboxEvents(conversationId?: string) {
     let accountsDirty = false;
     const dirtyConversations = new Set<string>();
     const dirtyMessages = new Set<string>();
+    const refreshingMessages = new Set<string>();
     const processedEventIds = new Set<string>();
+    const processedMessageIds = new Set<string>();
 
     function flushInvalidations() {
       refreshTimer = undefined;
@@ -63,17 +91,22 @@ export function useInboxEvents(conversationId?: string) {
       for (const id of dirtyConversations) {
         void queryClient.invalidateQueries({ queryKey: ['inbox', 'conversation', id] });
       }
-      for (const id of dirtyMessages) {
+      for (const id of [...dirtyMessages]) {
+        if (refreshingMessages.has(id)) continue;
+        dirtyMessages.delete(id);
+        refreshingMessages.add(id);
         void queryClient.fetchQuery({
           queryKey: ['inbox', 'live-messages', id],
-          queryFn: () => getMessages(id, {}),
+          queryFn: ({ signal }) => getLiveMessages(queryClient, id, signal),
           staleTime: 0
-        }).catch(() => undefined);
+        }).catch(() => undefined).finally(() => {
+          refreshingMessages.delete(id);
+          if (dirtyMessages.size > 0) scheduleFlush();
+        });
       }
       listDirty = false;
       accountsDirty = false;
       dirtyConversations.clear();
-      dirtyMessages.clear();
     }
 
     function scheduleFlush() {
@@ -99,17 +132,20 @@ export function useInboxEvents(conversationId?: string) {
         accountsDirty = false;
         dirtyConversations.clear();
         dirtyMessages.clear();
+        processedMessageIds.clear();
         setNewMessageCount(0);
         // A new epoch or expired cursor invalidates every cached snapshot and page cursor.
-        void queryClient.resetQueries({ queryKey: ['inbox'] });
-        const selectedId = conversationRef.current;
-        if (selectedId) {
-          void queryClient.fetchQuery({
-            queryKey: ['inbox', 'live-messages', selectedId],
-            queryFn: () => getMessages(selectedId, {}),
-            staleTime: 0
-          }).catch(() => undefined);
-        }
+        void queryClient.resetQueries({ queryKey: ['inbox'] }).then(() => {
+          const selectedId = conversationRef.current;
+          if (selectedId) {
+            return queryClient.fetchQuery({
+              queryKey: ['inbox', 'live-messages', selectedId],
+              queryFn: ({ signal }) => getLiveMessages(queryClient, selectedId, signal),
+              staleTime: 0
+            }).catch(() => undefined);
+          }
+          return undefined;
+        });
         return;
       }
 
@@ -124,7 +160,12 @@ export function useInboxEvents(conversationId?: string) {
         }
         if (id === conversationRef.current && messageChanged) {
           dirtyMessages.add(id);
-          if (event.type === 'message.created') setNewMessageCount(count => count + 1);
+          if (event.type === 'message.created' && typeof event.data.messageId === 'string'
+            && !processedMessageIds.has(event.data.messageId)) {
+            processedMessageIds.add(event.data.messageId);
+            if (processedMessageIds.size > 1000) processedMessageIds.delete(processedMessageIds.values().next().value as string);
+            setNewMessageCount(count => count + 1);
+          }
         }
       }
       scheduleFlush();
