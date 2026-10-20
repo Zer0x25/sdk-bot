@@ -5,6 +5,49 @@ based on [Conventional Commits](https://www.conventionalcommits.org/) and this
 file is maintained automatically by
 [release-please](https://github.com/googleapis/release-please).
 
+## [0.3.0](https://github.com/Zer0x25/sdk-bot/compare/v0.2.0...v0.3.0) (2026-10-20)
+
+
+### Features
+
+* **brain,stt:** non-blocking async execution, WAL mode and tests ([c366026](https://github.com/Zer0x25/sdk-bot/commit/c366026894e9d3e03a398a062f97aaac125c3525))
+* **brain:** Gemini 3.1 Flash Lite como modelo primary por defecto ([4c8f475](https://github.com/Zer0x25/sdk-bot/commit/4c8f475f4eb81edbb4d4c029fbfd68ec52056d26))
+* **brain:** tuning centralizado + capa de humanizacion (estilo/temp/top_p) ([f5f32fe](https://github.com/Zer0x25/sdk-bot/commit/f5f32fe0dc128cf7560fb1de11dbf10ca8e5c789))
+* build durable conversations platform and operator inbox ([#4](https://github.com/Zer0x25/sdk-bot/issues/4)) ([7526edc](https://github.com/Zer0x25/sdk-bot/commit/7526edcb09d5964bacd68b1e1c07cf2cf5f81dde))
+* **dev:** dev.sh up/down/status + reset no interactivo + panel reset reconecta en caliente ([990d529](https://github.com/Zer0x25/sdk-bot/commit/990d5299129e543e02c544d60b5d0b64268b05bb))
+* **gateway:** add telegram integration and refactor admin services ([1814789](https://github.com/Zer0x25/sdk-bot/commit/18147899abae68a2077f14fd236359ea50435f90))
+* **gateway:** controles anti-abuso y anti-cambio de numero en pairing ([db7a119](https://github.com/Zer0x25/sdk-bot/commit/db7a119ba739ba8626bb7ca249ddc4c6fd712ded))
+* **gateway:** multi-channel adapter hub architecture, UI pairing fixes, and self-chat detection ([0bbf461](https://github.com/Zer0x25/sdk-bot/commit/0bbf461aa0f50f2eba675e21002f2444cdd6a735))
+* **gateway:** Opción B en cambio de número - borrar y re-pair limpio + persistir en settings DB ([27f9fac](https://github.com/Zer0x25/sdk-bot/commit/27f9fac00ab06ebb2c1c9372231daf0beb82cb10))
+* **gateway:** simulacion humana + AFK tunables via .env.tuning ([3bf78af](https://github.com/Zer0x25/sdk-bot/commit/3bf78aff0e25d15f9389547a1b63f0ca55781779))
+* **pairing:** friendlier WhatsApp/Telegram pairing flow ([c6dbbf4](https://github.com/Zer0x25/sdk-bot/commit/c6dbbf44d982ab9dd396bb4d96fe363ed8b20ec1))
+* **panel:** implement status token security, origin validation and tests ([a9196ce](https://github.com/Zer0x25/sdk-bot/commit/a9196ce458370ec3367fc9559ea49b62da80f36b))
+* **panel:** rename tabs to WhatsApp and Telegram with SVGs ([4f470cf](https://github.com/Zer0x25/sdk-bot/commit/4f470cf7091e8893e72ddb9f4f490ba02ed577ea))
+* **stt:** transcripción local de audios WhatsApp/Telegram (faster-whisper) ([825ac4d](https://github.com/Zer0x25/sdk-bot/commit/825ac4ddd85585726868594ef59db9b95b2420b0))
+
+
+### Bug Fixes
+
+* **brain:** corrige 2 errores de lint en providers.py (f-string/zip strict) ([7320bb0](https://github.com/Zer0x25/sdk-bot/commit/7320bb03f06c9fc4921f62fe708939a9d58df931))
+* **ci:** allow release PR checks with configured token ([#5](https://github.com/Zer0x25/sdk-bot/issues/5)) ([69618d4](https://github.com/Zer0x25/sdk-bot/commit/69618d42765985801d73dec52549bd812f4d65ae))
+* **ci:** reemplaza install-smoke por dev-smoke y corrige dev.sh up multi-componente ([e4528f9](https://github.com/Zer0x25/sdk-bot/commit/e4528f98d0e1120dd73812f36214579ff56dd61f))
+* **gateway:** corregir lint no-useless-assignment en handler de reconexion ([277e4b5](https://github.com/Zer0x25/sdk-bot/commit/277e4b5d39e3354ab50fa9fbf795051838b5878e))
+* **gateway:** corrige bug factory-reset (ctx.sock-&gt;ctx.adapter) y limpia código muerto ([89ec31a](https://github.com/Zer0x25/sdk-bot/commit/89ec31a62ee8379f61b20d23facaa4883a269145))
+* **gateway:** descartar sesion a medias al conectar (evita 401 loggedOut en arranque) ([4ff010a](https://github.com/Zer0x25/sdk-bot/commit/4ff010a29dd1da7809243885d1a68422c8aa8131))
+* **gateway:** en desvinculación desde móvil no borrar creds (re-pair mismo número = todo igual) ([d535364](https://github.com/Zer0x25/sdk-bot/commit/d53536466a0d0e4e58446c5946d51502ca8c128d))
+* **gateway:** evitar 515 Stream Errored en pairing (syncFullHistory off + browser/version + no cortar socket) ([826b610](https://github.com/Zer0x25/sdk-bot/commit/826b610fe1ba42987969a9c34d5f36065e5adae4))
+* **gateway:** loguear razon real de connection.close en WhatsApp (statusCode/err) ([a7ccff5](https://github.com/Zer0x25/sdk-bot/commit/a7ccff55da38c257fbdb6a2b28ff201c683845b5))
+* **gateway:** quitar version inventada que causaba 405 en handshake (sin QR) ([bf46308](https://github.com/Zer0x25/sdk-bot/commit/bf46308d9f3b9b4963a336284d4479d11824e270))
+* **gateway:** reabrir ventana QR en /qr/refresh para que el panel reciba el QR en standby ([4ed993d](https://github.com/Zer0x25/sdk-bot/commit/4ed993d73f9ee837ac7437675d31ff568629fc03))
+* **gateway:** reconectar tras primer intento de pairing fallido (515/401 transitorio) ([c775e81](https://github.com/Zer0x25/sdk-bot/commit/c775e8125755b9ec381b9555d343ea2e6d81ec7a))
+* **gateway:** resolve telegram logger, typecheck errors and message routing ([2b54009](https://github.com/Zer0x25/sdk-bot/commit/2b540093b2ccf4c7e8b88ea9df3589f7b09fe173))
+* **gateway:** restaurar syncFullHistory y proteger socket durante pairing (515) ([1ea8d6d](https://github.com/Zer0x25/sdk-bot/commit/1ea8d6dc5a84e18b257404d1d6cef46e7fb59ba8))
+* **gateway:** unref registerSentMessage timer and clean up unused variable warnings ([51f2635](https://github.com/Zer0x25/sdk-bot/commit/51f2635e4ee475b4ee52b16d75b446a2def30d39))
+* **logs:** resolve active log file for deletion and unref timers ([5380cc5](https://github.com/Zer0x25/sdk-bot/commit/5380cc5f8ea64ee0dae9ebbc4de7d4a0399009e5))
+* **pairing:** complete WhatsApp link when phone accepts mid-stream close ([24ef62c](https://github.com/Zer0x25/sdk-bot/commit/24ef62c65191f93e99c279ab595c618ce437c0dc))
+* **pairing:** reopen QR window on explicit refresh (button produced no image) ([ebe470b](https://github.com/Zer0x25/sdk-bot/commit/ebe470b514a417417ef6718396cc32814e81cc27))
+* **tests:** prevent test runner hanging on telegram poller and infinite SSE ([e1ceca4](https://github.com/Zer0x25/sdk-bot/commit/e1ceca424ff2dc413bc8cff273a56b35570d2a04))
+
 ## [0.2.0](https://github.com/Zer0x25/sdk-bot/compare/v0.1.0...v0.2.0) (2026-08-16)
 
 
