@@ -689,7 +689,7 @@ ausencia de Vite/CA. Commit separado de la UI.
 Actualizar estado y solo checkboxes demostrados; hacer commit probado e informar
 hash. Consultar [BACKLOG.md](BACKLOG.md) para el estado y aceptación de cada bug.
 
-BUG-005/009/012/043/044/045/047/050/052/053/054/055/070 están cerrados; BUG-006/007/008/010/011/014/024/035/037/046/051/071/072 siguen abiertos o parciales según el backlog. BUG-016 fue probado en repositorio y alias del adapter, sin afirmar F2 completa.
+BUG-005/006/007/009/012/043/044/045/047/050/052/053/054/055/070 están cerrados; BUG-008/010/011/014/024/035/037/046/051/071/072 siguen abiertos o parciales según el backlog. BUG-016 fue probado en repositorio y alias del adapter, sin afirmar F2 completa.
 
 Cierres históricos: commits F2C.1/F2C.2/F2D/F2E.1 están en el log local; F2B.3 `42b8321`, F2B.2 `7d99f36`, F2B.1 `4bb4ec3`, F2A `37525a1`.
 
@@ -829,3 +829,18 @@ Cierres históricos: commits F2C.1/F2C.2/F2D/F2E.1 están en el log local; F2B.3
   [F6.4](F6.4-SMOKE-CANAL.md). La simulación F6.3 permanece separada del smoke real.
 - **F6.4 pendiente** hasta disponer de una cuenta de prueba conectada. Por tanto,
   Fase 6 aún no queda cerrada y no se pasa a Fase 7 hasta completar ese smoke.
+
+## Revisión del backlog antes de F7
+
+- Se confirmó que `work` y `origin/work` están sincronizados en `5a77104`. No se
+  iniciará F7 mientras F6.4 siga pendiente, porque la hoja de ruta exige v1 estable.
+- BUG-006/007 tenían evidencia de cierre F5.5/F5.7/F5.8, pero sus filas seguían
+  abiertas; BACKLOG.md ahora refleja los cierres y referencias de aceptación.
+- Gates por alcance de F7: BUG-024 antes de habilitar operadores limitados;
+  BUG-008/046 antes de afirmar paridad segura de comandos Telegram; BUG-035 en la
+  aceptación del pairing; BUG-072 prohíbe asumir retry seguro del test de token.
+  BUG-075/076 quedan condicionados a ofrecer conciliación o paridad de replay.
+- BUG-010/011 requieren aceptación o reparación si se conserva paridad de comandos
+  legacy. BUG-051 bloquea migrar un archivo runtime existente; BUG-071/073/074 y
+  BUG-066/069 siguen en sus límites anotados. No se ejecutaron pruebas en esta
+  revisión documental.
