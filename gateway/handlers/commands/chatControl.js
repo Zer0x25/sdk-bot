@@ -3,32 +3,28 @@
  */
 const { getContactsDB } = require('../../services/db');
 const { clearAIMemory } = require('../../services/brainService');
-const { setNumberState } = require('../../services/stateService');
-const { resolveTarget, getGlobalMode, syntaxError } = require('../commandHelpers');
+const { setNumberState, releaseControl } = require('../../services/stateService');
+const { resolveTarget, syntaxError } = require('../commandHelpers');
 
-function runIa({ queryParam }) {
+async function runIa({ queryParam, adapter }) {
     const t = resolveTarget(queryParam, 'ia');
     if (!t.ok) return t.error;
-    const res = setNumberState(t.targetId, 'neutral');
+    const res = await releaseControl(t.targetId, { channel: adapter?.channel || 'whatsapp', accountId: adapter?.accountId || null });
     if (res.success) {
         return `🤖 *IA Reactivada para el cliente:*\n\`${res.target}\`. (Pasó a estado: ${res.state})`;
     }
-    return syntaxError('ia', `No pude reactivar la IA para *${t.targetId}*.`);
+    return syntaxError('ia', `No pude reactivar la IA para *${t.targetId}*: ${res.message || 'conflicto de control'}.`);
 }
 
-function runHumano({ queryParam }) {
+async function runHumano({ queryParam, adapter }) {
     const t = resolveTarget(queryParam, 'humano');
     if (!t.ok) return t.error;
-    // Coherencia con el pipeline: en Modo Global estricto (ignored_all) el bot
-    // no atiende clientes salvo whitelist, así que /humano tampoco aplica.
-    if (getGlobalMode() === 'ignored_all') {
-        return syntaxError('humano', 'El bot está en *Modo Global Estricto* (Ignorar a Todos). Reactívalo con `/permitir *` antes de pausar la IA por cliente.');
+    const res = await setNumberState(t.targetId, 'handoff', { channel: adapter?.channel || 'whatsapp', accountId: adapter?.accountId || null });
+    if (!res.success) return syntaxError('humano', `No pude activar atención humana para *${t.targetId}*: ${res.message || 'conflicto de control'}.`);
+    if (res.pending) {
+        return `🤝 *Toma de control pendiente para:* \`${res.target}\`. La salida que ya comenzó está terminando; consulta la operación en el panel.`;
     }
-    const res = setNumberState(t.targetId, 'handoff');
-    if (res.success) {
-        return `🤝 *Atención Humana activada para:*\n\`${res.target}\`.\nLa IA permanecerá en silencio durante 24 horas (volverá a estado neutro automáticamente, o reactiva antes con \`/ia ${res.target}\`).`;
-    }
-    return syntaxError('humano', `No pude activar atención humana para *${t.targetId}*.`);
+    return `🤝 *Atención Humana activada para:*\n\`${res.target}\`. La IA seguirá en silencio hasta que uses \`/ia ${res.target}\`.`;
 }
 
 async function runLimpiar({ queryParam }) {

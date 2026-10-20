@@ -481,6 +481,28 @@
               "type": "null"
             }
           ]
+        },
+        "profileKey": {
+          "anyOf": [
+            { "type": "string", "pattern": "^[A-Za-z0-9_.-]{1,80}$" },
+            { "type": "null" }
+          ]
+        },
+        "requiresReview": {
+          "type": "boolean"
+        },
+        "reviewReasons": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "enum": [
+              "invalid_legacy_state",
+              "invalid_profile_key",
+              "profile_inventory_unavailable",
+              "profile_missing"
+            ]
+          },
+          "uniqueItems": true
         }
       },
       "required": [
@@ -492,7 +514,10 @@
         "contextVersion",
         "status",
         "takenAt",
-        "handoffReason"
+        "handoffReason",
+        "profileKey",
+        "requiresReview",
+        "reviewReasons"
       ],
       "additionalProperties": false,
       "description": "Forma de proyección; elegibilidad/cancelación/barrera se verifican en servicio de dominio F5."
@@ -1162,13 +1187,18 @@
         },
         "lifecycle": {
           "$ref": "#/$defs/Lifecycle"
+        },
+        "accessPolicy": {
+          "$ref": "#/$defs/AccessPolicy"
         }
       },
-      "required": [
-        "expectedVersion",
-        "lifecycle"
+      "required": ["expectedVersion"],
+      "anyOf": [
+        { "properties": { "lifecycle": { "$ref": "#/$defs/Lifecycle" } }, "required": ["lifecycle"] },
+        { "properties": { "accessPolicy": { "$ref": "#/$defs/AccessPolicy" } }, "required": ["accessPolicy"] }
       ],
-      "additionalProperties": false
+      "additionalProperties": false,
+      "description": "CAS por controlVersion; se requiere al menos un cambio de lifecycle, acceso o perfil."
     },
     "Operation": {
       "type": "object",

@@ -128,7 +128,7 @@ test('F5.2 CLI reports from read-only SQLite and leaves JSON sources and archive
     assert.equal(report.dryRun, true);
     assert.equal(report.cutoverAllowed, true);
     assert.deepEqual(report.counts, { sourceRecords: 3, imported: 3, quarantined: 0, excluded: 0, requiresReview: 0 });
-    assert.equal(report.sourceManifest.archive.schemaVersion, 6);
+    assert.equal(report.sourceManifest.archive.schemaVersion, 7);
     assert.equal(hash(await fs.readFile(contactsPath)), hash(contactBytes));
     assert.equal(hash(await fs.readFile(settingsPath)), hash(settingsBytes));
     assert.equal(hash(await fs.readFile(databasePath)), beforeDb);

@@ -37,6 +37,9 @@ const conversation: Conversation = {
     handoffReason: null,
     lifecycle: 'open',
     ownerId: null,
+    profileKey: null,
+    requiresReview: false,
+    reviewReasons: [],
     status: 'confirmed',
     takenAt: null
   },

@@ -10,6 +10,7 @@ const { retentionCutoff } = require('./eventRetention');
 const schema = require('./schema');
 let db;
 const READ_ONLY_METHODS = new Set(['snapshot','telegramCursor','pendingLegacyDispatches','controlState','controlAuthority','controlImportStatus','controlImportEntries',
+    'controlPolicy','controlOperation','pendingControlOperations','controlTargets','controlByIdentity',
     'conversation','conversations','conversationRows','conversationView','accounts','messages','messagePage',
     'events','eventsPage','diagnostics','close']);
 function fail(code) { throw Object.assign(new Error(code), { code }); }
@@ -42,7 +43,7 @@ function initialize() {
         // committed WAL records or touching another process's snapshot.
         db = new DatabaseSync(`${pathToFileURL(file).href}?immutable=1`, { readOnly: true });
         const schemaVersion = one('PRAGMA user_version').user_version;
-        if (schemaVersion !== 6) fail('SCHEMA_VERSION_REQUIRED');
+        if (![6, 7].includes(schemaVersion)) fail('SCHEMA_VERSION_REQUIRED');
         if (one("SELECT migration_id FROM control_import_migrations WHERE status IN ('cutover_applying','rolling_back') LIMIT 1")) {
             fail('CONTROL_CUTOVER_RECOVERY_REQUIRED');
         }
@@ -62,7 +63,7 @@ function initialize() {
     // SQLite owns the OS lock for the full connection lifetime; crash releases it.
     db.exec('BEGIN IMMEDIATE; COMMIT;');
     const version = one('PRAGMA user_version').user_version;
-    if (version > 6) fail('SCHEMA_TOO_NEW');
+    if (version > 7) fail('SCHEMA_TOO_NEW');
     if (version === 0) transaction(() => {
         db.exec(schema);
         run('INSERT INTO archive_meta VALUES(1,?,?)', randomUUID(), '0');
@@ -177,6 +178,37 @@ function initialize() {
         );
         PRAGMA user_version=6;`);
     });
+    if (one('PRAGMA user_version').user_version === 6) transaction(() => {
+        db.exec(`ALTER TABLE events RENAME TO events_v6;
+        CREATE TABLE events (
+            seq TEXT PRIMARY KEY CHECK(seq NOT GLOB '*[^0-9]*' AND substr(seq,1,1) BETWEEN '1' AND '9'),
+            conversation_id TEXT REFERENCES conversations(id),
+            message_id TEXT REFERENCES messages(id) ON DELETE SET NULL,
+            created_at TEXT NOT NULL,
+            actor_id TEXT,
+            payload TEXT NOT NULL CHECK(json_valid(payload))
+        );
+        INSERT INTO events(seq,conversation_id,message_id,created_at,actor_id,payload)
+            SELECT seq,conversation_id,message_id,created_at,actor_id,payload FROM events_v6;
+        DROP TABLE events_v6;
+        CREATE INDEX events_order ON events(length(seq),seq);
+        CREATE INDEX events_retention ON events(created_at);
+        CREATE TABLE control_operations (
+            id TEXT PRIMARY KEY,
+            conversation_id TEXT NOT NULL REFERENCES conversations(id),
+            actor_id TEXT NOT NULL,
+            type TEXT NOT NULL CHECK(type='takeover'),
+            status TEXT NOT NULL CHECK(status IN ('taking_control','completed','failed')),
+            control_version TEXT NOT NULL CHECK(control_version NOT GLOB '*[^0-9]*' AND substr(control_version,1,1) BETWEEN '1' AND '9'),
+            uncertain_message_ids TEXT NOT NULL DEFAULT '[]' CHECK(json_valid(uncertain_message_ids)),
+            idempotency_key TEXT NOT NULL UNIQUE,
+            request_fingerprint TEXT NOT NULL CHECK(length(request_fingerprint)=64),
+            created_at TEXT NOT NULL,
+            completed_at TEXT
+        );
+        CREATE INDEX control_operations_pending ON control_operations(status,created_at,id);
+        PRAGMA user_version=7;`);
+        });
     if (one('PRAGMA integrity_check').integrity_check !== 'ok' || all('PRAGMA foreign_key_check').length) fail('ARCHIVE_CORRUPT');
     const incompleteCutover = one("SELECT migration_id FROM control_import_migrations WHERE status IN ('cutover_applying','rolling_back') LIMIT 1");
     if (incompleteCutover && !workerData.controlRecovery) fail('CONTROL_CUTOVER_RECOVERY_REQUIRED');
@@ -194,7 +226,7 @@ function initialize() {
         transaction(() => pending.forEach(row => updateTranscription({ messageId: row.id, expectedStatus: 'pending', status: 'failed' })));
         after = pending[pending.length - 1].id;
     }
-    return { ...snapshot(), schemaVersion: 6, journalMode: one('PRAGMA journal_mode').journal_mode,
+    return { ...snapshot(), schemaVersion: 7, journalMode: one('PRAGMA journal_mode').journal_mode,
         synchronous: one('PRAGMA synchronous').synchronous, threadId: require('node:worker_threads').threadId };
 }
 function registerAccount(input) {
@@ -367,9 +399,11 @@ function ingest(input) {
     if (providerId !== null) run('INSERT INTO fingerprints VALUES(?,?,?,?,?,?)', input.identity.accountId, identity.canonical_id, providerId, draft.id, digest, now);
     const aggregate = String(BigInt(c.aggregate_version) + 1n);
     run(`UPDATE conversations SET aggregate_version=?,inbound_seq=?,last_activity_at=MAX(COALESCE(last_activity_at,''),?),
+        lifecycle=CASE WHEN ?='live' AND ?='inbound' THEN 'open' ELSE lifecycle END,
         capturing_since=CASE WHEN ?='live' THEN COALESCE(capturing_since,?) ELSE capturing_since END,
         history_observed=CASE WHEN ? IN ('history','import') THEN 1 ELSE history_observed END WHERE id=?`,
-    aggregate, draft.inboundSeq ?? c.inbound_seq, draft.occurredAt, draft.source, now, draft.source, c.id);
+    aggregate, draft.inboundSeq ?? c.inbound_seq, draft.occurredAt, draft.source, draft.direction,
+    draft.source, now, draft.source, c.id);
     const event = appendMessageEvent(draft, aggregate, 'message.created', now);
     if (dispatch && c.requires_review === 0) {
         run('INSERT INTO legacy_dispatch(message_id,status,payload,created_at) VALUES(?,?,?,?)', draft.id, dispatch.status, dispatch.payload, now);
@@ -390,7 +424,9 @@ function controlStateFromRow(row) {
     return { accessPolicy: row.access_policy, automationMode: row.automation_mode,
         lifecycle: row.lifecycle, ownerId: row.owner_id, controlVersion: row.control_version,
         contextVersion: row.context_version, status: row.control_status, takenAt: row.taken_at,
-        handoffReason: row.handoff_reason };
+        handoffReason: row.handoff_reason, profileKey: row.profile_key ?? null,
+        requiresReview: row.requires_review === 1,
+        reviewReasons: row.control_review_reason ? row.control_review_reason.split(',').filter(Boolean) : [] };
 }
 function controlState(conversationId) {
     assertValid('Id', conversationId);
@@ -407,16 +443,27 @@ function writeControlState(input) {
     const current = controlStateFromRow(row);
     if (input.expectedVersion !== current.controlVersion) return { status: 'conflict', control: current };
     const nextVersion = String(BigInt(current.controlVersion) + 1n);
-    const next = { ...input.state, controlVersion: nextVersion, contextVersion: current.contextVersion };
+    const state = { ...input.state };
+    for (const key of ['profileKey','requiresReview','reviewReasons']) {
+        if (state[key] === undefined) state[key] = current[key];
+    }
+    const profileChanged = state.profileKey !== current.profileKey;
+    const next = { ...state, controlVersion: nextVersion,
+        contextVersion: profileChanged ? String(BigInt(current.contextVersion) + 1n) : current.contextVersion };
     assertValid('ConversationControl', next);
-    const keys = ['accessPolicy','automationMode','lifecycle','ownerId','status','takenAt','handoffReason'];
-    if (keys.every(key => next[key] === current[key])) return { status: 'unchanged', control: current };
+    const keys = ['accessPolicy','automationMode','lifecycle','ownerId','status','takenAt','handoffReason',
+        'profileKey','requiresReview','reviewReasons'];
+    if (keys.every(key => Array.isArray(next[key]) && Array.isArray(current[key])
+        ? next[key].length === current[key].length && next[key].every((value, index) => value === current[key][index])
+        : next[key] === current[key])) return { status: 'unchanged', control: current };
     const aggregate = String(BigInt(row.aggregate_version) + 1n);
     const now = new Date().toISOString();
-    run(`UPDATE conversations SET access_policy=?,automation_mode=?,lifecycle=?,owner_id=?,control_version=?,
-        control_status=?,taken_at=?,handoff_reason=?,aggregate_version=? WHERE id=? AND control_version=?`,
+    run(`UPDATE conversations SET access_policy=?,automation_mode=?,lifecycle=?,owner_id=?,control_version=?,context_version=?,
+        control_status=?,taken_at=?,handoff_reason=?,profile_key=?,requires_review=?,control_review_reason=?,aggregate_version=? WHERE id=? AND control_version=?`,
     next.accessPolicy, next.automationMode, next.lifecycle, next.ownerId, next.controlVersion,
-    next.status, next.takenAt, next.handoffReason, aggregate, input.conversationId, current.controlVersion);
+    next.contextVersion, next.status, next.takenAt, next.handoffReason, next.profileKey,
+    next.requiresReview ? 1 : 0, next.reviewReasons.length ? [...new Set(next.reviewReasons)].sort().join(',') : null,
+    aggregate, input.conversationId, current.controlVersion);
     const cursor = snapshot();
     cursor.seq = String(BigInt(cursor.seq) + 1n);
     const event = assertValid('Event', { schemaVersion: 1, cursor, type: 'control.changed', occurredAt: now,
@@ -426,6 +473,137 @@ function writeControlState(input) {
     run('UPDATE archive_meta SET seq=? WHERE id=1', cursor.seq);
     pruneRetainedEvents();
     return { status: 'updated', control: next, event };
+}
+function controlPolicy() {
+    const row = one('SELECT * FROM control_policy WHERE id=1');
+    return { globalMode: row.global_mode, globalProfileKey: row.global_profile_key,
+        policyVersion: row.policy_version, requiresReview: row.requires_review === 1, reviewReason: row.review_reason };
+}
+function writeControlPolicy(input) {
+    assertValid('Id', input?.actorId);
+    assertValid('Version', input?.expectedVersion);
+    if (!['allowed_all','ignored_all'].includes(input?.globalMode)) fail('INVALID_GLOBAL_MODE');
+    const profile = input.globalProfileKey ?? null;
+    if (profile !== null && (typeof profile !== 'string' || !/^[A-Za-z0-9_.-]{1,80}$/.test(profile))) fail('INVALID_GLOBAL_PROFILE');
+    const current = controlPolicy();
+    if (input.expectedVersion !== current.policyVersion) return { status: 'conflict', policy: current };
+    if (input.globalMode === current.globalMode && profile === current.globalProfileKey && !current.requiresReview) {
+        return { status: 'unchanged', policy: current };
+    }
+    const policyVersion = String(BigInt(current.policyVersion) + 1n);
+    const now = new Date().toISOString();
+    run('UPDATE control_policy SET global_mode=?,global_profile_key=?,policy_version=?,requires_review=0,review_reason=NULL WHERE id=1',
+        input.globalMode, profile, policyVersion);
+    const cursor = snapshot();
+    cursor.seq = String(BigInt(cursor.seq) + 1n);
+    const event = assertValid('Event', { schemaVersion: 1, cursor, type: 'policy.updated', occurredAt: now,
+        data: { policyVersion } });
+    run('INSERT INTO events(seq,conversation_id,message_id,created_at,actor_id,payload) VALUES(?,?,NULL,?,?,?)',
+        cursor.seq, null, now, input.actorId, JSON.stringify(event));
+    run('UPDATE archive_meta SET seq=? WHERE id=1', cursor.seq);
+    pruneRetainedEvents();
+    return { status: 'updated', policy: controlPolicy(), event };
+}
+function controlOperationFromRow(row) {
+    if (!row) return null;
+    return { id: row.id, conversationId: row.conversation_id, actorId: row.actor_id, type: row.type,
+        status: row.status, controlVersion: row.control_version,
+        uncertainMessageIds: JSON.parse(row.uncertain_message_ids), createdAt: row.created_at,
+        completedAt: row.completed_at };
+}
+function controlOperation(operationId) {
+    assertValid('Id', operationId);
+    return controlOperationFromRow(one('SELECT * FROM control_operations WHERE id=?', operationId));
+}
+function pendingControlOperations() {
+    return all("SELECT * FROM control_operations WHERE status='taking_control' ORDER BY created_at,id")
+        .map(controlOperationFromRow);
+}
+function appendOperationEvent(operation, aggregateVersion, now) {
+    const cursor = snapshot();
+    cursor.seq = String(BigInt(cursor.seq) + 1n);
+    const event = assertValid('Event', { schemaVersion: 1, cursor, type: 'operation.updated', occurredAt: now,
+        data: { conversationId: operation.conversationId, operationId: operation.id, aggregateVersion } });
+    run('INSERT INTO events(seq,conversation_id,message_id,created_at,actor_id,payload) VALUES(?,?,NULL,?,?,?)',
+        cursor.seq, operation.conversationId, now, operation.actorId, JSON.stringify(event));
+    run('UPDATE archive_meta SET seq=? WHERE id=1', cursor.seq);
+    return event;
+}
+function beginControlTakeover(input) {
+    assertValid('Id', input?.conversationId); assertValid('Id', input?.actorId); assertValid('Version', input?.expectedVersion);
+    if (typeof input?.idempotencyKey !== 'string' || !/^[A-Za-z0-9_-]{16,128}$/.test(input.idempotencyKey)) fail('INVALID_IDEMPOTENCY_KEY');
+    if (typeof input?.overrideOwner !== 'boolean') fail('INVALID_OVERRIDE_OWNER');
+    const fingerprint = createHash('sha256').update(JSON.stringify({ actorId: input.actorId,
+        conversationId: input.conversationId, expectedVersion: input.expectedVersion,
+        overrideOwner: input.overrideOwner })).digest('hex');
+    const prior = one('SELECT * FROM control_operations WHERE idempotency_key=?', input.idempotencyKey);
+    if (prior) {
+        if (prior.request_fingerprint !== fingerprint) fail('IDEMPOTENCY_KEY_REUSED');
+        return { status: 'existing', operation: controlOperationFromRow(prior), control: controlState(input.conversationId) };
+    }
+    const current = controlState(input.conversationId);
+    if (!current) return { status: 'missing' };
+    if (input.expectedVersion !== current.controlVersion) return { status: 'conflict', control: current };
+    if (current.ownerId && current.ownerId !== input.actorId && !input.overrideOwner) return { status: 'owner_conflict', control: current };
+    const now = new Date().toISOString();
+    const opId = randomUUID();
+    const result = writeControlState({ conversationId: input.conversationId, actorId: input.actorId,
+        expectedVersion: input.expectedVersion, state: { ...current, automationMode: 'human', ownerId: input.actorId,
+            status: 'taking_control', takenAt: current.takenAt || now, handoffReason: 'operator' } });
+    if (result.status !== 'updated') return result;
+    run(`INSERT INTO control_operations(id,conversation_id,actor_id,type,status,control_version,uncertain_message_ids,
+        idempotency_key,request_fingerprint,created_at,completed_at) VALUES(?,?,?,'takeover','taking_control',?,'[]',?,?,?,NULL)`,
+        opId, input.conversationId, input.actorId, result.control.controlVersion, input.idempotencyKey, fingerprint, now);
+    const operation = controlOperation(opId);
+    const operationEvent = appendOperationEvent(operation, String(BigInt(one('SELECT aggregate_version FROM conversations WHERE id=?', input.conversationId).aggregate_version)), now);
+    return { status: 'started', operation, control: result.control, events: [result.event, operationEvent] };
+}
+function completeControlTakeover(input) {
+    assertValid('Id', input?.operationId);
+    const ids = input.uncertainMessageIds ?? [];
+    if (!Array.isArray(ids) || ids.length > 100 || ids.some(id => typeof id !== 'string' || !/^[0-9a-f-]{36}$/i.test(id))) fail('INVALID_OPERATION_MESSAGES');
+    const row = one('SELECT * FROM control_operations WHERE id=?', input.operationId);
+    if (!row) return { status: 'missing' };
+    const before = controlOperationFromRow(row);
+    if (before.status === 'completed') return { status: 'unchanged', operation: before, control: controlState(row.conversation_id) };
+    const control = controlState(row.conversation_id);
+    if (!control || control.status !== 'taking_control' || control.controlVersion !== row.control_version) fail('CONTROL_OPERATION_CONFLICT');
+    const changed = writeControlState({ conversationId: row.conversation_id, actorId: row.actor_id,
+        expectedVersion: control.controlVersion, state: { ...control, status: 'confirmed' } });
+    if (changed.status !== 'updated') fail('CONTROL_OPERATION_CONFLICT');
+    const now = new Date().toISOString();
+    run("UPDATE control_operations SET status='completed',control_version=?,uncertain_message_ids=?,completed_at=? WHERE id=? AND status='taking_control'",
+        changed.control.controlVersion, JSON.stringify([...new Set(ids)]), now, row.id);
+    const operation = controlOperation(row.id);
+    const operationEvent = appendOperationEvent(operation,
+        String(BigInt(one('SELECT aggregate_version FROM conversations WHERE id=?', row.conversation_id).aggregate_version)), now);
+    return { status: 'completed', operation, control: changed.control, events: [changed.event, operationEvent] };
+}
+function controlTargets(input) {
+    if (!input || !['whatsapp','telegram'].includes(input.channel) || !Array.isArray(input.candidates)
+        || !input.candidates.length || input.candidates.length > 512) fail('INVALID_CONTROL_TARGET');
+    if (input.accountId !== undefined && input.accountId !== null) assertValid('Id', input.accountId);
+    const ids = new Set();
+    for (const candidate of input.candidates) {
+        assertValid('IdentityKey', candidate);
+        if (candidate.channel !== input.channel || (input.accountId && candidate.accountId !== input.accountId)) fail('INVALID_CONTROL_TARGET');
+        const row = lookup(candidate);
+        if (row) ids.add(row.conversation_id);
+    }
+    return [...ids].sort().map(conversationId => {
+        const row = one('SELECT c.id AS conversation_id,c.account_id,a.channel,c.* FROM conversations c JOIN accounts a ON a.id=c.account_id WHERE c.id=?', conversationId);
+        const identities = all('SELECT kind,exact_value FROM identities WHERE conversation_id=? ORDER BY kind,exact_value', conversationId)
+            .map(identity => ({ kind: identity.kind, exactValue: identity.exact_value }));
+        return { conversationId, accountId: row.account_id, channel: row.channel, identities, control: controlStateFromRow(row) };
+    });
+}
+function controlByIdentity(identity) {
+    assertValid('IdentityKey', identity);
+    const found = lookup(identity);
+    if (!found) return null;
+    const row = one('SELECT c.id AS conversation_id,c.account_id,a.channel,c.* FROM conversations c JOIN accounts a ON a.id=c.account_id WHERE c.id=?', found.conversation_id);
+    return { conversationId: found.conversation_id, accountId: row.account_id, channel: row.channel,
+        control: controlStateFromRow(row) };
 }
 function controlAuthority() {
     const row = one('SELECT mode,migration_id,service_ready,changed_at FROM control_authority WHERE id=1');
@@ -543,7 +721,7 @@ function beginControlImport(input) {
     const report = input.report;
     if (!report || report.schemaVersion !== 1 || report.dryRun !== true || !Array.isArray(report.entries)
         || !Array.isArray(report.blockers) || typeof report.cutoverAllowed !== 'boolean') fail('INVALID_IMPORT_REPORT');
-    if (report.sourceManifest?.archive?.schemaVersion !== 6 || typeof report.sourceManifest.archive.dataEpoch !== 'string'
+    if (![6, 7].includes(report.sourceManifest?.archive?.schemaVersion) || typeof report.sourceManifest.archive.dataEpoch !== 'string'
         || !/^(0|[1-9][0-9]*)$/.test(report.sourceManifest.archive.seq || '')) fail('INVALID_IMPORT_SNAPSHOT');
     const currentSnapshot = snapshot();
     if (report.sourceManifest.archive.dataEpoch !== currentSnapshot.dataEpoch || report.sourceManifest.archive.seq !== currentSnapshot.seq) {
@@ -682,7 +860,8 @@ function importControlProjection(entry) {
     if (!control || typeof control !== 'object') fail('INVALID_IMPORT_CONTROL');
     const state = { accessPolicy: control.accessPolicy, automationMode: control.automationMode,
         lifecycle: control.lifecycle, ownerId: control.ownerId, controlVersion: '1', contextVersion: '1',
-        status: 'confirmed', takenAt: control.takenAt, handoffReason: control.handoffReason };
+        status: 'confirmed', takenAt: control.takenAt, handoffReason: control.handoffReason,
+        profileKey: control.profileKey, requiresReview: control.requiresReview, reviewReasons: control.reviewReasons };
     assertValid('ConversationControl', state);
     if (typeof control.requiresReview !== 'boolean' || !Array.isArray(control.reviewReasons)
         || control.reviewReasons.some(reason => !['invalid_legacy_state','invalid_profile_key','profile_inventory_unavailable','profile_missing'].includes(reason))) {
@@ -1146,6 +1325,14 @@ function dispatch(method, input) {
         case 'retryLegacyDispatch': return transaction(() => retryLegacyDispatch(input));
         case 'controlState': return controlState(input);
         case 'writeControlState': return transaction(() => writeControlState(input));
+        case 'beginControlTakeover': return transaction(() => beginControlTakeover(input));
+        case 'completeControlTakeover': return transaction(() => completeControlTakeover(input));
+        case 'controlOperation': return controlOperation(input);
+        case 'pendingControlOperations': return pendingControlOperations();
+        case 'controlTargets': return controlTargets(input);
+        case 'controlByIdentity': return controlByIdentity(input);
+        case 'controlPolicy': return controlPolicy();
+        case 'writeControlPolicy': return transaction(() => writeControlPolicy(input));
         case 'controlAuthority': return controlAuthority();
         case 'controlImportStatus': return controlImportStatus(input ?? undefined);
         case 'controlImportEntries': return controlImportEntries(input);
@@ -1196,6 +1383,8 @@ function committedEvents(method, value) {
     }
     if (method === 'updateTranscription' && value?.event) return [value.event];
     if (method === 'writeControlState' && value?.event) return [value.event];
+    if (method === 'writeControlPolicy' && value?.event) return [value.event];
+    if (['beginControlTakeover','completeControlTakeover'].includes(method) && Array.isArray(value?.events)) return value.events;
     if (['applyControlCutoverBatch','rollbackControlCutoverBatch'].includes(method) && Array.isArray(value?.events)) return value.events;
     return [];
 }

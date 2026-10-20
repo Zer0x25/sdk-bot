@@ -49,7 +49,7 @@ CREATE TABLE telegram_cursors (
 CREATE TABLE provenance (message_id TEXT NOT NULL REFERENCES messages(id) ON DELETE CASCADE,
  identity_id TEXT NOT NULL REFERENCES identities(id), source TEXT NOT NULL,
  PRIMARY KEY(message_id,identity_id,source));
-CREATE TABLE events (seq TEXT PRIMARY KEY CHECK(seq NOT GLOB '*[^0-9]*' AND substr(seq,1,1) BETWEEN '1' AND '9'), conversation_id TEXT NOT NULL REFERENCES conversations(id),
+CREATE TABLE events (seq TEXT PRIMARY KEY CHECK(seq NOT GLOB '*[^0-9]*' AND substr(seq,1,1) BETWEEN '1' AND '9'), conversation_id TEXT REFERENCES conversations(id),
  message_id TEXT REFERENCES messages(id) ON DELETE SET NULL, created_at TEXT NOT NULL, actor_id TEXT,
  payload TEXT NOT NULL CHECK(json_valid(payload)));
 CREATE INDEX events_order ON events(length(seq),seq);

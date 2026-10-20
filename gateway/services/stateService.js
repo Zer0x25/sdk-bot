@@ -4,12 +4,47 @@ const { getSettingsDB, saveSettingsDB, getContactsDB, saveContactsDB } = require
 const { findKeyByDigits } = require('./contactsRepository');
 const { summarizeListCounts } = require('../handlers/commandHelpers');
 
+/** @type {any} */
+let controlService = null;
+function setControlService(service) { controlService = service; }
+function getControlService() { return controlService; }
+function controlError(error) {
+    const messages = {
+        IDENTITY_AMBIGUOUS: 'La identidad tiene varias coincidencias; indica una cuenta exacta.',
+        CONTROL_TARGET_NOT_FOUND: 'No se encontró una identidad exacta para ese contacto.',
+        CONTROL_AUTHORITY_NOT_ACTIVE: 'El control SQLite aún no está activo.',
+        CONTROL_VERSION_CONFLICT: 'El control cambió mientras se aplicaba la operación.',
+        CONTROL_OWNER_CONFLICT: 'La conversación pertenece a otro operador.'
+    };
+    return messages[/** @type {any} */ (error)?.code] || 'No se pudo guardar el cambio de control.';
+}
+
 /**
  * 🔄 GESTIÓN DE ESTADOS EN CONTACTS_DB (ignorado ↔ permitido ↔ handoff ↔ neutro)
  * @param {string} targetId - Teléfono, LID o "*"
  * @param {'allowed' | 'ignored' | 'handoff' | 'neutral'} stateType
  */
-function setNumberState(targetId, stateType) {
+async function setNumberState(targetId, stateType, context = {}) {
+    if (controlService && await controlService.isActive()) {
+        try {
+            if (targetId === '*') {
+                const globalMode = stateType === 'ignored' ? 'ignored_all' : 'allowed_all';
+                const result = await controlService.setGlobalPolicy({ globalMode });
+                state.GLOBAL_MODE = globalMode;
+                return { success: true, mode: globalMode,
+                    message: globalMode === 'ignored_all' ? "Modo 'Ignorar a Todos por Defecto' (Estricto)" : "Modo 'Permitir a Todos por Defecto'",
+                    policyVersion: result.policy.policyVersion };
+            }
+            const result = await controlService.projectStateForLegacyTarget(targetId, stateType, {
+                channel: context.channel || 'whatsapp', accountId: context.accountId || null,
+                reason: context.reason || 'operator'
+            });
+            return { success: true, target: String(targetId), state: stateType,
+                pending: result.status === 'pending', conversationId: result.target?.conversationId };
+        } catch (error) {
+            return { success: false, code: /** @type {any} */ (error)?.code, message: controlError(error) };
+        }
+    }
     if (targetId === '*') {
         const settings = getSettingsDB();
         if (stateType === 'allowed' || stateType === 'neutral') {
@@ -63,12 +98,31 @@ function setNumberState(targetId, stateType) {
     return { success: true, target: newKey, state: db[newKey].estado };
 }
 
+async function releaseControl(targetId, context = {}) {
+    if (controlService && await controlService.isActive()) {
+        try {
+            const result = await controlService.setLegacyControl({ targetId,
+                channel: context.channel || 'whatsapp', accountId: context.accountId || null,
+                action: 'release', actorId: context.actorId || controlService.legacyAdminActor });
+            return { success: true, target: String(targetId), state: 'ai', conversationId: result.target?.conversationId };
+        } catch (error) { return { success: false, code: /** @type {any} */ (error)?.code, message: controlError(error) }; }
+    }
+    return setNumberState(targetId, 'neutral', context);
+}
+
 /**
  * 🎭 CAMBIAR PERFIL GLOBAL DEL BOT (persistido en settings_db.json)
  * @param {string} profileKey - Clave del perfil SOUL (default, lucia, mateo, ...)
  */
-function setCurrentProfile(profileKey) {
+async function setCurrentProfile(profileKey) {
     if (!profileKey) return { success: false, message: "Perfil no válido" };
+    if (controlService && await controlService.isActive()) {
+        try {
+            const result = await controlService.setGlobalPolicy({ globalProfileKey: profileKey });
+            state.CURRENT_PROFILE = profileKey;
+            return { success: true, profile: profileKey, policyVersion: result.policy.policyVersion };
+        } catch (error) { return { success: false, code: /** @type {any} */ (error)?.code, message: controlError(error) }; }
+    }
     state.CURRENT_PROFILE = profileKey;
     const settings = getSettingsDB();
     settings.currentProfile = profileKey;
@@ -81,7 +135,17 @@ function setCurrentProfile(profileKey) {
  * @param {string} targetId - Teléfono o LID del contacto
  * @param {string} profileKey - Clave del perfil SOUL
  */
-function setContactProfile(targetId, profileKey) {
+async function setContactProfile(targetId, profileKey, context = {}) {
+    if (controlService && await controlService.isActive()) {
+        try {
+            const cleanProfile = (profileKey === 'default' || profileKey === 'none' || !profileKey) ? null : profileKey;
+            const result = await controlService.setProfileForLegacyTarget({ targetId,
+                channel: context.channel || 'whatsapp', accountId: context.accountId || null,
+                profileKey: cleanProfile });
+            return { success: true, target: String(targetId), profile: cleanProfile,
+                conversationId: result.target?.conversationId };
+        } catch (error) { return { success: false, code: /** @type {any} */ (error)?.code, message: controlError(error) }; }
+    }
     const cleanTarget = String(targetId).replace(/[^0-9]/g, '');
     if (!cleanTarget) return { success: false, message: "ID no válido" };
 
@@ -112,7 +176,22 @@ function setContactProfile(targetId, profileKey) {
 /**
  * 📇 IGNORAR MASIVAMENTE A TODOS LOS CONTACTOS CON NOMBRE EN AGENDA
  */
-function ignoreAllAgendaContacts() {
+async function ignoreAllAgendaContacts(context = {}) {
+    if (controlService && await controlService.isActive()) {
+        const db = getContactsDB();
+        const contacts = Object.values(db).filter(contact => contact && (contact.isContact || (contact.savedName && contact.savedName.trim())));
+        let addedCount = 0;
+        let ambiguous = 0;
+        for (const contact of contacts) {
+            const target = contact.lid || contact.phone;
+            if (!target) continue;
+            const result = await setNumberState(target, 'ignored', { channel: context.channel || 'whatsapp',
+                accountId: context.accountId || null });
+            if (result.success && result.state === 'ignored') addedCount += 1;
+            else if (result.code === 'IDENTITY_AMBIGUOUS') ambiguous += 1;
+        }
+        return { addedCount, totalIgnored: addedCount, ambiguous };
+    }
     const db = getContactsDB();
     let addedCount = 0;
 
@@ -135,7 +214,10 @@ function ignoreAllAgendaContacts() {
 }
 
 module.exports = {
+    setControlService,
+    getControlService,
     setNumberState,
+    releaseControl,
     setCurrentProfile,
     setContactProfile,
     ignoreAllAgendaContacts

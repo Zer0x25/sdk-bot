@@ -83,6 +83,7 @@ salvo indicación contraria. La evidencia detallada y líneas están en la basel
 | BUG-068 | P2 | Cerrado: cada merge ejecutaba CI en la PR y otra vez en `main`; además, el deploy automático seguía esperando un runner Homelab retirado. | PR #5 tuvo CI en PR (39419195197) y en `main` (39419533797); PR #2 repitió CI en PR (39419585612) y en `main` (39419950921). Deploy 39420078908 quedó en cola sobre `self-hosted`. | CI corre en PRs hacia `main` y permite ejecución manual; se quitó el trigger `push` de `main` y el workflow de deploy. Release Please conserva su trigger `push` para actualizar releases. |
 | BUG-069 | P2 | Abierto: al fusionar release PR #6, Release Please dejó v0.4.0 como borrador sin tag y abrió PR #8 v0.5.0 repitiendo el changelog completo. | Run 39476647006 reporta `Expected 1 releases, only found 0` y busca `v0.4.0`; Releases API muestra v0.4.0 como draft y PR #6/#8 añaden los mismos 153 renglones de CHANGELOG.md. | Publicar automáticamente el release/tag tras aprobar y fusionar su PR (`draft: false`); validar en la siguiente ejecución que Release Please reconoce el tag y no vuelve a incluir el historial previo. Publicar/limpiar el borrador v0.4.0 y PR #8 existentes requiere reconciliación aparte. |
 | BUG-070 | P2 | Cerrado F4.3: el replay de más de 50 mensajes tras una desconexión podía dejar un hueco visible entre mensajes recientes e historial en caché. | La UI solo consultaba la página más reciente de 50 mensajes; el snapshot anterior quedaba más atrás. | F4.3 pagina el replay hasta solapar el snapshot cargado. Pruebas verifican 51 mensajes, ancla estable y un segundo evento durante un fetch activo. CI 39485451344, head del PR a390c71 (código f7c3acc). |
+| BUG-071 | P2 | Abierto: `/ignorar contactos de agenda` puede informar un total inflado cuando varios registros apuntan a la misma conversación o esta ya estaba ignorada. | El camino SQLite cuenta cada resultado exitoso, incluidos `unchanged`, sin deduplicar por conversationId. El cambio de control sigue siendo correcto; solo el resumen del comando puede exagerar el número. | F5 o posterior: contar conversaciones distintas y solo transiciones efectivas; probar alias/duplicados y una segunda ejecución idempotente. |
 
 ## Clasificación para la unidad activa
 
@@ -245,7 +246,7 @@ SQLite real en F2A; falta captura de aliases live antes de cerrar F2 completa.
   [CONTRATOS-V1.md](CONTRATOS-V1.md). Commit F1A: `git log --grep=BUG-018`.
 
 BUG-005/009/044/045/047/052/053/054/055 están cerrados. BUG-006/007/008/010/011/012, BUG-014/024/
-035/037/043/046/050/051 siguen abiertos o parciales según sus puertas. El perfil
+035/037/043/046/050/051/071 siguen abiertos o parciales según sus puertas. El perfil
 de carga de F2E.2 se ejecutó fuera del hardware objetivo; repetir con 2 CPU/4 GiB
 antes de certificar ese perfil. BUG-051 se vuelve puerta antes de usar un archivo
 preexistente real. Checks verdes no demuestran escenarios fuera de su alcance.

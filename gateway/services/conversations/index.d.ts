@@ -51,6 +51,15 @@ export interface ControlImportStatus {
     run: { id: string; reportSha256: string; archiveEpoch: string; archiveSeq: string; status: string; report: ControlImportReportSummary } | null;
     startedAt: string; updatedAt: string; cutoverAt: string | null;
 }
+export interface ControlTarget {
+    conversationId: string; accountId: string; channel: 'whatsapp' | 'telegram';
+    identities: Array<{ kind: string; exactValue: string }>; control: Contract<'ConversationControl'>;
+}
+export interface ControlOperation extends Contract<'Operation'> {}
+export interface ControlPolicy {
+    globalMode: 'allowed_all' | 'ignored_all'; globalProfileKey: string | null; policyVersion: string;
+    requiresReview: boolean; reviewReason: string | null;
+}
 export interface Archive {
     ready: Promise<Contract<'EventCursor'> & { schemaVersion: number; journalMode: string; synchronous: number; threadId: number; readOnly?: boolean }>;
     snapshot(): Promise<Contract<'EventCursor'>>;
@@ -75,6 +84,25 @@ export interface Archive {
         { status: 'updated'; control: Contract<'ConversationControl'>; event: Contract<'Event'> } |
         { status: 'conflict' | 'unchanged'; control: Contract<'ConversationControl'> } |
         { status: 'missing' }>;
+    beginControlTakeover(input: { conversationId: string; actorId: string; expectedVersion: Contract<'Version'>;
+        overrideOwner: boolean; idempotencyKey: string }): Promise<
+        { status: 'started' | 'existing'; operation: ControlOperation; control: Contract<'ConversationControl'>; events?: Contract<'Event'>[] } |
+        { status: 'conflict' | 'owner_conflict'; control: Contract<'ConversationControl'> } | { status: 'missing' }>;
+    completeControlTakeover(input: { operationId: string; uncertainMessageIds?: string[] }): Promise<
+        { status: 'completed' | 'unchanged'; operation: ControlOperation; control: Contract<'ConversationControl'>; events?: Contract<'Event'>[] } |
+        { status: 'missing' }>;
+    controlOperation(id: string): Promise<ControlOperation | null>;
+    pendingControlOperations(): Promise<ControlOperation[]>;
+    controlTargets(input: { channel: 'whatsapp' | 'telegram'; accountId?: string | null;
+        candidates: Contract<'IdentityKey'>[] }): Promise<ControlTarget[]>;
+    controlByIdentity(identity: Contract<'IdentityKey'>): Promise<{
+        conversationId: string; accountId: string; channel: 'whatsapp' | 'telegram'; control: Contract<'ConversationControl'>;
+    } | null>;
+    controlPolicy(): Promise<ControlPolicy>;
+    writeControlPolicy(input: { actorId: string; expectedVersion: Contract<'Version'>;
+        globalMode: 'allowed_all' | 'ignored_all'; globalProfileKey: string | null }): Promise<
+        { status: 'updated' | 'unchanged'; policy: ControlPolicy; event?: Contract<'Event'> } |
+        { status: 'conflict'; policy: ControlPolicy }>;
     controlAuthority(): Promise<{ mode: 'legacy' | 'sqlite'; migrationId: string | null; serviceReady: boolean; changedAt: string | null }>;
     controlImportStatus(migrationId?: string): Promise<ControlImportStatus | null>;
     controlImportEntries(input: { runId: string; afterSourceKey?: string; limit?: number }): Promise<ControlImportReport['entries']>;

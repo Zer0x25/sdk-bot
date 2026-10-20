@@ -5,56 +5,56 @@ const { getContactsDB } = require('../../services/db');
 const { setNumberState, ignoreAllAgendaContacts } = require('../../services/stateService');
 const { resolveTarget, syntaxError, getGlobalMode, summarizeListCounts } = require('../commandHelpers');
 
-function runIgnorar({ queryParam }) {
+async function runIgnorar({ queryParam, adapter }) {
     if (!queryParam) return resolveTarget(null, 'ignorar').error;
 
     if (queryParam.toLowerCase() === 'agenda') {
-        const res = ignoreAllAgendaContacts();
+        const res = await ignoreAllAgendaContacts({ channel: adapter?.channel || 'whatsapp', accountId: adapter?.accountId || null });
         return `🚫 *Ignorado Masivo de Agenda Ejecutado:*\nSe agregaron *${res.addedCount}* contactos de tu libreta a la Lista de Ignorados.\nTotal ignorados en lista: *${res.totalIgnored}*.`;
     }
 
     if (queryParam === '*' || queryParam.toLowerCase() === 'all') {
-        const res = setNumberState('*', 'ignored');
+        const res = await setNumberState('*', 'ignored');
         return `🔒 *Modo Global Cambiado:* ${res.message}.\nLa IA estará en *Modo Estricto (Whitelist)*. Solo responderá a los números explícitamente permitidos.`;
     }
 
     const t = resolveTarget(queryParam, 'ignorar');
     if (!t.ok) return t.error;
-    const res = setNumberState(t.targetId, 'ignored');
+    const res = await setNumberState(t.targetId, 'ignored', { channel: adapter?.channel || 'whatsapp', accountId: adapter?.accountId || null });
     if (res.success) {
         return `🚫 ID/Número \`${res.target}\` asignado a la *Lista de Ignorados* (reubicado de permitidos si existía).`;
     }
     return syntaxError('ignorar', `No pude ignorar *${t.targetId}*.`);
 }
 
-function runPermitir({ queryParam }) {
+async function runPermitir({ queryParam, adapter }) {
     if (!queryParam) return resolveTarget(null, 'permitir').error;
 
     if (queryParam === '*' || queryParam.toLowerCase() === 'all') {
-        const res = setNumberState('*', 'allowed');
+        const res = await setNumberState('*', 'allowed');
         return `🌐 *Modo Global Cambiado:* ${res.message}.\nLa IA responderá a todos los clientes por defecto (excepto los que estén en la Lista de Ignorados).`;
     }
 
     const t = resolveTarget(queryParam, 'permitir');
     if (!t.ok) return t.error;
-    const res = setNumberState(t.targetId, 'allowed');
+    const res = await setNumberState(t.targetId, 'allowed', { channel: adapter?.channel || 'whatsapp', accountId: adapter?.accountId || null });
     if (res.success) {
         return `✅ ID/Número \`${res.target}\` asignado a la *Lista de Permitidos* (reubicado de ignorados si existía).`;
     }
     return syntaxError('permitir', `No pude permitir *${t.targetId}*.`);
 }
 
-function runQuitar({ queryParam }) {
+async function runQuitar({ queryParam, adapter }) {
     if (!queryParam) return resolveTarget(null, 'quitar').error;
 
     if (queryParam === '*') {
-        setNumberState('*', 'neutral');
+        await setNumberState('*', 'neutral');
         return `🔄 Comodín (\`*\`) removido de ambas listas. Transición a estado neutro.`;
     }
 
     const t = resolveTarget(queryParam, 'quitar');
     if (!t.ok) return t.error;
-    const res = setNumberState(t.targetId, 'neutral');
+    const res = await setNumberState(t.targetId, 'neutral', { channel: adapter?.channel || 'whatsapp', accountId: adapter?.accountId || null });
     if (res.success) {
         return `🔄 ID/Número \`${res.target}\` removido de ambas listas. Regresado a *Estado 0 (Neutro)*.`;
     }

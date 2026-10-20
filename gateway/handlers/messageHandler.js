@@ -1,7 +1,7 @@
 const { state, registerSentMessage } = require('../config');
 const { enrichContactExtraData, isSelfChat } = require('../services/metadataService');
 const { upsertContactMetadata, isHandoffActive } = require('../services/contactsRepository');
-const { setNumberState } = require('../services/stateService');
+const { setNumberState, getControlService } = require('../services/stateService');
 const { processAIChat } = require('../services/brainService');
 const { enqueueAI, poolStats } = require('../services/aiQueue');
 const messageQueue = require('../services/messageQueue');
@@ -25,6 +25,8 @@ const logError = cat('ERROR');
 const messageBuffers = new Map();
 const activePresences = new Map();   // Mapa global en memoria RAM del estado de presencia
 const chatInFlight = new Set();      // JIDs con una llamada de IA en curso (serialización por chat)
+const conversationByRemote = new Map();
+const drainWaiters = new Map();
 const TYPING_TTL_MS = num('GATEWAY_TYPING_TTL_MS', 5000);           // 5.0 segundos: el estado de tecleo expira si el teclado queda inactivo (tunable vía .env.tuning)
 
 // 🧠 PRECARGA DE HISTORIAL EN PRESENCIA (Opción C, "señal de intervención web-like")
@@ -221,6 +223,9 @@ async function handleIncomingMessage(stdMsg, { onDurableComplete } = {}) {
         return;
     }
 
+    const isSelf = isSelfChat(remoteJid)
+        || (stdMsg.channel === 'telegram' && !!(metadata && metadata.isAdminChannel));
+
     // 🔔 SUSCRIBIR EN TIEMPO REAL A EVENTOS DE PRESENCIA (composing/paused) DE ESTE CLIENTE AL INICIAR
     // Solo si es whatsapp
     if (stdMsg.channel === 'whatsapp') {
@@ -233,7 +238,40 @@ async function handleIncomingMessage(stdMsg, { onDurableComplete } = {}) {
     }
 
     // 🗂️ GUARDAR / ACTUALIZAR CONTACTO EN BASE DE DATOS
-    const contactRecord = upsertContactMetadata(metadata, remoteJid) || { estado: 'neutro' };
+    let contactRecord = upsertContactMetadata(metadata, remoteJid) || { estado: 'neutro' };
+
+    // Tras el corte, SQLite es la autoridad. Resolver por canal, cuenta e ID
+    // exactos; si falta esa fila, fallar cerrado y reconocer la entrada durable.
+    if (!isSelf && stdMsg.rawId && adapter.accountId) {
+        try {
+            const controlService = getControlService();
+            const kind = stdMsg.channel === 'telegram' ? 'telegram_chat_id'
+                : stdMsg.rawId.endsWith('@lid') ? 'whatsapp_lid' : 'whatsapp_jid';
+            const result = await controlService?.readForIdentity({ accountId: adapter.accountId,
+                channel: stdMsg.channel, kind, exactValue: stdMsg.rawId });
+            if (result?.authority === 'sqlite') {
+                if (!result.target) {
+                    logError.error(`Control SQLite: identidad exacta sin conversación (${stdMsg.channel}).`);
+                    await onDurableComplete?.();
+                    return;
+                }
+                conversationByRemote.set(remoteJid, result.target.conversationId);
+                if (conversationByRemote.size > 5000) conversationByRemote.delete(conversationByRemote.keys().next().value);
+                const control = result.target.control;
+                let estado = 'neutro';
+                if (control.requiresReview || control.lifecycle === 'resolved' || control.accessPolicy === 'ignored'
+                    || (control.accessPolicy === 'allowed' && control.automationMode === 'off')) estado = 'ignorado';
+                else if (control.automationMode === 'human') estado = 'handoff';
+                else if (control.accessPolicy === 'allowed') estado = 'permitido';
+                contactRecord = { ...contactRecord, estado, handoffAt: null,
+                    perfil: control.profileKey };
+            }
+        } catch (error) {
+            logError.error(`No se pudo leer el control durable de ${remoteJid}; respuesta bloqueada: ${error?.code || error?.message || error}`);
+            await onDurableComplete?.();
+            return;
+        }
+    }
 
     // 🔄 Enriquecimiento asíncrono en segundo plano (Foto de Perfil & Bio) solo para WA
     if (stdMsg.channel === 'whatsapp' && adapter.sock) {
@@ -243,8 +281,6 @@ async function handleIncomingMessage(stdMsg, { onDurableComplete } = {}) {
     // Self-chat de WhatsApp (JID propio) o canal admin de Telegram: ambos son
     // "el admin hablando consigo mismo" y comparten SCENARIO 1 del pipeline
     // (comandos '/' + Asistente Personal IA + confirmaciones broadcast/F7).
-    const isSelf = isSelfChat(remoteJid)
-        || (stdMsg.channel === 'telegram' && !!(metadata && metadata.isAdminChannel));
     const displayName = savedName ? `${savedName} (Agenda)` : pushName;
 
     logAI.info(`\n🔍 [DEBUG CHAT] JID: ${remoteJid} | Phone: ${phoneNumber || 'N/A'} | LID: ${lid || 'N/A'} | From: "${displayName}" | isSelf: ${isSelf} | Texto: "${textMessage}"`);
@@ -256,7 +292,7 @@ async function handleIncomingMessage(stdMsg, { onDurableComplete } = {}) {
         // 🧹 Handoff expirado: el decisor ya lo trató como neutro; persistimos
         // el reset para que no "reviva" tras reiniciar (el decisor no muta BD).
         if (contactRecord && contactRecord.estado === 'handoff' && !isHandoffActive(contactRecord)) {
-            setNumberState(phoneNumber || lid, 'neutral');
+            await setNumberState(phoneNumber || lid, 'neutral', { channel: stdMsg.channel, accountId: adapter.accountId });
         }
     }
 
@@ -280,7 +316,14 @@ async function handleIncomingMessage(stdMsg, { onDurableComplete } = {}) {
 
         case 'handoff': {
             logAI.info(`\n🚨 [HANDOFF ACTIVADO] Cliente ${decision.displayName} (${decision.targetId}) solicitó atención humana.`);
-            setNumberState(decision.targetId, 'handoff');
+            const handoff = await setNumberState(stdMsg.rawId, 'handoff', {
+                channel: stdMsg.channel, accountId: adapter.accountId, reason: 'customer_request'
+            });
+            if (!handoff.success) {
+                logError.error(`No se pudo persistir la solicitud de atención humana (${remoteJid}): ${handoff.message}`);
+                await onDurableComplete?.();
+                return;
+            }
 
             // 1. Notificar al Admin en Self-Chat
             if (state.ADMIN_PHONE || state.ADMIN_LID) {
@@ -456,7 +499,9 @@ function createBufferTimeout(remoteJid, metadata, adapter) {
             } else if (bufAfter) {
                 if (bufAfter.timer) clearTimeout(bufAfter.timer);
                 messageBuffers.delete(remoteJid);
+                conversationByRemote.delete(remoteJid);
             }
+            notifyDrained(remoteJid);
         }
     };
 }
@@ -472,6 +517,44 @@ function getRuntimeStats() {
         chatInFlight: chatInFlight.size,
         aiPool: poolStats()
     };
+}
+
+function notifyDrained(remoteJid) {
+    if (chatInFlight.has(remoteJid)) return;
+    const waiters = drainWaiters.get(remoteJid);
+    if (!waiters) return;
+    drainWaiters.delete(remoteJid);
+    for (const resolve of waiters) resolve();
+}
+
+function drainConversation(conversationId) {
+    const remoteIds = [...conversationByRemote].filter(([, id]) => id === conversationId).map(([remoteId]) => remoteId);
+    const acknowledgements = [];
+    for (const remoteId of remoteIds) {
+        const buffer = messageBuffers.get(remoteId);
+        if (buffer) {
+            if (buffer.timer) clearTimeout(buffer.timer);
+            if (buffer.typingExpiryTimer) clearTimeout(buffer.typingExpiryTimer);
+            acknowledgements.push(...(buffer.dispatchAcks?.splice(0) || []));
+            messageBuffers.delete(remoteId);
+        }
+    }
+    const active = remoteIds.filter(remoteId => chatInFlight.has(remoteId));
+    if (!active.length && !acknowledgements.length) {
+        for (const remoteId of remoteIds) conversationByRemote.delete(remoteId);
+        return { drained: true, uncertainMessageIds: [] };
+    }
+    const activeDrains = active.map(remoteId => new Promise(resolve => {
+            const waiters = drainWaiters.get(remoteId) || new Set();
+            waiters.add(resolve);
+            drainWaiters.set(remoteId, waiters);
+        }));
+    return (async () => {
+        await Promise.allSettled(acknowledgements.map(acknowledge => Promise.resolve().then(() => acknowledge())));
+        await Promise.all(activeDrains);
+        for (const remoteId of remoteIds) conversationByRemote.delete(remoteId);
+        return { drained: true, uncertainMessageIds: [] };
+    })();
 }
 
 // 📥 F4-P4: procesar mensajes encolados cuando el brain vuelve
@@ -525,5 +608,6 @@ messageQueue.setFlushHandler(flushQueuedMessages);
 module.exports = {
     handleIncomingMessage,
     handlePresenceUpdate,
+    drainConversation,
     getRuntimeStats
 };

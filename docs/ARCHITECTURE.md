@@ -341,8 +341,10 @@ teléfono, JID, LID ni referencia del proveedor. Los estados de control actuales
 una proyección de solo lectura de la agenda/settings heredados. Sus versiones
 wire comienzan en `1`. F5.1 añadió columnas de control versionado y auditoría a
 SQLite v5, con defaults neutrales e IA apagada. F5.3 actualiza el esquema a v6,
-añade política/perfil y staging recuperable; la autoridad se mantiene en JSON
-hasta que F5.4 conecte el servicio compartido y habilite el corte.
+añade política/perfil y staging recuperable. F5.4 migra a v7, conserva eventos al
+permitir eventos de política global y agrega operaciones de takeover recuperables.
+El servicio común conecta API, comandos heredados y pipeline al control SQLite;
+la autoridad cambia solo después del staging y corte verificados.
 La cobertura indica `capturing_since`, `provider_sync_observed` o `partial_import`;
 `capturingSince` es null cuando el archivo no tiene un punto de observación.
 

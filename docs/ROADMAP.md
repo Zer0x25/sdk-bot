@@ -270,12 +270,14 @@ Compositor todavía no ofrece enviar.
   reanudar o rollback. La autoridad permanece legacy hasta que F5.4 registre el
   servicio SQLite listo. Handoff vencido sigue human explícito. Evidencia:
   [F5.3](F5.3-STAGING-CUTOVER.md).
-- [ ] **F5.4 — Servicio de control compartido y activación:** takeover/release/
+- [x] **F5.4 — Servicio de control compartido y activación:** takeover/release/
   resolver y cambios de acceso con expectedVersion, actor/propietario, auditoría y
   operación recuperable mientras drena una salida ya iniciada. API, comandos legacy
   y estado llaman el mismo dominio; resolución exacta por canal/cuenta, sin dígitos
-  ambiguos. Registrar servicio listo, ejecutar el corte verificado y cambiar la
-  autoridad a SQLite.
+  ambiguos. El gateway registra servicio listo y el corte verificado cambia la
+  autoridad a SQLite. Migración v6→v7 conserva eventos y agrega operaciones
+  recuperables; la aceptación de corte se ejecutó sobre fixtures, sin datos runtime.
+  Evidencia: [F5.4](F5.4-CONTROL-SERVICE.md).
 - [ ] **F5.5 — Barrera y coordinación de jobs:** serializar por conversación y
   comprobar controlVersion, policyVersion y contextVersion en debounce, pool,
   generación, typing, pausas, retries y cada globo. Cancelar trabajos obsoletos;

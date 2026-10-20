@@ -227,6 +227,9 @@ export interface components {
             handoffReason: ("operator" | "customer_request" | "external_self" | "legacy_import" | "identity_conflict") | null;
             lifecycle: components["schemas"]["Lifecycle"];
             ownerId: components["schemas"]["Id"] | null;
+            profileKey: string | null;
+            requiresReview: boolean;
+            reviewReasons: ("invalid_legacy_state" | "invalid_profile_key" | "profile_inventory_unavailable" | "profile_missing")[];
             /** @enum {string} */
             status: "confirmed" | "taking_control";
             takenAt: components["schemas"]["Timestamp"] | null;
@@ -568,9 +571,15 @@ export interface components {
          */
         Timestamp: string;
         unreadOnly: boolean;
+        /** @description CAS por controlVersion; se requiere al menos un cambio de lifecycle, acceso o perfil. */
         UpdateConversationRequest: {
+            accessPolicy?: components["schemas"]["AccessPolicy"];
             expectedVersion: components["schemas"]["Version"];
+            lifecycle?: components["schemas"]["Lifecycle"];
+        } | {
             lifecycle: components["schemas"]["Lifecycle"];
+        } | {
+            accessPolicy: components["schemas"]["AccessPolicy"];
         };
         /** @description Versión positiva decimal como texto. No intercambiar controlVersion con aggregateVersion. */
         Version: string;

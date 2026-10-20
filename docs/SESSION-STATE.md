@@ -633,6 +633,29 @@ ausencia de Vite/CA. Commit separado de la UI.
   siguiente punto exacto es **F5.4: servicio compartido y activación segura del
   corte**, integrado en API, comandos y estado.
 
+## F5.4: Servicio de control compartido y activación
+
+- `ControlService` centraliza takeover, release, lifecycle, acceso, perfil y política
+  global. API autenticada, comandos heredados y estado escriben en la misma autoridad
+  con expectedVersion y actor; los destinos legacy se buscan por identidad exacta,
+  canal y cuenta, y se rechazan coincidencias ambiguas.
+- El takeover guarda operación/idempotency key y versión antes de drenar. El gateway
+  espera buffers ACK y salida activa antes de confirmar; al reiniciar retoma
+  operaciones pendientes de forma segura. La migración v6→v7 conserva la línea de
+  eventos, admite eventos de política sin conversación y crea la tabla de operaciones.
+- El gateway registra readiness; el corte verificado de autoridad se probó con DB
+  temporal. No se leyó ni modificó el archivo de control runtime ni se ejecutó un
+  corte sobre datos reales. La política global se aplica a conversaciones neutrales;
+  una revisión requerida, cierre o exclusión mantiene la IA bloqueada.
+- Se corrigió durante validación el valor de schemaVersion devuelto al abrir v7,
+  aceptación de v7 en el informe de staging y la proyección importada de revisión y
+  perfil. BUG-071 documenta un resumen inflado en `/ignorar contactos de agenda`;
+  el control aplicado permanece correcto y el ajuste queda para después.
+- Evidencia: [F5.4](F5.4-CONTROL-SERVICE.md). 6 pruebas del servicio, 7 pruebas de
+  migración/corte, 15 contratos, lint y typecheck pasan.
+- F5.4 queda validada y con commit local; sin push hasta cerrar F5. Sigue **F5.5:
+  barrera y coordinación de jobs**.
+
 ## Pendientes materiales
 
 - F5 aborda toma de control, cancelación de IA, contexto y outbox; BUG-046/050

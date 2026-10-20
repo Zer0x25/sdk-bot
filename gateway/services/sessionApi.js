@@ -448,14 +448,32 @@ function projectedControl(row, contact, globalPolicy, nowMs, identityConflict) {
     if (review) automationMode = 'off';
     return {
         control: { accessPolicy, automationMode, lifecycle: 'open', ownerId: null,
-            controlVersion: '1', contextVersion: '1', status: 'confirmed', takenAt, handoffReason },
+            controlVersion: '1', contextVersion: '1', status: 'confirmed', takenAt, handoffReason,
+            profileKey: null, requiresReview: Boolean(review), reviewReasons: [] },
         requiresReview: Boolean(review)
     };
 }
 
-function projectConversation(row, projection, globalPolicy, nowMs) {
+function sqliteProjectedControl(row, globalPolicy) {
+    const reviewReasons = row.control_review_reason ? row.control_review_reason.split(',').filter(Boolean) : [];
+    const requiresReview = row.requires_review === 1 || Boolean(globalPolicy.requiresReview);
+    let automationMode = row.automation_mode;
+    if (requiresReview || row.lifecycle === 'resolved' || row.access_policy === 'ignored') automationMode = 'off';
+    else if (row.automation_mode !== 'human' && row.access_policy === 'neutral') {
+        automationMode = globalPolicy.globalMode === 'allowed_all' ? 'ai' : 'off';
+    }
+    if (globalPolicy.globalPaused && automationMode === 'ai') automationMode = 'off';
+    return { control: { accessPolicy: row.access_policy, automationMode, lifecycle: row.lifecycle,
+        ownerId: row.owner_id, controlVersion: row.control_version, contextVersion: row.context_version,
+        status: row.control_status, takenAt: row.taken_at, handoffReason: row.handoff_reason,
+        profileKey: row.profile_key ?? null, requiresReview, reviewReasons }, requiresReview };
+}
+
+function projectConversation(row, projection, globalPolicy, nowMs, authority = 'legacy') {
     const match = matchingContact(row, projection);
-    const control = projectedControl(row, match.contact, globalPolicy, nowMs, match.conflict);
+    const control = authority === 'sqlite'
+        ? sqliteProjectedControl(row, globalPolicy)
+        : projectedControl(row, match.contact, globalPolicy, nowMs, match.conflict);
     const historyCoverage = row.capturing_since
         ? { kind: 'capturing_since', capturingSince: row.capturing_since }
         : row.history_observed
@@ -500,10 +518,25 @@ function accountStatus(statusValue) {
 function archiveBoundary(error) {
     if (error instanceof BoundaryError) return error;
     if (['INVALID_LIMIT', 'INVALID_CHANNEL', 'INVALID_READ_CURSOR', 'INVALID_INPUT'].includes(error?.code)) return invalid();
+    if (error?.name === 'ControlServiceError') {
+        const status = error.status || 409;
+        const code = status === 422 ? 'VALIDATION_ERROR' : error.code || 'CONTROL_CONFLICT';
+        const messages = {
+            CONTROL_AUTHORITY_NOT_ACTIVE: 'El control de conversaciones aún no está activo.',
+            CONTROL_SERVICE_NOT_READY: 'El servicio de control no está listo.',
+            CONTROL_VERSION_CONFLICT: 'La conversación cambió; vuelve a cargarla.',
+            CONTROL_OWNER_CONFLICT: 'La conversación pertenece a otro operador.',
+            IDENTITY_AMBIGUOUS: 'La identidad tiene más de una coincidencia; revisa canal y cuenta.',
+            CONVERSATION_NOT_FOUND: 'Conversación no encontrada.',
+            CONTROL_TARGET_NOT_FOUND: 'No se encontró una identidad exacta para ese contacto.'
+        };
+        return new BoundaryError(status, code, messages[error.code] || 'No se pudo cambiar el control de la conversación.');
+    }
     return new BoundaryError(503, 'SERVICE_UNAVAILABLE', 'Archivo de conversaciones no disponible.');
 }
 
-function createSessionApi(getPolicy, archive, getContacts = () => ({}), getChannelStatus = (_channel, _accountId) => 'disconnected') {
+/** @param {() => any} getPolicy @param {any} archive @param {() => any} [getContacts] @param {(channel:string,accountId:string) => any} [getChannelStatus] @param {any} [controlService] */
+function createSessionApi(getPolicy, archive, getContacts = () => ({}), getChannelStatus = (_channel, _accountId) => 'disconnected', controlService = null) {
     const readRevisions = new Map();
     return async function route(req, res, context, pathname, requestBody = Buffer.alloc(0)) {
         const capability = capabilityFor(req.method, pathname);
@@ -540,6 +573,7 @@ function createSessionApi(getPolicy, archive, getContacts = () => ({}), getChann
                 const nowMs = Date.now();
                 const contacts = contactProjection(getContacts(), nowMs);
                 const policy = getPolicy();
+                const authority = await archive.controlAuthority();
                 const readRevision = readRevisions.get(context.actor.id) ?? 0;
                 const scope = stableHash({ actorId: context.actor.id, filters, contacts: contacts.revision,
                     policyVersion: policy.policyVersion, readRevision });
@@ -573,7 +607,7 @@ function createSessionApi(getPolicy, archive, getContacts = () => ({}), getChann
                     for (const row of rows) {
                         lastScanned = { lastActivityAt: row.last_activity_at, id: row.id };
                         scanned += 1;
-                        const conversation = projectConversation(row, contacts, policy, nowMs);
+                        const conversation = projectConversation(row, contacts, policy, nowMs, authority.mode);
                         if (!matchesConversation(conversation, filters, search)) continue;
                         if (items.length === limit) { moreMatches = true; break; }
                         items.push({ conversation, position: lastScanned });
@@ -610,7 +644,8 @@ function createSessionApi(getPolicy, archive, getContacts = () => ({}), getChann
                 const row = await archive.conversationView({ conversationId, actorId: context.actor.id });
                 if (!row) throw new BoundaryError(404, 'NOT_FOUND', 'Conversación no encontrada.');
                 const contacts = contactProjection(getContacts());
-                const conversation = projectConversation(row, contacts, getPolicy(), Date.now());
+                const authority = await archive.controlAuthority();
+                const conversation = projectConversation(row, contacts, getPolicy(), Date.now(), authority.mode);
                 return send(res, 200, assertValid('ConversationResponse', {
                     conversation, channelCapabilities: CAPABILITIES[row.channel], snapshot
                 }), context.requestId);
@@ -653,6 +688,67 @@ function createSessionApi(getPolicy, archive, getContacts = () => ({}), getChann
                 if (!result) throw new BoundaryError(404, 'NOT_FOUND', 'Conversación no encontrada.');
                 readRevisions.set(context.actor.id, (readRevisions.get(context.actor.id) ?? 0) + 1);
                 return send(res, 200, assertValid('ReadResponse', result), context.requestId);
+            }
+            const takeover = /^\/v1\/conversations\/([^/]+)\/(takeover|release)$/.exec(pathname);
+            if (req.method === 'POST' && takeover) {
+                rejectQuery(req);
+                if (!controlService) throw new BoundaryError(503, 'CONTROL_SERVICE_NOT_READY', 'Servicio de control no disponible.');
+                const conversationId = conversationPathId(takeover[1]);
+                let request;
+                try { request = JSON.parse(requestBody.toString('utf8')); }
+                catch { throw invalid('Cuerpo JSON inválido.'); }
+                const contract = takeover[2] === 'takeover' ? 'TakeoverRequest' : 'ReleaseRequest';
+                if (!validate(contract, request).valid) throw invalid('Solicitud de control inválida.');
+                const idempotencyKey = req.headers?.['idempotency-key'];
+                if (!validate('IdempotencyKey', idempotencyKey).valid) {
+                    throw invalid('Falta Idempotency-Key válido.');
+                }
+                if (request.overrideOwner === true) requireCapability(context.actor, 'control:override');
+                if (takeover[2] === 'takeover') {
+                    const result = await controlService.takeover({ conversationId, actorId: context.actor.id,
+                        expectedVersion: request.expectedVersion, overrideOwner: request.overrideOwner === true, idempotencyKey });
+                    if (result.status === 'pending') {
+                        return send(res, 202, assertValid('TakeoverPendingResponse', { operation: result.operation }), context.requestId);
+                    }
+                } else {
+                    await controlService.release({ conversationId, actorId: context.actor.id,
+                        expectedVersion: request.expectedVersion, overrideOwner: request.overrideOwner === true });
+                }
+                const row = await archive.conversationView({ conversationId, actorId: context.actor.id });
+                if (!row) throw new BoundaryError(404, 'NOT_FOUND', 'Conversación no encontrada.');
+                const authority = await archive.controlAuthority();
+                const conversation = projectConversation(row, contactProjection(getContacts()), getPolicy(), Date.now(), authority.mode);
+                return send(res, 200, assertValid('TakeoverConfirmedResponse', { conversation }), context.requestId);
+            }
+            const update = /^\/v1\/conversations\/([^/]+)$/.exec(pathname);
+            if (req.method === 'PATCH' && update) {
+                rejectQuery(req);
+                if (!controlService) throw new BoundaryError(503, 'CONTROL_SERVICE_NOT_READY', 'Servicio de control no disponible.');
+                const conversationId = conversationPathId(update[1]);
+                if (!validate('IdempotencyKey', req.headers?.['idempotency-key']).valid) {
+                    throw invalid('Falta Idempotency-Key válido.');
+                }
+                let request;
+                try { request = JSON.parse(requestBody.toString('utf8')); }
+                catch { throw invalid('Cuerpo JSON inválido.'); }
+                if (!validate('UpdateConversationRequest', request).valid) throw invalid('Solicitud de actualización inválida.');
+                await controlService.updateConversation({ conversationId, actorId: context.actor.id,
+                    expectedVersion: request.expectedVersion, lifecycle: request.lifecycle,
+                    accessPolicy: request.accessPolicy });
+                const row = await archive.conversationView({ conversationId, actorId: context.actor.id });
+                if (!row) throw new BoundaryError(404, 'NOT_FOUND', 'Conversación no encontrada.');
+                const authority = await archive.controlAuthority();
+                const conversation = projectConversation(row, contactProjection(getContacts()), getPolicy(), Date.now(), authority.mode);
+                return send(res, 200, assertValid('TakeoverConfirmedResponse', { conversation }), context.requestId);
+            }
+            const operation = /^\/v1\/operations\/([^/]+)$/.exec(pathname);
+            if (req.method === 'GET' && operation) {
+                rejectQuery(req);
+                if (!controlService) throw new BoundaryError(503, 'CONTROL_SERVICE_NOT_READY', 'Servicio de control no disponible.');
+                const operationId = conversationPathId(operation[1]);
+                const result = await controlService.operation(operationId);
+                if (!result) throw new BoundaryError(404, 'NOT_FOUND', 'Operación no encontrada.');
+                return send(res, 200, assertValid('Operation', result), context.requestId);
             }
             throw new BoundaryError(404, 'NOT_FOUND', 'Ruta todavía no disponible.');
         } catch (error) {

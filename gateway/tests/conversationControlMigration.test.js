@@ -68,19 +68,56 @@ test('F5.3 migrates an existing v5 archive in place and preserves staged control
     t.after(() => fs.rm(dir, { recursive: true, force: true }));
     const archive = createArchive({ path: databasePath });
     t.after(() => archive.close());
-    assert.equal((await archive.ready).schemaVersion, 6);
+    assert.equal((await archive.ready).schemaVersion, 7);
     assert.deepEqual(await archive.controlState(conversationId), {
         accessPolicy: 'neutral', automationMode: 'human', lifecycle: 'open', ownerId: null,
-        controlVersion: '4', contextVersion: '2', status: 'confirmed', takenAt: null, handoffReason: 'operator'
+        controlVersion: '4', contextVersion: '2', status: 'confirmed', takenAt: null, handoffReason: 'operator',
+        profileKey: null, requiresReview: false, reviewReasons: []
     });
     assert.equal((await archive.conversation(conversationId)).profile_key, null);
     assert.equal((await archive.controlAuthority()).mode, 'legacy');
     assert.deepEqual(await archive.snapshot(), { dataEpoch: 'fixture-v5-epoch', seq: '7' });
 });
 
+test('F5.4 v6 to v7 migration preserves the event timeline and permits audited global policy events', async t => {
+    const { archive, databasePath } = await fixture(t, ['909']);
+    const created = await archive.ingestBatch([message((await archive.accounts())[0].id, '909', 'v6-event')]);
+    assert.equal(created[0].status, 'created');
+    const beforeEvents = await archive.events({ after: '0' });
+    await archive.close();
+
+    const db = new DatabaseSync(databasePath);
+    db.exec(`DROP TABLE control_operations;
+        ALTER TABLE events RENAME TO events_v7;
+        CREATE TABLE events (
+            seq TEXT PRIMARY KEY CHECK(seq NOT GLOB '*[^0-9]*' AND substr(seq,1,1) BETWEEN '1' AND '9'),
+            conversation_id TEXT NOT NULL REFERENCES conversations(id),
+            message_id TEXT REFERENCES messages(id) ON DELETE SET NULL,
+            created_at TEXT NOT NULL, actor_id TEXT, payload TEXT NOT NULL CHECK(json_valid(payload))
+        );
+        INSERT INTO events SELECT * FROM events_v7;
+        DROP TABLE events_v7;
+        CREATE INDEX events_order ON events(length(seq),seq);
+        CREATE INDEX events_retention ON events(created_at);
+        PRAGMA user_version=6;`);
+    db.close();
+
+    const migrated = createArchive({ path: databasePath });
+    t.after(() => migrated.close());
+    assert.equal((await migrated.ready).schemaVersion, 7);
+    assert.deepEqual(await migrated.events({ after: '0' }), beforeEvents);
+    const policy = await migrated.writeControlPolicy({ actorId: randomUUID(), expectedVersion: '1',
+        globalMode: 'allowed_all', globalProfileKey: null });
+    assert.equal(policy.status, 'updated');
+    assert.equal(policy.event.type, 'policy.updated');
+    const diagnostics = await migrated.diagnostics();
+    assert.equal(diagnostics.integrity, 'ok');
+    assert.equal(diagnostics.foreignKeys, 0);
+});
+
 test('F5.3 stages idempotently, preserves legacy authority and blocks unsafe deltas', async t => {
     const { archive } = await fixture(t, ['111', '222']);
-    assert.equal((await archive.ready).schemaVersion, 6);
+    assert.equal((await archive.ready).schemaVersion, 7);
     assert.deepEqual(await archive.controlAuthority(), { mode: 'legacy', migrationId: null, serviceReady: false, changedAt: null });
     const contacts = { alice: { phone: '111', estado: 'permitido' } };
     const first = await reportFor(archive, contacts);
