@@ -1,6 +1,6 @@
 # Estado de continuidad — SDK-Bot
 
-Actualización: 2026-10-20. F4.2 probada; commit pendiente por filesystem lleno. Sigue F4.3.
+Actualización: 2026-10-20. F4.2 publicada en origin/work; sigue F4.3.
 
 ## Objetivo vigente
 
