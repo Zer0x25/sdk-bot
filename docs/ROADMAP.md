@@ -119,7 +119,7 @@ alterado/vencido y desarrollo explícito, sin conectarse a canales reales.
 
 ## Fase 2 — Historial durable y captura completa
 
-**Depende de:** Fase 1. **Estado: F2A/F2B/F2C/F2D y F2E.1 completadas; carga completa pendiente.**
+**Depende de:** Fase 1. **Estado: F2A/F2B/F2C/F2D/F2E completas; carga de referencia pendiente.**
 Evidencia: [ARCHIVO-CONVERSACIONES-F2A](ARCHIVO-CONVERSACIONES-F2A.md).
 F2B.1 completa la puerta BUG-029/031 del reset CLI; evidencia en
 [RESET-SEGURO-F2B1](RESET-SEGURO-F2B1.md). F2B integra WA; F2C Telegram/cursor;
@@ -167,9 +167,10 @@ abort físico queda como puerta de aceptación STT real F8, sin prometerlo aquí
 - [x] F2E.1 Registrar salidas WA/TG aceptadas y deduplicar eco WA por ID de
   proveedor; conservar `external_self` mientras no haya origen correlacionado.
   HTTP 200 `{ok:false}` no se considera envío. [Evidencia](SALIDAS-ACEPTADAS-F2E1.md).
-- [ ] F2E.2 Ejecutar el dataset reproducible de [VALIDACION-V1](VALIDACION-V1.md):
-  1M mensajes/2.000 chats/5 cuentas, redelivery, concurrencia, métricas, saturación
-  y reapertura. F2 sigue abierta hasta que se informe evidencia completa.
+- [x] F2E.2 Ejecutar el dataset reproducible de [VALIDACION-V1](VALIDACION-V1.md):
+  1M mensajes/2.000 chats/5 cuentas, redelivery, cinco runs concurrentes, métricas,
+  saturación, snapshot y reapertura. BUG-055 quedó cerrado al comprobar 50.000 eventos
+  exactos tras los 2.700 mensajes nuevos. [Informe](F2E2-CARGA-COMPLETA.md).
 - [x] F2B.3 Multimedia durable: BUG-033/034/036 reparados. Mismo ID/huella;
   pending/completed/failed y message.updated antes de legacy, captions por tipo,
   purga sin recreación, recuperación de pendientes y trabajos acotados. Apagado
@@ -182,8 +183,10 @@ abort físico queda como puerta de aceptación STT real F8, sin prometerlo aquí
 canales/cuentas/IDs con signo no colisionan; audio fallido sigue visible. Carga con
 miles de mensajes sin bloquear pings del transporte falso; progreso observable.
 F2C.2 prueba reapertura/cursor y redelivery; F2D prueba replay post-commit; F2E.1
-prueba salida aceptada y eco WA. La carga completa sigue pendiente antes de cerrar
-F2; autoría de origen y casos ambiguos requieren el outbox/control de F5.
+prueba salida aceptada y eco WA; F2E.2 conserva volumen, deduplicación y rendimiento
+de archivo. El entorno medido (3 CPU/10,45 GiB) difiere de la referencia
+(2 CPU/4 GiB), por lo que repetir allí antes de certificar ese perfil. Control/toma
+de control y atribución de autoría outbound quedan para F5.
 
 ## Fase 3 — API de lectura y eventos en vivo
 

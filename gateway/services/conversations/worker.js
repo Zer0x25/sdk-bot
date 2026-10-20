@@ -5,6 +5,7 @@ const path = require('node:path');
 const { randomUUID, createHash } = require('node:crypto');
 const { DatabaseSync } = require('node:sqlite');
 const { assertValid } = require('@sdk-bot/contracts');
+const { retentionCutoff } = require('./eventRetention');
 const schema = require('./schema');
 let db;
 function fail(code) { throw Object.assign(new Error(code), { code }); }
@@ -133,6 +134,7 @@ function captureTelegramBatch(input) {
             ON CONFLICT(account_id) DO UPDATE SET last_update_id=excluded.last_update_id,updated_at=excluded.updated_at`,
         input.accountId, cursor, new Date().toISOString());
     }
+    pruneRetainedEvents();
     return { lastUpdateId: cursor, results };
 }
 function lookup(key) {
@@ -263,6 +265,12 @@ function appendMessageEvent(message, aggregate, type, now) {
     run('UPDATE archive_meta SET seq=? WHERE id=1', cursor.seq);
     return event;
 }
+function pruneRetainedEvents() {
+    const cutoff = retentionCutoff(snapshot().seq);
+    if (cutoff !== null) {
+        run(`DELETE FROM events WHERE length(seq)<length(?) OR (length(seq)=length(?) AND seq<=?)`, cutoff, cutoff, cutoff);
+    }
+}
 function updateTranscription(input) {
     assertValid('Id', input.messageId);
     if (!['not_requested','pending'].includes(input.expectedStatus)
@@ -293,6 +301,7 @@ function updateTranscription(input) {
     }
     // Fingerprint, inboundSeq, activity and capture time refer to the original.
     const event = appendMessageEvent(message, aggregate, 'message.updated', new Date().toISOString());
+    pruneRetainedEvents();
     return { status: 'updated', message, event };
 }
 function pendingLegacyDispatches(input = {}) {
@@ -333,6 +342,19 @@ function page(input) {
     } else rows = all('SELECT payload FROM messages WHERE conversation_id=? ORDER BY occurred_at DESC,id DESC LIMIT ?', input.conversationId, limit);
     return rows.reverse().map(row => JSON.parse(row.payload));
 }
+function conversationPage(input = {}) {
+    const limit = input.limit ?? 50;
+    if (!Number.isInteger(limit) || limit < 1 || limit > 100) fail('INVALID_LIMIT');
+    if (input.before) {
+        assertValid('Timestamp', input.before.lastActivityAt);
+        assertValid('Id', input.before.id);
+        const beforeTime = new Date(input.before.lastActivityAt).toISOString();
+        return all(`SELECT * FROM conversations
+            WHERE last_activity_at<? OR (last_activity_at=? AND id<?)
+            ORDER BY last_activity_at DESC,id DESC LIMIT ?`, beforeTime, beforeTime, input.before.id, limit);
+    }
+    return all('SELECT * FROM conversations ORDER BY last_activity_at DESC,id DESC LIMIT ?', limit);
+}
 function purge(input) {
     const now = input.now ?? new Date().toISOString();
     assertValid('Timestamp', now);
@@ -358,13 +380,18 @@ function dispatch(method, input) {
         case 'bindAlias': return transaction(() => bindAlias(input));
         case 'ingestBatch': {
             if (!Array.isArray(input) || !input.length || input.length > 1000) fail('INVALID_BATCH');
-            return transaction(() => input.map(ingest));
+            return transaction(() => {
+                const results = input.map(ingest);
+                pruneRetainedEvents();
+                return results;
+            });
         }
         case 'updateTranscription': return transaction(() => updateTranscription(input));
         case 'pendingLegacyDispatches': return pendingLegacyDispatches(input);
         case 'markLegacyDispatched': return transaction(() => markLegacyDispatched(input));
         case 'retryLegacyDispatch': return transaction(() => retryLegacyDispatch(input));
         case 'conversation': assertValid('Id', input); return one('SELECT * FROM conversations WHERE id=?', input) ?? null;
+        case 'conversations': return conversationPage(input);
         case 'messages': return page(input);
         case 'events': {
             const after = input.after ?? '0'; assertValid('Sequence', after);

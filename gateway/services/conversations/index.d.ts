@@ -58,6 +58,7 @@ export interface Archive {
     markLegacyDispatched(input: { messageId: string }): Promise<{ status: 'dispatched' | 'pending' | 'waiting' | 'skipped' | 'missing' }>;
     retryLegacyDispatch(input: { messageId: string; code?: string }): Promise<{ status: 'pending' | 'waiting' | 'dispatched' | 'skipped' | 'missing' }>;
     conversation(id: string): Promise<ArchiveConversation | null>;
+    conversations(input?: { limit?: number; before?: { lastActivityAt: string; id: string } }): Promise<ArchiveConversation[]>;
     messages(input: { conversationId: string; limit?: number; before?: { occurredAt: string; id: string } }): Promise<Contract<'Message'>[]>;
     events(input?: { after?: string; limit?: number }): Promise<Contract<'Event'>[]>;
     diagnostics(): Promise<Contract<'EventCursor'> & { messages: number; events: number; quarantine: number; aliases: number; provenance: number; legacyDispatchPending: number; legacyDispatchWaiting: number; integrity: string; foreignKeys: number }>;

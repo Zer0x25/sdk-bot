@@ -417,10 +417,12 @@ Backups SQLite consistentes, con manejo correcto WAL/SHM; no copiar WAL aislado.
 
 DB nueva, adjuntos futuros y cursores se agregan a factoryReset.js, .gitignore,
 variables y volúmenes antes de persistirlos. Conservar confirmación destructiva.
-Retención inicial fijada por F0.3: historial 90 días desde ingestedAt, eventos 7 días,
-huellas/idempotencia 180 días y backups diarios 7 días; configurable e independiente
-de IA. Límites de purga/exportación/backup en SPEC-OPERATIVA-V1. No ejecutar reset/re-pairing ni usar producción
-como fixture para validar. No almacenar tokens o cuerpos completos en logs por defecto.
+Retención inicial fijada por F0.3: historial 90 días desde ingestedAt; eventos hasta
+50.000 secuencias o 7 días, lo que venza antes; huellas/idempotencia 180 días y
+backups diarios 7 días. Es configurable e independiente de IA. Límites de
+purga/exportación/backup en SPEC-OPERATIVA-V1. No ejecutar reset/re-pairing ni usar
+producción como fixture para validar. No almacenar tokens o cuerpos completos en
+logs por defecto.
 
 Métricas: retraso de ingesta, duplicados reconciliados, jobs cancelados, tiempo de
 toma de control, salidas inciertas, colas, SSE y latencia de páginas. Correlación

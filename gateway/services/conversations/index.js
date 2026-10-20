@@ -74,6 +74,7 @@ function createArchive(options = {}) {
         markLegacyDispatched: input => call('markLegacyDispatched', input),
         retryLegacyDispatch: input => call('retryLegacyDispatch', input),
         conversation: id => call('conversation', id),
+        conversations: (input = {}) => call('conversations', input),
         messages: input => call('messages', input),
         events: (input = {}) => call('events', input),
         diagnostics: () => call('diagnostics'),

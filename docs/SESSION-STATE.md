@@ -1,6 +1,6 @@
 # Estado de continuidad — SDK-Bot
 
-Actualización: 2026-10-20. Última unidad cerrada: **F2E.1; registro de salidas aceptadas y reconciliación de ecos WA**. F2 sigue abierta hasta la carga sintética completa.
+Actualización: 2026-10-20. Última unidad cerrada: **F2E.2; carga sintética completa del archivo**. La referencia 2 CPU/4 GiB queda pendiente de repetir en ese perfil.
 
 ## Objetivo vigente
 
@@ -387,15 +387,36 @@ La evidencia funcional y los límites de replay están en
 - Sin canal/proveedor real, credenciales, DB de usuario ni carga de 1M. Detalles y
   límites: [SALIDAS-ACEPTADAS-F2E1](SALIDAS-ACEPTADAS-F2E1.md).
 
-## Siguiente unidad exacta: F2E.2 / carga sintética completa del archivo
+## Validación ejecutada: F2E.2 / carga sintética completa
 
-La captura de entrada ya conserva mensajes aunque la IA esté pausada, el contacto
-ignorado o en handoff; F2E.1 archiva salidas aceptadas y eco WA. Ejecutar el dataset
-reproducible de [VALIDACION-V1](VALIDACION-V1.md): 1M mensajes, 2.000 chats,
-5 cuentas, duplicados/eventos, throughput, p95/p99, RSS, latencia del event loop,
-saturación FIFO y reapertura. Usar solo fixtures temporales y proveedores falsos.
-BUG-050 (F5) conserva la idempotencia ante ACK ambiguo; BUG-051 sigue como puerta
-antes de desplegar sobre un archivo real; BUG-046 mantiene aparte el inbox admin.
+- Dataset v1 reproducible: 1M mensajes, 2.000 conversaciones, cinco cuentas,
+  50.000 redeliveries y 40 aliases WA; throughput 3.152 mensajes/s. Snapshot:
+  integridad `ok`, 50.000 eventos retenidos, 0 cuarentenas/FK.
+- Dos calentamientos y tres runs medidos, 2.000 páginas por tipo/run y 2.700
+  ingestas live/run. En los tres medidos: p95/p99 de lista 1,94–2,55/5,02–5,87 ms;
+  página de mensajes 1,87–2,48/4,91–5,87 ms; ingesta steady p99 7,39–12,48 ms;
+  event loop p99 10,86–10,90 ms; RSS 280,3–284,2 MiB; cero errores.
+- BUG-055: la primera carga halló 50.700 eventos tras el tráfico nuevo; la poda ahora
+  ocurre al final de cada commit que genera eventos. La repetición retuvo exactamente
+  50.000 en los cinco runs. Saturación por 1.000 items y 32 MiB rechaza con claridad;
+  Telegram no confirma el cursor al saturarse y no se crea mensaje/dispatch.
+- Evidencia y muestras: [F2E2-CARGA-COMPLETA](F2E2-CARGA-COMPLETA.md) y
+  [JSON completo](evidence/F2E2-load-report.json). `gateway npm run check` en
+  Node 24.19.0 pasa lint, typecheck y **256 pruebas**.
+- Perfil de host distinto (Linux x64, 3 CPU/10,45 GiB vs objetivo 2 CPU/4 GiB): no
+  certificar aún el presupuesto de referencia; repetir allí. Takeover queda F5;
+  atribución outbound del backfill se mantiene `unknown` hasta el outbox F5.
+  Sin canal real, credenciales ni DB de usuario.
+
+## Siguiente unidad exacta: F3.1 / API autenticada de lectura
+
+F2 cierra captura/persistencia y su carga medida. La consulta estable base del
+archivo ya ofrece páginas de conversaciones por `(last_activity_at,id)`; falta
+exponerla como API v1 autenticada, proyectar contactos/capacidades/cobertura,
+completar filtros de contrato y devolver cursores opacos/snapshot. Completar además
+la página de mensajes por cursor y detalle. BUG-024 debe resolverse antes de abrir
+operadores con grants limitados. En F3.2, replay/SSE debe responder
+`resync.required` para cursores anteriores a los 50.000 eventos retenidos.
 
 ## Pendientes materiales
 
@@ -422,7 +443,7 @@ antes de desplegar sobre un archivo real; BUG-046 mantiene aparte el inbox admin
 
 Actualizar estado y solo checkboxes demostrados; hacer commit probado e informar
 hash. El [prompt estable](PROMPT-CONTINUIDAD.md) consulta este estado sin reescritura.
-BUG-005/009/044/045/047/052/053/054 cerrados; BUG-006/007/008/010/011/012/014/024/
+BUG-005/009/044/045/047/052/053/054/055 cerrados; BUG-006/007/008/010/011/012/014/024/
 035/037/043/046/050/051 siguen abiertos o parciales según backlog. BUG-016 probado en repositorio/alias
 del adapter, sin afirmar F2 completa.
 

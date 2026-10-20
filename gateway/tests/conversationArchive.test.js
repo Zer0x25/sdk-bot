@@ -9,6 +9,7 @@ const { spawn } = require('node:child_process');
 const { once } = require('node:events');
 const { assertValid } = require('@sdk-bot/contracts');
 const { createArchive } = require('../services/conversations');
+const { retentionCutoff } = require('../services/conversations/eventRetention');
 const { signContext, actorId } = require('../lib/panelContext');
 const { withTempDbPaths } = require('./helpers/tmpPaths');
 const temporary = withTempDbPaths();
@@ -29,6 +30,37 @@ async function fixture(t, options = {}) {
     await archive.registerAccount({ id: account, channel: 'whatsapp', providerKey: 'test-wa-account' });
     return { archive, dir, dbPath };
 }
+
+test('conversation page uses a stable timestamp/id cursor and bounds page size', async t => {
+    const { archive } = await fixture(t);
+    for (const [providerId, jid, occurredAt] of [
+        ['page-a', '100@s.whatsapp.net', '2026-01-01T00:00:00.000Z'],
+        ['page-b', '101@s.whatsapp.net', '2026-01-02T00:00:00.000Z'],
+        ['page-c', '102@s.whatsapp.net', '2026-01-02T00:00:00.000Z'],
+    ]) await archive.ingestBatch([message(key(jid), providerId, { occurredAt })]);
+    const full = await archive.conversations({ limit: 100 });
+    const paged = [];
+    let before;
+    do {
+        const [row] = await archive.conversations({ limit: 1, before });
+        if (!row) break;
+        paged.push(row);
+        before = { lastActivityAt: row.last_activity_at, id: row.id };
+    } while (paged.length < 4);
+    assert.deepEqual(paged.map(row => row.id), full.map(row => row.id));
+    assert.deepEqual(full.map(row => row.last_activity_at), [
+        '2026-01-02T00:00:00.000Z', '2026-01-02T00:00:00.000Z', '2026-01-01T00:00:00.000Z',
+    ]);
+    await assert.rejects(archive.conversations({ limit: 101 }), { code: 'INVALID_LIMIT' });
+});
+
+test('event retention computes an exact 50,000-event replay window after each commit', () => {
+    assert.equal(retentionCutoff('50000'), null);
+    assert.equal(retentionCutoff('50001'), '1');
+    assert.equal(retentionCutoff('51000'), '1000');
+    assert.equal(retentionCutoff('1000000'), '950000');
+    assert.equal(retentionCutoff('1000001'), '950001');
+});
 
 test('worker: migration, WAL FULL, transaction, minimal event and durable session watermark after reopen', async t => {
     const { archive, dbPath } = await fixture(t);

@@ -1,12 +1,11 @@
 # Validación y presupuestos v1 — F0.3
 
-Fecha: 2026-10-19. Define cómo se demostrará la especificación en fases posteriores.
-**No es un informe de rendimiento del producto.** F1A ejecuta los seis casos TXT
-y comprueba formas wire de ID; el resto sigue pendiente de sus servicios.
-Evidencia: [CONTRATOS-V1.md](CONTRATOS-V1.md). F2A ejecuta casos de repositorio
-(identidad/dedup/purga/crash/backup), documentados en
-[ARCHIVO-CONVERSACIONES-F2A](ARCHIVO-CONVERSACIONES-F2A.md); no el protocolo
-completo de carga ni la captura live.
+Fecha: 2026-10-19. Define cómo demostrar la especificación. F1A ejecuta los seis
+casos TXT y comprueba formas wire de ID. F2E.2 ejecutó el dataset y la carga completa
+en un host distinto del perfil de referencia; resultados y límites están en
+[F2E2-CARGA-COMPLETA](F2E2-CARGA-COMPLETA.md). No se midió takeover porque la API
+de control pertenece a F5. F2A ejecuta los casos de repositorio descritos en
+[ARCHIVO-CONVERSACIONES-F2A](ARCHIVO-CONVERSACIONES-F2A.md).
 Norma: [SPEC-OPERATIVA-V1.md](SPEC-OPERATIVA-V1.md).
 Valores/ejemplos: [fixtures/v1-acceptance.json](fixtures/v1-acceptance.json).
 
@@ -75,7 +74,10 @@ Fuente de parámetros: loadProfile del fixture. El generador de F2 deberá:
 
 Los archivos generados viven en temporales, sin tokens/sesiones y con limpieza.
 El JSON versionado describe el dataset, no contiene un millón de mensajes en git.
-Este protocolo todavía no es el generador implementado.
+El generador y los resultados F2E.2 están implementados en
+[gateway/scripts/conversation-load.js](../gateway/scripts/conversation-load.js) y
+[F2E2-CARGA-COMPLETA](F2E2-CARGA-COMPLETA.md); el runner exige un volumen temporal
+con al menos 6 GiB libres para evitar agotar el espacio durante el snapshot.
 
 ## 3. Presupuestos iniciales y medición
 
@@ -126,7 +128,9 @@ Procedimiento:
 Una muestra única de 5.000 escrituras del spike F0.2 no cumple este protocolo.
 No ralentizar la CI de cada cambio con el dataset completo: CI ejecuta casos
 funcionales reducidos; la entrega de almacenamiento/UI conserva un informe de
-carga completo antes de cerrar sus puertas.
+carga completo antes de cerrar sus puertas. El runner actual está en
+`gateway/scripts/conversation-load.js`; repetir con 2 CPU/4 GiB antes de certificar
+ese perfil. Takeover se incorpora cuando F5 entregue la operación durable.
 
 ## 4. Ensayos de corte y recuperación
 
