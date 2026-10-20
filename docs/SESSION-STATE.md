@@ -15,8 +15,8 @@ fusionar la #8 como una versión nueva.
 
 BUG-066 sigue abierto: checks de PRs generadas por Release Please pueden quedar
 `action_required` sin jobs. BUG-067 eliminó el input inválido `draft` de la
-acción. BUG-068 retiró el deploy Homelab y duplicación CI post-merge. F4.3 sigue
-pendiente.
+acción. BUG-068 retiró el deploy Homelab y duplicación CI post-merge. F4.3 está
+implementada y verificada en PR #10; pendiente de merge a main.
 
 ## Objetivo vigente
 
@@ -526,14 +526,31 @@ ausencia de Vite/CA. Commit separado de la UI.
   temporal BuildKit. El contenedor de sondeo no pudo arrancar porque el filesystem
   llegó al 100% y Docker no pudo crear la capa escribible; el build y las pruebas
   locales sí finalizaron.
-- La UI no implementa envío ni toma de control. F4.3 conecta SSE, caché,
-  reconexión, ancla de scroll y resync.
+- La UI no implementa envío ni toma de control; esos flujos quedan para F5/F6.
+  F4.3 conecta SSE, caché, reconexión, ancla de scroll y resync.
+
+## F4.3 completada: eventos en vivo de la bandeja
+
+- La UI abre el SSE autenticado y actualiza listas/detalle con invalidaciones
+  agrupadas. Para mensajes del chat seleccionado refresca solo páginas necesarias.
+- Si el replay supera una página, sigue cursores hacia atrás hasta solapar con el
+  snapshot reciente que ya estaba cargado. Deduplica por ID y conserva el ancla
+  cuando el operador lee mensajes anteriores; el contador ofrece volver al final.
+- Eventos recibidos durante un fetch dejan el hilo marcado para otro refresco al
+  terminar la petición en curso. CURSOR_EXPIRED/DATA_EPOCH_MISMATCH reinician las
+  páginas y cargan snapshot tras completar el reset.
+- BUG-070 cerró el hueco visual con más de 50 mensajes tras una desconexión.
+  Evidencia: [F4.3-STREAM-INBOX](F4.3-STREAM-INBOX.md).
+- PR #10, commit final f7c3acc. GitHub Actions run 39485070383 pasó los cinco jobs:
+  13 pruebas Vitest del panel, build/servido del artefacto, 269 pruebas Node,
+  smoke, spike SQLite, contratos Node 22.13/24 y brain Ruff/pytest.
+- No se probaron canales reales ni E2E manual en navegador. La revisión visual del
+  viewport móvil sigue pendiente; F4.3 se validó con pruebas de componente/CI.
 
 ## Pendientes materiales
 
-- F4.3 integra SSE en la bandeja. F5 aborda toma de control, cancelación de IA,
-  contexto y outbox; BUG-043/046/050 son puertas de esa entrega y BUG-051 antes de
-  migrar archivos preexistentes.
+- F5 aborda toma de control, cancelación de IA, contexto y outbox; BUG-043/046/050
+  son puertas de esa entrega y BUG-051 antes de migrar archivos preexistentes.
 - BUG-010 sigue parcial; BUG-035/037 quedan para F8. Windows/Termux y canales reales
   no están validados; la historia previa que conservan los proveedores es limitada.
 - BUG-024 antes de operadores limitados; BUG-014 antes de Python paralelo.
@@ -543,6 +560,6 @@ ausencia de Vite/CA. Commit separado de la UI.
 Actualizar estado y solo checkboxes demostrados; hacer commit probado e informar
 hash. Consultar [BACKLOG.md](BACKLOG.md) para el estado y aceptación de cada bug.
 
-BUG-005/009/044/045/047/052/053/054/055 están cerrados; BUG-006/007/008/010/011/012/014/024/035/037/043/046/050/051 siguen abiertos o parciales según el backlog. BUG-016 fue probado en repositorio y alias del adapter, sin afirmar F2 completa.
+BUG-005/009/044/045/047/052/053/054/055/070 están cerrados; BUG-006/007/008/010/011/012/014/024/035/037/043/046/050/051 siguen abiertos o parciales según el backlog. BUG-016 fue probado en repositorio y alias del adapter, sin afirmar F2 completa.
 
 Cierres históricos: commits F2C.1/F2C.2/F2D/F2E.1 están en el log local; F2B.3 `42b8321`, F2B.2 `7d99f36`, F2B.1 `4bb4ec3`, F2A `37525a1`.

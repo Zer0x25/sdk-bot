@@ -2,6 +2,7 @@ import { NavLink } from 'react-router-dom';
 import { Archive, CircleHelp, MessageCircle, Search, Send, UsersRound } from 'lucide-react';
 import { PanelApiError, type Account, type Channel, type Conversation } from './api';
 import { BrandLabel } from '../../app/AppShell';
+import type { StreamStatus } from './useInboxEvents';
 
 export type InboxFilter = 'all' | 'unread' | 'open';
 
@@ -23,6 +24,7 @@ interface Props {
   onLoadMore(): void;
   onRetryMore(): void;
   onRetry(): void;
+  streamStatus: StreamStatus;
 }
 
 const channelLabel: Record<Channel, string> = {
@@ -49,7 +51,7 @@ export function ConversationList(props: Props) {
   const {
     conversationId, conversations, accounts, loading, error, moreError, hasMore, loadingMore,
     filter, channel, search, onFilterChange, onChannelChange, onSearchChange,
-    onLoadMore, onRetry, onRetryMore
+    onLoadMore, onRetry, onRetryMore, streamStatus
   } = props;
   const accountById = new Map(accounts.map(account => [account.id, account]));
   const expiredListCursor = moreError instanceof PanelApiError && (moreError.code === 'CURSOR_EXPIRED' || moreError.code === 'DATA_EPOCH_MISMATCH');
@@ -160,7 +162,10 @@ export function ConversationList(props: Props) {
       <footer className="conversation-footer">
         <span>Historial archivado</span>
         <span className="footer-divider" aria-hidden="true">·</span>
-        <span>Sincronización en vivo en la siguiente entrega</span>
+        <span className={`live-sync-status is-${streamStatus}`} role="status" aria-live="polite">
+          <span className="live-sync-dot" aria-hidden="true" />
+          {streamStatus === 'connected' ? 'En vivo' : streamStatus === 'reconnecting' ? 'Reconectando…' : 'Conectando…'}
+        </span>
       </footer>
     </section>
   );

@@ -4,6 +4,7 @@ import { useParams } from 'react-router-dom';
 import { ConversationDetails } from './ConversationDetails';
 import { ConversationList, type InboxFilter } from './ConversationList';
 import { ConversationThread } from './ConversationThread';
+import { useInboxEvents } from './useInboxEvents';
 import {
   getAccounts,
   getConversation,
@@ -22,11 +23,18 @@ function asError(value: unknown) {
 export function InboxPage() {
   const { conversationId } = useParams();
   const queryClient = useQueryClient();
+  const live = useInboxEvents(conversationId);
   const readAttempt = useRef<string | null>(null);
+  const [isAtLatest, setIsAtLatest] = useState(true);
   const [filter, setFilter] = useState<InboxFilter>('all');
   const [channel, setChannel] = useState<Channel | ''>('');
   const [searchInput, setSearchInput] = useState('');
   const [search, setSearch] = useState('');
+
+  useEffect(() => {
+    setIsAtLatest(true);
+    readAttempt.current = null;
+  }, [conversationId]);
 
   useEffect(() => {
     const timer = window.setTimeout(() => setSearch(searchInput.trim()), 250);
@@ -72,13 +80,23 @@ export function InboxPage() {
 
   const conversations = conversationsQuery.data?.pages.flatMap(page => page.items) ?? [];
   const messagePages = messagesQuery.data?.pages ?? [];
-  // The first page is the newest window; older pages are appended by cursor.
-  const messages = [...messagePages].reverse().flatMap(page => page.items);
+  const liveMessagesQuery = useQuery({
+    queryKey: ['inbox', 'live-messages', conversationId],
+    queryFn: ({ signal }) => getMessages(conversationId!, {}, signal),
+    enabled: false
+  });
+  // Live refreshes only fetch the newest page; older paged history stays cached.
+  const archivedMessages = [...messagePages].reverse().flatMap(page => page.items);
+  const messages = [...new Map([...archivedMessages, ...(liveMessagesQuery.data?.items ?? [])]
+    .map(message => [message.id, message] as const)).values()]
+    .sort((left, right) => left.occurredAt.localeCompare(right.occurredAt) || left.id.localeCompare(right.id));
   const selectedConversation = conversationQuery.data?.conversation;
   const accounts = accountsQuery.data?.items ?? [];
   const selectedAccount = accounts.find(account => account.id === selectedConversation?.accountId);
   const conversationError = conversationQuery.isError ? asError(conversationQuery.error) : null;
-  const messageError = messagesQuery.isError ? asError(messagesQuery.error) : null;
+  const messageError = messagesQuery.isError
+    ? asError(messagesQuery.error)
+    : liveMessagesQuery.isError ? asError(liveMessagesQuery.error) : null;
   const listError = !conversationsQuery.data && conversationsQuery.isError
     ? asError(conversationsQuery.error)
     : null;
@@ -109,11 +127,11 @@ export function InboxPage() {
 
   useEffect(() => {
     if (!conversationId || !selectedConversation || selectedConversation.unreadCount === 0
-      || !latestInboundSeq || messagesQuery.isLoading) return;
+      || !latestInboundSeq || messagesQuery.isLoading || !isAtLatest) return;
     const key = `${conversationId}:${latestInboundSeq}`;
     if (readAttempt.current === key) return;
     sendReadCursor();
-  }, [conversationId, selectedConversation?.unreadCount, latestInboundSeq, messagesQuery.isLoading]);
+  }, [conversationId, selectedConversation?.unreadCount, latestInboundSeq, messagesQuery.isLoading, isAtLatest]);
 
   const readError = readMutation.isError && readMutation.variables?.conversationId === conversationId
     ? asError(readMutation.error)
@@ -145,6 +163,7 @@ export function InboxPage() {
             void conversationsQuery.fetchNextPage();
           }
         }}
+        streamStatus={live.status}
       />
       <ConversationThread
         conversationId={conversationId}
@@ -158,9 +177,21 @@ export function InboxPage() {
         hasOlder={Boolean(messagesQuery.hasNextPage)}
         loadingOlder={messagesQuery.isFetchingNextPage}
         readError={readError}
+        newMessagesCount={live.newMessageCount}
+        onMessagesSeen={live.clearNewMessages}
+        onAtLatestChange={setIsAtLatest}
         onLoadOlder={() => messagesQuery.fetchNextPage()}
         onRetryDetail={() => { void conversationQuery.refetch(); }}
-        onRetryMessages={() => { void messagesQuery.refetch(); }}
+        onRetryMessages={() => {
+          void messagesQuery.refetch();
+          if (conversationId) {
+            void queryClient.fetchQuery({
+              queryKey: ['inbox', 'live-messages', conversationId],
+              queryFn: () => getMessages(conversationId, {}),
+              staleTime: 0
+            }).catch(() => undefined);
+          }
+        }}
         onRetryRead={sendReadCursor}
       />
       <ConversationDetails

@@ -1,4 +1,4 @@
-import { cleanup, render, screen, waitFor, within } from '@testing-library/react';
+import { act, cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import type { Contract } from '@sdk-bot/contracts';
@@ -136,6 +136,71 @@ function installApiMock(options: { empty?: boolean; listError?: boolean; paginat
   return fetchMock;
 }
 
+const liveMessage = {
+  ...message('99999999-9999-4999-8999-999999999999', 'Mensaje nuevo en vivo', '2026-10-20T12:01:00.000Z'),
+  inboundSeq: '2'
+};
+
+class FakeEventSource {
+  static instances: FakeEventSource[] = [];
+  readonly url: string;
+  readyState = 0;
+  onopen: ((event: Event) => void) | null = null;
+  onerror: ((event: Event) => void) | null = null;
+  private listeners = new Map<string, Set<EventListenerOrEventListenerObject>>();
+
+  constructor(url: string) {
+    this.url = url;
+    FakeEventSource.instances.push(this);
+  }
+
+  addEventListener(type: string, listener: EventListenerOrEventListenerObject) {
+    const entries = this.listeners.get(type) ?? new Set<EventListenerOrEventListenerObject>();
+    entries.add(listener);
+    this.listeners.set(type, entries);
+  }
+
+  removeEventListener(type: string, listener: EventListenerOrEventListenerObject) {
+    this.listeners.get(type)?.delete(listener);
+  }
+
+  open() {
+    this.readyState = 1;
+    this.onopen?.(new Event('open'));
+  }
+
+  disconnect() {
+    this.readyState = 0;
+    this.onerror?.(new Event('error'));
+  }
+
+  dispatch(type: string, data: unknown, lastEventId: string) {
+    const event = new MessageEvent(type, { data: JSON.stringify(data), lastEventId });
+    for (const listener of this.listeners.get(type) ?? []) {
+      if (typeof listener === 'function') listener(event);
+      else listener.handleEvent(event);
+    }
+  }
+
+  close() { this.readyState = 2; }
+}
+
+function installEventSourceMock() {
+  FakeEventSource.instances.length = 0;
+  vi.stubGlobal('EventSource', FakeEventSource);
+  return FakeEventSource.instances;
+}
+
+function streamEvent(type: string, data: Record<string, unknown>, seq: string) {
+  return {
+    schemaVersion: 1,
+    cursor: { dataEpoch: snapshot.dataEpoch, seq },
+    type,
+    occurredAt: timestamp,
+    data
+  };
+}
+
 function renderApp(path = '/inbox/') {
   window.history.replaceState({}, '', path);
   return render(<App queryClient={createAppQueryClient()} />);
@@ -144,6 +209,7 @@ function renderApp(path = '/inbox/') {
 afterEach(() => {
   cleanup();
   vi.unstubAllGlobals();
+  FakeEventSource.instances.length = 0;
   window.history.replaceState({}, '', '/inbox/');
 });
 
@@ -261,6 +327,201 @@ describe('inbox shell and real API integration', () => {
     renderApp();
     expect(await screen.findByRole('alert')).toHaveTextContent('No se pudieron cargar las conversaciones');
     expect(screen.getByRole('button', { name: 'Volver a intentar' })).toBeInTheDocument();
+  });
+
+  it('streams new messages without reloading older pages, preserves a scrolled thread and deduplicates replay', async () => {
+    const fetchMock = installApiMock();
+    const fallback = fetchMock.getMockImplementation();
+    expect(fallback).toBeDefined();
+    let includeLiveMessage = false;
+    fetchMock.mockImplementation(async (input, init) => {
+      const url = new URL(String(input), 'http://panel.local');
+      if (includeLiveMessage && url.pathname === `/api/v1/conversations/${conversationId}/messages`) {
+        return jsonResponse({ items: [latestMessage, liveMessage], nextCursor: null, snapshot });
+      }
+      return fallback!(input, init);
+    });
+    const sources = installEventSourceMock();
+    renderApp(`/inbox/${conversationId}`);
+
+    const log = await screen.findByRole('log', { name: 'Mensajes del chat' });
+    expect(await within(log).findByText('¿En qué puedo ayudarte?')).toBeInTheDocument();
+    const history = document.querySelector('.message-history') as HTMLDivElement;
+    Object.defineProperty(history, 'scrollHeight', { configurable: true, value: 1200 });
+    Object.defineProperty(history, 'clientHeight', { configurable: true, value: 300 });
+    history.scrollTop = 200;
+    fireEvent.scroll(history);
+
+    const source = sources[0];
+    expect(source.url).toBe('/api/v1/events');
+    act(() => source.open());
+    expect(await screen.findByText('En vivo')).toBeInTheDocument();
+
+    includeLiveMessage = true;
+    const eventId = `${snapshot.dataEpoch}:3`;
+    const event = streamEvent('message.created', {
+      conversationId,
+      messageId: liveMessage.id,
+      aggregateVersion: '3'
+    }, '3');
+    act(() => source.dispatch('message.created', event, eventId));
+
+    expect(await screen.findByText('Mensaje nuevo en vivo')).toBeInTheDocument();
+    expect(screen.getByText('1 mensaje nuevo')).toBeInTheDocument();
+    expect(history.scrollTop).toBe(200);
+    expect(within(log).getAllByText('¿En qué puedo ayudarte?')).toHaveLength(1);
+
+    act(() => source.disconnect());
+    expect(screen.getByText('Reconectando…')).toBeInTheDocument();
+    act(() => source.open());
+    expect(screen.getByText('En vivo')).toBeInTheDocument();
+    act(() => source.dispatch('message.created', event, eventId));
+    expect(screen.getByText('1 mensaje nuevo')).toBeInTheDocument();
+
+    await userEvent.setup().click(screen.getByRole('button', { name: 'Ver mensajes recientes' }));
+    expect(history.scrollTop).toBe(1200);
+    expect(screen.queryByText('1 mensaje nuevo')).not.toBeInTheDocument();
+  });
+
+  it('recovers every replayed message across pages before the cached history anchor', async () => {
+    const fetchMock = installApiMock();
+    const fallback = fetchMock.getMockImplementation();
+    expect(fallback).toBeDefined();
+    let includeReplay = false;
+    const replayMessages = Array.from({ length: 51 }, (_, index) => ({
+      ...message(
+        '90000000-0000-4000-8000-' + String(index + 1).padStart(12, '0'),
+        'Mensaje recuperado ' + String(index + 1),
+        new Date(Date.parse(timestamp) + (index + 1) * 1000).toISOString()
+      ),
+      inboundSeq: String(index + 2)
+    }));
+    fetchMock.mockImplementation(async (input, init) => {
+      const url = new URL(String(input), 'http://panel.local');
+      if (includeReplay && url.pathname === '/api/v1/conversations/' + conversationId + '/messages') {
+        if (url.searchParams.get('cursor') === 'replay-page-2') {
+          return jsonResponse({ items: [replayMessages[0], latestMessage], nextCursor: null, snapshot });
+        }
+        return jsonResponse({ items: replayMessages.slice(1), nextCursor: 'replay-page-2', snapshot });
+      }
+      return fallback!(input, init);
+    });
+    const sources = installEventSourceMock();
+    renderApp('/inbox/' + conversationId);
+
+    const log = await screen.findByRole('log', { name: 'Mensajes del chat' });
+    await within(log).findByText('¿En qué puedo ayudarte?');
+    const history = document.querySelector('.message-history') as HTMLDivElement;
+    Object.defineProperty(history, 'scrollHeight', { configurable: true, value: 1200 });
+    Object.defineProperty(history, 'clientHeight', { configurable: true, value: 300 });
+    history.scrollTop = 200;
+    fireEvent.scroll(history);
+
+    const source = sources[0];
+    act(() => source.open());
+    await screen.findByText('En vivo');
+    includeReplay = true;
+    act(() => {
+      replayMessages.forEach((entry, index) => {
+        source.dispatch('message.created', streamEvent('message.created', {
+          conversationId,
+          messageId: entry.id,
+          aggregateVersion: String(index + 3)
+        }, String(index + 3)), snapshot.dataEpoch + ':' + String(index + 3));
+      });
+    });
+
+    await waitFor(() => expect(within(log).getAllByText(/Mensaje recuperado/)).toHaveLength(51));
+    expect(screen.getByText('51 mensajes nuevos')).toBeInTheDocument();
+    expect(history.scrollTop).toBe(200);
+    expect(fetchMock.mock.calls.some(([input]) => {
+      const url = new URL(String(input), 'http://panel.local');
+      return url.pathname.endsWith('/messages') && url.searchParams.get('cursor') === 'replay-page-2';
+    })).toBe(true);
+  });
+
+  it('runs another message refresh when an event arrives during an in-flight fetch', async () => {
+    const fetchMock = installApiMock();
+    const fallback = fetchMock.getMockImplementation();
+    expect(fallback).toBeDefined();
+    const secondLiveMessage = {
+      ...message('aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa', 'Mensaje recibido durante la actualización', '2026-10-20T12:02:00.000Z'),
+      inboundSeq: '3'
+    };
+    let includeReplay = false;
+    let liveResponses = 0;
+    let signalFirstFetchStarted!: () => void;
+    const firstFetchStarted = new Promise<void>(resolve => { signalFirstFetchStarted = resolve; });
+    let releaseFirstFetch!: () => void;
+    fetchMock.mockImplementation(async (input, init) => {
+      const url = new URL(String(input), 'http://panel.local');
+      if (includeReplay && url.pathname === '/api/v1/conversations/' + conversationId + '/messages') {
+        liveResponses += 1;
+        if (liveResponses === 1) {
+          const waitForRelease = new Promise<void>(resolve => { releaseFirstFetch = resolve; });
+          signalFirstFetchStarted();
+          await waitForRelease;
+          return jsonResponse({ items: [latestMessage, liveMessage], nextCursor: null, snapshot });
+        }
+        return jsonResponse({ items: [latestMessage, liveMessage, secondLiveMessage], nextCursor: null, snapshot });
+      }
+      return fallback!(input, init);
+    });
+    const sources = installEventSourceMock();
+    renderApp('/inbox/' + conversationId);
+    await screen.findByText('¿En qué puedo ayudarte?');
+    const history = document.querySelector('.message-history') as HTMLDivElement;
+    Object.defineProperty(history, 'scrollHeight', { configurable: true, value: 1200 });
+    Object.defineProperty(history, 'clientHeight', { configurable: true, value: 300 });
+    history.scrollTop = 200;
+    fireEvent.scroll(history);
+
+    const source = sources[0];
+    act(() => source.open());
+    await screen.findByText('En vivo');
+    includeReplay = true;
+    act(() => source.dispatch('message.created', streamEvent('message.created', {
+      conversationId,
+      messageId: liveMessage.id,
+      aggregateVersion: '3'
+    }, '3'), snapshot.dataEpoch + ':3'));
+    await firstFetchStarted;
+
+    act(() => source.dispatch('message.created', streamEvent('message.created', {
+      conversationId,
+      messageId: secondLiveMessage.id,
+      aggregateVersion: '4'
+    }, '4'), snapshot.dataEpoch + ':4'));
+    await new Promise(resolve => window.setTimeout(resolve, 140));
+    releaseFirstFetch();
+
+    expect(await screen.findByText('Mensaje recibido durante la actualización')).toBeInTheDocument();
+    expect(liveResponses).toBeGreaterThan(1);
+    expect(screen.getByText('2 mensajes nuevos')).toBeInTheDocument();
+  });
+
+  it('resets paginated snapshots when the stream reports that its cursor needs resynchronization', async () => {
+    const fetchMock = installApiMock({ pagination: true, listPagination: true });
+    const sources = installEventSourceMock();
+    renderApp(`/inbox/${conversationId}`);
+    await screen.findByText('¿En qué puedo ayudarte?');
+
+    const source = sources[0];
+    act(() => source.open());
+    await screen.findByText('En vivo');
+    const before = fetchMock.mock.calls.filter(([input]) => {
+      const url = new URL(String(input), 'http://panel.local');
+      return url.pathname === '/api/v1/conversations' && !url.searchParams.has('cursor');
+    }).length;
+
+    act(() => source.dispatch('resync.required', streamEvent('resync.required', { reason: 'cursor_expired' }, '4'), `${snapshot.dataEpoch}:4`));
+    await waitFor(() => {
+      const firstPageRequests = fetchMock.mock.calls.filter(([input]) => {
+        const url = new URL(String(input), 'http://panel.local');
+        return url.pathname === '/api/v1/conversations' && !url.searchParams.has('cursor');
+      });
+      expect(firstPageRequests.length).toBeGreaterThan(before);
+    });
   });
 
   it('keeps section navigation and the skip-to-content link keyboard accessible', async () => {

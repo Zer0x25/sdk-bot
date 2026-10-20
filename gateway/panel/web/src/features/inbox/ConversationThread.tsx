@@ -16,6 +16,9 @@ interface Props {
   hasOlder: boolean;
   loadingOlder: boolean;
   readError: Error | null;
+  newMessagesCount: number;
+  onMessagesSeen(): void;
+  onAtLatestChange(atLatest: boolean): void;
   onLoadOlder(): Promise<unknown>;
   onRetryDetail(): void;
   onRetryMessages(): void;
@@ -78,34 +81,69 @@ function ErrorPanel({ error, onRetry, title }: { error: Error; onRetry(): void; 
 export function ConversationThread(props: Props) {
   const {
     conversationId, conversation, detailLoading, detailError, messages, messagePageCount,
-    messagesLoading, messagesError, hasOlder, loadingOlder, readError, onLoadOlder,
-    onRetryDetail, onRetryMessages, onRetryRead
+    messagesLoading, messagesError, hasOlder, loadingOlder, readError, newMessagesCount,
+    onMessagesSeen, onAtLatestChange, onLoadOlder, onRetryDetail, onRetryMessages, onRetryRead
   } = props;
   const historyRef = useRef<HTMLDivElement>(null);
   const activeConversationId = useRef(conversationId);
   const previousPageCount = useRef(0);
+  const previousMessageCount = useRef(0);
   const olderLoadPending = useRef(false);
+  const atLatestRef = useRef(true);
   const previousScroll = useRef({ height: 0, top: 0 });
+
+  function updatePosition() {
+    const container = historyRef.current;
+    if (!container) return;
+    const atLatest = container.scrollHeight - container.scrollTop - container.clientHeight <= 64;
+    if (atLatestRef.current !== atLatest) {
+      atLatestRef.current = atLatest;
+      onAtLatestChange(atLatest);
+    }
+    if (atLatest && newMessagesCount > 0) onMessagesSeen();
+  }
+
+  function jumpToLatest() {
+    const container = historyRef.current;
+    if (container) container.scrollTop = container.scrollHeight;
+    updatePosition();
+  }
 
   useLayoutEffect(() => {
     const container = historyRef.current;
+    let loadedOlder = false;
+    let firstSnapshot = false;
     if (activeConversationId.current !== conversationId) {
       activeConversationId.current = conversationId;
       previousPageCount.current = 0;
+      previousMessageCount.current = 0;
       olderLoadPending.current = false;
+      atLatestRef.current = true;
     }
     if (!container) return;
 
     if (olderLoadPending.current && messagePageCount > previousPageCount.current) {
       container.scrollTop = previousScroll.current.top + container.scrollHeight - previousScroll.current.height;
       olderLoadPending.current = false;
+      loadedOlder = true;
     } else if (messagePageCount > 0 && previousPageCount.current === 0) {
       container.scrollTop = container.scrollHeight;
+      firstSnapshot = true;
     } else if (olderLoadPending.current && !loadingOlder && messagePageCount === previousPageCount.current) {
       olderLoadPending.current = false;
     }
+
+    if (messages.length > previousMessageCount.current && !loadedOlder && !firstSnapshot && atLatestRef.current) {
+      container.scrollTop = container.scrollHeight;
+    }
     previousPageCount.current = messagePageCount;
-  }, [conversationId, messagePageCount, loadingOlder]);
+    previousMessageCount.current = messages.length;
+    if (firstSnapshot || messages.length > 0) updatePosition();
+  }, [conversationId, messagePageCount, messages.length, loadingOlder]);
+
+  function handleHistoryScroll() {
+    updatePosition();
+  }
 
   async function loadOlder() {
     const container = historyRef.current;
@@ -148,7 +186,13 @@ export function ConversationThread(props: Props) {
       {conversationId && !detailLoading && detailError && <ErrorPanel error={detailError} onRetry={onRetryDetail} title="No se pudo abrir el chat" />}
       {conversationId && !detailLoading && !detailError && conversation && (
         <>
-          <div className="message-history" ref={historyRef} aria-busy={messagesLoading || loadingOlder}>
+          <div className="message-history" ref={historyRef} onScroll={handleHistoryScroll} aria-busy={messagesLoading || loadingOlder}>
+            {newMessagesCount > 0 && (
+              <div className="new-messages-banner" role="status">
+                <span>{newMessagesCount === 1 ? '1 mensaje nuevo' : `${newMessagesCount} mensajes nuevos`}</span>
+                <button className="text-button" type="button" onClick={jumpToLatest}>Ver mensajes recientes</button>
+              </div>
+            )}
             {readError && (
               <div className="inline-error" role="alert">
                 <span>No se pudo actualizar el contador local de no leídos: {readError.message}</span>

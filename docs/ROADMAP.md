@@ -31,8 +31,9 @@ F2E.2 cierra la carga sintética completa y F3.1 implementa la API autenticada d
 lectura, filtros, páginas y cursor local de lectura. F3.2 completa SSE, replay y
 resynchronización ante cursores fuera de retención. F4.1 entrega el shell visual,
 la unidad de seguridad cerró BUG-062 en dependencias de medios y F4.2 conecta la
-lista e historial reales. Sigue F4.3: integrar eventos SSE con caché, scroll y
-recuperación.
+lista e historial reales. F4.3 añade conexión SSE, actualización paginada sin
+huecos, ancla de scroll, contador de novedades, reconexión y resync. Evidencia:
+[F4.3](F4.3-STREAM-INBOX.md); BUG-070 cerrado.
 BUG-050 conserva salidas ambiguas; BUG-051 es puerta antes de usar archivos
 preexistentes reales. La atribución IA/operador queda en F5 junto a su outbox.
 Sin canales reales ni migración.
@@ -234,16 +235,18 @@ Evidencia F3.1: [lectura autenticada](F3.1-LECTURA-AUTENTICADA.md). F3.2:
   contextual desde la API autenticada del panel. Mocks exclusivamente en pruebas.
   Cursor de lectura local por secuencia inbound; no envía recibos remotos.
   Evidencia: [F4.2](F4.2-LECTURA-HTTP-REAL.md). BUG-063 corregido.
-- [ ] **F4.3 — actualización en vivo:** SSE integrado con caché, ancla de scroll,
-  contador de novedades, reconexión y resync. No reconstruir el hilo entero por
-  evento.
+- [x] **F4.3 — actualización en vivo:** SSE integrado con caché, ancla de scroll,
+  contador de novedades, reconexión y resync. El replay pagina hasta solapar con
+  el snapshot cargado, sin reconstruir todo el hilo por cada evento. Evidencia:
+  [F4.3](F4.3-STREAM-INBOX.md).
 - [x] Build Vite servido por el proceso existente bajo `/inbox`; pruebas de
   componentes y del artefacto servido. Mantener el panel antiguo en `/` hasta
   completar sustitución. La validación visual de viewport real se registra por
   separado; el shell tiene CSS responsive y una prueba de acceso por teclado.
 
-**Aceptación:** leer hilos largos y reconectar sin saltos ni mensajes duplicados;
-recorrido con teclado y viewport móvil. Compositor todavía no ofrece enviar.
+**Aceptación F4:** leer hilos largos y reconectar sin saltos ni mensajes duplicados;
+navegación por teclado probada. La validación visual en viewport móvil sigue pendiente.
+Compositor todavía no ofrece enviar.
 
 ## Fase 5 — Control exclusivo, salida y contexto IA
 
