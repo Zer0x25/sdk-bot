@@ -73,21 +73,36 @@ test('durable events publish only after commit and duplicate ingests stay silent
     const { archive } = await setup(t);
     const published = [];
     const visibleAfterCommit = [];
+    let resolvePublished;
+    const firstPublishedEvent = new Promise(resolve => { resolvePublished = resolve; });
     const unsubscribe = archive.onEvent(event => {
         published.push(event);
         visibleAfterCommit.push(archive.eventsPage({ after: String(BigInt(event.cursor.seq) - 1n), through: event.cursor.seq })
             .then(page => page.items.some(item => item.cursor.seq === event.cursor.seq)));
+        resolvePublished(event);
     });
     t.after(unsubscribe);
     const input = message('committed');
     const [created] = await archive.ingestBatch([input]);
-    await new Promise(resolve => setImmediate(resolve));
+    let publishTimeout;
+    try {
+        await Promise.race([
+            firstPublishedEvent,
+            new Promise((_, reject) => {
+                publishTimeout = setTimeout(() => reject(new Error('committed event was not published')), 2000);
+            })
+        ]);
+    } finally {
+        clearTimeout(publishTimeout);
+    }
     assert.deepEqual(await Promise.all(visibleAfterCommit), [true]);
     assert.equal(published.length, 1);
     assert.deepEqual(await archive.ingestBatch([input]), [{
         status: 'duplicate', messageId: created.message.id, conversationId: created.message.conversationId
     }]);
-    await new Promise(resolve => setImmediate(resolve));
+    // A worker RPC response and its committedEvent notification are separate
+    // messages; a following RPC acts as a barrier before asserting silence.
+    await archive.eventsPage({ after: '0', through: published[0].cursor.seq });
     assert.equal(published.length, 1);
 });
 

@@ -77,6 +77,7 @@ salvo indicación contraria. La evidencia detallada y líneas están en la basel
 | BUG-062 | P1 | Cerrado en unidad de seguridad después de F4.1: dependencias de medios transitivas de Baileys tenían avisos DoS/proceso-crash; `sharp@0.35.3` (high) y `music-metadata@11.14.0` (moderate). | `npm audit --omit=dev` y `npm ls` los ubicaron bajo `@whiskeysockets/baileys@7.0.0-rc14`; no los introdujo la UI. | `npm audit fix` movió solo el lockfile a `sharp@0.35.5` y `music-metadata@11.16.1` sin cambiar rangos directos. Auditoría completa y de producción limpias; suites y Docker verificadas. Evidencia: [DEPENDENCY-SECURITY-BUG-062](DEPENDENCY-SECURITY-BUG-062.md). |
 | BUG-063 | P2 | Cerrado F4.2: reintentar una página con cursor vencido podía repetir el mismo 410 y dejar la lista sin salida. | Al rastrear los estados de paginación, la acción de error volvía a pedir `nextCursor`. | CURSOR_EXPIRED/DATA_EPOCH_MISMATCH ahora vuelven a leer la primera página; una prueba de UI simula 410 y verifica la recarga sin cursor. |
 | BUG-064 | P2 | Cerrado durante la validación de PR #4: Gateway CI ejecutaba Vitest con Node 22.13 aunque `jsdom@30.1.3` requiere Node 22.22.2 y su `undici@8` no inicia en 22.13. | En la reejecución de Actions, Vitest no pudo iniciar el worker y `undici/lib/interceptor/decompress.js` lanzó `Cannot read properties of undefined (reading 'bind')`; los archivos de prueba no llegaron a ejecutarse. | Gateway CI usa Node 22.22.2/24; contratos conservan Node 22.13/24 y el mínimo del runtime no cambia. Lint, tipos, panel, SQLite, 269 pruebas y smoke pasan en Gateway con Node 22.22.2. |
+| BUG-065 | P2 | Cerrado durante la validación de PR #4: una prueba de publicación durable dependía de que `setImmediate` cediera tiempo suficiente al worker. | Actions Node 24.22.0 falló 1/269 con `published=[]` tras el RPC; la notificación committedEvent llega en un mensaje distinto del worker. | La prueba espera la notificación real con timeout y usa un RPC posterior como barrera antes de comprobar el silencio de duplicados. Las 269 pruebas pasan en Node 24.22.0. |
 
 ## Clasificación para la unidad activa
 
@@ -95,7 +96,7 @@ y `resync.required` para cursores expirados sin retener el archivo sin límite. 
 cierra BUG-058/059/060 de UI y BUG-061 de instalación Docker detrás de CA. La
 unidad de seguridad cerró BUG-062; F4.2 cierra BUG-063 al recuperar cursores de
 lista vencidos. BUG-064 corrige el mínimo Node de las pruebas del panel en Gateway
-CI. El perfil de carga completo
+CI y BUG-065 elimina una carrera en la prueba del evento durable. El perfil de carga completo
 requiere repetición con 2 CPU/4 GiB;
 el host medido tenía 3 CPU/10,45 GiB. No extrapolar archivo/polling a control, roles, salida durable
 ni carga/aceptación completa F2.
