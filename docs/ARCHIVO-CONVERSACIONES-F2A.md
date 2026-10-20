@@ -60,7 +60,8 @@ retención y orden decimal de eventos; FK, unicidad y checks protegen relaciones
 Contactos son anclas internas del archivo; no copian permisos ni agenda JSON.
 En la entrega F2A, conversación aún no tenía accessPolicy/automationMode/
 controlVersion. F5.1 añade esas columnas en SQLite v5 como staging durable con
-defaults conservadores; JSON sigue siendo autoridad de lectura hasta el corte F5.3.
+defaults conservadores; F5.3 sube a v6 para importación recuperable. JSON sigue
+siendo autoridad de lectura hasta que F5.4 integre el servicio y habilite el corte.
 
 - registerAccount conserva ID por `(channel, providerKey)`; puede generarlo al
   primer registro. Un ID existente no puede adoptar otra cuenta/canal. providerKey

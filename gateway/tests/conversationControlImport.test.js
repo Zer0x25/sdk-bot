@@ -43,7 +43,7 @@ test('F5.2 dry-run maps only exact WhatsApp identities and reports conservative 
         settings: { globalMode: 'allowed_all', currentProfile: 'default', telegramToken: 'never-print-this-secret' },
         conversations, profileKeys: ['default'], generatedAt: '2026-10-20T12:00:00.000Z',
         sourceManifest: { contacts: { present: true, sha256: 'a'.repeat(64) }, settings: { present: true, sha256: 'b'.repeat(64) } },
-        archive: { dataEpoch: id('9'), seq: '44', schemaVersion: 5 } });
+        archive: { dataEpoch: id('9'), seq: '44', schemaVersion: 6 } });
 
     assert.equal(report.status, 'review_required');
     assert.equal(report.cutoverAllowed, false);
@@ -72,6 +72,22 @@ test('F5.2 dry-run maps only exact WhatsApp identities and reports conservative 
     assert.ok(!serialized.includes('never-print-this-secret'));
     assert.ok(!serialized.includes('111@s.whatsapp.net'));
     assert.ok(!serialized.includes('allowedSource'));
+});
+
+test('F5.2 records effective application defaults when legacy settings omit currentProfile', () => {
+    const report = buildControlImportReport({ contacts: {}, settings: { globalMode: 'ignored_all' }, conversations: [],
+        profileKeys: ['default'], sourceManifest: {
+            contacts: { present: true, sha256: 'a'.repeat(64) }, settings: { present: true, sha256: 'b'.repeat(64) }
+        }, archive: { dataEpoch: randomUUID(), seq: '0', schemaVersion: 6 } });
+    const profile = report.entries.find(entry => entry.field === 'currentProfile');
+    assert.equal(profile.source, 'settings_default');
+    assert.equal(profile.disposition, 'imported');
+    assert.equal(profile.plannedProfile, 'default');
+    assert.equal(report.globalPolicy.globalProfile, 'default');
+    assert.equal(report.sourceManifest.settings.sourceRecordCount, 1);
+    assert.equal(report.sourceManifest.settings.plannedRecordCount, 2);
+    assert.equal(report.counts.sourceRecords,
+        report.counts.imported + report.counts.quarantined + report.counts.excluded);
 });
 
 test('F5.2 CLI reports from read-only SQLite and leaves JSON sources and archive bytes unchanged', async t => {
@@ -112,7 +128,7 @@ test('F5.2 CLI reports from read-only SQLite and leaves JSON sources and archive
     assert.equal(report.dryRun, true);
     assert.equal(report.cutoverAllowed, true);
     assert.deepEqual(report.counts, { sourceRecords: 3, imported: 3, quarantined: 0, excluded: 0, requiresReview: 0 });
-    assert.equal(report.sourceManifest.archive.schemaVersion, 5);
+    assert.equal(report.sourceManifest.archive.schemaVersion, 6);
     assert.equal(hash(await fs.readFile(contactsPath)), hash(contactBytes));
     assert.equal(hash(await fs.readFile(settingsPath)), hash(settingsBytes));
     assert.equal(hash(await fs.readFile(databasePath)), beforeDb);

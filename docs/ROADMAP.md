@@ -263,14 +263,19 @@ Compositor todavía no ofrece enviar.
   cuarentena. El informe cuadra origen/importado/cuarentena/exclusiones y permite
   revisión; no cambia autoridad ni inicia IA. CLI de solo lectura, bloquea gateway
   activo/WAL pendiente. Evidencia: [F5.2](F5.2-IMPORT-DRY-RUN.md).
-- [ ] **F5.3 — Staging y corte de autoridad:** importar idempotentemente con
-  migrationId, snapshot, mantenimiento, delta y recuperación por lote. Verificar
-  antes de cambiar la autoridad a SQLite; conservar JSON para export/rollback y
-  evitar writers simultáneos. Handoff vencido se importa como human explícito.
-- [ ] **F5.4 — Servicio de control compartido:** takeover/release/resolver y
-  cambios de acceso con expectedVersion, actor/propietario, auditoría y operación
-  recuperable mientras drena una salida ya iniciada. API, comandos legacy y estado
-  llaman el mismo dominio; resolución exacta por canal/cuenta, sin dígitos ambiguos.
+- [x] **F5.3 — Staging y corte de autoridad:** esquema v6, importación idempotente
+  por migrationId, snapshot de fuentes/archivo, staging y verificación por lotes,
+  delta y rollback recuperable. Bajas/remapeos bloquean salvo aceptación explícita;
+  JSON se conserva. Si el corte cae a mitad, el gateway falla cerrado y exige
+  reanudar o rollback. La autoridad permanece legacy hasta que F5.4 registre el
+  servicio SQLite listo. Handoff vencido sigue human explícito. Evidencia:
+  [F5.3](F5.3-STAGING-CUTOVER.md).
+- [ ] **F5.4 — Servicio de control compartido y activación:** takeover/release/
+  resolver y cambios de acceso con expectedVersion, actor/propietario, auditoría y
+  operación recuperable mientras drena una salida ya iniciada. API, comandos legacy
+  y estado llaman el mismo dominio; resolución exacta por canal/cuenta, sin dígitos
+  ambiguos. Registrar servicio listo, ejecutar el corte verificado y cambiar la
+  autoridad a SQLite.
 - [ ] **F5.5 — Barrera y coordinación de jobs:** serializar por conversación y
   comprobar controlVersion, policyVersion y contextVersion en debounce, pool,
   generación, typing, pausas, retries y cada globo. Cancelar trabajos obsoletos;

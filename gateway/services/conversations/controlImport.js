@@ -65,7 +65,15 @@ function identityIndex(conversations) {
 }
 
 function globalProfilePlan(settings, profileKeys, entries, blockers) {
-    if (!hasOwn(settings, 'currentProfile')) return { value: 'default', source: 'application_default', valid: profileKeys?.has('default') === true };
+    if (!hasOwn(settings, 'currentProfile') || settings.currentProfile === null || settings.currentProfile === '') {
+        const value = 'default';
+        const valid = profileKeys?.has(value) === true;
+        entries.push({ sourceKey: sourceKey('settings', 'currentProfile'), source: 'settings_default', field: 'currentProfile',
+            sourceChecksum: recordChecksum(value), disposition: valid ? 'imported' : 'quarantined',
+            ...(valid ? { plannedProfile: value } : { reason: 'profile_missing', plannedProfile: value }) });
+        if (!valid) blockers.push({ code: 'default_profile_missing' });
+        return { value: valid ? value : null, source: 'application_default', valid };
+    }
     const raw = settings.currentProfile;
     const source = 'settings:currentProfile';
     if (!safeProfileKey(raw)) {
@@ -169,7 +177,7 @@ function buildControlImportReport(input) {
     else if (manifest.settings?.present !== true || !/^[0-9a-f]{64}$/.test(manifest.settings?.sha256 || '')) {
         blockers.push({ code: 'settings_checksum_missing' });
     }
-    if (!isRecord(input.archive) || input.archive.schemaVersion !== 5 || typeof input.archive.dataEpoch !== 'string'
+    if (!isRecord(input.archive) || input.archive.schemaVersion !== 6 || typeof input.archive.dataEpoch !== 'string'
         || !/^(0|[1-9][0-9]*)$/.test(input.archive.seq || '')) blockers.push({ code: 'archive_snapshot_invalid' });
     if (!profileInventoryAvailable) blockers.push({ code: 'profile_inventory_unavailable' });
 
@@ -187,6 +195,9 @@ function buildControlImportReport(input) {
                 sourceChecksum: recordChecksum(raw), disposition: 'quarantined', reason: 'invalid_global_mode' });
             blockers.push({ code: 'global_mode_invalid' });
         }
+    } else {
+        entries.push({ sourceKey: sourceKey('settings', 'globalMode'), source: 'settings_default', field: 'globalMode',
+            sourceChecksum: recordChecksum(globalMode), disposition: 'imported', plannedValue: globalMode });
     }
     const globalProfile = globalProfilePlan(input.settings, profileKeys, entries, blockers);
     const index = identityIndex(input.conversations);
@@ -223,9 +234,6 @@ function buildControlImportReport(input) {
     }
     entries.push(...contactEntries);
 
-    if (!globalProfile.valid && globalProfile.source === 'application_default') {
-        blockers.push({ code: 'default_profile_missing' });
-    }
     const counts = { sourceRecords: entries.length, imported: 0, quarantined: 0, excluded: 0, requiresReview: 0 };
     for (const entry of entries) {
         counts[entry.disposition] += 1;
@@ -245,7 +253,8 @@ function buildControlImportReport(input) {
     const sourceManifest = {
         ...manifest,
         contacts: { ...manifest.contacts, sourceRecordCount: Object.keys(input.contacts).length },
-        settings: { ...manifest.settings, sourceRecordCount: ['globalMode','currentProfile'].filter(key => hasOwn(input.settings, key)).length },
+        settings: { ...manifest.settings, sourceRecordCount: ['globalMode','currentProfile'].filter(key => hasOwn(input.settings, key)).length,
+            plannedRecordCount: 2 },
         profileInventory: { available: profileInventoryAvailable, count: profileKeys?.size ?? 0,
             sha256: profileKeys ? sha256([...profileKeys].sort().join('\n')) : null },
         archive: input.archive || null

@@ -595,7 +595,7 @@ ausencia de Vite/CA. Commit separado de la UI.
   conocidos se excluyen. Handoff importado sigue en human aunque su TTL legacy
   haya vencido. Settings de proveedor no se imprimen ni migran aquí.
 - La CLI bloquea el lock del gateway activo, sidecars WAL/SHM/journal y esquemas
-  distintos de v5. SQLite abre immutable/read-only; prueba no cambia bytes de JSON
+  distintos de v6. SQLite abre immutable/read-only; prueba no cambia bytes de JSON
   ni DB y no crea sidecars. No se leyó ningún contacts/settings real ni se ejecutó
   un corte. Un informe con blockers devuelve exit 2; `cutoverAllowed` queda falso.
 - Evidencia: [F5.2](F5.2-IMPORT-DRY-RUN.md). `cd gateway && npm run check` pasó:
@@ -604,6 +604,34 @@ ausencia de Vite/CA. Commit separado de la UI.
 - No aparecieron bugs de producto nuevos para backlog. El siguiente punto exacto
   es **F5.3: staging idempotente, corte de autoridad y recuperación**, todavía sin
   ejecutar contra datos del entorno.
+
+## F5.3: Staging, delta y corte recuperable
+
+- SQLite migra v5→v6 en el mismo archivo, conserva epoch/secuencia/controles y
+  agrega perfil/revisión por conversación, política global, authority y tablas de
+  migrationId, ejecuciones, entradas y snapshots. La autoridad inicial continúa
+  `legacy`.
+- `npm run conversations:control-import` es de solo lectura por defecto. `--apply`
+  guarda y verifica el plan por lotes; no escribe columnas de control activas.
+  Repetir la misma fuente retoma la ejecución idempotente. La delta detecta bajas y
+  remapeos; ambos bloquean salvo `--accept-source-removals`/
+  `--accept-identity-changes`, decisiones que quedan auditadas en el informe.
+- `--cutover` solo acepta staging verificado y requiere que F5.4 registre el servicio
+  común listo. La aplicación es por lotes de 100 con snapshot por control; cada
+  cambio emite `control.changed`. Una interrupción deja al gateway y dry-run
+  bloqueados hasta `--resume-cutover` o `--rollback`; el rollback conserva versiones
+  monotónicas. Cada conversación cambiada emite `control.changed`. Se revalidan los
+  hashes de JSON/perfiles antes de verificar y activar.
+- Se corrigió el caso de F5.2 donde settings omitía `currentProfile`: ahora el
+  informe incluye valores efectivos por defecto. No se ejecutó `--apply` contra
+  datos runtime, ni se cambió autoridad. BUG-050 permanece F5.6; BUG-051 sigue como
+  puerta antes de migrar un archivo real. No apareció otro defecto para backlog.
+- Evidencia: [F5.3](F5.3-STAGING-CUTOVER.md). 9 pruebas enfocadas pasan. `cd gateway
+  && npm run check` pasó lint, typecheck, 13 Vitest, build/serving del panel y 282
+  pruebas Node en Node 24.19.0/Linux.
+- F5.3 queda validada y se compromete localmente; sin push hasta cerrar F5. El
+  siguiente punto exacto es **F5.4: servicio compartido y activación segura del
+  corte**, integrado en API, comandos y estado.
 
 ## Pendientes materiales
 

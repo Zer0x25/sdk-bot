@@ -39,6 +39,18 @@ export interface ArchiveIdentity {
     kind: Contract<'IdentityKey'>['kind']; exact_value: string;
     canonical_id: string; conversation_id: string;
 }
+export interface ControlImportReport {
+    schemaVersion: 1; dryRun: true; status: string; cutoverAllowed: boolean;
+    sourceManifest: Record<string, unknown>; counts: Record<string, number>;
+    blockers: Array<{ code: string; count?: number }>;
+    entries: Array<Record<string, unknown>>; [key: string]: unknown;
+}
+export type ControlImportReportSummary = Omit<ControlImportReport, 'entries'> & { entryCount: number };
+export interface ControlImportStatus {
+    migrationId: string; status: string; baseEpoch: string; baseSeq: string; latestRunId: string | null;
+    run: { id: string; reportSha256: string; archiveEpoch: string; archiveSeq: string; status: string; report: ControlImportReportSummary } | null;
+    startedAt: string; updatedAt: string; cutoverAt: string | null;
+}
 export interface Archive {
     ready: Promise<Contract<'EventCursor'> & { schemaVersion: number; journalMode: string; synchronous: number; threadId: number; readOnly?: boolean }>;
     snapshot(): Promise<Contract<'EventCursor'>>;
@@ -63,6 +75,31 @@ export interface Archive {
         { status: 'updated'; control: Contract<'ConversationControl'>; event: Contract<'Event'> } |
         { status: 'conflict' | 'unchanged'; control: Contract<'ConversationControl'> } |
         { status: 'missing' }>;
+    controlAuthority(): Promise<{ mode: 'legacy' | 'sqlite'; migrationId: string | null; serviceReady: boolean; changedAt: string | null }>;
+    controlImportStatus(migrationId?: string): Promise<ControlImportStatus | null>;
+    controlImportEntries(input: { runId: string; afterSourceKey?: string; limit?: number }): Promise<ControlImportReport['entries']>;
+    beginControlImport(input: { migrationId: string; report: ControlImportReport; decisions?: {
+        acceptSourceRemovals?: boolean; acceptIdentityChanges?: boolean;
+    } }): Promise<{
+        migrationId: string; runId: string; status: string; report: ControlImportReportSummary; resumed: boolean;
+    }>;
+    stageControlImportBatch(input: { runId: string; offset: number; limit?: number }): Promise<{ staged: number; batchCount: number }>;
+    verifyControlImport(input: { runId: string }): Promise<{ status: string; report: ControlImportReportSummary }>;
+    setControlServiceReady(input: { ready: boolean }): Promise<{ mode: 'legacy' | 'sqlite'; migrationId: string | null; serviceReady: boolean; changedAt: string | null }>;
+    startControlCutover(input: { migrationId: string }): Promise<{ status: string; runId: string }>;
+    applyControlCutoverBatch(input: { migrationId: string; limit?: number }): Promise<{
+        status: string; applied: number; remaining: number; events: Contract<'Event'>[];
+    }>;
+    finishControlCutover(input: { migrationId: string }): Promise<{
+        status: string; authority: { mode: 'legacy' | 'sqlite'; migrationId: string | null; serviceReady: boolean; changedAt: string | null };
+        snapshot: Contract<'EventCursor'>;
+    }>;
+    rollbackControlCutoverBatch(input: { migrationId: string; limit?: number }): Promise<{
+        status: string; rolledBack: number; remaining: number; events: Contract<'Event'>[];
+    }>;
+    finishControlRollback(input: { migrationId: string }): Promise<{ status: string; migrationId: string; latestRunId: string; authority: {
+        mode: 'legacy' | 'sqlite'; migrationId: string | null; serviceReady: boolean; changedAt: string | null;
+    } }>;
     conversation(id: string): Promise<ArchiveConversation | null>;
     conversations(input?: { limit?: number; before?: { lastActivityAt: string; id: string } }): Promise<ArchiveConversation[]>;
     conversationRows(input?: { actorId?: string; accountId?: string; channel?: 'whatsapp' | 'telegram'; limit?: number;
@@ -90,4 +127,4 @@ export interface Archive {
     queue(): { elements: number; bytes: number };
 }
 /** restore=true only for an offline restored copy: purge before exposure, rotate epoch, discard prior event timeline. */
-export function createArchive(options?: { path?: string; timeoutMs?: number; restore?: boolean; readOnly?: boolean }): Archive;
+export function createArchive(options?: { path?: string; timeoutMs?: number; restore?: boolean; readOnly?: boolean; controlRecovery?: boolean }): Archive;

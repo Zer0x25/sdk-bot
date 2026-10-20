@@ -9,7 +9,7 @@ const { assertValid } = require('@sdk-bot/contracts');
 const { retentionCutoff } = require('./eventRetention');
 const schema = require('./schema');
 let db;
-const READ_ONLY_METHODS = new Set(['snapshot','telegramCursor','pendingLegacyDispatches','controlState',
+const READ_ONLY_METHODS = new Set(['snapshot','telegramCursor','pendingLegacyDispatches','controlState','controlAuthority','controlImportStatus','controlImportEntries',
     'conversation','conversations','conversationRows','conversationView','accounts','messages','messagePage',
     'events','eventsPage','diagnostics','close']);
 function fail(code) { throw Object.assign(new Error(code), { code }); }
@@ -42,7 +42,10 @@ function initialize() {
         // committed WAL records or touching another process's snapshot.
         db = new DatabaseSync(`${pathToFileURL(file).href}?immutable=1`, { readOnly: true });
         const schemaVersion = one('PRAGMA user_version').user_version;
-        if (schemaVersion !== 5) fail('SCHEMA_VERSION_REQUIRED');
+        if (schemaVersion !== 6) fail('SCHEMA_VERSION_REQUIRED');
+        if (one("SELECT migration_id FROM control_import_migrations WHERE status IN ('cutover_applying','rolling_back') LIMIT 1")) {
+            fail('CONTROL_CUTOVER_RECOVERY_REQUIRED');
+        }
         if (one('PRAGMA integrity_check').integrity_check !== 'ok' || all('PRAGMA foreign_key_check').length) fail('ARCHIVE_CORRUPT');
         return { ...snapshot(), schemaVersion, journalMode: one('PRAGMA journal_mode').journal_mode,
             synchronous: one('PRAGMA synchronous').synchronous, threadId: require('node:worker_threads').threadId,
@@ -59,7 +62,7 @@ function initialize() {
     // SQLite owns the OS lock for the full connection lifetime; crash releases it.
     db.exec('BEGIN IMMEDIATE; COMMIT;');
     const version = one('PRAGMA user_version').user_version;
-    if (version > 5) fail('SCHEMA_TOO_NEW');
+    if (version > 6) fail('SCHEMA_TOO_NEW');
     if (version === 0) transaction(() => {
         db.exec(schema);
         run('INSERT INTO archive_meta VALUES(1,?,?)', randomUUID(), '0');
@@ -107,7 +110,76 @@ function initialize() {
         ALTER TABLE events ADD COLUMN actor_id TEXT;
         PRAGMA user_version=5;`);
     });
+    if (one('PRAGMA user_version').user_version === 5) transaction(() => {
+        db.exec(`ALTER TABLE conversations ADD COLUMN profile_key TEXT;
+        ALTER TABLE conversations ADD COLUMN control_review_reason TEXT;
+        CREATE TABLE control_policy (
+            id INTEGER PRIMARY KEY CHECK(id=1),
+            global_mode TEXT NOT NULL CHECK(global_mode IN ('allowed_all','ignored_all')),
+            global_profile_key TEXT,
+            policy_version TEXT NOT NULL DEFAULT '1' CHECK(policy_version NOT GLOB '*[^0-9]*' AND substr(policy_version,1,1) BETWEEN '1' AND '9'),
+            requires_review INTEGER NOT NULL DEFAULT 0 CHECK(requires_review IN (0,1)),
+            review_reason TEXT
+        );
+        INSERT INTO control_policy(id,global_mode,global_profile_key) VALUES(1,'ignored_all',NULL);
+        CREATE TABLE control_authority (
+            id INTEGER PRIMARY KEY CHECK(id=1),
+            mode TEXT NOT NULL CHECK(mode IN ('legacy','sqlite')),
+            migration_id TEXT,
+            service_ready INTEGER NOT NULL DEFAULT 0 CHECK(service_ready IN (0,1)),
+            changed_at TEXT
+        );
+        INSERT INTO control_authority(id,mode,migration_id,service_ready,changed_at) VALUES(1,'legacy',NULL,0,NULL);
+        CREATE TABLE control_import_migrations (
+            migration_id TEXT PRIMARY KEY,
+            status TEXT NOT NULL CHECK(status IN ('staging','blocked','verified','cutover_applying','cutover','rolling_back','rolled_back')),
+            base_epoch TEXT NOT NULL,
+            base_seq TEXT NOT NULL,
+            latest_run_id TEXT,
+            started_at TEXT NOT NULL,
+            updated_at TEXT NOT NULL,
+            cutover_at TEXT
+        );
+        CREATE TABLE control_import_runs (
+            id TEXT PRIMARY KEY,
+            migration_id TEXT NOT NULL REFERENCES control_import_migrations(migration_id),
+            report_sha256 TEXT NOT NULL CHECK(length(report_sha256)=64),
+            report_json TEXT NOT NULL CHECK(json_valid(report_json)),
+            archive_epoch TEXT NOT NULL,
+            archive_seq TEXT NOT NULL,
+            status TEXT NOT NULL CHECK(status IN ('staging','blocked','verified','cutover_applying','cutover','rolling_back','rolled_back')),
+            created_at TEXT NOT NULL,
+            verified_at TEXT
+        );
+        CREATE INDEX control_import_runs_order ON control_import_runs(migration_id,created_at,id);
+        CREATE TABLE control_import_entries (
+            run_id TEXT NOT NULL REFERENCES control_import_runs(id) ON DELETE CASCADE,
+            source_key TEXT NOT NULL,
+            disposition TEXT NOT NULL CHECK(disposition IN ('imported','quarantined','excluded')),
+            status TEXT NOT NULL CHECK(status IN ('pending','applied','quarantined','excluded')),
+            entry_json TEXT NOT NULL CHECK(json_valid(entry_json)),
+            PRIMARY KEY(run_id,source_key)
+        );
+        CREATE INDEX control_import_entries_pending ON control_import_entries(run_id,status,source_key);
+        CREATE TABLE control_import_snapshots (
+            migration_id TEXT NOT NULL REFERENCES control_import_migrations(migration_id) ON DELETE CASCADE,
+            conversation_id TEXT NOT NULL REFERENCES conversations(id),
+            before_state TEXT NOT NULL CHECK(json_valid(before_state)),
+            applied_state TEXT NOT NULL CHECK(json_valid(applied_state)),
+            applied INTEGER NOT NULL DEFAULT 0 CHECK(applied IN (0,1)),
+            PRIMARY KEY(migration_id,conversation_id)
+        );
+        CREATE TABLE control_policy_snapshots (
+            migration_id TEXT PRIMARY KEY REFERENCES control_import_migrations(migration_id) ON DELETE CASCADE,
+            before_state TEXT NOT NULL CHECK(json_valid(before_state)),
+            applied_state TEXT NOT NULL CHECK(json_valid(applied_state)),
+            applied INTEGER NOT NULL DEFAULT 0 CHECK(applied IN (0,1))
+        );
+        PRAGMA user_version=6;`);
+    });
     if (one('PRAGMA integrity_check').integrity_check !== 'ok' || all('PRAGMA foreign_key_check').length) fail('ARCHIVE_CORRUPT');
+    const incompleteCutover = one("SELECT migration_id FROM control_import_migrations WHERE status IN ('cutover_applying','rolling_back') LIMIT 1");
+    if (incompleteCutover && !workerData.controlRecovery) fail('CONTROL_CUTOVER_RECOVERY_REQUIRED');
     if (workerData.restore) transaction(() => {
         while (purge({ now: new Date().toISOString(), limit: 1000 }).remaining) { /* bounded SQL batches before exposure */ }
         run('DELETE FROM events');
@@ -122,7 +194,7 @@ function initialize() {
         transaction(() => pending.forEach(row => updateTranscription({ messageId: row.id, expectedStatus: 'pending', status: 'failed' })));
         after = pending[pending.length - 1].id;
     }
-    return { ...snapshot(), schemaVersion: 5, journalMode: one('PRAGMA journal_mode').journal_mode,
+    return { ...snapshot(), schemaVersion: 6, journalMode: one('PRAGMA journal_mode').journal_mode,
         synchronous: one('PRAGMA synchronous').synchronous, threadId: require('node:worker_threads').threadId };
 }
 function registerAccount(input) {
@@ -354,6 +426,488 @@ function writeControlState(input) {
     run('UPDATE archive_meta SET seq=? WHERE id=1', cursor.seq);
     pruneRetainedEvents();
     return { status: 'updated', control: next, event };
+}
+function controlAuthority() {
+    const row = one('SELECT mode,migration_id,service_ready,changed_at FROM control_authority WHERE id=1');
+    return { mode: row.mode, migrationId: row.migration_id, serviceReady: row.service_ready === 1, changedAt: row.changed_at };
+}
+function importReportSummary(report) {
+    const { entries, ...summary } = report;
+    return { ...summary, entryCount: Array.isArray(entries) ? entries.length : 0 };
+}
+function controlImportEntries(input) {
+    if (typeof input?.runId !== 'string' || !/^[0-9a-f]{64}$/.test(input.runId)) fail('INVALID_IMPORT_RUN_ID');
+    const after = input.afterSourceKey ?? '';
+    if (typeof after !== 'string') fail('INVALID_IMPORT_CURSOR');
+    const limit = input.limit ?? 250;
+    if (!Number.isInteger(limit) || limit < 1 || limit > 500) fail('INVALID_LIMIT');
+    const rows = all('SELECT source_key,entry_json FROM control_import_entries WHERE run_id=? AND source_key>? ORDER BY source_key LIMIT ?',
+        input.runId, after, limit);
+    return rows.map(row => JSON.parse(row.entry_json));
+}
+function controlImportStatus(migrationId) {
+    if (migrationId !== undefined && (typeof migrationId !== 'string' || !/^[A-Za-z0-9._:-]{1,128}$/.test(migrationId))) fail('INVALID_MIGRATION_ID');
+    const migration = migrationId
+        ? one('SELECT * FROM control_import_migrations WHERE migration_id=?', migrationId)
+        : one('SELECT * FROM control_import_migrations ORDER BY updated_at DESC,migration_id LIMIT 1');
+    if (!migration) return null;
+    const run = migration.latest_run_id ? one('SELECT * FROM control_import_runs WHERE id=?', migration.latest_run_id) : null;
+    return { migrationId: migration.migration_id, status: migration.status, baseEpoch: migration.base_epoch,
+        baseSeq: migration.base_seq, latestRunId: migration.latest_run_id,
+        run: run ? { id: run.id, reportSha256: run.report_sha256, archiveEpoch: run.archive_epoch,
+            archiveSeq: run.archive_seq, status: run.status, report: importReportSummary(JSON.parse(run.report_json)) } : null,
+        startedAt: migration.started_at, updatedAt: migration.updated_at, cutoverAt: migration.cutover_at };
+}
+function importReportDigest(report) {
+    const stableReport = { ...report };
+    delete stableReport.generatedAt;
+    return createHash('sha256').update(stableImport(stableReport)).digest('hex');
+}
+function stableImport(value) {
+    if (Array.isArray(value)) return '[' + value.map(stableImport).join(',') + ']';
+    if (value === null || typeof value !== 'object') return JSON.stringify(value);
+    return '{' + Object.keys(value).sort().map(key => JSON.stringify(key) + ':' + stableImport(value[key])).join(',') + '}';
+}
+function reportCounts(report) {
+    report.counts.imported = report.entries.filter(entry => entry.disposition === 'imported').length;
+    report.counts.quarantined = report.entries.filter(entry => entry.disposition === 'quarantined').length;
+    report.counts.excluded = report.entries.filter(entry => entry.disposition === 'excluded').length;
+    report.counts.requiresReview = report.entries.filter(entry => entry.control?.requiresReview).length;
+    report.counts.sourceRecords = report.counts.imported + report.counts.quarantined + report.counts.excluded;
+}
+function addImportBlocker(report, code, count = 1) {
+    const existing = report.blockers.find(blocker => blocker.code === code);
+    if (existing) existing.count = (existing.count || 0) + count;
+    else report.blockers.push({ code, count });
+}
+function normalizeDeltaReport(report, previousReport, decisions = {}) {
+    const next = JSON.parse(JSON.stringify(report));
+    if (!previousReport || !Array.isArray(previousReport.entries)) return next;
+    const current = new Map(next.entries.map(entry => [entry.sourceKey, entry]));
+    const priorContacts = previousReport.entries.filter(entry => entry.source === 'contact'
+        && (entry.disposition === 'imported' || ['source_record_removed','source_record_removed_accepted','identity_target_changed'].includes(entry.reason)));
+    let removed = 0;
+    let acceptedRemovals = 0;
+    let acceptedIdentityChanges = 0;
+    for (const previous of priorContacts) {
+        const currentEntry = current.get(previous.sourceKey);
+        const previousTarget = previous.reviewTargetId || previous.targetId;
+        const targetChanged = currentEntry?.disposition === 'imported' && previousTarget
+            && previousTarget !== currentEntry.targetId;
+        if (targetChanged && !decisions.acceptIdentityChanges) {
+            currentEntry.disposition = 'quarantined';
+            currentEntry.reason = 'identity_target_changed';
+            currentEntry.reviewTargetId = previousTarget;
+            delete currentEntry.control;
+            addImportBlocker(next, 'identity_target_changed');
+        } else if (targetChanged && decisions.acceptIdentityChanges) {
+            acceptedIdentityChanges += 1;
+        } else if (currentEntry?.disposition === 'imported' && previous.reason === 'identity_target_changed'
+            && !decisions.acceptIdentityChanges) {
+            currentEntry.disposition = 'quarantined';
+            currentEntry.reason = 'identity_target_changed';
+            currentEntry.reviewTargetId = previousTarget;
+            delete currentEntry.control;
+            addImportBlocker(next, 'identity_target_changed');
+        } else if (!currentEntry && previous.reason === 'source_record_removed_accepted') {
+            next.entries.push(previous);
+            removed += 1;
+            acceptedRemovals += 1;
+        } else if (!currentEntry) {
+            const accepted = decisions.acceptSourceRemovals === true;
+            next.entries.push({ sourceKey: previous.sourceKey, source: 'contact', sourceChecksum: previous.sourceChecksum,
+                disposition: accepted ? 'excluded' : 'quarantined',
+                reason: accepted ? 'source_record_removed_accepted' : 'source_record_removed',
+                ...(previous.targetId ? { targetId: previous.targetId } : {}) });
+            removed += 1;
+            if (accepted) acceptedRemovals += 1;
+        }
+    }
+    if (removed) {
+        next.delta = { ...(next.delta || {}), removedRecords: removed };
+        if (acceptedRemovals) next.delta.acceptedSourceRemovals = acceptedRemovals;
+        if (removed > acceptedRemovals) addImportBlocker(next, 'source_record_removed', removed - acceptedRemovals);
+    }
+    if (acceptedIdentityChanges) next.delta = { ...(next.delta || {}), acceptedIdentityChanges };
+    next.blockers = next.blockers.filter(blocker => blocker.code !== 'source_records_quarantined' && blocker.code !== 'records_require_review');
+    reportCounts(next);
+    if (next.counts.quarantined) addImportBlocker(next, 'source_records_quarantined', next.counts.quarantined);
+    if (next.counts.requiresReview) addImportBlocker(next, 'records_require_review', next.counts.requiresReview);
+    next.entries.sort((a, b) => a.sourceKey.localeCompare(b.sourceKey));
+    next.status = next.blockers.length ? 'review_required' : 'ready';
+    next.cutoverAllowed = next.blockers.length === 0;
+    return next;
+}
+function beginControlImport(input) {
+    if (typeof input?.migrationId !== 'string' || !/^[A-Za-z0-9._:-]{1,128}$/.test(input.migrationId)) fail('INVALID_MIGRATION_ID');
+    const report = input.report;
+    if (!report || report.schemaVersion !== 1 || report.dryRun !== true || !Array.isArray(report.entries)
+        || !Array.isArray(report.blockers) || typeof report.cutoverAllowed !== 'boolean') fail('INVALID_IMPORT_REPORT');
+    if (report.sourceManifest?.archive?.schemaVersion !== 6 || typeof report.sourceManifest.archive.dataEpoch !== 'string'
+        || !/^(0|[1-9][0-9]*)$/.test(report.sourceManifest.archive.seq || '')) fail('INVALID_IMPORT_SNAPSHOT');
+    const currentSnapshot = snapshot();
+    if (report.sourceManifest.archive.dataEpoch !== currentSnapshot.dataEpoch || report.sourceManifest.archive.seq !== currentSnapshot.seq) {
+        fail('ARCHIVE_SNAPSHOT_CHANGED');
+    }
+    const authority = one('SELECT mode FROM control_authority WHERE id=1');
+    if (authority.mode !== 'legacy') fail('CONTROL_AUTHORITY_ALREADY_SWITCHED');
+    const digest = importReportDigest(report);
+    const runId = createHash('sha256').update(`${input.migrationId}:${digest}`).digest('hex');
+    const existingRun = one('SELECT id,report_sha256,report_json,status FROM control_import_runs WHERE id=?', runId);
+    if (existingRun) {
+        if (existingRun.report_sha256 !== digest) fail('IMPORT_RUN_CONFLICT');
+        return { migrationId: input.migrationId, runId, status: existingRun.status,
+            report: importReportSummary(JSON.parse(existingRun.report_json)), resumed: true };
+    }
+    const previousMigration = one('SELECT * FROM control_import_migrations WHERE migration_id=?', input.migrationId);
+    if (previousMigration && ['cutover','cutover_applying','rolling_back','rolled_back'].includes(previousMigration.status)) {
+        fail('IMPORT_MIGRATION_CLOSED');
+    }
+    let preparedReport = JSON.parse(JSON.stringify(report));
+    if (previousMigration?.latest_run_id) {
+        const previousRun = one('SELECT report_json FROM control_import_runs WHERE id=?', previousMigration.latest_run_id);
+        if (previousRun) preparedReport = normalizeDeltaReport(preparedReport, JSON.parse(previousRun.report_json), input.decisions || {});
+    }
+    const preparedDigest = importReportDigest(preparedReport);
+    const preparedRunId = createHash('sha256').update(`${input.migrationId}:${preparedDigest}`).digest('hex');
+    const resumedRun = one('SELECT report_sha256,report_json,status FROM control_import_runs WHERE id=?', preparedRunId);
+    if (resumedRun) {
+        if (resumedRun.report_sha256 !== preparedDigest) fail('IMPORT_RUN_CONFLICT');
+        return { migrationId: input.migrationId, runId: preparedRunId, status: resumedRun.status,
+            report: importReportSummary(JSON.parse(resumedRun.report_json)), resumed: true };
+    }
+    const now = new Date().toISOString();
+    if (!previousMigration) {
+        run(`INSERT INTO control_import_migrations(migration_id,status,base_epoch,base_seq,latest_run_id,started_at,updated_at,cutover_at)
+            VALUES(?,?,?,?,?,?,?,NULL)`, input.migrationId, 'staging', currentSnapshot.dataEpoch, currentSnapshot.seq,
+        preparedRunId, now, now);
+    } else {
+        run("UPDATE control_import_migrations SET status='staging',latest_run_id=?,updated_at=? WHERE migration_id=?",
+            preparedRunId, now, input.migrationId);
+    }
+    run(`INSERT INTO control_import_runs(id,migration_id,report_sha256,report_json,archive_epoch,archive_seq,status,created_at,verified_at)
+        VALUES(?,?,?,?,?,?,'staging',?,NULL)`, preparedRunId, input.migrationId, preparedDigest,
+    JSON.stringify(preparedReport), currentSnapshot.dataEpoch, currentSnapshot.seq, now);
+    return { migrationId: input.migrationId, runId: preparedRunId, status: 'staging',
+        report: importReportSummary(preparedReport), resumed: false };
+}
+function stageControlImportBatch(input) {
+    if (typeof input?.runId !== 'string' || !/^[0-9a-f]{64}$/.test(input.runId)
+        || !Number.isInteger(input.offset) || input.offset < 0) fail('INVALID_IMPORT_BATCH');
+    const runRow = one('SELECT status,report_json FROM control_import_runs WHERE id=?', input.runId);
+    if (!runRow) fail('IMPORT_RUN_MISSING');
+    if (runRow.status !== 'staging') fail('IMPORT_RUN_NOT_STAGING');
+    const reportEntries = JSON.parse(runRow.report_json).entries;
+    const limit = input.limit ?? 250;
+    if (!Number.isInteger(limit) || limit < 1 || limit > 500) fail('INVALID_LIMIT');
+    const entries = reportEntries.slice(input.offset, input.offset + limit);
+    for (const entry of entries) {
+        if (typeof entry?.sourceKey !== 'string' || !/^(contact|settings):[0-9a-f]{64}$/.test(entry.sourceKey)
+            || !['imported','quarantined','excluded'].includes(entry.disposition)) fail('INVALID_IMPORT_ENTRY');
+        const status = entry.disposition === 'imported' ? 'pending' : entry.disposition;
+        const value = JSON.stringify(entry);
+        const existing = one('SELECT entry_json FROM control_import_entries WHERE run_id=? AND source_key=?', input.runId, entry.sourceKey);
+        if (existing) {
+            if (existing.entry_json !== value) fail('IMPORT_ENTRY_CONFLICT');
+            continue;
+        }
+        run('INSERT INTO control_import_entries(run_id,source_key,disposition,status,entry_json) VALUES(?,?,?,?,?)',
+            input.runId, entry.sourceKey, entry.disposition, status, value);
+    }
+    return { staged: one('SELECT COUNT(*) AS n FROM control_import_entries WHERE run_id=?', input.runId).n,
+        batchCount: entries.length };
+}
+function verifyControlImport(input) {
+    const runRow = one('SELECT * FROM control_import_runs WHERE id=?', input?.runId);
+    if (!runRow) fail('IMPORT_RUN_MISSING');
+    if (['verified','blocked','cutover'].includes(runRow.status)) return { status: runRow.status,
+        report: importReportSummary(JSON.parse(runRow.report_json)) };
+    if (runRow.status !== 'staging') fail('IMPORT_RUN_NOT_STAGING');
+    const report = JSON.parse(runRow.report_json);
+    const staged = one('SELECT COUNT(*) AS n FROM control_import_entries WHERE run_id=?', input.runId).n;
+    if (staged !== report.entries.length) fail('IMPORT_STAGE_INCOMPLETE');
+    const invalid = one("SELECT COUNT(*) AS n FROM control_import_entries WHERE run_id=? AND ((disposition='imported' AND status!='pending') OR (disposition='quarantined' AND status!='quarantined') OR (disposition='excluded' AND status!='excluded'))", input.runId).n;
+    if (invalid) fail('IMPORT_STAGE_INCONSISTENT');
+    const noCutover = report.cutoverAllowed !== true || report.blockers.length > 0;
+    const status = noCutover ? 'blocked' : 'verified';
+    const now = new Date().toISOString();
+    run('UPDATE control_import_runs SET status=?,verified_at=? WHERE id=?', status, now, input.runId);
+    run('UPDATE control_import_migrations SET status=?,updated_at=? WHERE migration_id=?', status, now, runRow.migration_id);
+    return { status, report: importReportSummary(report) };
+}
+function migrationRow(migrationId) {
+    if (typeof migrationId !== 'string' || !/^[A-Za-z0-9._:-]{1,128}$/.test(migrationId)) fail('INVALID_MIGRATION_ID');
+    const row = one('SELECT * FROM control_import_migrations WHERE migration_id=?', migrationId);
+    if (!row) fail('IMPORT_MIGRATION_MISSING');
+    return row;
+}
+function latestImportRun(migration) {
+    if (!migration.latest_run_id) fail('IMPORT_RUN_MISSING');
+    const row = one('SELECT * FROM control_import_runs WHERE id=? AND migration_id=?', migration.latest_run_id, migration.migration_id);
+    if (!row) fail('IMPORT_RUN_MISSING');
+    return row;
+}
+function setControlServiceReady(input) {
+    if (typeof input?.ready !== 'boolean') fail('INVALID_SERVICE_READINESS');
+    const status = one("SELECT status FROM control_import_migrations WHERE status IN ('cutover_applying','rolling_back') LIMIT 1");
+    if (status) fail('CONTROL_CUTOVER_RECOVERY_REQUIRED');
+    run('UPDATE control_authority SET service_ready=?,changed_at=? WHERE id=1', input.ready ? 1 : 0, new Date().toISOString());
+    return controlAuthority();
+}
+function startControlCutover(input) {
+    const migration = migrationRow(input?.migrationId);
+    const authority = one('SELECT mode,service_ready FROM control_authority WHERE id=1');
+    if (authority.mode !== 'legacy') fail('CONTROL_AUTHORITY_ALREADY_SWITCHED');
+    if (authority.service_ready !== 1) fail('CONTROL_SERVICE_NOT_READY');
+    if (migration.status === 'cutover_applying') return { status: migration.status, runId: migration.latest_run_id };
+    if (migration.status !== 'verified') fail('IMPORT_NOT_VERIFIED');
+    const runRow = latestImportRun(migration);
+    const report = JSON.parse(runRow.report_json);
+    if (runRow.status !== 'verified' || report.cutoverAllowed !== true || report.blockers.length) fail('IMPORT_CUTOVER_BLOCKED');
+    const now = new Date().toISOString();
+    run("UPDATE control_import_migrations SET status='cutover_applying',updated_at=? WHERE migration_id=?", now, migration.migration_id);
+    run("UPDATE control_import_runs SET status='cutover_applying' WHERE id=?", runRow.id);
+    return { status: 'cutover_applying', runId: runRow.id };
+}
+function rowControlProjection(row) {
+    return { accessPolicy: row.access_policy, automationMode: row.automation_mode,
+        lifecycle: row.lifecycle, ownerId: row.owner_id, status: row.control_status,
+        takenAt: row.taken_at, handoffReason: row.handoff_reason,
+        controlVersion: row.control_version, contextVersion: row.context_version,
+        profileKey: row.profile_key, requiresReview: row.requires_review === 1,
+        reviewReasons: row.control_review_reason ? row.control_review_reason.split(',') : [] };
+}
+function importControlProjection(entry) {
+    const control = entry.control;
+    if (!control || typeof control !== 'object') fail('INVALID_IMPORT_CONTROL');
+    const state = { accessPolicy: control.accessPolicy, automationMode: control.automationMode,
+        lifecycle: control.lifecycle, ownerId: control.ownerId, controlVersion: '1', contextVersion: '1',
+        status: 'confirmed', takenAt: control.takenAt, handoffReason: control.handoffReason };
+    assertValid('ConversationControl', state);
+    if (typeof control.requiresReview !== 'boolean' || !Array.isArray(control.reviewReasons)
+        || control.reviewReasons.some(reason => !['invalid_legacy_state','invalid_profile_key','profile_inventory_unavailable','profile_missing'].includes(reason))) {
+        fail('INVALID_IMPORT_REVIEW_STATE');
+    }
+    if (control.profileKey !== null && (typeof control.profileKey !== 'string' || !/^[A-Za-z0-9_.-]{1,80}$/.test(control.profileKey))) {
+        fail('INVALID_IMPORT_PROFILE');
+    }
+    return { ...state, profileKey: control.profileKey,
+        requiresReview: control.requiresReview, reviewReasons: [...new Set(control.reviewReasons)].sort() };
+}
+function projectionEquals(left, right) {
+    return stable(left) === stable(right);
+}
+function controlProjectionEquals(left, right) {
+    const leftValues = { ...left }, rightValues = { ...right };
+    delete leftValues.controlVersion; delete leftValues.contextVersion;
+    delete rightValues.controlVersion; delete rightValues.contextVersion;
+    return projectionEquals(leftValues, rightValues);
+}
+function controlSnapshot(row) {
+    return { state: rowControlProjection(row), aggregateVersion: row.aggregate_version };
+}
+function setPolicyFromImport(entry, migrationId) {
+    const row = one('SELECT * FROM control_policy WHERE id=1');
+    const before = { globalMode: row.global_mode, globalProfileKey: row.global_profile_key,
+        policyVersion: row.policy_version, requiresReview: row.requires_review === 1, reviewReason: row.review_reason };
+    run(`INSERT OR IGNORE INTO control_policy_snapshots(migration_id,before_state,applied_state,applied)
+        VALUES(?,?,?,0)`, migrationId, JSON.stringify(before), JSON.stringify(before));
+    let globalMode = row.global_mode;
+    let globalProfileKey = row.global_profile_key;
+    if (entry.field === 'globalMode') {
+        if (!['allowed_all','ignored_all'].includes(entry.plannedValue)) fail('INVALID_IMPORT_GLOBAL_MODE');
+        globalMode = entry.plannedValue;
+    } else if (entry.field === 'currentProfile') {
+        if (typeof entry.plannedProfile !== 'string' || !/^[A-Za-z0-9_.-]{1,80}$/.test(entry.plannedProfile)) fail('INVALID_IMPORT_GLOBAL_PROFILE');
+        globalProfileKey = entry.plannedProfile;
+    } else fail('INVALID_IMPORT_SETTINGS_FIELD');
+    const changed = globalMode !== row.global_mode || globalProfileKey !== row.global_profile_key || row.requires_review !== 0 || row.review_reason !== null;
+    const policyVersion = changed ? String(BigInt(row.policy_version) + 1n) : row.policy_version;
+    run('UPDATE control_policy SET global_mode=?,global_profile_key=?,policy_version=?,requires_review=0,review_reason=NULL WHERE id=1',
+        globalMode, globalProfileKey, policyVersion);
+    const appliedState = { globalMode, globalProfileKey, policyVersion, requiresReview: false, reviewReason: null };
+    run('UPDATE control_policy_snapshots SET applied_state=?,applied=1 WHERE migration_id=?', JSON.stringify(appliedState), migrationId);
+    return changed;
+}
+function applyControlImportEntry(migrationId, entry) {
+    if (entry.source === 'settings' || entry.source === 'settings_default') {
+        setPolicyFromImport(entry, migrationId);
+        return null;
+    }
+    if (entry.source !== 'contact' || typeof entry.targetId !== 'string') fail('INVALID_IMPORT_TARGET');
+    const row = one('SELECT * FROM conversations WHERE id=?', entry.targetId);
+    if (!row) fail('IMPORT_TARGET_MISSING');
+    const currentState = rowControlProjection(row);
+    const desired = importControlProjection(entry);
+    const desiredState = { ...desired, controlVersion: currentState.controlVersion, contextVersion: currentState.contextVersion };
+    const desiredWithoutVersions = { ...desiredState };
+    const currentWithoutVersions = { ...currentState };
+    delete desiredWithoutVersions.controlVersion; delete currentWithoutVersions.controlVersion;
+    delete desiredWithoutVersions.contextVersion; delete currentWithoutVersions.contextVersion;
+    const changed = !projectionEquals(currentWithoutVersions, desiredWithoutVersions);
+    run(`INSERT OR IGNORE INTO control_import_snapshots(migration_id,conversation_id,before_state,applied_state,applied)
+        VALUES(?,?,?,?,0)`, migrationId, entry.targetId, JSON.stringify(controlSnapshot(row)), JSON.stringify(controlSnapshot(row)));
+    const saved = one('SELECT before_state,applied_state FROM control_import_snapshots WHERE migration_id=? AND conversation_id=?', migrationId, entry.targetId);
+    if (!projectionEquals(JSON.parse(saved.applied_state), controlSnapshot(row))) fail('IMPORT_APPLY_CONFLICT');
+    if (!changed) {
+        run('UPDATE control_import_snapshots SET applied=1 WHERE migration_id=? AND conversation_id=?', migrationId, entry.targetId);
+        return null;
+    }
+    const controlVersion = String(BigInt(currentState.controlVersion) + 1n);
+    const profileChanged = currentState.profileKey !== desired.profileKey;
+    const contextVersion = profileChanged ? String(BigInt(currentState.contextVersion) + 1n) : currentState.contextVersion;
+    const aggregateVersion = String(BigInt(row.aggregate_version) + 1n);
+    const reviewReason = desired.reviewReasons.length ? desired.reviewReasons.join(',') : null;
+    run(`UPDATE conversations SET access_policy=?,automation_mode=?,lifecycle=?,owner_id=?,control_version=?,context_version=?,
+        control_status=?,taken_at=?,handoff_reason=?,profile_key=?,requires_review=?,control_review_reason=?,aggregate_version=? WHERE id=?`,
+    desired.accessPolicy, desired.automationMode, desired.lifecycle, desired.ownerId, controlVersion, contextVersion,
+    desired.status, desired.takenAt, desired.handoffReason, desired.profileKey, desired.requiresReview ? 1 : 0,
+    reviewReason, aggregateVersion, entry.targetId);
+    const cursor = snapshot();
+    cursor.seq = String(BigInt(cursor.seq) + 1n);
+    const now = new Date().toISOString();
+    const event = assertValid('Event', { schemaVersion: 1, cursor, type: 'control.changed', occurredAt: now,
+        data: { conversationId: entry.targetId, aggregateVersion, controlVersion } });
+    run('INSERT INTO events(seq,conversation_id,message_id,created_at,actor_id,payload) VALUES(?,?,?,?,NULL,?)',
+        cursor.seq, entry.targetId, null, now, JSON.stringify(event));
+    run('UPDATE archive_meta SET seq=? WHERE id=1', cursor.seq);
+    run('UPDATE control_import_snapshots SET applied_state=?,applied=1 WHERE migration_id=? AND conversation_id=?',
+        JSON.stringify({ state: rowControlProjection(one('SELECT * FROM conversations WHERE id=?', entry.targetId)), aggregateVersion }),
+        migrationId, entry.targetId);
+    return event;
+}
+function applyControlCutoverBatch(input) {
+    const migration = migrationRow(input?.migrationId);
+    if (migration.status !== 'cutover_applying') fail('CONTROL_CUTOVER_NOT_STARTED');
+    const authority = one('SELECT mode,service_ready FROM control_authority WHERE id=1');
+    if (authority.mode !== 'legacy' || authority.service_ready !== 1) fail('CONTROL_SERVICE_NOT_READY');
+    const limit = input.limit ?? 100;
+    if (!Number.isInteger(limit) || limit < 1 || limit > 500) fail('INVALID_LIMIT');
+    const runRow = latestImportRun(migration);
+    const rows = all("SELECT source_key,entry_json FROM control_import_entries WHERE run_id=? AND disposition='imported' AND status='pending' ORDER BY source_key LIMIT ?", runRow.id, limit);
+    const events = [];
+    for (const row of rows) {
+        const entry = JSON.parse(row.entry_json);
+        const event = applyControlImportEntry(migration.migration_id, entry);
+        if (event) events.push(event);
+        run("UPDATE control_import_entries SET status='applied' WHERE run_id=? AND source_key=?", runRow.id, row.source_key);
+    }
+    if (events.length) pruneRetainedEvents();
+    const remaining = one("SELECT COUNT(*) AS n FROM control_import_entries WHERE run_id=? AND disposition='imported' AND status='pending'", runRow.id).n;
+    return { status: 'cutover_applying', applied: rows.length, remaining, events };
+}
+function verifyAppliedImport(migration, runRow) {
+    const report = JSON.parse(runRow.report_json);
+    if (report.cutoverAllowed !== true || report.blockers.length) fail('IMPORT_CUTOVER_BLOCKED');
+    const pending = one("SELECT COUNT(*) AS n FROM control_import_entries WHERE run_id=? AND disposition='imported' AND status!='applied'", runRow.id).n;
+    if (pending) fail('IMPORT_APPLY_INCOMPLETE');
+    const entries = all("SELECT entry_json FROM control_import_entries WHERE run_id=? AND disposition='imported' ORDER BY source_key", runRow.id)
+        .map(row => JSON.parse(row.entry_json));
+    const expectedByTarget = new Map();
+    for (const entry of entries) if (entry.source === 'contact') {
+        const desired = importControlProjection(entry);
+        const previous = expectedByTarget.get(entry.targetId);
+        if (previous && !projectionEquals(previous, desired)) fail('IMPORT_TARGET_CONFLICT');
+        expectedByTarget.set(entry.targetId, desired);
+    }
+    for (const [conversationId, desired] of expectedByTarget) {
+        const row = one('SELECT * FROM conversations WHERE id=?', conversationId);
+        if (!row || !controlProjectionEquals(rowControlProjection(row), desired)) fail('IMPORT_VERIFY_CONTROL_MISMATCH');
+    }
+    const policy = one('SELECT global_mode,global_profile_key,requires_review FROM control_policy WHERE id=1');
+    if (policy.global_mode !== report.globalPolicy.globalMode || policy.global_profile_key !== report.globalPolicy.globalProfile
+        || policy.requires_review !== 0) fail('IMPORT_VERIFY_POLICY_MISMATCH');
+    if (one('PRAGMA integrity_check').integrity_check !== 'ok' || all('PRAGMA foreign_key_check').length) fail('ARCHIVE_CORRUPT');
+    return report;
+}
+function finishControlCutover(input) {
+    const migration = migrationRow(input?.migrationId);
+    if (migration.status !== 'cutover_applying') fail('CONTROL_CUTOVER_NOT_STARTED');
+    const authority = one('SELECT mode,service_ready FROM control_authority WHERE id=1');
+    if (authority.mode !== 'legacy' || authority.service_ready !== 1) fail('CONTROL_SERVICE_NOT_READY');
+    const runRow = latestImportRun(migration);
+    verifyAppliedImport(migration, runRow);
+    const now = new Date().toISOString();
+    run("UPDATE control_authority SET mode='sqlite',migration_id=?,changed_at=? WHERE id=1", migration.migration_id, now);
+    run("UPDATE control_import_runs SET status='cutover' WHERE id=?", runRow.id);
+    run("UPDATE control_import_migrations SET status='cutover',cutover_at=?,updated_at=? WHERE migration_id=?", now, now, migration.migration_id);
+    return { status: 'cutover', authority: controlAuthority(), snapshot: snapshot() };
+}
+function rollbackControlCutoverBatch(input) {
+    const migration = migrationRow(input?.migrationId);
+    if (!['cutover_applying','rolling_back','verified','blocked','staging'].includes(migration.status)) fail('IMPORT_ROLLBACK_UNAVAILABLE');
+    if (one('SELECT mode FROM control_authority WHERE id=1').mode !== 'legacy') fail('CONTROL_AUTHORITY_ALREADY_SWITCHED');
+    if (migration.status !== 'rolling_back') {
+        run("UPDATE control_import_migrations SET status='rolling_back',updated_at=? WHERE migration_id=?", new Date().toISOString(), migration.migration_id);
+        const runRow = latestImportRun(migration);
+        run("UPDATE control_import_runs SET status='rolling_back' WHERE id=?", runRow.id);
+    }
+    const limit = input.limit ?? 100;
+    if (!Number.isInteger(limit) || limit < 1 || limit > 500) fail('INVALID_LIMIT');
+    const snapshots = all('SELECT * FROM control_import_snapshots WHERE migration_id=? AND applied=1 ORDER BY conversation_id LIMIT ?',
+        migration.migration_id, limit);
+    const events = [];
+    for (const saved of snapshots) {
+        const row = one('SELECT * FROM conversations WHERE id=?', saved.conversation_id);
+        if (!row) fail('IMPORT_ROLLBACK_TARGET_MISSING');
+        const appliedState = JSON.parse(saved.applied_state);
+        if (!projectionEquals(controlSnapshot(row), appliedState)) fail('IMPORT_ROLLBACK_CONFLICT');
+        const before = JSON.parse(saved.before_state);
+        const current = rowControlProjection(row);
+        const prior = before.state;
+        const sameValue = controlProjectionEquals(current, prior);
+        if (!sameValue) {
+            const controlVersion = String(BigInt(current.controlVersion) + 1n);
+            const contextVersion = current.profileKey !== prior.profileKey
+                ? String(BigInt(current.contextVersion) + 1n) : current.contextVersion;
+            const aggregateVersion = String(BigInt(row.aggregate_version) + 1n);
+            run(`UPDATE conversations SET access_policy=?,automation_mode=?,lifecycle=?,owner_id=?,control_version=?,context_version=?,
+                control_status=?,taken_at=?,handoff_reason=?,profile_key=?,requires_review=?,control_review_reason=?,aggregate_version=? WHERE id=?`,
+            prior.accessPolicy, prior.automationMode, prior.lifecycle, prior.ownerId, controlVersion, contextVersion,
+            prior.status, prior.takenAt, prior.handoffReason, prior.profileKey, prior.requiresReview ? 1 : 0,
+            prior.reviewReasons.length ? prior.reviewReasons.join(',') : null, aggregateVersion, saved.conversation_id);
+            const cursor = snapshot(); cursor.seq = String(BigInt(cursor.seq) + 1n);
+            const now = new Date().toISOString();
+            const event = assertValid('Event', { schemaVersion: 1, cursor, type: 'control.changed', occurredAt: now,
+                data: { conversationId: saved.conversation_id, aggregateVersion, controlVersion } });
+            run('INSERT INTO events(seq,conversation_id,message_id,created_at,actor_id,payload) VALUES(?,?,?,?,NULL,?)',
+                cursor.seq, saved.conversation_id, null, now, JSON.stringify(event));
+            run('UPDATE archive_meta SET seq=? WHERE id=1', cursor.seq);
+            events.push(event);
+        }
+        run('UPDATE control_import_snapshots SET applied=0 WHERE migration_id=? AND conversation_id=?', migration.migration_id, saved.conversation_id);
+    }
+    const remainingConversations = one('SELECT COUNT(*) AS n FROM control_import_snapshots WHERE migration_id=? AND applied=1', migration.migration_id).n;
+    if (remainingConversations === 0) {
+        const savedPolicy = one('SELECT * FROM control_policy_snapshots WHERE migration_id=? AND applied=1', migration.migration_id);
+        if (savedPolicy) {
+            const current = one('SELECT * FROM control_policy WHERE id=1');
+            const appliedState = JSON.parse(savedPolicy.applied_state);
+            const currentState = { globalMode: current.global_mode, globalProfileKey: current.global_profile_key,
+                policyVersion: current.policy_version, requiresReview: current.requires_review === 1, reviewReason: current.review_reason };
+            if (!projectionEquals(currentState, appliedState)) fail('IMPORT_ROLLBACK_CONFLICT');
+            const before = JSON.parse(savedPolicy.before_state);
+            const policyVersion = String(BigInt(current.policy_version) + 1n);
+            run('UPDATE control_policy SET global_mode=?,global_profile_key=?,policy_version=?,requires_review=?,review_reason=? WHERE id=1',
+                before.globalMode, before.globalProfileKey, policyVersion, before.requiresReview ? 1 : 0, before.reviewReason);
+            run('UPDATE control_policy_snapshots SET applied=0 WHERE migration_id=?', migration.migration_id);
+        }
+    }
+    const remaining = one('SELECT COUNT(*) AS n FROM control_import_snapshots WHERE migration_id=? AND applied=1', migration.migration_id).n
+        + one('SELECT COUNT(*) AS n FROM control_policy_snapshots WHERE migration_id=? AND applied=1', migration.migration_id).n;
+    if (events.length) pruneRetainedEvents();
+    return { status: 'rolling_back', rolledBack: snapshots.length, remaining, events };
+}
+function finishControlRollback(input) {
+    const migration = migrationRow(input?.migrationId);
+    if (migration.status !== 'rolling_back') fail('IMPORT_ROLLBACK_NOT_STARTED');
+    if (one("SELECT COUNT(*) AS n FROM control_import_snapshots WHERE migration_id=? AND applied=1", migration.migration_id).n
+        || one("SELECT COUNT(*) AS n FROM control_policy_snapshots WHERE migration_id=? AND applied=1", migration.migration_id).n) fail('IMPORT_ROLLBACK_INCOMPLETE');
+    const runRow = latestImportRun(migration);
+    const now = new Date().toISOString();
+    run("UPDATE control_import_runs SET status='rolled_back' WHERE migration_id=? AND status IN ('staging','blocked','verified','cutover_applying','rolling_back')", migration.migration_id);
+    run("UPDATE control_import_migrations SET status='rolled_back',updated_at=? WHERE migration_id=?", now, migration.migration_id);
+    return { status: 'rolled_back', migrationId: migration.migration_id, latestRunId: runRow.id, authority: controlAuthority() };
 }
 function pruneRetainedEvents() {
     const cutoff = retentionCutoff(snapshot().seq);
@@ -592,6 +1146,18 @@ function dispatch(method, input) {
         case 'retryLegacyDispatch': return transaction(() => retryLegacyDispatch(input));
         case 'controlState': return controlState(input);
         case 'writeControlState': return transaction(() => writeControlState(input));
+        case 'controlAuthority': return controlAuthority();
+        case 'controlImportStatus': return controlImportStatus(input ?? undefined);
+        case 'controlImportEntries': return controlImportEntries(input);
+        case 'beginControlImport': return transaction(() => beginControlImport(input));
+        case 'stageControlImportBatch': return transaction(() => stageControlImportBatch(input));
+        case 'verifyControlImport': return transaction(() => verifyControlImport(input));
+        case 'setControlServiceReady': return transaction(() => setControlServiceReady(input));
+        case 'startControlCutover': return transaction(() => startControlCutover(input));
+        case 'applyControlCutoverBatch': return transaction(() => applyControlCutoverBatch(input));
+        case 'finishControlCutover': return transaction(() => finishControlCutover(input));
+        case 'rollbackControlCutoverBatch': return transaction(() => rollbackControlCutoverBatch(input));
+        case 'finishControlRollback': return transaction(() => finishControlRollback(input));
         case 'conversation': assertValid('Id', input); return one('SELECT * FROM conversations WHERE id=?', input) ?? null;
         case 'conversations': return conversationPage(input);
         case 'conversationRows': return conversationRows(input);
@@ -630,6 +1196,7 @@ function committedEvents(method, value) {
     }
     if (method === 'updateTranscription' && value?.event) return [value.event];
     if (method === 'writeControlState' && value?.event) return [value.event];
+    if (['applyControlCutoverBatch','rollbackControlCutoverBatch'].includes(method) && Array.isArray(value?.events)) return value.events;
     return [];
 }
 try {

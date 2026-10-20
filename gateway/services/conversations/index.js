@@ -10,7 +10,7 @@ function unavailable(code = 'ARCHIVE_UNAVAILABLE') {
 function createArchive(options = {}) {
     const worker = new Worker(path.join(__dirname, 'worker.js'), {
         workerData: { path: options.path || databasePath(), restore: options.restore === true,
-            readOnly: options.readOnly === true }
+            readOnly: options.readOnly === true, controlRecovery: options.controlRecovery === true }
     });
     const pending = new Map();
     const eventListeners = new Set();
@@ -83,6 +83,18 @@ function createArchive(options = {}) {
         retryLegacyDispatch: input => call('retryLegacyDispatch', input),
         controlState: id => call('controlState', id),
         writeControlState: input => call('writeControlState', input),
+        controlAuthority: () => call('controlAuthority'),
+        controlImportStatus: (migrationId = undefined) => call('controlImportStatus', migrationId),
+        controlImportEntries: input => call('controlImportEntries', input),
+        beginControlImport: input => call('beginControlImport', input),
+        stageControlImportBatch: input => call('stageControlImportBatch', input),
+        verifyControlImport: input => call('verifyControlImport', input),
+        setControlServiceReady: input => call('setControlServiceReady', input),
+        startControlCutover: input => call('startControlCutover', input),
+        applyControlCutoverBatch: input => call('applyControlCutoverBatch', input),
+        finishControlCutover: input => call('finishControlCutover', input),
+        rollbackControlCutoverBatch: input => call('rollbackControlCutoverBatch', input),
+        finishControlRollback: input => call('finishControlRollback', input),
         conversation: id => call('conversation', id),
         conversations: (input = {}) => call('conversations', input),
         conversationRows: (input = {}) => call('conversationRows', input),
