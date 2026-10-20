@@ -1,7 +1,8 @@
 import { useLayoutEffect, useRef } from 'react';
+import type { KeyboardEvent } from 'react';
 import { Link } from 'react-router-dom';
-import { ArrowLeft, Bell, MessageSquareText, Search } from 'lucide-react';
-import type { Conversation, Message } from './api';
+import { ArrowLeft, Bell, Bot, MessageSquareText, Search, SendHorizontal, UserRound } from 'lucide-react';
+import type { Account, Actor, Conversation, Message } from './api';
 import { PanelApiError } from './api';
 
 interface Props {
@@ -23,6 +24,28 @@ interface Props {
   onRetryDetail(): void;
   onRetryMessages(): void;
   onRetryRead(): void;
+  actor?: Actor;
+  account?: Account;
+  canTakeover: boolean;
+  canRelease: boolean;
+  canResolve: boolean;
+  canReopen: boolean;
+  canSend: boolean;
+  controlBusy: boolean;
+  controlError: Error | null;
+  controlNotice: string | null;
+  onTakeover(): void;
+  onRelease(): void;
+  onResolve(): void;
+  onReopen(): void;
+  draft: string;
+  onDraftChange(value: string): void;
+  sendBusy: boolean;
+  sendError: Error | null;
+  uncertainSend: { text: string; clientMessageId: string; state: 'in_progress' | 'delivery_unknown' } | null;
+  onSubmitMessage(): void;
+  onRetryUncertainSend(): void;
+  onRestoreUncertainDraft(): void;
 }
 
 const authorNames: Record<Message['authorKind'], string> = {
@@ -61,6 +84,8 @@ function formatTime(timestamp: string) {
 
 function deliveryLabel(message: Message) {
   if (message.direction !== 'outbound') return '';
+  if (message.deliveryStatus === 'queued') return 'En cola';
+  if (message.deliveryStatus === 'sending') return 'Enviando';
   if (message.deliveryStatus === 'failed') return 'No enviado';
   if (message.deliveryStatus === 'delivery_unknown') return 'Entrega sin confirmar';
   if (message.deliveryStatus === 'cancelled') return 'Cancelado';
@@ -82,7 +107,10 @@ export function ConversationThread(props: Props) {
   const {
     conversationId, conversation, detailLoading, detailError, messages, messagePageCount,
     messagesLoading, messagesError, hasOlder, loadingOlder, readError, newMessagesCount,
-    onMessagesSeen, onAtLatestChange, onLoadOlder, onRetryDetail, onRetryMessages, onRetryRead
+    onMessagesSeen, onAtLatestChange, onLoadOlder, onRetryDetail, onRetryMessages, onRetryRead,
+    actor, account, canTakeover, canRelease, canResolve, canReopen, canSend, controlBusy, controlError,
+    controlNotice, onTakeover, onRelease, onResolve, onReopen, draft, onDraftChange, sendBusy, sendError,
+    uncertainSend, onSubmitMessage, onRetryUncertainSend, onRestoreUncertainDraft
   } = props;
   const historyRef = useRef<HTMLDivElement>(null);
   const activeConversationId = useRef(conversationId);
@@ -145,6 +173,30 @@ export function ConversationThread(props: Props) {
     updatePosition();
   }
 
+  function handleComposerKeyDown(event: KeyboardEvent<HTMLTextAreaElement>) {
+    if (event.key === 'Enter' && !event.shiftKey) {
+      event.preventDefault();
+      onSubmitMessage();
+    }
+  }
+
+  const control = conversation?.control;
+  const controlLabel = control?.status === 'taking_control' ? 'Tomando control…'
+    : control?.automationMode === 'human' ? (control.ownerId && actor?.id === control.ownerId ? 'Atención humana · a tu cargo' : 'Atención humana')
+      : control?.automationMode === 'ai' ? 'Atención IA' : 'Atención pausada';
+  const uncertainSameDraft = Boolean(uncertainSend && draft.trim() === uncertainSend.text);
+  const composerEnabled = Boolean(canSend && !sendBusy && draft.trim() && !uncertainSend);
+  const composerStatus = !account ? 'No se encontró la cuenta del canal.'
+    : account.status !== 'connected' ? 'El canal está desconectado; el borrador queda en el panel.'
+      : !account.capabilities.reply ? 'Este canal no permite responder desde el panel.'
+        : control?.status === 'taking_control' ? 'La toma de control todavía no está confirmada.'
+          : control?.automationMode !== 'human' ? 'Toma el control para responder desde aquí.'
+            : control?.lifecycle !== 'open' ? 'Reabre la conversación para responder.'
+              : control?.ownerId && actor?.id !== control.ownerId && !actor?.capabilities.includes('control:override')
+                ? 'La conversación pertenece a otro operador.'
+                  : control?.requiresReview || conversation?.requiresReview ? 'La identidad requiere revisión antes de responder.'
+                    : !actor?.capabilities.includes('messages:send') ? 'Tu cuenta no tiene permiso para enviar mensajes.' : null;
+
   async function loadOlder() {
     const container = historyRef.current;
     if (container) previousScroll.current = { height: container.scrollHeight, top: container.scrollTop };
@@ -186,6 +238,29 @@ export function ConversationThread(props: Props) {
       {conversationId && !detailLoading && detailError && <ErrorPanel error={detailError} onRetry={onRetryDetail} title="No se pudo abrir el chat" />}
       {conversationId && !detailLoading && !detailError && conversation && (
         <>
+          <div className="thread-control-toolbar">
+            <div className="thread-control-state" role="status">
+              {control?.automationMode === 'human' ? <UserRound aria-hidden="true" size={15} /> : <Bot aria-hidden="true" size={15} />}
+              <span>{controlLabel}</span>
+            </div>
+            <div className="thread-control-buttons">
+              {control?.status === 'taking_control' && <span className="control-pending" role="status">Tomando control…</span>}
+              {canTakeover && control?.automationMode !== 'human' && (
+                <button className="thread-control-button is-primary" type="button" onClick={onTakeover} disabled={controlBusy}>
+                  {controlBusy ? 'Tomando control…' : 'Tomar control'}
+                </button>
+              )}
+              {canRelease && (
+                <button className="thread-control-button" type="button" onClick={onRelease} disabled={controlBusy}>
+                  {controlBusy ? 'Guardando…' : 'Devolver a IA'}
+                </button>
+              )}
+              {canResolve && <button className="thread-control-button" type="button" onClick={onResolve} disabled={controlBusy}>Resolver</button>}
+              {canReopen && <button className="thread-control-button" type="button" onClick={onReopen} disabled={controlBusy}>Reabrir</button>}
+            </div>
+          </div>
+          {controlNotice && <div className="thread-inline-status" role="status">{controlNotice}</div>}
+          {controlError && <div className="thread-inline-error" role="alert">{controlError.message}</div>}
           <div className="message-history" ref={historyRef} onScroll={handleHistoryScroll} aria-busy={messagesLoading || loadingOlder}>
             {newMessagesCount > 0 && (
               <div className="new-messages-banner" role="status">
@@ -237,8 +312,40 @@ export function ConversationThread(props: Props) {
             )}
           </div>
           <footer className="composer-preview" aria-label="Compositor de mensajes">
-            <span>Responder desde el chat estará disponible en la fase de control humano.</span>
-            <button className="send-preview" type="button" disabled aria-label="Enviar mensaje deshabilitado">↗</button>
+            <form className="composer-form" onSubmit={event => { event.preventDefault(); onSubmitMessage(); }}>
+              <textarea
+                aria-label="Escribir mensaje"
+                placeholder={composerStatus || 'Escribe una respuesta…'}
+                value={draft}
+                onChange={event => onDraftChange(event.target.value)}
+                onKeyDown={handleComposerKeyDown}
+                maxLength={4096}
+                disabled={!canSend || sendBusy}
+                rows={2}
+              />
+              <button className="send-preview" type="submit" disabled={!composerEnabled} aria-label="Enviar mensaje">
+                <SendHorizontal aria-hidden="true" size={17} />
+              </button>
+            </form>
+            {sendBusy && <span className="composer-state" role="status">Guardando y enviando…</span>}
+            {!canSend && !sendBusy && <span className="composer-state">{composerStatus}</span>}
+            {sendError && <span className="composer-error" role="alert">{sendError.message}</span>}
+            {uncertainSend && (
+              <div className="composer-uncertain" role="alert">
+                <span>{uncertainSend.state === 'in_progress'
+                  ? 'El envío sigue en curso. Consulta el mismo intento para evitar crear otro mensaje.'
+                  : 'Entrega sin confirmar. Revisa el chat; volver a enviar puede crear un duplicado.'}</span>
+                {uncertainSend.state === 'in_progress' && (
+                  <button className="text-button" type="button" onClick={onRetryUncertainSend}>Consultar estado</button>
+                )}
+                {uncertainSend.state === 'delivery_unknown' && uncertainSameDraft && (
+                  <button className="text-button" type="button" onClick={onRetryUncertainSend}>Reintentar de todos modos</button>
+                )}
+                {uncertainSend.state === 'delivery_unknown' && !uncertainSameDraft && (
+                  <button className="text-button" type="button" onClick={onRestoreUncertainDraft}>Restaurar borrador pendiente</button>
+                )}
+              </div>
+            )}
           </footer>
         </>
       )}

@@ -753,3 +753,29 @@ Cierres históricos: commits F2C.1/F2C.2/F2D/F2E.1 están en el log local; F2B.3
   límite en [BACKLOG.md](BACKLOG.md). No se usaron canales reales ni datos runtime.
 - Evidencia: [F5.8](F5.8-ACEPTACION-INTEGRADA.md). Fase 5 queda validada; el próximo
   paso es iniciar F6 después de publicar la rama.
+
+## F6.1: Control humano y envío desde el hilo
+
+- Se conectaron los botones de tomar/devolver control y resolver/reabrir. La toma
+  de control pendiente se consulta por operación; el compositor exige permiso,
+  canal conectado/compatible, lifecycle abierto, identidad sin revisión y control
+  humano confirmado con propietario autorizado.
+- `POST /messages` usa la identidad canónica de la conversación y un intent durable
+  ligado a actor/conversación/`clientMessageId`. El worker revalida snapshot y
+  propietario al reclamar; release, reasignación y resolución esperan si un envío
+  humano ya está en curso. La aceptación se reconcilia con el mensaje archivado y
+  publica `message.updated` con autor y `clientMessageId`.
+- La UI conserva el borrador ante errores, muestra estado optimista y exige
+  confirmación informada cuando el resultado HTTP/proveedor sea incierto. Se fuerza
+  texto plano para Telegram. Las incertidumbres sobreviven al cambio de conversación;
+  una operación todavía `sending` consulta su misma clave y no ofrece crear otro
+  intent. El mensaje archivado limpia la incertidumbre y el optimismo. Se amplió
+  `ErrorCode` tras encontrar que la frontera no podía serializar los códigos de
+  conflicto implementados en F5.
+- Evidencia: [F6.1](F6.1-ENVIO-HUMANO.md). `npm run contracts:generate`, `cd
+  gateway && npm ci`, `npm run lint`, `npm run typecheck` y `npm run panel:typecheck`
+  completados; lint y tipos limpios. No se ejecutaron suites de pruebas en esta
+  entrega. No se usó una cuenta de canal real.
+- Próximo: **F6.2**, exponer una elección explícita entre `future_only` y procesar
+  entradas pendientes verificables; luego F6.3 E2E y F6.4 smoke de cuenta de prueba
+  cuando esté disponible. Fase 6 sigue incompleta.

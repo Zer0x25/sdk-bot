@@ -1,7 +1,9 @@
 import type { Contract } from '@sdk-bot/contracts';
 
 export type Account = Contract<'Account'>;
+export type Actor = Contract<'Actor'>;
 export type Channel = Contract<'Channel'>;
+export type ConversationControl = Contract<'ConversationControl'>;
 export type Conversation = Contract<'Conversation'>;
 export type Lifecycle = Contract<'Lifecycle'>;
 export type Message = Contract<'Message'>;
@@ -12,6 +14,12 @@ export type ConversationResponse = Contract<'ConversationResponse'>;
 export type AccountsResponse = Contract<'AccountsResponse'>;
 export type MessagesResponse = Contract<'MessagesResponse'>;
 export type ReadResponse = Contract<'ReadResponse'>;
+export type SessionResponse = Contract<'SessionResponse'>;
+export type Operation = Contract<'Operation'>;
+export type SendMessageResponse = Contract<'SendMessageResponse'>;
+export type SendMessageRequest = Contract<'SendMessageRequest'>;
+
+export type ControlResponse = Contract<'TakeoverConfirmedResponse'> | Contract<'TakeoverPendingResponse'>;
 
 export class PanelApiError extends Error {
   readonly status: number;
@@ -28,6 +36,7 @@ export class PanelApiError extends Error {
 interface ErrorPayload {
   error?: {
     code?: unknown;
+    message?: unknown;
   };
 }
 
@@ -73,6 +82,49 @@ async function getJson<T>(pathname: string, signal?: AbortSignal): Promise<T> {
   return body as T;
 }
 
+async function postJson<T>(pathname: string, body: unknown, idempotencyKey?: string): Promise<T> {
+  let response: Response;
+  try {
+    response = await fetch(`/api/v1${pathname}`, {
+      method: 'POST',
+      credentials: 'same-origin',
+      headers: {
+        accept: 'application/json',
+        'content-type': 'application/json',
+        ...(idempotencyKey ? { 'idempotency-key': idempotencyKey } : {})
+      },
+      body: JSON.stringify(body)
+    });
+  } catch (error) {
+    if (error instanceof Error && error.name === 'AbortError') throw error;
+    throw new PanelApiError(0, null, 'No se pudo conectar con el servicio de conversaciones.');
+  }
+
+  let payload: unknown;
+  try { payload = await response.json(); }
+  catch { throw new PanelApiError(502, null, 'El servicio devolvió una respuesta inválida.'); }
+  if (!response.ok) {
+    const error = (payload as ErrorPayload)?.error;
+    const code = typeof error?.code === 'string' ? error.code : null;
+    const message = typeof error?.message === 'string'
+      ? error.message
+      : response.status === 401 ? 'Tu sesión venció. Vuelve a iniciar sesión.'
+        : response.status === 403 ? 'Tu cuenta no tiene permiso para realizar esta acción.'
+          : code === 'OUTBOUND_DELIVERY_UNKNOWN'
+            ? 'El proveedor pudo haber recibido el mensaje. Revisa el chat antes de volver a enviarlo.'
+            : code === 'CONTROL_OWNER_CONFLICT' ? 'La conversación pertenece a otro operador.'
+              : code === 'CONTROL_VERSION_CONFLICT' ? 'El control cambió. Actualiza el chat e inténtalo de nuevo.'
+                : code === 'CHANNEL_NOT_READY' ? 'El canal no está conectado. Conservamos el borrador.'
+                  : 'No se pudo completar la acción. Conservamos el borrador.';
+    throw new PanelApiError(response.status, code, message);
+  }
+  return payload as T;
+}
+
+export function getSession(signal?: AbortSignal) {
+  return getJson<SessionResponse>('/session', signal);
+}
+
 export function getAccounts(signal?: AbortSignal) {
   return getJson<AccountsResponse>('/accounts', signal);
 }
@@ -95,6 +147,59 @@ export function getConversations(input: {
 
 export function getConversation(conversationId: string, signal?: AbortSignal) {
   return getJson<ConversationResponse>(`/conversations/${encodeURIComponent(conversationId)}`, signal);
+}
+
+export function getOperation(operationId: string, signal?: AbortSignal) {
+  return getJson<Operation>(`/operations/${encodeURIComponent(operationId)}`, signal);
+}
+
+export function takeoverConversation(conversationId: string, expectedVersion: ConversationControl['controlVersion'], overrideOwner = false) {
+  return postJson<ControlResponse>(`/conversations/${encodeURIComponent(conversationId)}/takeover`, {
+    expectedVersion,
+    ...(overrideOwner ? { overrideOwner: true } : {})
+  }, `panel_takeover_${crypto.randomUUID()}`);
+}
+
+export function releaseConversation(conversationId: string, expectedVersion: ConversationControl['controlVersion'], overrideOwner = false) {
+  return postJson<ControlResponse>(`/conversations/${encodeURIComponent(conversationId)}/release`, {
+    expectedVersion,
+    ...(overrideOwner ? { overrideOwner: true } : {}),
+    resumePolicy: 'future_only'
+  }, `panel_release_${crypto.randomUUID()}`);
+}
+
+export function updateConversationLifecycle(conversationId: string, expectedVersion: ConversationControl['controlVersion'], lifecycle: Lifecycle) {
+  return fetchConversationUpdate<ControlResponse>(conversationId, { expectedVersion, lifecycle }, `panel_lifecycle_${crypto.randomUUID()}`);
+}
+
+async function fetchConversationUpdate<T>(conversationId: string, body: unknown, idempotencyKey: string): Promise<T> {
+  let response: Response;
+  try {
+    response = await fetch(`/api/v1/conversations/${encodeURIComponent(conversationId)}`, {
+      method: 'PATCH',
+      credentials: 'same-origin',
+      headers: { accept: 'application/json', 'content-type': 'application/json', 'idempotency-key': idempotencyKey },
+      body: JSON.stringify(body)
+    });
+  } catch (error) {
+    if (error instanceof Error && error.name === 'AbortError') throw error;
+    throw new PanelApiError(0, null, 'No se pudo conectar con el servicio de conversaciones.');
+  }
+  let payload: unknown;
+  try { payload = await response.json(); }
+  catch { throw new PanelApiError(502, null, 'El servicio devolvió una respuesta inválida.'); }
+  if (!response.ok) {
+    const code = typeof (payload as ErrorPayload)?.error?.code === 'string' ? (payload as ErrorPayload).error!.code as string : null;
+    throw new PanelApiError(response.status, code, response.status === 403
+      ? 'Tu cuenta no tiene permiso para cambiar el estado de la conversación.'
+      : code === 'CONTROL_VERSION_CONFLICT' ? 'La conversación cambió. Actualízala e inténtalo de nuevo.'
+        : 'No se pudo cambiar el estado de la conversación.');
+  }
+  return payload as T;
+}
+
+export function sendConversationMessage(conversationId: string, request: SendMessageRequest) {
+  return postJson<SendMessageResponse>(`/conversations/${encodeURIComponent(conversationId)}/messages`, request);
 }
 
 export function getMessages(conversationId: string, input: { cursor?: PageCursor }, signal?: AbortSignal) {

@@ -166,6 +166,10 @@ async function startGateway() {
         await conversationArchive.close();
     });
     internalBus.startInternalBus({ archive: conversationArchive, controlService: conversationControl,
+        getAdapter: (channel, accountId) => {
+            const adapter = adapters.get(channel);
+            return adapter?.accountId === accountId ? adapter : null;
+        },
         getChannelStatus: (channel, accountId) => {
             const adapter = adapters.get(channel);
             if (!adapter || adapter.accountId !== accountId) return 'disconnected';

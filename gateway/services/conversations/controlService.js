@@ -76,6 +76,7 @@ function createControlService(archive, { drainConversation = null, onPolicyChang
         const result = await archive.writeControlState({ conversationId, actorId, expectedVersion, state: next });
         if (result.status === 'missing') fail('CONVERSATION_NOT_FOUND', 404);
         if (result.status === 'conflict') fail('CONTROL_VERSION_CONFLICT', 409);
+        if (result.status === 'human_send_in_flight') fail('CONTROL_HUMAN_SEND_IN_FLIGHT', 409);
         if (result.status === 'updated' && current.automationMode === 'ai' && drainConversation) {
             await drainConversation(conversationId);
         }
@@ -179,6 +180,7 @@ function createControlService(archive, { drainConversation = null, onPolicyChang
             if (result.status === 'missing') fail('CONVERSATION_NOT_FOUND', 404);
             if (result.status === 'conflict') fail('CONTROL_VERSION_CONFLICT', 409);
             if (result.status === 'owner_conflict') fail('CONTROL_OWNER_CONFLICT', 409);
+            if (result.status === 'send_in_flight') fail('CONTROL_HUMAN_SEND_IN_FLIGHT', 409);
             return continueTakeover(result.operation, result.control);
         },
         async release({ conversationId, actorId, expectedVersion, overrideOwner = false }) {

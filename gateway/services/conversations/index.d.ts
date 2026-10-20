@@ -2,9 +2,11 @@ import type { Contract } from '@sdk-bot/contracts';
 export interface ArchiveInput {
     identity: Contract<'IdentityKey'>;
     providerMessageId: string | null;
-    source: 'live' | 'history' | 'import';
+    source: 'live' | 'history' | 'import' | 'panel' | 'automation';
     direction: 'inbound' | 'outbound';
     authorKind: Contract<'Message'>['authorKind'];
+    actorId?: string | null;
+    clientMessageId?: string | null;
     occurredAt: string;
     content: Contract<'MessageContent'>;
     legacyDispatch?: {
@@ -109,11 +111,12 @@ export interface Archive {
     writeControlState(input: { conversationId: string; actorId: string; expectedVersion: Contract<'Version'>;
         state: Omit<Contract<'ConversationControl'>, 'controlVersion' | 'contextVersion'> }): Promise<
         { status: 'updated'; control: Contract<'ConversationControl'>; event: Contract<'Event'> } |
-        { status: 'conflict' | 'unchanged'; control: Contract<'ConversationControl'> } |
+        { status: 'conflict' | 'unchanged' | 'human_send_in_flight'; control: Contract<'ConversationControl'> } |
         { status: 'missing' }>;
     beginControlTakeover(input: { conversationId: string; actorId: string; expectedVersion: Contract<'Version'>;
         overrideOwner: boolean; idempotencyKey: string }): Promise<
         { status: 'started' | 'existing'; operation: ControlOperation; control: Contract<'ConversationControl'>; events?: Contract<'Event'>[] } |
+        { status: 'send_in_flight'; control: Contract<'ConversationControl'> } |
         { status: 'conflict' | 'owner_conflict'; control: Contract<'ConversationControl'> } | { status: 'missing' }>;
     completeControlTakeover(input: { operationId: string; uncertainMessageIds?: string[] }): Promise<
         { status: 'completed' | 'unchanged'; operation: ControlOperation; control: Contract<'ConversationControl'>; events?: Contract<'Event'>[] } |
@@ -166,9 +169,13 @@ export interface Archive {
         channel: 'whatsapp' | 'telegram'; identity_keys: Array<{ kind: string; exactValue: string }>;
         first_ingested_at: string | null; unread_count: number;
     }) | null>;
+    conversationAddress(input: { conversationId: string }): Promise<{
+        accountId: string; channel: 'whatsapp' | 'telegram'; kind: string; exactValue: string;
+    } | null>;
     accounts(): Promise<Array<{ id: string; channel: 'whatsapp' | 'telegram' }>>;
     messages(input: { conversationId: string; limit?: number; before?: { occurredAt: string; id: string } }): Promise<Contract<'Message'>[]>;
     messagePage(input: { conversationId: string; limit?: number; before?: { occurredAt: string; id: string } }): Promise<{ items: Contract<'Message'>[]; hasMore: boolean }>;
+    messageByProviderId(input: { conversationId: string; providerMessageId: string }): Promise<Contract<'Message'> | null>;
     aiContext(input: { conversationId: string; expectedContextVersion?: Contract<'Version'>;
         throughMessageId?: string | null; excludeMessageIds?: string[]; excludeGenerationId?: string; limit?: number }): Promise<{
         conversationId: string; contextVersion: Contract<'Version'>; throughMessageId: string | null;

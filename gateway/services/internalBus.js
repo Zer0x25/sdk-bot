@@ -1103,7 +1103,7 @@ function startInternalBus(opts = {}) {
         !['127.0.0.1', '::1', 'localhost'].includes(host);
     const verify = createVerifier({ secret });
     const sessionApi = createSessionApi(() => { getSettingsDB(); return getGlobalPolicy(); }, opts.archive,
-        getContactsDB, opts.getChannelStatus, opts.controlService);
+        getContactsDB, opts.getChannelStatus, opts.controlService, opts.getAdapter);
     const server = http.createServer(async (req, res) => {
         let u;
         try { u = new URL(req.url || '/', 'http://gateway.local'); }

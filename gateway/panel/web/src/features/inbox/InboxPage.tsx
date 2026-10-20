@@ -9,9 +9,17 @@ import {
   getAccounts,
   getConversation,
   getConversations,
-  getMessages,
-  PanelApiError,
+  getOperation,
+  getSession,
   markConversationRead,
+  PanelApiError,
+  releaseConversation,
+  sendConversationMessage,
+  takeoverConversation,
+  updateConversationLifecycle,
+  type ControlResponse,
+  getMessages,
+  type Message,
   type Channel,
   type PageCursor
 } from './api';
@@ -25,13 +33,35 @@ export function InboxPage() {
   const queryClient = useQueryClient();
   const live = useInboxEvents(conversationId);
   const readAttempt = useRef<string | null>(null);
+  const activeConversationId = useRef(conversationId);
   const [isAtLatest, setIsAtLatest] = useState(true);
   const [filter, setFilter] = useState<InboxFilter>('all');
   const [channel, setChannel] = useState<Channel | ''>('');
   const [searchInput, setSearchInput] = useState('');
   const [search, setSearch] = useState('');
+  const [draft, setDraft] = useState('');
+  const [optimisticMessages, setOptimisticMessages] = useState<Message[]>([]);
+  const [uncertainSends, setUncertainSends] = useState<Array<{
+    conversationId: string; text: string; clientMessageId: string; state: 'in_progress' | 'delivery_unknown';
+  }>>([]);
+  const [pendingTakeoverId, setPendingTakeoverId] = useState<string | null>(null);
+  const [controlNotice, setControlNotice] = useState<string | null>(null);
+
+  const sessionQuery = useQuery({
+    queryKey: ['inbox', 'session'],
+    queryFn: ({ signal }) => getSession(signal),
+    staleTime: 30_000
+  });
+
+  const pendingTakeoverQuery = useQuery({
+    queryKey: ['inbox', 'operation', pendingTakeoverId],
+    queryFn: ({ signal }) => getOperation(pendingTakeoverId!, signal),
+    enabled: Boolean(pendingTakeoverId),
+    refetchInterval: query => !query.state.data || query.state.data.status === 'taking_control' ? 1000 : false
+  });
 
   useEffect(() => {
+    activeConversationId.current = conversationId;
     setIsAtLatest(true);
     readAttempt.current = null;
   }, [conversationId]);
@@ -90,6 +120,11 @@ export function InboxPage() {
   const messages = [...new Map([...archivedMessages, ...(liveMessagesQuery.data?.items ?? [])]
     .map(message => [message.id, message] as const)).values()]
     .sort((left, right) => left.occurredAt.localeCompare(right.occurredAt) || left.id.localeCompare(right.id));
+  const confirmedClientMessageIds = new Set(messages.map(message => message.clientMessageId).filter((id): id is string => Boolean(id)));
+  const visibleOptimisticMessages = optimisticMessages.filter(message => message.conversationId === conversationId
+    && !confirmedClientMessageIds.has(message.clientMessageId || ''));
+  const visibleMessages = [...messages, ...visibleOptimisticMessages]
+    .sort((left, right) => left.occurredAt.localeCompare(right.occurredAt) || left.id.localeCompare(right.id));
   const selectedConversation = conversationQuery.data?.conversation;
   const accounts = accountsQuery.data?.items ?? [];
   const selectedAccount = accounts.find(account => account.id === selectedConversation?.accountId);
@@ -105,6 +140,35 @@ export function InboxPage() {
     if (message.direction !== 'inbound' || !message.inboundSeq) return latest;
     return latest === null || BigInt(message.inboundSeq) > BigInt(latest) ? message.inboundSeq : latest;
   }, null);
+
+  useEffect(() => {
+    if (!conversationId) {
+      setPendingTakeoverId(null);
+      setControlNotice(null);
+      return;
+    }
+    setDraft('');
+    setPendingTakeoverId(null);
+    setControlNotice(null);
+  }, [conversationId]);
+
+  useEffect(() => {
+    const operation = pendingTakeoverQuery.data;
+    if (!operation || operation.id !== pendingTakeoverId) return;
+    if (operation.status === 'completed') {
+      setPendingTakeoverId(null);
+      setControlNotice(null);
+      void queryClient.invalidateQueries({ queryKey: ['inbox', 'conversation', operation.conversationId] });
+      void queryClient.invalidateQueries({ queryKey: ['inbox', 'conversations'] });
+    } else if (operation.status === 'failed') {
+      setPendingTakeoverId(null);
+      setControlNotice('No se pudo completar la toma de control. Actualiza la conversación.');
+    }
+  }, [pendingTakeoverId, pendingTakeoverQuery.data, queryClient]);
+
+  useEffect(() => {
+    if (selectedConversation?.control.status !== 'taking_control') setControlNotice(null);
+  }, [selectedConversation?.control.status]);
 
   const readMutation = useMutation({
     mutationFn: (input: { conversationId: string; throughInboundSeq: string }) => markConversationRead(input.conversationId, input.throughInboundSeq),
@@ -136,6 +200,174 @@ export function InboxPage() {
   const readError = readMutation.isError && readMutation.variables?.conversationId === conversationId
     ? asError(readMutation.error)
     : null;
+
+  const controlMutation = useMutation<ControlResponse, Error, {
+    action: 'takeover' | 'release' | 'resolve' | 'reopen'; conversationId: string; expectedVersion: string; overrideOwner: boolean;
+  }>({
+    mutationFn: async input => {
+      if (input.action === 'takeover') return takeoverConversation(input.conversationId, input.expectedVersion, input.overrideOwner);
+      if (input.action === 'release') return releaseConversation(input.conversationId, input.expectedVersion, input.overrideOwner);
+      return updateConversationLifecycle(input.conversationId, input.expectedVersion, input.action === 'resolve' ? 'resolved' : 'open');
+    },
+    onSuccess: async result => {
+      setControlNotice(null);
+      if ('operation' in result) {
+        setPendingTakeoverId(result.operation.id);
+        setControlNotice('La toma de control está esperando que terminen los envíos anteriores.');
+      } else {
+        const changedConversationId = result.conversation.id;
+        await Promise.all([
+          queryClient.invalidateQueries({ queryKey: ['inbox', 'conversation', changedConversationId] }),
+          queryClient.invalidateQueries({ queryKey: ['inbox', 'conversations'] })
+        ]);
+      }
+    }
+  });
+
+  function runControlAction(action: 'takeover' | 'release' | 'resolve' | 'reopen') {
+    if (!conversationId || !selectedConversation) return;
+    controlMutation.reset();
+    controlMutation.mutate({ action, conversationId, expectedVersion: selectedConversation.control.controlVersion,
+      overrideOwner: Boolean((action === 'takeover' || action === 'release')
+        && selectedConversation.control.ownerId
+        && selectedConversation.control.ownerId !== sessionQuery.data?.actor.id
+        && sessionQuery.data?.actor.capabilities.includes('control:override')) });
+  }
+
+  const sendMutation = useMutation<Awaited<ReturnType<typeof sendConversationMessage>>, Error,
+    { conversationId: string; text: string; clientMessageId: string; expectedVersion: string; handledThroughInboundSeq?: string }>({
+    mutationFn: variables => sendConversationMessage(variables.conversationId, {
+      expectedVersion: variables.expectedVersion,
+      clientMessageId: variables.clientMessageId,
+      text: variables.text,
+      ...(variables.handledThroughInboundSeq ? { handledThroughInboundSeq: variables.handledThroughInboundSeq } : {})
+    }),
+    onMutate: variables => {
+      const occurredAt = new Date().toISOString();
+      const optimistic: Message = {
+        id: variables.clientMessageId,
+        conversationId: variables.conversationId,
+        providerMessageId: null,
+        clientMessageId: variables.clientMessageId,
+        inboundSeq: null,
+        direction: 'outbound',
+        authorKind: 'operator',
+        actorId: sessionQuery.data?.actor.id ?? null,
+        content: { type: 'text', text: variables.text },
+        occurredAt,
+        ingestedAt: occurredAt,
+        deliveryStatus: 'sending',
+        replyToId: null,
+        source: 'panel',
+        deduplicationQuality: 'unknown'
+      };
+      setOptimisticMessages(previous => [...previous.filter(message => message.clientMessageId !== variables.clientMessageId), optimistic]);
+    },
+    onSuccess: (_result, variables) => {
+      if (activeConversationId.current === variables.conversationId) setDraft(current => current === variables.text ? '' : current);
+      setUncertainSends(previous => previous.filter(item => item.clientMessageId !== variables.clientMessageId
+        || item.conversationId !== variables.conversationId));
+      setOptimisticMessages(previous => previous.map(message => message.clientMessageId === variables.clientMessageId
+        ? { ...message, deliveryStatus: 'sent' } : message));
+      void Promise.all([
+        queryClient.invalidateQueries({ queryKey: ['inbox', 'conversation', variables.conversationId] }),
+        queryClient.invalidateQueries({ queryKey: ['inbox', 'conversations'] }),
+        queryClient.fetchQuery({
+          queryKey: ['inbox', 'live-messages', variables.conversationId],
+          queryFn: () => getMessages(variables.conversationId, {}),
+          staleTime: 0
+        })
+      ]).catch(() => undefined);
+    },
+    onError: (error, variables) => {
+      const inProgress = error instanceof PanelApiError && error.code === 'OUTBOUND_IN_PROGRESS';
+      const deliveryUnknown = error instanceof PanelApiError
+        && (error.code === 'OUTBOUND_DELIVERY_UNKNOWN' || error.status === 0 || error.status >= 500);
+      if (inProgress || deliveryUnknown) {
+        const state = inProgress ? 'in_progress' : 'delivery_unknown';
+        setUncertainSends(previous => [...previous.filter(item => item.clientMessageId !== variables.clientMessageId
+          || item.conversationId !== variables.conversationId), {
+          conversationId: variables.conversationId,
+          text: variables.text,
+          clientMessageId: variables.clientMessageId,
+          state
+        }]);
+        setOptimisticMessages(previous => previous.map(message => message.clientMessageId === variables.clientMessageId
+          ? { ...message, deliveryStatus: inProgress ? 'sending' : 'delivery_unknown' } : message));
+      } else {
+        setUncertainSends(previous => previous.filter(item => item.clientMessageId !== variables.clientMessageId
+          || item.conversationId !== variables.conversationId));
+        setOptimisticMessages(previous => previous.filter(message => message.clientMessageId !== variables.clientMessageId));
+      }
+    }
+  });
+
+  useEffect(() => {
+    if (!messages.length) return;
+    const confirmed = new Set(messages.map(message => message.clientMessageId).filter((id): id is string => Boolean(id)));
+    if (!confirmed.size) return;
+    setOptimisticMessages(previous => {
+      const next = previous.filter(message => !message.clientMessageId || !confirmed.has(message.clientMessageId));
+      return next.length === previous.length ? previous : next;
+    });
+    const delivered = uncertainSends.filter(item => item.conversationId === conversationId && confirmed.has(item.clientMessageId));
+    if (!delivered.length) return;
+    setUncertainSends(previous => previous.filter(item => item.conversationId !== conversationId || !confirmed.has(item.clientMessageId)));
+    if (delivered.some(item => item.text === draft)) setDraft('');
+  }, [messages, conversationId, uncertainSends, draft]);
+
+  function submitMessage(text = draft, clientMessageId: string = crypto.randomUUID(), retryConfirmed = false) {
+    if (!conversationId || !selectedConversation || !text.trim()
+      || sendMutation.isPending && sendMutation.variables?.conversationId === conversationId) return;
+    if (uncertainSends.some(item => item.conversationId === conversationId) && !retryConfirmed) return;
+    setControlNotice(null);
+    sendMutation.mutate({
+      conversationId,
+      text,
+      clientMessageId,
+      expectedVersion: selectedConversation.control.controlVersion,
+      ...(latestInboundSeq && isAtLatest ? { handledThroughInboundSeq: latestInboundSeq } : {})
+    });
+  }
+
+  function retryUncertainSend() {
+    const uncertainSend = uncertainSends.find(item => item.conversationId === conversationId);
+    if (!uncertainSend) return;
+    if (uncertainSend.state === 'in_progress') {
+      submitMessage(uncertainSend.text, uncertainSend.clientMessageId, true);
+      return;
+    }
+    if (!window.confirm('El proveedor pudo haber enviado el mensaje. Reintentar puede enviar un duplicado. ¿Quieres crear un nuevo envío?')) return;
+    setUncertainSends(previous => previous.filter(item => item.clientMessageId !== uncertainSend.clientMessageId
+      || item.conversationId !== uncertainSend.conversationId));
+    submitMessage(uncertainSend.text, crypto.randomUUID(), true);
+  }
+
+  const actor = sessionQuery.data?.actor;
+  const control = selectedConversation?.control;
+  const canOverrideOwner = Boolean(control?.ownerId && actor && actor.id !== control.ownerId
+    && actor.capabilities.includes('control:override'));
+  const ownerCanAct = Boolean(!control?.ownerId || actor?.id === control.ownerId || canOverrideOwner);
+  const controlConfirmed = control?.status === 'confirmed';
+  const currentControlBusy = controlMutation.isPending && controlMutation.variables?.conversationId === conversationId;
+  const currentControlError = controlMutation.isError && controlMutation.variables?.conversationId === conversationId
+    ? asError(controlMutation.error) : null;
+  const canTakeover = Boolean(actor?.capabilities.includes('control:write') && controlConfirmed
+    && control?.lifecycle === 'open' && control?.accessPolicy !== 'ignored'
+    && !selectedConversation?.requiresReview && ownerCanAct && !currentControlBusy);
+  const canRelease = Boolean(actor?.capabilities.includes('control:write') && controlConfirmed
+    && control?.automationMode === 'human' && ownerCanAct && !currentControlBusy);
+  const canResolve = Boolean(actor?.capabilities.includes('conversations:write') && controlConfirmed
+    && control?.lifecycle === 'open' && !currentControlBusy);
+  const canReopen = Boolean(actor?.capabilities.includes('conversations:write') && controlConfirmed
+    && control?.lifecycle === 'resolved' && !currentControlBusy);
+  const canSend = Boolean(actor?.capabilities.includes('messages:send') && selectedAccount?.capabilities.reply
+    && selectedAccount.status === 'connected' && controlConfirmed && control?.automationMode === 'human'
+    && control.lifecycle === 'open' && !selectedConversation?.requiresReview && ownerCanAct);
+  const currentUncertainSend = uncertainSends.find(item => item.conversationId === conversationId) ?? null;
+  const currentSendPending = sendMutation.isPending && sendMutation.variables?.conversationId === conversationId;
+  const sendError = sendMutation.isError && sendMutation.variables?.conversationId === conversationId && !currentUncertainSend
+    ? asError(sendMutation.error) : null;
 
   return (
     <div className={`inbox-layout${conversationId ? ' has-selected-chat' : ''}`}>
@@ -170,7 +402,7 @@ export function InboxPage() {
         conversation={selectedConversation}
         detailLoading={Boolean(conversationId) && conversationQuery.isLoading}
         detailError={conversationError}
-        messages={messages}
+        messages={visibleMessages}
         messagePageCount={messagePages.length}
         messagesLoading={Boolean(conversationId) && messagesQuery.isLoading}
         messagesError={messageError}
@@ -193,6 +425,28 @@ export function InboxPage() {
           }
         }}
         onRetryRead={sendReadCursor}
+        actor={actor}
+        account={selectedAccount}
+        canTakeover={canTakeover}
+        canRelease={canRelease}
+        canResolve={canResolve}
+        canReopen={canReopen}
+        canSend={canSend}
+        controlBusy={currentControlBusy || Boolean(pendingTakeoverId)}
+        controlError={currentControlError}
+        controlNotice={controlNotice}
+        onTakeover={() => runControlAction('takeover')}
+        onRelease={() => runControlAction('release')}
+        onResolve={() => runControlAction('resolve')}
+        onReopen={() => runControlAction('reopen')}
+        draft={draft}
+        onDraftChange={setDraft}
+        sendBusy={currentSendPending}
+        sendError={sendError}
+        uncertainSend={currentUncertainSend}
+        onSubmitMessage={() => submitMessage()}
+        onRetryUncertainSend={retryUncertainSend}
+        onRestoreUncertainDraft={() => { if (currentUncertainSend) setDraft(currentUncertainSend.text); }}
       />
       <ConversationDetails
         conversation={selectedConversation}

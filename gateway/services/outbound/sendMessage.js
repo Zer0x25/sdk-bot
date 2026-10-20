@@ -2,7 +2,7 @@ const { randomUUID } = require('node:crypto');
 
 const SYSTEM_ACTOR = '00000000-0000-4000-8000-000000000002';
 const OUTBOUND_OPTIONS = new Set(['source', 'actorId', 'idempotencyKey', 'conversationId',
-    'controlSnapshot', 'policy', 'generationId', 'bubbleIndex', 'isCurrent', '_outboundAccountId']);
+    'controlSnapshot', 'policy', 'generationId', 'bubbleIndex', 'isCurrent', '_outboundAccountId', 'useMarkdown']);
 
 function withoutOutboundOptions(options = {}) {
     return Object.fromEntries(Object.entries(options).filter(([key]) => !OUTBOUND_OPTIONS.has(key)));

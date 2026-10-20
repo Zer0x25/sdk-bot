@@ -526,17 +526,34 @@ function archiveBoundary(error) {
             CONTROL_SERVICE_NOT_READY: 'El servicio de control no está listo.',
             CONTROL_VERSION_CONFLICT: 'La conversación cambió; vuelve a cargarla.',
             CONTROL_OWNER_CONFLICT: 'La conversación pertenece a otro operador.',
+            CONTROL_HUMAN_SEND_IN_FLIGHT: 'Espera a que termine el envío humano antes de cambiar el control.',
             IDENTITY_AMBIGUOUS: 'La identidad tiene más de una coincidencia; revisa canal y cuenta.',
             CONVERSATION_NOT_FOUND: 'Conversación no encontrada.',
             CONTROL_TARGET_NOT_FOUND: 'No se encontró una identidad exacta para ese contacto.'
         };
         return new BoundaryError(status, code, messages[error.code] || 'No se pudo cambiar el control de la conversación.');
     }
+    const outbound = {
+        OUTBOUND_CONTROL_STALE: [409, 'CONTROL_VERSION_CONFLICT', 'El control cambió antes de iniciar el envío. Actualiza el chat.'],
+        OUTBOUND_CONTROL_OWNER_CONFLICT: [409, 'CONTROL_OWNER_CONFLICT', 'La conversación pertenece a otro operador.'],
+        OUTBOUND_DELIVERY_UNKNOWN: [409, 'OUTBOUND_DELIVERY_UNKNOWN', 'El proveedor pudo haber recibido el mensaje. Revisa el chat antes de intentar enviarlo de nuevo.'],
+        OUTBOUND_CLAIM_UNCERTAIN: [409, 'OUTBOUND_DELIVERY_UNKNOWN', 'El proveedor pudo haber recibido el mensaje. Revisa el chat antes de intentar enviarlo de nuevo.'],
+        OUTBOUND_IN_PROGRESS: [409, 'OUTBOUND_IN_PROGRESS', 'El envío sigue pendiente de confirmación.'],
+        OUTBOUND_CONTROL_REQUIRED: [409, 'CONTROL_VERSION_CONFLICT', 'La solicitud no incluye un estado de control válido.'],
+        OUTBOUND_ACCOUNT_CHANGED: [409, 'CHANNEL_NOT_READY', 'La cuenta del canal cambió antes del envío.'],
+        OUTBOUND_ACCOUNT_UNAVAILABLE: [409, 'CHANNEL_NOT_READY', 'La cuenta del canal no está disponible.'],
+        OUTBOUND_IDEMPOTENCY_CONFLICT: [409, 'IDEMPOTENCY_KEY_REUSED', 'El identificador del mensaje ya se usó con otro contenido.'],
+        OUTBOUND_REJECTED: [409, 'OUTBOUND_REJECTED', 'El canal rechazó el envío. Conservamos el borrador.']
+    };
+    if (outbound[error?.code]) {
+        const [status, code, message] = outbound[error.code];
+        return new BoundaryError(status, code, message);
+    }
     return new BoundaryError(503, 'SERVICE_UNAVAILABLE', 'Archivo de conversaciones no disponible.');
 }
 
-/** @param {() => any} getPolicy @param {any} archive @param {() => any} [getContacts] @param {(channel:string,accountId:string) => any} [getChannelStatus] @param {any} [controlService] */
-function createSessionApi(getPolicy, archive, getContacts = () => ({}), getChannelStatus = (_channel, _accountId) => 'disconnected', controlService = null) {
+/** @param {() => any} getPolicy @param {any} archive @param {() => any} [getContacts] @param {(channel:string,accountId:string) => any} [getChannelStatus] @param {any} [controlService] @param {(channel:string,accountId:string) => any} [getAdapter] */
+function createSessionApi(getPolicy, archive, getContacts = () => ({}), getChannelStatus = (_channel, _accountId) => 'disconnected', controlService = null, getAdapter = () => null) {
     const readRevisions = new Map();
     return async function route(req, res, context, pathname, requestBody = Buffer.alloc(0)) {
         const capability = capabilityFor(req.method, pathname);
@@ -673,6 +690,98 @@ function createSessionApi(getPolicy, archive, getContacts = () => ({}), getChann
                     scope, position: { occurredAt: oldest.occurredAt, id: oldest.id } }) : null;
                 return send(res, 200, assertValid('MessagesResponse', {
                     items: page.items, nextCursor, snapshot
+                }), context.requestId);
+            }
+            if (req.method === 'POST' && messages) {
+                rejectQuery(req);
+                if (!controlService) throw new BoundaryError(503, 'CONTROL_SERVICE_NOT_READY', 'Servicio de control no disponible.');
+                if (!archive || typeof getAdapter !== 'function') throw new BoundaryError(503, 'SERVICE_UNAVAILABLE', 'Envío desde el panel no disponible.');
+                const conversationId = conversationPathId(messages[1]);
+                let request;
+                try { request = JSON.parse(requestBody.toString('utf8')); }
+                catch { throw invalid('Cuerpo JSON inválido.'); }
+                if (!validate('SendMessageRequest', request).valid) throw invalid('Solicitud de mensaje inválida.');
+                const idempotencyKey = `panel_${context.actor.id}_${conversationId}_${request.clientMessageId}`;
+                const existing = await archive.outboundIntent(idempotencyKey);
+                if (existing) {
+                    if (existing.source !== 'human' || existing.actorId !== context.actor.id
+                        || existing.conversationId !== conversationId || existing.payload?.text !== request.text
+                        || existing.policy?.clientMessageId !== request.clientMessageId) {
+                        throw new BoundaryError(409, 'IDEMPOTENCY_KEY_REUSED', 'El identificador del mensaje ya se usó con otro contenido.');
+                    }
+                    if (existing.state === 'accepted') {
+                        const message = existing.providerMessageId
+                            ? await archive.messageByProviderId({ conversationId, providerMessageId: existing.providerMessageId }) : null;
+                        if (!message) throw new BoundaryError(409, 'OUTBOUND_DELIVERY_UNKNOWN', 'El envío se aceptó, pero el mensaje no pudo reconciliarse con el historial. Revisa el chat antes de volver a enviarlo.');
+                        return send(res, 202, assertValid('SendMessageResponse', {
+                            messageId: message.id, clientMessageId: request.clientMessageId
+                        }), context.requestId);
+                    }
+                    if (existing.state === 'delivery_unknown') {
+                        throw new BoundaryError(409, 'OUTBOUND_DELIVERY_UNKNOWN', 'El proveedor pudo haber recibido el mensaje. Revisa el chat antes de intentar enviarlo de nuevo.');
+                    }
+                    if (existing.state === 'sending') {
+                        throw new BoundaryError(409, 'OUTBOUND_IN_PROGRESS', 'El envío sigue pendiente de confirmación.');
+                    }
+                    if (existing.state === 'rejected') {
+                        throw archiveBoundary(Object.assign(new Error(existing.errorCode || 'OUTBOUND_REJECTED'), {
+                            code: existing.errorCode || 'OUTBOUND_REJECTED'
+                        }));
+                    }
+                }
+                const authority = await archive.controlAuthority();
+                if (authority.mode !== 'sqlite') throw new BoundaryError(503, 'CONTROL_AUTHORITY_NOT_ACTIVE', 'El control de conversaciones aún no está activo.');
+                if (!authority.serviceReady) throw new BoundaryError(503, 'CONTROL_SERVICE_NOT_READY', 'El servicio de control no está listo.');
+                const state = await archive.controlState(conversationId);
+                if (!state) throw new BoundaryError(404, 'NOT_FOUND', 'Conversación no encontrada.');
+                if (state.controlVersion !== request.expectedVersion || state.status !== 'confirmed'
+                    || state.automationMode !== 'human' || state.lifecycle !== 'open' || state.requiresReview
+                    || state.accessPolicy === 'ignored') {
+                    throw new BoundaryError(409, 'CONTROL_VERSION_CONFLICT', 'El control cambió o la conversación aún no está disponible para responder. Actualiza el chat.');
+                }
+                const overrideOwner = Boolean(state.ownerId && state.ownerId !== context.actor.id
+                    && context.actor.capabilities.includes('control:override'));
+                if (state.ownerId && state.ownerId !== context.actor.id && !overrideOwner) {
+                    throw new BoundaryError(409, 'CONTROL_OWNER_CONFLICT', 'La conversación pertenece a otro operador.');
+                }
+                const row = await archive.conversationView({ conversationId, actorId: context.actor.id });
+                const address = await archive.conversationAddress({ conversationId });
+                if (!row || !address || address.accountId !== row.account_id || address.channel !== row.channel) {
+                    throw new BoundaryError(409, 'IDENTITY_AMBIGUOUS', 'No hay una identidad canónica segura para enviar a este chat.');
+                }
+                if (!CAPABILITIES[address.channel].reply || accountStatus(getChannelStatus(address.channel, address.accountId)) !== 'connected') {
+                    throw new BoundaryError(409, 'CHANNEL_NOT_READY', 'Conecta la cuenta del canal antes de enviar.');
+                }
+                const adapter = getAdapter(address.channel, address.accountId);
+                if (!adapter || adapter.accountId !== address.accountId) {
+                    throw new BoundaryError(409, 'CHANNEL_NOT_READY', 'La conexión del canal cambió. Actualiza su estado e inténtalo de nuevo.');
+                }
+                const policy = await archive.controlPolicy();
+                const controlSnapshot = { conversationId, controlVersion: state.controlVersion,
+                    contextVersion: state.contextVersion, policyVersion: policy.policyVersion };
+                let result;
+                try {
+                    result = await adapter.sendMessage(`${address.channel}:${address.exactValue}`, request.text, {
+                        source: 'human', actorId: context.actor.id, idempotencyKey, conversationId,
+                        controlSnapshot, policy: { clientMessageId: request.clientMessageId, overrideOwner }, useMarkdown: false
+                    });
+                } catch (error) { throw archiveBoundary(error); }
+                const intent = result?._outbox;
+                if (!intent?.id || intent.state !== 'accepted') {
+                    throw new BoundaryError(409, 'OUTBOUND_IN_PROGRESS', 'El envío quedó guardado y espera confirmación.');
+                }
+                const message = intent.providerMessageId
+                    ? await archive.messageByProviderId({ conversationId, providerMessageId: intent.providerMessageId }) : null;
+                if (!message) throw new BoundaryError(409, 'OUTBOUND_DELIVERY_UNKNOWN', 'El envío se aceptó, pero el mensaje no pudo reconciliarse con el historial. Revisa el chat antes de volver a enviarlo.');
+                if (request.handledThroughInboundSeq !== undefined) {
+                    try {
+                        const read = await archive.markRead({ conversationId, actorId: context.actor.id,
+                            throughInboundSeq: request.handledThroughInboundSeq });
+                        if (read) readRevisions.set(context.actor.id, (readRevisions.get(context.actor.id) ?? 0) + 1);
+                    } catch { /* A successful provider send stays successful if the local read cursor needs a retry. */ }
+                }
+                return send(res, 202, assertValid('SendMessageResponse', {
+                    messageId: message.id, clientMessageId: request.clientMessageId
                 }), context.requestId);
             }
             const read = /^\/v1\/conversations\/([^/]+)\/read$/.exec(pathname);

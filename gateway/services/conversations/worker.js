@@ -12,7 +12,7 @@ let db;
 const READ_ONLY_METHODS = new Set(['snapshot','telegramCursor','pendingLegacyDispatches','controlState','controlAuthority','controlImportStatus','controlImportEntries',
     'controlPolicy','controlOperation','pendingControlOperations','controlTargets','controlByIdentity',
     'outboundIntent','outboundIntents',
-    'conversation','conversations','conversationRows','conversationView','accounts','messages','messagePage','aiContext',
+    'conversation','conversations','conversationRows','conversationView','conversationAddress','accounts','messages','messagePage','messageByProviderId','aiContext',
     'events','eventsPage','diagnostics','close']);
 function fail(code) { throw Object.assign(new Error(code), { code }); }
 function one(sql, ...params) { return db.prepare(sql).get(...params); }
@@ -423,16 +423,23 @@ function ingest(input) {
     const now = new Date().toISOString();
     const providerId = input.providerMessageId ?? null;
     if (providerId !== null) assertValid('ProviderMessageId', providerId);
-    if (!['live','history','import'].includes(input.source)) fail('INVALID_SOURCE');
+    if (!['live','history','import','panel','automation'].includes(input.source)) fail('INVALID_SOURCE');
+    if (input.actorId != null) assertValid('Id', input.actorId);
+    if (input.clientMessageId != null) assertValid('Id', input.clientMessageId);
+    if (input.source === 'panel' && (input.direction !== 'outbound' || input.authorKind !== 'operator'
+        || !input.actorId || !input.clientMessageId)) fail('INVALID_PANEL_MESSAGE');
+    if (input.source === 'automation' && (input.direction !== 'outbound' || input.authorKind !== 'ai')) fail('INVALID_AUTOMATION_MESSAGE');
     let content = input.content;
     const storedText = content?.type === 'text' ? content.text : content?.caption;
     if (typeof storedText === 'string' && Buffer.byteLength(storedText) > 65536) {
         content = { type: 'oversized', originalBytes: Buffer.byteLength(storedText), reason: 'text_limit' };
     }
     const draft = {
-        id: randomUUID(), conversationId: c.id, providerMessageId: providerId, clientMessageId: null,
+        id: randomUUID(), conversationId: c.id, providerMessageId: providerId, clientMessageId: input.clientMessageId ?? null,
         inboundSeq: input.direction === 'inbound' && input.source === 'live' ? String(BigInt(c.inbound_seq) + 1n) : null,
-        direction: input.direction, authorKind: input.direction === 'outbound' && input.source !== 'live' ? 'unknown' : input.authorKind, actorId: null, content,
+        direction: input.direction, authorKind: ['panel','automation'].includes(input.source) ? input.authorKind
+            : input.direction === 'outbound' && input.source !== 'live' ? 'unknown' : input.authorKind,
+        actorId: input.actorId ?? null, content,
         occurredAt: input.occurredAt, ingestedAt: now, deliveryStatus: input.direction === 'inbound' ? 'received' : 'sent',
         replyToId: null, source: input.source, deduplicationQuality: providerId === null ? 'unknown' : 'provider_id'
     };
@@ -472,7 +479,7 @@ function appendMessageEvent(message, aggregate, type, now) {
     const event = assertValid('Event', { schemaVersion: 1, cursor, type, occurredAt: now,
         data: { conversationId: message.conversationId, messageId: message.id, aggregateVersion: aggregate } });
     run('INSERT INTO events(seq,conversation_id,message_id,created_at,actor_id,payload) VALUES(?,?,?,?,?,?)',
-        cursor.seq, message.conversationId, message.id, now, null, JSON.stringify(event));
+        cursor.seq, message.conversationId, message.id, now, message.actorId ?? null, JSON.stringify(event));
     run('UPDATE archive_meta SET seq=? WHERE id=1', cursor.seq);
     return event;
 }
@@ -524,6 +531,12 @@ function writeControlState(input) {
     if (!row) return { status: 'missing' };
     const current = controlStateFromRow(row);
     if (input.expectedVersion !== current.controlVersion) return { status: 'conflict', control: current };
+    const nextState = input.state;
+    if (current.automationMode === 'human'
+        && (nextState.automationMode !== 'human' || nextState.lifecycle !== 'open' || nextState.ownerId !== current.ownerId)
+        && one("SELECT id FROM outbound_intents WHERE conversation_id=? AND source='human' AND state='sending' LIMIT 1", input.conversationId)) {
+        return { status: 'human_send_in_flight', control: current };
+    }
     const nextVersion = String(BigInt(current.controlVersion) + 1n);
     const state = { ...input.state };
     for (const key of ['profileKey','requiresReview','reviewReasons']) {
@@ -719,6 +732,29 @@ function claimOutboundIntent(input) {
             }
         }
     }
+    if (current.source === 'human') {
+        const authority = controlAuthority();
+        const expected = current.controlSnapshot;
+        const control = current.conversationId ? controlState(current.conversationId) : null;
+        const policy = controlPolicy();
+        const ownerAllowed = !control?.ownerId || control.ownerId === current.actorId || current.policy?.overrideOwner === true;
+        const eligible = control && !control.requiresReview && !policy.requiresReview && control.lifecycle === 'open'
+            && control.status === 'confirmed' && control.automationMode === 'human' && control.accessPolicy !== 'ignored'
+            && ownerAllowed;
+        let rejection = null;
+        if (control?.ownerId && control.ownerId !== current.actorId && !ownerAllowed) rejection = 'OUTBOUND_CONTROL_OWNER_CONFLICT';
+        else if (!authority.serviceReady || authority.mode !== 'sqlite' || !expected
+            || expected.conversationId !== current.conversationId || expected.controlVersion !== control?.controlVersion
+            || expected.contextVersion !== control?.contextVersion || expected.policyVersion !== policy.policyVersion || !eligible) {
+            rejection = 'OUTBOUND_CONTROL_STALE';
+        }
+        if (rejection) {
+            const now = new Date().toISOString();
+            run("UPDATE outbound_intents SET state='rejected',error_code=?,updated_at=?,completed_at=? WHERE idempotency_key=? AND state='intent'",
+                rejection, now, now, input.idempotencyKey);
+            return { status: 'rejected', errorCode: rejection, intent: outboundIntent(input.idempotencyKey) };
+        }
+    }
     const now = new Date().toISOString();
     const changed = run("UPDATE outbound_intents SET state='sending',updated_at=?,sending_at=? WHERE idempotency_key=? AND state='intent'",
         now, now, input.idempotencyKey).changes;
@@ -742,7 +778,45 @@ function finishOutboundIntent(input) {
     const now = new Date().toISOString();
     run(`UPDATE outbound_intents SET state=?,provider_message_id=?,provider_result=?,error_code=?,updated_at=?,completed_at=? WHERE id=? AND state='sending'`,
         input.state, providerMessageId, providerResult, errorCode, now, now, row.id);
-    return outboundIntentFromRow(one('SELECT * FROM outbound_intents WHERE id=?', row.id));
+    const updated = outboundIntentFromRow(one('SELECT * FROM outbound_intents WHERE id=?', row.id));
+    if (input.state === 'accepted' && updated.source === 'human') materializeHumanOutbound(updated, providerMessageId, now);
+    return updated;
+}
+function materializeHumanOutbound(intent, providerMessageId, now) {
+    const clientMessageId = intent.policy?.clientMessageId;
+    if (!providerMessageId || typeof clientMessageId !== 'string') fail('OUTBOUND_MESSAGE_CORRELATION_REQUIRED');
+    assertValid('Id', clientMessageId);
+    const kind = intent.channel === 'telegram' ? 'telegram_chat_id'
+        : intent.destination.endsWith('@lid') ? 'whatsapp_lid' : 'whatsapp_jid';
+    const identityKey = { accountId: intent.accountId, channel: intent.channel, kind, exactValue: intent.destination };
+    const identity = lookup(identityKey);
+    if (!identity || identity.conversation_id !== intent.conversationId) fail('OUTBOUND_IDENTITY_MISMATCH');
+    const fingerprint = one('SELECT message_id FROM fingerprints WHERE account_id=? AND canonical_id=? AND provider_id=?',
+        intent.accountId, identity.canonical_id, providerMessageId);
+    if (fingerprint) {
+        const stored = one('SELECT payload FROM messages WHERE id=? AND conversation_id=?', fingerprint.message_id, intent.conversationId);
+        if (!stored) fail('OUTBOUND_ARCHIVE_RECONCILIATION_FAILED');
+        const message = JSON.parse(stored.payload);
+        const text = intent.payload?.text;
+        if (message.direction !== 'outbound' || message.content?.type !== 'text' || message.content.text !== text) {
+            fail('OUTBOUND_ARCHIVE_RECONCILIATION_FAILED');
+        }
+        const next = { ...message, clientMessageId, authorKind: 'operator', actorId: intent.actorId, source: 'panel' };
+        assertValid('Message', next);
+        if (JSON.stringify(next) !== JSON.stringify(message)) {
+            const conversation = one('SELECT aggregate_version FROM conversations WHERE id=?', intent.conversationId);
+            const aggregate = String(BigInt(conversation.aggregate_version) + 1n);
+            run('UPDATE messages SET source=?,payload=? WHERE id=?', next.source, JSON.stringify(next), next.id);
+            run('UPDATE conversations SET aggregate_version=? WHERE id=?', aggregate, intent.conversationId);
+            appendMessageEvent(next, aggregate, 'message.updated', now);
+        }
+        return;
+    }
+    if (typeof intent.payload?.text !== 'string') fail('OUTBOUND_ARCHIVE_RECONCILIATION_FAILED');
+    const result = ingest({ identity: identityKey, providerMessageId, source: 'panel', direction: 'outbound',
+        authorKind: 'operator', actorId: intent.actorId, clientMessageId, occurredAt: now,
+        content: { type: 'text', text: intent.payload.text } });
+    if (result.status === 'quarantined') fail('OUTBOUND_ARCHIVE_RECONCILIATION_FAILED');
 }
 function reconcileOutboundIntent(input) {
     if (!input || typeof input.idempotencyKey !== 'string') fail('INVALID_IDEMPOTENCY_KEY');
@@ -833,6 +907,7 @@ function beginControlTakeover(input) {
     const result = writeControlState({ conversationId: input.conversationId, actorId: input.actorId,
         expectedVersion: input.expectedVersion, state: { ...current, automationMode: 'human', ownerId: input.actorId,
             status: 'taking_control', takenAt: current.takenAt || now, handoffReason: 'operator' } });
+    if (result.status === 'human_send_in_flight') return { status: 'send_in_flight', control: current };
     if (result.status !== 'updated') return result;
     run(`INSERT INTO control_operations(id,conversation_id,actor_id,type,status,control_version,uncertain_message_ids,
         idempotency_key,request_fingerprint,created_at,completed_at) VALUES(?,?,?,'takeover','taking_control',?,'[]',?,?,?,NULL)`,
@@ -1520,6 +1595,12 @@ function conversationView(input) {
     row.identity_keys = JSON.parse(row.identity_keys);
     return row;
 }
+function conversationAddress(input) {
+    assertValid('Id', input?.conversationId);
+    return one(`SELECT c.account_id AS accountId,a.channel,i.kind,i.exact_value AS exactValue
+        FROM conversations c JOIN accounts a ON a.id=c.account_id
+        JOIN identities i ON i.id=c.canonical_id WHERE c.id=?`, input.conversationId) || null;
+}
 function listAccounts() {
     return all('SELECT id,channel FROM accounts ORDER BY channel,id');
 }
@@ -1537,6 +1618,13 @@ function messagePage(input) {
     const hasMore = rows.length > limit;
     const items = rows.slice(0, limit).reverse().map(row => JSON.parse(row.payload));
     return { items, hasMore };
+}
+function messageByProviderId(input) {
+    assertValid('Id', input?.conversationId);
+    assertValid('ProviderMessageId', input?.providerMessageId);
+    const row = one(`SELECT m.payload FROM messages m JOIN fingerprints f ON f.message_id=m.id
+        WHERE m.conversation_id=? AND f.provider_id=? LIMIT 1`, input.conversationId, input.providerMessageId);
+    return row ? JSON.parse(row.payload) : null;
 }
 function markRead(input) {
     assertValid('Id', input.conversationId); assertValid('Id', input.actorId);
@@ -1641,9 +1729,11 @@ function dispatch(method, input) {
         case 'conversations': return conversationPage(input);
         case 'conversationRows': return conversationRows(input);
         case 'conversationView': return conversationView(input);
+        case 'conversationAddress': return conversationAddress(input);
         case 'accounts': return listAccounts();
         case 'messages': return page(input);
         case 'messagePage': return messagePage(input);
+        case 'messageByProviderId': return messageByProviderId(input);
         case 'aiContext': return aiContext(input);
         case 'markRead': return transaction(() => markRead(input));
         case 'events': {

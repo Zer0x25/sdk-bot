@@ -316,15 +316,18 @@ Compositor todavía no ofrece enviar.
 
 **Depende de:** Fase 5.
 
-- [ ] Cabecera Tomar control/Devolver a IA; compositor condicionado a estado confirmado,
-  permisos y propietario; estados taking_control, conflicto y envío incierto claros.
-- [ ] Envío optimista por clientMessageId, reconciliación por evento/HTTP y borrador
-  conservado si falla. Reintento ambiguo exige acción expresa informada.
-- [ ] Resolver/reabrir y lectura; devolver a IA conserva permisos y permite elegir
-  procesar pendientes, sin activarlo de forma silenciosa.
-- [ ] E2E completo: entrada -> hilo -> takeover -> mensaje humano -> recepción de
-  cliente durante human -> release -> siguiente respuesta IA con contexto correcto.
-- [ ] Smoke manual documentado en cuenta de prueba WA/TG cuando esté disponible;
+- [x] **F6.1** Cabecera Tomar control/Devolver a IA, resolver/reabrir y compositor
+  condicionados a permisos, propietario y control confirmado. El compositor además
+  requiere cuenta conectada y compatible. El envío usa outbox durable,
+  `clientMessageId`, reconciliación de archivo/evento y borrador conservado; un
+  resultado incierto exige confirmación informada para generar otro envío. Evidencia
+  y límites: [F6.1](F6.1-ENVIO-HUMANO.md).
+- [ ] **F6.2** Devolver a IA conserva la política de acceso y permite elegir
+  explícitamente `future_only` o seleccionar entradas pendientes verificables para
+  procesarlas; nunca reanudar pendientes sin elección.
+- [ ] **F6.3** E2E completo: entrada -> hilo -> takeover -> mensaje humano -> recepción
+  de cliente durante human -> release -> siguiente respuesta IA con contexto correcto.
+- [ ] **F6.4** Smoke manual documentado en cuenta de prueba WA/TG cuando esté disponible;
   una única instancia y resultados separados de simulación. No ejecutar reset para
   fabricar datos. Registrar si la validación externa queda pendiente.
 
