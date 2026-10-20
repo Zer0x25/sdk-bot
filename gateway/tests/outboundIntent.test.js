@@ -93,12 +93,31 @@ test('AI intent is rejected before provider I/O when a job became stale after cl
 
 test('global pause leaves the authorized human outbox path available', async t => {
     const f = await fixture(t);
-    const adapter = new FakeAdapter(f.archive, f.account.id);
+    const input = { identity: { accountId: f.account.id, channel: 'telegram', kind: 'telegram_chat_id', exactValue: '77' },
+        source: 'live', direction: 'inbound', authorKind: 'customer', occurredAt: '2026-10-20T12:00:00.000Z',
+        content: { type: 'text', text: 'consulta' } };
+    const [captured] = await f.archive.ingestBatch([input]);
+    const control = await f.archive.controlState(captured.message.conversationId);
+    const actorId = randomUUID();
+    const enabled = await f.archive.writeControlState({ conversationId: captured.message.conversationId, actorId,
+        expectedVersion: control.controlVersion, state: { ...control, accessPolicy: 'allowed', automationMode: 'human', ownerId: actorId } });
+    assert.equal(enabled.status, 'updated');
+    await f.archive.close();
+    const db = new DatabaseSync(f.dbPath);
+    db.exec("UPDATE control_authority SET mode='sqlite',service_ready=1 WHERE id=1;");
+    db.close();
+    const archive = await f.reopen();
+    const policy = await archive.controlPolicy();
+    const adapter = new FakeAdapter(archive, f.account.id);
     const previous = state.IS_BOT_PAUSED;
     state.IS_BOT_PAUSED = true;
     try {
         const sent = await adapter.sendMessage('telegram:77', 'respuesta humana', {
-            source: 'human', idempotencyKey: 'human-during-global-pause'
+            source: 'human', actorId, conversationId: captured.message.conversationId,
+            controlSnapshot: { conversationId: captured.message.conversationId,
+                controlVersion: enabled.control.controlVersion, contextVersion: enabled.control.contextVersion,
+                policyVersion: policy.policyVersion }, idempotencyKey: 'human-during-global-pause',
+            policy: { clientMessageId: randomUUID() }
         });
         assert.equal(sent._outbox.state, 'accepted');
         assert.equal(adapter.calls, 1);
@@ -145,16 +164,17 @@ test('definite provider rejection is recorded and is not retried with the same k
     assert.equal(adapter.calls, 1);
 });
 
-test('v7 archives migrate to v9 without altering control authority', async t => {
+test('v7 archives migrate to v10 without altering control authority', async t => {
     const f = await fixture(t);
     await f.archive.close();
     const db = new DatabaseSync(f.dbPath);
     db.exec(`DROP TABLE outbound_intents; DROP INDEX messages_ai_context; DROP TABLE message_sequence;
         ALTER TABLE messages DROP COLUMN archive_seq; ALTER TABLE conversations DROP COLUMN context_through_seq;
+        ALTER TABLE conversations DROP COLUMN handled_inbound_seq; ALTER TABLE conversations DROP COLUMN resume_after_inbound_seq;
         PRAGMA user_version=7;`);
     db.close();
     const archive = await f.reopen();
-    assert.equal((await archive.ready).schemaVersion, 9);
+    assert.equal((await archive.ready).schemaVersion, 10);
     assert.deepEqual(await archive.controlAuthority(), { mode: 'legacy', migrationId: null, serviceReady: false, changedAt: null });
     assert.deepEqual(await archive.outboundIntents(), []);
 });

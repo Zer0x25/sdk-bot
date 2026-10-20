@@ -67,7 +67,7 @@ test('event retention computes an exact 50,000-event replay window after each co
 test('worker: migration, WAL FULL, transaction, minimal event and durable session watermark after reopen', async t => {
     const { archive, dbPath } = await fixture(t);
     const info = await archive.ready;
-    assert.equal(info.schemaVersion, 9); assert.equal(info.journalMode, 'wal'); assert.equal(info.synchronous, 2);
+    assert.equal(info.schemaVersion, 10); assert.equal(info.journalMode, 'wal'); assert.equal(info.synchronous, 2);
     assert.ok(info.threadId > 0);
     const [created] = await archive.ingestBatch([message()]);
     assertValid('Message', created.message); assertValid('Event', created.event);
@@ -140,7 +140,7 @@ test('F5.1: v4 migration keeps conversations and stages conservative control def
     t.after(() => fs.rm(dir, { recursive: true, force: true }));
     const db = new DatabaseSync(dbPath);
     db.exec(`CREATE TABLE archive_meta (id INTEGER PRIMARY KEY, epoch TEXT NOT NULL, seq TEXT NOT NULL);
-        CREATE TABLE conversations (id TEXT PRIMARY KEY, aggregate_version TEXT NOT NULL DEFAULT '1');
+        CREATE TABLE conversations (id TEXT PRIMARY KEY, aggregate_version TEXT NOT NULL DEFAULT '1', inbound_seq TEXT NOT NULL DEFAULT '0');
         CREATE TABLE events (seq TEXT PRIMARY KEY, conversation_id TEXT NOT NULL, message_id TEXT, created_at TEXT NOT NULL, payload TEXT NOT NULL);
         CREATE TABLE messages (id TEXT PRIMARY KEY, conversation_id TEXT, payload TEXT NOT NULL);
         INSERT INTO archive_meta VALUES(1,'v4-epoch','0');
@@ -150,7 +150,7 @@ test('F5.1: v4 migration keeps conversations and stages conservative control def
     const archive = createArchive({ path: dbPath });
     t.after(() => archive.close());
     const ready = await archive.ready;
-    assert.equal(ready.schemaVersion, 9);
+    assert.equal(ready.schemaVersion, 10);
     assert.deepEqual(await archive.controlState(conversationId), {
         accessPolicy: 'neutral', automationMode: 'off', lifecycle: 'open', ownerId: null,
         controlVersion: '1', contextVersion: '1', status: 'confirmed', takenAt: null, handoffReason: null,
@@ -454,6 +454,27 @@ test('v1 conversation reads project safe contacts, filter/paginate stably, and k
         if (oldSecret === undefined) delete process.env.SDK_PANEL_GATEWAY_SECRET;
         else process.env.SDK_PANEL_GATEWAY_SECRET = oldSecret;
     }
+});
+
+test('F6.2 migrates v9 watermarks to the current inbound sequence without replaying old messages', async t => {
+    const { archive, dbPath } = await fixture(t);
+    const [created] = await archive.ingestBatch([message()]);
+    const conversationId = created.message.conversationId;
+    assert.equal(created.message.inboundSeq, '1');
+    await archive.close();
+
+    const db = new DatabaseSync(dbPath);
+    db.exec(`ALTER TABLE conversations DROP COLUMN handled_inbound_seq;
+        ALTER TABLE conversations DROP COLUMN resume_after_inbound_seq;
+        PRAGMA user_version=9;`);
+    db.close();
+
+    const migrated = createArchive({ path: dbPath });
+    t.after(() => migrated.close());
+    assert.equal((await migrated.ready).schemaVersion, 10);
+    const row = await migrated.conversation(conversationId);
+    assert.equal(row.handled_inbound_seq, '1');
+    assert.equal(row.resume_after_inbound_seq, '1');
 });
 
 test('startup failure rejects readiness and queued calls, never creates placeholder snapshots', async t => {

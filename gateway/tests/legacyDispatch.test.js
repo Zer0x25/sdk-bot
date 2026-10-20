@@ -91,6 +91,8 @@ test('v2 migration adds the outbox but leaves unreceipted historic rows untouche
         ALTER TABLE conversations DROP COLUMN control_status;
         ALTER TABLE conversations DROP COLUMN context_version;
         ALTER TABLE conversations DROP COLUMN control_version;
+        ALTER TABLE conversations DROP COLUMN handled_inbound_seq;
+        ALTER TABLE conversations DROP COLUMN resume_after_inbound_seq;
         ALTER TABLE conversations DROP COLUMN owner_id;
         ALTER TABLE conversations DROP COLUMN lifecycle;
         ALTER TABLE conversations DROP COLUMN automation_mode;
@@ -101,7 +103,7 @@ test('v2 migration adds the outbox but leaves unreceipted historic rows untouche
     oldVersion.close();
 
     archive = await f.open();
-    assert.equal((await archive.ready).schemaVersion, 9);
+    assert.equal((await archive.ready).schemaVersion, 10);
     assert.equal((await archive.diagnostics()).messages, 1);
     assert.equal((await archive.pendingLegacyDispatches()).length, 0);
 });

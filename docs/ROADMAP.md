@@ -326,8 +326,9 @@ Compositor todavía no ofrece enviar.
   explícitamente `future_only` o seleccionar entradas pendientes verificables para
   procesarlas; nunca reanudar pendientes sin elección. Evidencia y límites:
   [F6.2](F6.2-REANUDACION-PENDIENTES.md).
-- [ ] **F6.3** E2E completo: entrada -> hilo -> takeover -> mensaje humano -> recepción
-  de cliente durante human -> release -> siguiente respuesta IA con contexto correcto.
+- [x] **F6.3** Flujo integrado: entrada -> hilo -> takeover -> mensaje humano ->
+  recepción de cliente durante human -> release explícito -> respuesta IA con
+  contexto correcto. Evidencia y límites: [F6.3](F6.3-FLUJO-CONVERSACION.md).
 - [ ] **F6.4** Smoke manual documentado en cuenta de prueba WA/TG cuando esté disponible;
   una única instancia y resultados separados de simulación. No ejecutar reset para
   fabricar datos. Registrar si la validación externa queda pendiente.

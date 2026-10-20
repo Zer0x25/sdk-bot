@@ -264,6 +264,8 @@ function initialize() {
             CHECK(resume_after_inbound_seq='0' OR (resume_after_inbound_seq NOT GLOB '*[^0-9]*' AND substr(resume_after_inbound_seq,1,1) BETWEEN '1' AND '9'));
         UPDATE conversations SET handled_inbound_seq=inbound_seq,resume_after_inbound_seq=inbound_seq;
         PRAGMA user_version=10;`);
+    });
+    if (one("SELECT id FROM outbound_intents WHERE state='sending' LIMIT 1")) transaction(() => {
         run(`UPDATE outbound_intents SET state='delivery_unknown',error_code='PROCESS_RESTARTED_DURING_SEND',
             updated_at=?,completed_at=? WHERE state='sending'`, new Date().toISOString(), new Date().toISOString());
     });
@@ -1303,7 +1305,7 @@ function beginControlImport(input) {
     const report = input.report;
     if (!report || report.schemaVersion !== 1 || report.dryRun !== true || !Array.isArray(report.entries)
         || !Array.isArray(report.blockers) || typeof report.cutoverAllowed !== 'boolean') fail('INVALID_IMPORT_REPORT');
-    if (![6, 7, 8, 9].includes(report.sourceManifest?.archive?.schemaVersion) || typeof report.sourceManifest.archive.dataEpoch !== 'string'
+    if (![6, 7, 8, 9, 10].includes(report.sourceManifest?.archive?.schemaVersion) || typeof report.sourceManifest.archive.dataEpoch !== 'string'
         || !/^(0|[1-9][0-9]*)$/.test(report.sourceManifest.archive.seq || '')) fail('INVALID_IMPORT_SNAPSHOT');
     const currentSnapshot = snapshot();
     if (report.sourceManifest.archive.dataEpoch !== currentSnapshot.dataEpoch || report.sourceManifest.archive.seq !== currentSnapshot.seq) {

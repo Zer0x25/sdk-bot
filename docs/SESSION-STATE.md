@@ -801,3 +801,20 @@ Cierres históricos: commits F2C.1/F2C.2/F2D/F2E.1 están en el log local; F2B.3
 - Próximo: **F6.3**, recorrido E2E de entrada, takeover, respuesta humana, entrada
   durante human, release y respuesta IA con contexto; después F6.4 smoke en cuenta
   de prueba cuando esté disponible. Fase 6 sigue incompleta.
+
+## F6.3: Flujo integrado de conversación
+
+- La prueba `f63ConversationFlow.test.js` recorre SQLite, cola durable, API de
+  bandeja/hilo, takeover, salida humana archivada, entrada durante human, selección
+  explícita `process_pending` y siguiente respuesta IA con contexto ordenado. Usa
+  Brain y transporte falsos; no usa una cuenta ni proveedor real.
+- El cutover integrado expuso BUG-077, validadores de importación que rechazaban
+  schema v10; se corrigieron y el cutover pasa. También se corrigió BUG-078 para que
+  todo inicio recupere intents `sending` a `delivery_unknown`, incluso cuando la base
+  ya está en v10. Ambos quedan cerrados con prueba.
+- Siete suites enfocadas: 56/56; gateway lint, typecheck y panel typecheck pasan;
+  contratos generados y typecheck pasan; `git diff --check` pasa. Evidencia:
+  [F6.3](F6.3-FLUJO-CONVERSACION.md).
+- F6.3 completada. Próximo: F6.4, smoke manual con cuenta WA/TG de prueba cuando
+  esté disponible. La presentación del hilo en navegador tampoco se validó aquí;
+  registrar ese límite junto al smoke. Fase 6 sigue incompleta.
