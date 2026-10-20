@@ -8,6 +8,7 @@ const { randomUUID } = require('node:crypto');
 const { DatabaseSync } = require('node:sqlite');
 const ChannelAdapter = require('../core/ChannelAdapter');
 const { createArchive } = require('../services/conversations');
+const { state } = require('../config');
 
 async function fixture(t) {
     const dir = await fs.mkdtemp(path.join(os.tmpdir(), 'sdkbot-outbound-'));
@@ -69,6 +70,43 @@ test('concurrent duplicate sends claim one provider call and report the other as
     assert.equal(adapter.calls, 1);
 });
 
+test('AI intent is rejected before provider I/O when a job became stale after claiming', async t => {
+    const f = await fixture(t);
+    const [observed] = await f.archive.ingestBatch([{ identity: { accountId: f.account.id, channel: 'telegram',
+        kind: 'telegram_chat_id', exactValue: '77' }, providerMessageId: 'stale-control-input', source: 'live',
+        direction: 'inbound', authorKind: 'customer', occurredAt: '2026-10-20T12:00:00.000Z',
+        content: { type: 'text', text: 'entrada' } }]);
+    const adapter = new FakeAdapter(f.archive, f.account.id);
+    await assert.rejects(adapter.sendMessage('telegram:77', 'respuesta', {
+        source: 'ai', generationId: 'gen-stale', bubbleIndex: 0,
+        idempotencyKey: 'gen-stale:bubble:0',
+        controlSnapshot: { conversationId: observed.message.conversationId,
+            controlVersion: '1', contextVersion: '1', policyVersion: '1' },
+        isCurrent: async () => false
+    }), { code: 'OUTBOUND_CONTROL_STALE' });
+    assert.equal(adapter.calls, 0);
+    const intent = await f.archive.outboundIntent('gen-stale:bubble:0');
+    assert.equal(intent.state, 'rejected');
+    assert.equal(intent.errorCode, 'OUTBOUND_CONTROL_STALE');
+    assert.equal(intent.policy.generationId, 'gen-stale');
+});
+
+test('global pause leaves the authorized human outbox path available', async t => {
+    const f = await fixture(t);
+    const adapter = new FakeAdapter(f.archive, f.account.id);
+    const previous = state.IS_BOT_PAUSED;
+    state.IS_BOT_PAUSED = true;
+    try {
+        const sent = await adapter.sendMessage('telegram:77', 'respuesta humana', {
+            source: 'human', idempotencyKey: 'human-during-global-pause'
+        });
+        assert.equal(sent._outbox.state, 'accepted');
+        assert.equal(adapter.calls, 1);
+    } finally {
+        state.IS_BOT_PAUSED = previous;
+    }
+});
+
 test('provider timeout and process restart stay delivery_unknown until explicit reconciliation', async t => {
     const f = await fixture(t);
     const timedOut = new FakeAdapter(f.archive, f.account.id, async () => {
@@ -107,14 +145,16 @@ test('definite provider rejection is recorded and is not retried with the same k
     assert.equal(adapter.calls, 1);
 });
 
-test('v7 archives migrate to v8 without altering control authority', async t => {
+test('v7 archives migrate to v9 without altering control authority', async t => {
     const f = await fixture(t);
     await f.archive.close();
     const db = new DatabaseSync(f.dbPath);
-    db.exec('DROP TABLE outbound_intents; PRAGMA user_version=7;');
+    db.exec(`DROP TABLE outbound_intents; DROP INDEX messages_ai_context; DROP TABLE message_sequence;
+        ALTER TABLE messages DROP COLUMN archive_seq; ALTER TABLE conversations DROP COLUMN context_through_seq;
+        PRAGMA user_version=7;`);
     db.close();
     const archive = await f.reopen();
-    assert.equal((await archive.ready).schemaVersion, 8);
+    assert.equal((await archive.ready).schemaVersion, 9);
     assert.deepEqual(await archive.controlAuthority(), { mode: 'legacy', migrationId: null, serviceReady: false, changedAt: null });
     assert.deepEqual(await archive.outboundIntents(), []);
 });

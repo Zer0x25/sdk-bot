@@ -12,7 +12,7 @@ let db;
 const READ_ONLY_METHODS = new Set(['snapshot','telegramCursor','pendingLegacyDispatches','controlState','controlAuthority','controlImportStatus','controlImportEntries',
     'controlPolicy','controlOperation','pendingControlOperations','controlTargets','controlByIdentity',
     'outboundIntent','outboundIntents',
-    'conversation','conversations','conversationRows','conversationView','accounts','messages','messagePage',
+    'conversation','conversations','conversationRows','conversationView','accounts','messages','messagePage','aiContext',
     'events','eventsPage','diagnostics','close']);
 function fail(code) { throw Object.assign(new Error(code), { code }); }
 function one(sql, ...params) { return db.prepare(sql).get(...params); }
@@ -44,7 +44,7 @@ function initialize() {
         // committed WAL records or touching another process's snapshot.
         db = new DatabaseSync(`${pathToFileURL(file).href}?immutable=1`, { readOnly: true });
         const schemaVersion = one('PRAGMA user_version').user_version;
-        if (![6, 7, 8].includes(schemaVersion)) fail('SCHEMA_VERSION_REQUIRED');
+        if (![6, 7, 8, 9].includes(schemaVersion)) fail('SCHEMA_VERSION_REQUIRED');
         if (one("SELECT migration_id FROM control_import_migrations WHERE status IN ('cutover_applying','rolling_back') LIMIT 1")) {
             fail('CONTROL_CUTOVER_RECOVERY_REQUIRED');
         }
@@ -64,7 +64,7 @@ function initialize() {
     // SQLite owns the OS lock for the full connection lifetime; crash releases it.
     db.exec('BEGIN IMMEDIATE; COMMIT;');
     const version = one('PRAGMA user_version').user_version;
-    if (version > 8) fail('SCHEMA_TOO_NEW');
+    if (version > 9) fail('SCHEMA_TOO_NEW');
     if (version === 0) transaction(() => {
         db.exec(schema);
         run('INSERT INTO archive_meta VALUES(1,?,?)', randomUUID(), '0');
@@ -243,6 +243,20 @@ function initialize() {
     // A provider request may have taken effect before the previous process
     // lost its response. Keep it visible for reconciliation; never replay it.
     if (one('PRAGMA user_version').user_version === 8) transaction(() => {
+        db.exec(`ALTER TABLE conversations ADD COLUMN context_through_seq TEXT NOT NULL DEFAULT '0'
+            CHECK(context_through_seq='0' OR (context_through_seq NOT GLOB '*[^0-9]*' AND substr(context_through_seq,1,1) BETWEEN '1' AND '9'));
+        ALTER TABLE messages ADD COLUMN archive_seq TEXT NOT NULL DEFAULT '0'
+            CHECK(archive_seq='0' OR (archive_seq NOT GLOB '*[^0-9]*' AND substr(archive_seq,1,1) BETWEEN '1' AND '9'));
+        UPDATE messages SET archive_seq=CAST(rowid AS TEXT);
+        CREATE INDEX messages_ai_context ON messages(conversation_id,length(archive_seq),archive_seq);
+        CREATE TABLE message_sequence (
+            id INTEGER PRIMARY KEY CHECK(id=1),
+            value TEXT NOT NULL CHECK(value='0' OR (value NOT GLOB '*[^0-9]*' AND substr(value,1,1) BETWEEN '1' AND '9'))
+        );
+        INSERT INTO message_sequence(id,value) SELECT 1,COALESCE(MAX(CAST(archive_seq AS INTEGER)),'0') FROM messages;
+        PRAGMA user_version=9;`);
+    });
+    if (one('PRAGMA user_version').user_version === 9) transaction(() => {
         run(`UPDATE outbound_intents SET state='delivery_unknown',error_code='PROCESS_RESTARTED_DURING_SEND',
             updated_at=?,completed_at=? WHERE state='sending'`, new Date().toISOString(), new Date().toISOString());
     });
@@ -263,7 +277,7 @@ function initialize() {
         transaction(() => pending.forEach(row => updateTranscription({ messageId: row.id, expectedStatus: 'pending', status: 'failed' })));
         after = pending[pending.length - 1].id;
     }
-    return { ...snapshot(), schemaVersion: 8, journalMode: one('PRAGMA journal_mode').journal_mode,
+    return { ...snapshot(), schemaVersion: 9, journalMode: one('PRAGMA journal_mode').journal_mode,
         synchronous: one('PRAGMA synchronous').synchronous, threadId: require('node:worker_threads').threadId };
 }
 function registerAccount(input) {
@@ -432,7 +446,11 @@ function ingest(input) {
         if (one('SELECT id FROM messages WHERE id=?', previous.message_id)) run('INSERT OR IGNORE INTO provenance VALUES(?,?,?)', previous.message_id, identity.id, input.source);
         return { status: 'duplicate', messageId: previous.message_id, conversationId: c.id };
     }
-    run('INSERT INTO messages VALUES(?,?,?,?,?,?,?)', draft.id, c.id, draft.occurredAt, now, draft.inboundSeq, draft.source, JSON.stringify(draft));
+    const archiveSeq = String(BigInt(one('SELECT value FROM message_sequence WHERE id=1').value) + 1n);
+    run('UPDATE message_sequence SET value=? WHERE id=1', archiveSeq);
+    run(`INSERT INTO messages(id,conversation_id,occurred_at,ingested_at,inbound_seq,source,payload,archive_seq)
+        VALUES(?,?,?,?,?,?,?,?)`, draft.id, c.id, draft.occurredAt, now, draft.inboundSeq, draft.source,
+    JSON.stringify(draft), archiveSeq);
     run('INSERT INTO provenance VALUES(?,?,?)', draft.id, identity.id, draft.source);
     if (providerId !== null) run('INSERT INTO fingerprints VALUES(?,?,?,?,?,?)', input.identity.accountId, identity.canonical_id, providerId, draft.id, digest, now);
     const aggregate = String(BigInt(c.aggregate_version) + 1n);
@@ -470,6 +488,32 @@ function controlState(conversationId) {
     assertValid('Id', conversationId);
     const row = one('SELECT * FROM conversations WHERE id=?', conversationId);
     return row ? controlStateFromRow(row) : null;
+}
+function clearAIContext(input) {
+    assertValid('Id', input?.conversationId);
+    assertValid('Id', input?.actorId);
+    assertValid('Version', input?.expectedContextVersion);
+    const row = one('SELECT * FROM conversations WHERE id=?', input.conversationId);
+    if (!row) return { status: 'missing' };
+    const current = controlStateFromRow(row);
+    if (input.expectedContextVersion !== current.contextVersion) return { status: 'conflict', control: current };
+    const boundary = one(`SELECT archive_seq,id FROM messages WHERE conversation_id=?
+        ORDER BY length(archive_seq) DESC,archive_seq DESC LIMIT 1`, input.conversationId);
+    const contextVersion = String(BigInt(current.contextVersion) + 1n);
+    const aggregateVersion = String(BigInt(row.aggregate_version) + 1n);
+    const now = new Date().toISOString();
+    run(`UPDATE conversations SET context_version=?,context_through_seq=?,aggregate_version=?
+        WHERE id=? AND context_version=?`, contextVersion, boundary?.archive_seq ?? one('SELECT value FROM message_sequence WHERE id=1').value,
+    aggregateVersion, input.conversationId, current.contextVersion);
+    const cursor = snapshot();
+    cursor.seq = String(BigInt(cursor.seq) + 1n);
+    const event = assertValid('Event', { schemaVersion: 1, cursor, type: 'conversation.updated', occurredAt: now,
+        data: { conversationId: input.conversationId, aggregateVersion } });
+    run('INSERT INTO events(seq,conversation_id,message_id,created_at,actor_id,payload) VALUES(?,?,?,?,?,?)',
+        cursor.seq, input.conversationId, null, now, input.actorId, JSON.stringify(event));
+    run('UPDATE archive_meta SET seq=? WHERE id=1', cursor.seq);
+    pruneRetainedEvents();
+    return { status: 'updated', contextVersion, throughMessageId: boundary?.id ?? null, event };
 }
 function writeControlState(input) {
     assertValid('Id', input?.conversationId);
@@ -544,6 +588,68 @@ function outboundIntents(input = {}) {
     if (input.after) { clauses.push('(created_at>? OR (created_at=? AND id>?))'); params.push(input.after.createdAt, input.after.createdAt, input.after.id); }
     const where = clauses.length ? `WHERE ${clauses.join(' AND ')}` : '';
     return all(`SELECT * FROM outbound_intents ${where} ORDER BY created_at,id LIMIT ?`, ...params, limit).map(outboundIntentFromRow);
+}
+function aiContext(input) {
+    assertValid('Id', input?.conversationId);
+    if (input.expectedContextVersion !== undefined) assertValid('Version', input.expectedContextVersion);
+    const conversation = one(`SELECT context_version,context_through_seq
+        FROM conversations WHERE id=?`, input.conversationId);
+    if (!conversation) return null;
+    if (input.expectedContextVersion && input.expectedContextVersion !== conversation.context_version) fail('AI_CONTEXT_VERSION_STALE');
+    const limit = input.limit ?? 300;
+    if (!Number.isInteger(limit) || limit < 1 || limit > 500) fail('INVALID_LIMIT');
+    const exclusions = input.excludeMessageIds ?? [];
+    if (!Array.isArray(exclusions) || exclusions.length > 200) fail('INVALID_AI_CONTEXT_EXCLUSIONS');
+    exclusions.forEach(id => assertValid('Id', id));
+    let through;
+    if (input.throughMessageId !== undefined && input.throughMessageId !== null) {
+        assertValid('Id', input.throughMessageId);
+        through = one('SELECT id,archive_seq FROM messages WHERE id=? AND conversation_id=?',
+            input.throughMessageId, input.conversationId);
+        if (!through) fail('AI_CONTEXT_ANCHOR_MISSING');
+    } else {
+        through = one(`SELECT id,archive_seq FROM messages WHERE conversation_id=?
+            ORDER BY length(archive_seq) DESC,archive_seq DESC LIMIT 1`, input.conversationId);
+    }
+    if (!through) return { conversationId: input.conversationId, contextVersion: conversation.context_version,
+        throughMessageId: null, messages: [] };
+    const boundary = conversation.context_through_seq;
+    const rows = all(`SELECT payload FROM messages WHERE conversation_id=?
+        AND (length(archive_seq)>length(?) OR (length(archive_seq)=length(?) AND archive_seq>?))
+        AND (length(archive_seq)<length(?) OR (length(archive_seq)=length(?) AND archive_seq<=?))
+        ORDER BY length(archive_seq) DESC,archive_seq DESC LIMIT ?`,
+    input.conversationId, boundary, boundary, boundary, through.archive_seq, through.archive_seq, through.archive_seq, limit).reverse();
+    const messages = rows.map(row => JSON.parse(row.payload));
+    const providerIds = [...new Set(messages.map(message => message.providerMessageId).filter(Boolean))];
+    const outbound = new Map();
+    if (providerIds.length) {
+        const placeholders = providerIds.map(() => '?').join(',');
+        for (const intent of all(`SELECT provider_message_id,source,state,control_snapshot,policy FROM outbound_intents
+            WHERE conversation_id=? AND provider_message_id IN (${placeholders})`, input.conversationId, ...providerIds)) {
+            outbound.set(intent.provider_message_id, { source: intent.source, state: intent.state,
+                controlSnapshot: intent.control_snapshot ? JSON.parse(intent.control_snapshot) : null,
+                policy: intent.policy ? JSON.parse(intent.policy) : null });
+        }
+    }
+    const excluded = new Set(exclusions);
+    const contextual = [];
+    for (const message of messages) {
+        if (excluded.has(message.id)) continue;
+        if (message.direction === 'outbound' && message.authorKind === 'external_self') {
+            const intent = outbound.get(message.providerMessageId);
+            // Only durable provider acceptance proves an outbound author. An
+            // ambiguous echo stays in the archive but cannot become AI context.
+            if (!intent || intent.state !== 'accepted') continue;
+            if (input.excludeGenerationId && intent.policy?.generationId === input.excludeGenerationId) continue;
+            if (intent.source === 'ai') {
+                if (intent.controlSnapshot?.contextVersion !== conversation.context_version) continue;
+                message.authorKind = 'ai';
+            } else if (intent.source === 'human') message.authorKind = 'operator';
+        }
+        contextual.push(message);
+    }
+    return { conversationId: input.conversationId, contextVersion: conversation.context_version,
+        throughMessageId: through.id, messages: contextual };
 }
 function beginOutboundIntent(input) {
     if (!input || !['whatsapp','telegram'].includes(input.channel)) fail('INVALID_OUTBOUND_CHANNEL');
@@ -900,7 +1006,7 @@ function beginControlImport(input) {
     const report = input.report;
     if (!report || report.schemaVersion !== 1 || report.dryRun !== true || !Array.isArray(report.entries)
         || !Array.isArray(report.blockers) || typeof report.cutoverAllowed !== 'boolean') fail('INVALID_IMPORT_REPORT');
-    if (![6, 7, 8].includes(report.sourceManifest?.archive?.schemaVersion) || typeof report.sourceManifest.archive.dataEpoch !== 'string'
+    if (![6, 7, 8, 9].includes(report.sourceManifest?.archive?.schemaVersion) || typeof report.sourceManifest.archive.dataEpoch !== 'string'
         || !/^(0|[1-9][0-9]*)$/.test(report.sourceManifest.archive.seq || '')) fail('INVALID_IMPORT_SNAPSHOT');
     const currentSnapshot = snapshot();
     if (report.sourceManifest.archive.dataEpoch !== currentSnapshot.dataEpoch || report.sourceManifest.archive.seq !== currentSnapshot.seq) {
@@ -1503,6 +1609,7 @@ function dispatch(method, input) {
         case 'markLegacyDispatched': return transaction(() => markLegacyDispatched(input));
         case 'retryLegacyDispatch': return transaction(() => retryLegacyDispatch(input));
         case 'controlState': return controlState(input);
+        case 'clearAIContext': return transaction(() => clearAIContext(input));
         case 'writeControlState': return transaction(() => writeControlState(input));
         case 'beginControlTakeover': return transaction(() => beginControlTakeover(input));
         case 'completeControlTakeover': return transaction(() => completeControlTakeover(input));
@@ -1537,6 +1644,7 @@ function dispatch(method, input) {
         case 'accounts': return listAccounts();
         case 'messages': return page(input);
         case 'messagePage': return messagePage(input);
+        case 'aiContext': return aiContext(input);
         case 'markRead': return transaction(() => markRead(input));
         case 'events': {
             const after = input.after ?? '0'; assertValid('Sequence', after);
@@ -1568,6 +1676,7 @@ function committedEvents(method, value) {
     }
     if (method === 'updateTranscription' && value?.event) return [value.event];
     if (method === 'writeControlState' && value?.event) return [value.event];
+    if (method === 'clearAIContext' && value?.event) return [value.event];
     if (method === 'writeControlPolicy' && value?.event) return [value.event];
     if (['beginControlTakeover','completeControlTakeover'].includes(method) && Array.isArray(value?.events)) return value.events;
     if (['applyControlCutoverBatch','rollbackControlCutoverBatch'].includes(method) && Array.isArray(value?.events)) return value.events;

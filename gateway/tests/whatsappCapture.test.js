@@ -282,6 +282,33 @@ test('WhatsApp echo racing the send response keeps one deterministic external_se
     assert.equal(messages[0].content.text, 'race text');
 });
 
+test('unknown live self output pauses automation after checking accepted outbox echoes', async () => {
+    const stateService = require('../services/stateService');
+    const original = stateService.setNumberState;
+    const calls = [];
+    stateService.setNumberState = async (...args) => { calls.push(args); return { success: true }; };
+    try {
+        const adapter = Object.create(WhatsappAdapter.prototype);
+        adapter.accountId = 'wa-account-fixture';
+        adapter.archive = { outboundIntents: async () => [] };
+        adapter.deferUnknownSelfHandoff({ remote: '200@s.whatsapp.net', providerMessageId: 'phone-send',
+            result: { message: { conversationId: 'conversation-fixture' } } });
+        await new Promise(resolve => setTimeout(resolve, 550));
+        assert.deepEqual(calls[0], ['200@s.whatsapp.net', 'handoff', {
+            channel: 'whatsapp', accountId: 'wa-account-fixture', reason: 'external_self'
+        }]);
+
+        calls.length = 0;
+        adapter.archive = { outboundIntents: async () => [{ providerMessageId: 'gateway-send', state: 'accepted' }] };
+        adapter.deferUnknownSelfHandoff({ remote: '200@s.whatsapp.net', providerMessageId: 'gateway-send',
+            result: { message: { conversationId: 'conversation-fixture' } } });
+        await new Promise(resolve => setTimeout(resolve, 550));
+        assert.equal(calls.length, 0);
+    } finally {
+        stateService.setNumberState = original;
+    }
+});
+
 test('overlapping connect attempts cannot install a socket from older asynchronous auth', async t => {
     const f = await fixture(t); const a = await f.adapter(); const auth = deferred(); let calls = 0;
     a.instance.loadAuth = async () => { if (++calls === 1) await auth.promise;

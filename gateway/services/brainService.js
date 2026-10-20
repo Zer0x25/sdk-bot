@@ -13,7 +13,7 @@
  * en el proceso Python del brain.
  */
 const { BRAIN_API_BASE, BRAIN_API_URL, BRAIN_API_KEY, state, registerSentMessage } = require('../config');
-const { randomUUID } = require('node:crypto');
+const { createHash, randomUUID } = require('node:crypto');
 const { cat, errMsg } = require("../services/logger");
 const { num } = require('../tuning');
 const { enqueue, scheduleFlush } = require("./messageQueue");
@@ -113,8 +113,8 @@ async function notifyAdminError(adapter, metadata, textMessage, errorDetails) {
  * 🤝 Petición al brain con reintento 1x en errores TRANSITORIOS.
  * No se reintentan errores 4xx (422 de validación = bug, no transitorio).
  */
-async function requestBrain(payload, jobSignal = null) {
-    const response = await fetch(BRAIN_API_URL, {
+async function requestBrain(payload, jobSignal = null, endpoint = BRAIN_API_URL) {
+    const response = await fetch(endpoint, {
         method: 'POST',
         headers: authHeaders({ 'Content-Type': 'application/json' }),
         signal: jobSignal ? AbortSignal.any([jobSignal, AbortSignal.timeout(90000)]) : AbortSignal.timeout(90000),
@@ -126,8 +126,9 @@ async function requestBrain(payload, jobSignal = null) {
     if (!response.ok) {
         // FastAPI devuelve {"detail": [...]} en 422 (validación) — loguear la causa real
         const detail = (data && data.detail) ? JSON.stringify(data.detail) : `HTTP ${response.status}`;
-        const err = /** @type {Error & {status?: number}} */ (new Error(`Brain rechazó la petición (${response.status}): ${detail}`));
+        const err = /** @type {Error & {status?: number; code?: string}} */ (new Error(`Brain rechazó la petición (${response.status}): ${detail}`));
         err.status = response.status;
+        if (typeof data?.detail === 'string') err.code = data.detail;
         throw err;
     }
 
@@ -138,6 +139,23 @@ async function requestBrain(payload, jobSignal = null) {
     }
 
     return data;
+}
+
+async function invalidateBrainGeneration(generationId, contextVersion) {
+    try {
+        await fetch(`${BRAIN_API_BASE}/invalidate-generation`, {
+            method: 'POST', headers: authHeaders({ 'Content-Type': 'application/json' }),
+            signal: AbortSignal.timeout(3000),
+            body: JSON.stringify({ generation_id: generationId, context_version: contextVersion })
+        });
+    } catch (error) {
+        log.warn(`No se pudo registrar la invalidación de ${generationId}: ${errMsg(error)}`);
+    }
+}
+
+function stableGenerationId(conversationId, contextVersion, sourceMessageIds) {
+    const digest = createHash('sha256').update(JSON.stringify({ conversationId, contextVersion, sourceMessageIds })).digest('hex');
+    return `gen_${digest}`;
 }
 
 function cancelledJob() {
@@ -175,11 +193,15 @@ async function processAIChat(textMessage, remoteJid, metadata, adapter, opts = {
     brainStats.aiCalls += 1;
     brainStats.lastAiAt = new Date().toISOString();
     const displayName = metadata.savedName || metadata.pushName || 'Usuario';
-    const generationId = opts.generationId || randomUUID();
+    const sourceMessageIds = Array.isArray(opts.sourceMessageIds) ? [...new Set(opts.sourceMessageIds)] : [];
+    const generationId = opts.generationId || (opts.controlSnapshot?.conversationId && sourceMessageIds.length
+        ? stableGenerationId(opts.controlSnapshot.conversationId, opts.controlSnapshot.contextVersion, sourceMessageIds)
+        : randomUUID());
+    const explicitContext = Boolean(opts.controlSnapshot && adapter.archive && sourceMessageIds.length);
     const langLog = metadata.language ? ` | Idioma: ${metadata.language}` : '';
     log.info(`\n[ENVIANDO A IA] De: ${displayName} (${remoteJid}) | País: ${metadata.country}${langLog}`);
     
-    const payload = {
+    let payload = {
         user_id: remoteJid,
         message: textMessage,
         bot_profile: metadata.perfil || state.CURRENT_PROFILE,
@@ -194,12 +216,37 @@ async function processAIChat(textMessage, remoteJid, metadata, adapter, opts = {
         bio: metadata.bio,
         is_business: metadata.isBusiness
     };
+    let endpoint = BRAIN_API_URL;
+    let contextVersion = opts.controlSnapshot?.contextVersion || null;
 
     try {
+        if (opts.controlSnapshot && !explicitContext) {
+            throw Object.assign(new Error('AI_CONTEXT_SOURCE_REQUIRED'), { code: 'AI_CONTEXT_SOURCE_REQUIRED' });
+        }
+        if (explicitContext) {
+            const context = await adapter.archive.aiContext({
+                conversationId: opts.controlSnapshot.conversationId,
+                expectedContextVersion: opts.controlSnapshot.contextVersion,
+                throughMessageId: sourceMessageIds[sourceMessageIds.length - 1],
+                excludeMessageIds: sourceMessageIds, excludeGenerationId: generationId
+            });
+            if (!context || !context.throughMessageId) throw Object.assign(new Error('AI_CONTEXT_ANCHOR_MISSING'), { code: 'AI_CONTEXT_ANCHOR_MISSING' });
+            contextVersion = context.contextVersion;
+            payload = { ...payload, generation_id: generationId, conversation_id: context.conversationId,
+                context_version: context.contextVersion, through_message_id: context.throughMessageId,
+                context: context.messages.flatMap(message => {
+                    const content = message.content;
+                    const text = content.type === 'text' ? content.text : content.transcript || content.caption || '';
+                    if (!text) return [];
+                    return [{ role: message.authorKind === 'customer' ? 'user' : 'assistant',
+                        author_kind: message.authorKind, content: text }];
+                }) };
+            endpoint = `${BRAIN_API_BASE}/generate-reply`;
+        }
         let data;
         try {
             await assertJobCurrent(opts);
-            data = await requestBrain(payload, opts.signal);
+            data = await requestBrain(payload, opts.signal, endpoint);
         } catch (error) {
             if (opts.signal?.aborted || /** @type {any} */ (error)?.code === 'CONTROL_JOB_CANCELLED') throw cancelledJob();
             // ↻ Retry 1x solo en errores transitorios (red, timeout, 5xx). 4xx = bug, no reintentar.
@@ -209,7 +256,7 @@ async function processAIChat(textMessage, remoteJid, metadata, adapter, opts = {
                 log.warn(`↻ Error transitorio del cerebro (${err.message}). Reintentando (1/1)...`);
                 await waitForJob(1500, opts.signal);
                 await assertJobCurrent(opts);
-                data = await requestBrain(payload, opts.signal);
+                data = await requestBrain(payload, opts.signal, endpoint);
             } else {
                 throw err;
             }
@@ -246,6 +293,7 @@ async function processAIChat(textMessage, remoteJid, metadata, adapter, opts = {
                 const sentMsg = await adapter.sendMessage(remoteJid, bubble, {
                     source: 'ai', generationId, bubbleIndex: i,
                     idempotencyKey: `${generationId}:bubble:${i}`,
+                    isCurrent: async () => !state.IS_BOT_PAUSED && (!opts.isCurrent || await opts.isCurrent()),
                     ...(opts.controlSnapshot ? { controlSnapshot: opts.controlSnapshot,
                         conversationId: opts.controlSnapshot.conversationId } : {})
                 });
@@ -269,9 +317,19 @@ async function processAIChat(textMessage, remoteJid, metadata, adapter, opts = {
             await notifyAdminError(adapter, metadata, textMessage, data.error || "Respuesta vacía del cerebro IA");
         }
     } catch (error) {
+        const caught = /** @type {Error & {status?: number; code?: string}} */ (error);
         if (opts.signal?.aborted || /** @type {any} */ (error)?.code === 'CONTROL_JOB_CANCELLED') {
+            if (explicitContext && contextVersion) await invalidateBrainGeneration(generationId, contextVersion);
             log.info(`[CONTROL F5] Trabajo IA cancelado para ${remoteJid}; no se continúa con otros globos.`);
             return;
+        }
+        if (explicitContext && ['OUTBOUND_CONTROL_STALE','AI_CONTEXT_VERSION_STALE','AI_CONTEXT_ANCHOR_MISSING','GENERATION_INVALIDATED'].includes(caught.code || '')) {
+            if (contextVersion) await invalidateBrainGeneration(generationId, contextVersion);
+            log.info(`[CONTROL F5] Generación ${generationId} invalidada para ${remoteJid}; no se continúa con otros globos.`);
+            return;
+        }
+        if (opts.controlSnapshot && ['AI_CONTEXT_SOURCE_REQUIRED','AI_CONTEXT_ANCHOR_MISSING'].includes(caught.code || '')) {
+            caught.status = 422;
         }
         brainStats.lastErrorAt = new Date().toISOString();
         brainStats.lastErrorMsg = errMsg(error);
@@ -325,6 +383,7 @@ async function handleBrainFailure(error, textMessage, remoteJid, metadata, adapt
     if (transitory) {
         // 📥 Encolar en disco: el mensaje del cliente no se pierde
         queued = enqueue({ jid: remoteJid, text: textMessage, metadata,
+            ...(Array.isArray(opts.sourceMessageIds) && opts.sourceMessageIds.length ? { sourceMessageIds: opts.sourceMessageIds } : {}),
             ...(opts.controlSnapshot ? { controlSnapshot: opts.controlSnapshot } : {}) });
         scheduleFlush();
     }

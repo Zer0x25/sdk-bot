@@ -129,6 +129,16 @@ function createControlService(archive, { drainConversation = null, onPolicyChang
         async isActive() { return (await archive.controlAuthority()).mode === 'sqlite'; },
         async setServiceReady(ready) { return archive.setControlServiceReady({ ready }); },
         resolveLegacyTarget: input => resolveLegacyTarget(input),
+        async clearContextForLegacyTarget({ targetId, channel, accountId = null, actorId = LEGACY_ADMIN_ACTOR }) {
+            await assertAuthority();
+            const target = await resolveLegacyTarget({ targetId, channel, accountId });
+            const result = await archive.clearAIContext({ conversationId: target.conversationId, actorId,
+                expectedContextVersion: target.control.contextVersion });
+            if (result.status === 'missing') fail('CONVERSATION_NOT_FOUND', 404);
+            if (result.status === 'conflict') fail('CONTEXT_VERSION_CONFLICT', 409);
+            if (result.status === 'updated' && drainConversation) await drainConversation(target.conversationId);
+            return { ...result, target };
+        },
         async readForIdentity(identity) {
             const authority = await archive.controlAuthority();
             if (authority.mode !== 'sqlite') return { authority: authority.mode, target: null };
@@ -248,7 +258,8 @@ function createControlService(archive, { drainConversation = null, onPolicyChang
         async projectStateForLegacyTarget(targetId, stateType, context = {}) {
             if (!['allowed','ignored','neutral','handoff'].includes(stateType)) fail('INVALID_CONTROL_STATE', 422);
             if (stateType === 'handoff') return this.setLegacyControl({ ...context, targetId,
-                action: context.reason === 'customer_request' ? 'customer_handoff' : 'takeover', reason: context.reason || 'operator' });
+                action: ['customer_request','external_self'].includes(context.reason) ? 'customer_handoff' : 'takeover',
+                reason: context.reason || 'operator' });
             const policy = stateType === 'allowed' ? 'allowed' : stateType === 'ignored' ? 'ignored' : 'neutral';
             return this.setAccessForLegacyTarget({ ...context, targetId, policy });
         }

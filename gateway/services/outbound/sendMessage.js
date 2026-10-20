@@ -2,7 +2,7 @@ const { randomUUID } = require('node:crypto');
 
 const SYSTEM_ACTOR = '00000000-0000-4000-8000-000000000002';
 const OUTBOUND_OPTIONS = new Set(['source', 'actorId', 'idempotencyKey', 'conversationId',
-    'controlSnapshot', 'policy', 'generationId', 'bubbleIndex', '_outboundAccountId']);
+    'controlSnapshot', 'policy', 'generationId', 'bubbleIndex', 'isCurrent', '_outboundAccountId']);
 
 function withoutOutboundOptions(options = {}) {
     return Object.fromEntries(Object.entries(options).filter(([key]) => !OUTBOUND_OPTIONS.has(key)));
@@ -84,10 +84,12 @@ async function sendMessage(adapter, normalizedJid, text, options = {}) {
     const payload = typeof text === 'string' ? { text, options: withoutOutboundOptions(options) }
         : { content: text, options: withoutOutboundOptions(options) };
     const actorId = options.actorId || SYSTEM_ACTOR;
-    const policy = adminSelfChat
-        ? { ...(options.policy && typeof options.policy === 'object' && !Array.isArray(options.policy) ? options.policy : {}),
-            scope: 'admin_self_chat' }
-        : options.policy || null;
+    const basePolicy = options.policy && typeof options.policy === 'object' && !Array.isArray(options.policy)
+        ? options.policy : {};
+    const policy = adminSelfChat ? { ...basePolicy, scope: 'admin_self_chat' }
+        : source === 'ai' && options.generationId
+            ? { ...basePolicy, generationId: options.generationId, bubbleIndex: options.bubbleIndex ?? null }
+            : options.policy || null;
     const begun = await adapter.archive.beginOutboundIntent({ idempotencyKey, accountId, conversationId,
         channel, destination, actorId, source, payload, controlSnapshot, policy });
     let intent = begun.intent;
@@ -111,6 +113,18 @@ async function sendMessage(adapter, normalizedJid, text, options = {}) {
                 : claimed.status === 'accepted' ? null : 'OUTBOUND_REJECTED');
         if (!code && claimed.status === 'accepted') return responseWithIntent(intent.providerResult, intent, true);
         throw outboundError(code, intent, claimed.status);
+    }
+
+    if (source === 'ai' && typeof options.isCurrent === 'function') {
+        let current = false;
+        try { current = await options.isCurrent(); } catch { /* fail closed before provider I/O */ }
+        if (!current) {
+            try {
+                intent = await adapter.archive.finishOutboundIntent({ idempotencyKey, state: 'rejected',
+                    errorCode: 'OUTBOUND_CONTROL_STALE' });
+            } catch { /* The intent remains sending and startup recovery will mark it uncertain. */ }
+            throw outboundError('OUTBOUND_CONTROL_STALE', intent, 'rejected');
+        }
     }
 
     let result;

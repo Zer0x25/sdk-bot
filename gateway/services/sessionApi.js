@@ -711,6 +711,10 @@ function createSessionApi(getPolicy, archive, getContacts = () => ({}), getChann
                         return send(res, 202, assertValid('TakeoverPendingResponse', { operation: result.operation }), context.requestId);
                     }
                 } else {
+                    if (request.resumePolicy === 'process_pending') {
+                        throw new BoundaryError(409, 'PENDING_RESUME_NOT_AVAILABLE',
+                            'La selección de mensajes pendientes llegará con el compositor de F6; esta liberación solo acepta mensajes futuros.');
+                    }
                     await controlService.release({ conversationId, actorId: context.actor.id,
                         expectedVersion: request.expectedVersion, overrideOwner: request.overrideOwner === true });
                 }

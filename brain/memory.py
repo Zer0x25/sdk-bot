@@ -58,6 +58,19 @@ def _connect():
             _conn.execute(
                 "CREATE INDEX IF NOT EXISTS idx_bot_user_time ON messages(bot_id, user_id, created_at)"
             )
+            _conn.execute(
+                """
+                CREATE TABLE IF NOT EXISTS generations (
+                    generation_id TEXT PRIMARY KEY,
+                    fingerprint TEXT NOT NULL,
+                    context_version TEXT NOT NULL,
+                    status TEXT NOT NULL CHECK (status IN ('generated', 'invalidated')),
+                    response TEXT,
+                    provider TEXT,
+                    created_at REAL NOT NULL
+                )
+                """
+            )
             _conn.commit()
         return _conn
 
@@ -141,6 +154,56 @@ def clear_history(bot_id: str, user_id: str):
         )
         conn.commit()
         return cur.rowcount > 0
+
+
+def get_generation(generation_id: str):
+    """Return a durable generated reply for idempotent resume, if present."""
+    conn = _connect()
+    with _lock:
+        row = conn.execute(
+            "SELECT generation_id, fingerprint, context_version, status, response, provider "
+            "FROM generations WHERE generation_id = ?",
+            (generation_id,),
+        ).fetchone()
+    return dict(row) if row else None
+
+
+def save_generation(generation_id: str, fingerprint: str, context_version: str,
+                    response: str, provider: str):
+    """Persist an AI draft without adding it to conversational memory."""
+    conn = _connect()
+    with _lock:
+        row = conn.execute(
+            "SELECT fingerprint, context_version, status, response, provider "
+            "FROM generations WHERE generation_id = ?",
+            (generation_id,),
+        ).fetchone()
+        if row:
+            if row["status"] == "invalidated":
+                raise ValueError("GENERATION_INVALIDATED")
+            if row["fingerprint"] != fingerprint or row["context_version"] != context_version:
+                raise ValueError("GENERATION_ID_CONFLICT")
+            return {"status": "existing", "response": row["response"], "provider": row["provider"]}
+        conn.execute(
+            "INSERT INTO generations(generation_id,fingerprint,context_version,status,response,provider,created_at) "
+            "VALUES(?,?,?,'generated',?,?,?)",
+            (generation_id, fingerprint, context_version, response, provider, time.time()),
+        )
+        conn.commit()
+    return {"status": "generated", "response": response, "provider": provider}
+
+
+def invalidate_generation(generation_id: str, context_version: str):
+    """Tombstone a generation, including one whose provider call is still running."""
+    conn = _connect()
+    with _lock:
+        conn.execute(
+            "INSERT INTO generations(generation_id,fingerprint,context_version,status,response,provider,created_at) "
+            "VALUES(?,'',?,'invalidated',NULL,NULL,?) "
+            "ON CONFLICT(generation_id) DO UPDATE SET status='invalidated',response=NULL,provider=NULL",
+            (generation_id, context_version, time.time()),
+        )
+        conn.commit()
 
 
 def get_db_stats():

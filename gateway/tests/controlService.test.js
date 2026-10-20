@@ -137,6 +137,26 @@ test('F5.4 takeover is CAS/idempotent, remains pending during drain, and release
     assert.equal(released.control.accessPolicy, human.accessPolicy);
 });
 
+test('F5.7 context clearing is identity-scoped, versioned, and drains the previous generation', async t => {
+    const { archive, accountId, migrationId } = await fixture(t);
+    await cutover(archive, migrationId);
+    const target = { accountId, channel: 'whatsapp', kind: 'whatsapp_jid', exactValue: '111@s.whatsapp.net' };
+    const existing = await archive.resolve(target);
+    let drained = 0;
+    const service = createControlService(archive, { drainConversation: async conversationId => {
+        assert.equal(conversationId, existing.conversation_id); drained += 1; return { drained: true };
+    } });
+    const before = await archive.controlState(existing.conversation_id);
+    const result = await service.clearContextForLegacyTarget({ targetId: '111', channel: 'whatsapp', accountId });
+    assert.equal(result.status, 'updated');
+    assert.equal(result.contextVersion, String(BigInt(before.contextVersion) + 1n));
+    assert.equal((await archive.controlState(existing.conversation_id)).controlVersion, before.controlVersion);
+    assert.equal(drained, 1);
+    assert.equal((await archive.messages({ conversationId: existing.conversation_id })).length, 1);
+    await assert.rejects(archive.aiContext({ conversationId: existing.conversation_id,
+        expectedContextVersion: before.contextVersion }), { code: 'AI_CONTEXT_VERSION_STALE' });
+});
+
 test('F5.4 resumes a durable takeover after the gateway restarts', async t => {
     const { archive, accountId, migrationId, databasePath } = await fixture(t);
     await cutover(archive, migrationId);
@@ -191,6 +211,12 @@ test('F5.4 API uses signed actor identity, expectedVersion and durable operation
     assert.equal(takeover.status, 200);
     assert.equal(takeover.response.conversation.control.ownerId, actor.id);
     assert.equal(takeover.response.conversation.control.automationMode, 'human');
+    const pendingRelease = await request('POST', `/v1/conversations/${target.conversationId}/release`, {
+        expectedVersion: takeover.response.conversation.control.controlVersion,
+        resumePolicy: 'process_pending', pendingInboundIds: [randomUUID()]
+    }, { 'idempotency-key': 'api-release-pending-future-feature' });
+    assert.equal(pendingRelease.status, 409);
+    assert.equal(pendingRelease.response.code, 'PENDING_RESUME_NOT_AVAILABLE');
     const stale = await request('PATCH', `/v1/conversations/${target.conversationId}`,
         { expectedVersion: target.control.controlVersion, lifecycle: 'resolved' });
     assert.equal(stale.status, 409);

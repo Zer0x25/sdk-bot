@@ -225,6 +225,7 @@ async function handleIncomingMessage(stdMsg, { onDurableComplete } = {}) {
     const metadata = stdMsg.metadata;
     // We use the unified ID as the remoteJid now (e.g. 'whatsapp:123', 'telegram:456')
     const remoteJid = stdMsg.remoteId; 
+    const sourceMessageId = stdMsg.archiveMessageId || null;
     const { phoneNumber, lid, savedName, pushName } = metadata;
     const textMessage = stdMsg.text;
 
@@ -378,6 +379,7 @@ async function handleIncomingMessage(stdMsg, { onDurableComplete } = {}) {
                 let inflightBuffer = messageBuffers.get(bufferKey);
                 if (inflightBuffer) {
                     inflightBuffer.messages.push(decision.text);
+                    if (sourceMessageId) (inflightBuffer.archiveMessageIds ||= []).push(sourceMessageId);
                     if (onDurableComplete) (inflightBuffer.dispatchAcks ||= []).push(onDurableComplete);
                     inflightBuffer.lastActivity = Date.now();
                     inflightBuffer.remoteJid = remoteJid;
@@ -391,6 +393,7 @@ async function handleIncomingMessage(stdMsg, { onDurableComplete } = {}) {
                 } else {
                     messageBuffers.set(bufferKey, {
                         messages: [decision.text],
+                        archiveMessageIds: sourceMessageId ? [sourceMessageId] : [],
                         dispatchAcks: onDurableComplete ? [onDurableComplete] : [],
                         remoteJid, metadata, adapter, controlSnapshot,
                         isTyping: false,
@@ -412,6 +415,7 @@ async function handleIncomingMessage(stdMsg, { onDurableComplete } = {}) {
             if (existingBuffer) {
                 if (existingBuffer.timer) clearTimeout(existingBuffer.timer);
                 existingBuffer.messages.push(decision.text);
+                if (sourceMessageId) (existingBuffer.archiveMessageIds ||= []).push(sourceMessageId);
                 if (onDurableComplete) (existingBuffer.dispatchAcks ||= []).push(onDurableComplete);
                 existingBuffer.onTimeout = onTimeout;
                 existingBuffer.remoteJid = remoteJid;
@@ -427,6 +431,7 @@ async function handleIncomingMessage(stdMsg, { onDurableComplete } = {}) {
             } else {
                 const newBuffer = {
                     messages: [decision.text],
+                    archiveMessageIds: sourceMessageId ? [sourceMessageId] : [],
                     dispatchAcks: onDurableComplete ? [onDurableComplete] : [],
                     remoteJid, metadata, adapter, controlSnapshot,
                     isTyping: false,
@@ -513,6 +518,7 @@ function createBufferTimeout(bufferKey, fallbackMetadata, fallbackAdapter) {
 
         const fullBufferedText = buf.messages.join('\n');
         buf.messages = []; // Los mensajes procesados salen del buffer; no se borra el buffer aún
+        const sourceMessageIds = buf.archiveMessageIds?.splice(0) || [];
         const dispatchAcks = buf.dispatchAcks?.splice(0) || [];
 
         log.info(`\n📦 [DE-BOUNCE BATCH FINAL] Silencio confirmado. Procesando mensaje(s) de ${displayName}:\n"${fullBufferedText}"`);
@@ -524,7 +530,7 @@ function createBufferTimeout(bufferKey, fallbackMetadata, fallbackAdapter) {
             // 🎯 La cola FIFO global limita las llamadas simultáneas a la IA
             const { active, queued } = poolStats();
             logAI.info(`🎯 [POOL AI] Esperando turno en cola global (activas: ${active}, en cola: ${queued})...`);
-            const jobOptions = controlSnapshot ? { controlSnapshot, signal: controller.signal,
+            const jobOptions = controlSnapshot ? { controlSnapshot, sourceMessageIds, signal: controller.signal,
                 isCurrent: () => controlService.isSnapshotCurrent(controlSnapshot) } : { signal: controller.signal };
             await enqueueAI(() => processAIChat(fullBufferedText, remoteJid, metadata, adapter, jobOptions));
             for (const acknowledge of dispatchAcks) await acknowledge();
@@ -658,9 +664,10 @@ async function flushQueuedMessages() {
         activeGenerationControllers.set(bufferKey, controller);
         try {
             const jobOptions = item.controlSnapshot ? { fromQueue: true, controlSnapshot: item.controlSnapshot,
+                sourceMessageIds: item.sourceMessageIds || [],
                 generationId: item.id, signal: controller.signal,
                 isCurrent: () => controlService.isSnapshotCurrent(item.controlSnapshot) }
-                : { fromQueue: true, generationId: item.id, signal: controller.signal };
+                : { fromQueue: true, generationId: item.id, sourceMessageIds: item.sourceMessageIds || [], signal: controller.signal };
             await enqueueAI(() => processAIChat(item.text, item.jid, item.metadata, adapter, jobOptions));
             messageQueue.removeHead();
             // ⏱️ Pausa humana entre mensajes encolados (2-5s)

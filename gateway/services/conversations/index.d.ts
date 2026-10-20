@@ -103,6 +103,9 @@ export interface Archive {
     reconcileOutboundIntent(input: { idempotencyKey: string; actorId: string; state: 'accepted' | 'rejected';
         note: string; providerMessageId?: string | null }): Promise<{ status: 'reconciled' | 'existing'; intent: OutboundIntent }>;
     controlState(conversationId: string): Promise<Contract<'ConversationControl'> | null>;
+    clearAIContext(input: { conversationId: string; actorId: string; expectedContextVersion: Contract<'Version'> }): Promise<
+        { status: 'updated'; contextVersion: Contract<'Version'>; throughMessageId: string | null; event: Contract<'Event'> } |
+        { status: 'conflict'; control: Contract<'ConversationControl'> } | { status: 'missing' }>;
     writeControlState(input: { conversationId: string; actorId: string; expectedVersion: Contract<'Version'>;
         state: Omit<Contract<'ConversationControl'>, 'controlVersion' | 'contextVersion'> }): Promise<
         { status: 'updated'; control: Contract<'ConversationControl'>; event: Contract<'Event'> } |
@@ -166,6 +169,10 @@ export interface Archive {
     accounts(): Promise<Array<{ id: string; channel: 'whatsapp' | 'telegram' }>>;
     messages(input: { conversationId: string; limit?: number; before?: { occurredAt: string; id: string } }): Promise<Contract<'Message'>[]>;
     messagePage(input: { conversationId: string; limit?: number; before?: { occurredAt: string; id: string } }): Promise<{ items: Contract<'Message'>[]; hasMore: boolean }>;
+    aiContext(input: { conversationId: string; expectedContextVersion?: Contract<'Version'>;
+        throughMessageId?: string | null; excludeMessageIds?: string[]; excludeGenerationId?: string; limit?: number }): Promise<{
+        conversationId: string; contextVersion: Contract<'Version'>; throughMessageId: string | null;
+        messages: Contract<'Message'>[] } | null>;
     markRead(input: { conversationId: string; actorId: string; throughInboundSeq: string }): Promise<{ throughInboundSeq: string } | null>;
     events(input?: { after?: string; limit?: number }): Promise<Contract<'Event'>[]>;
     eventsPage(input?: { after?: string; through?: string; limit?: number }): Promise<{

@@ -67,7 +67,7 @@ test('event retention computes an exact 50,000-event replay window after each co
 test('worker: migration, WAL FULL, transaction, minimal event and durable session watermark after reopen', async t => {
     const { archive, dbPath } = await fixture(t);
     const info = await archive.ready;
-    assert.equal(info.schemaVersion, 8); assert.equal(info.journalMode, 'wal'); assert.equal(info.synchronous, 2);
+    assert.equal(info.schemaVersion, 9); assert.equal(info.journalMode, 'wal'); assert.equal(info.synchronous, 2);
     assert.ok(info.threadId > 0);
     const [created] = await archive.ingestBatch([message()]);
     assertValid('Message', created.message); assertValid('Event', created.event);
@@ -142,7 +142,7 @@ test('F5.1: v4 migration keeps conversations and stages conservative control def
     db.exec(`CREATE TABLE archive_meta (id INTEGER PRIMARY KEY, epoch TEXT NOT NULL, seq TEXT NOT NULL);
         CREATE TABLE conversations (id TEXT PRIMARY KEY, aggregate_version TEXT NOT NULL DEFAULT '1');
         CREATE TABLE events (seq TEXT PRIMARY KEY, conversation_id TEXT NOT NULL, message_id TEXT, created_at TEXT NOT NULL, payload TEXT NOT NULL);
-        CREATE TABLE messages (id TEXT PRIMARY KEY, payload TEXT NOT NULL);
+        CREATE TABLE messages (id TEXT PRIMARY KEY, conversation_id TEXT, payload TEXT NOT NULL);
         INSERT INTO archive_meta VALUES(1,'v4-epoch','0');
         PRAGMA user_version=4;`);
     db.prepare('INSERT INTO conversations(id,aggregate_version) VALUES(?,?)').run(conversationId, '7');
@@ -150,7 +150,7 @@ test('F5.1: v4 migration keeps conversations and stages conservative control def
     const archive = createArchive({ path: dbPath });
     t.after(() => archive.close());
     const ready = await archive.ready;
-    assert.equal(ready.schemaVersion, 8);
+    assert.equal(ready.schemaVersion, 9);
     assert.deepEqual(await archive.controlState(conversationId), {
         accessPolicy: 'neutral', automationMode: 'off', lifecycle: 'open', ownerId: null,
         controlVersion: '1', contextVersion: '1', status: 'confirmed', takenAt: null, handoffReason: null,

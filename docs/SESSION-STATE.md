@@ -718,3 +718,20 @@ Cierres históricos: commits F2C.1/F2C.2/F2D/F2E.1 están en el log local; F2B.3
   Vitest, build y 301 pruebas Node. No se leyeron ni modificaron archivos runtime.
 - F5.6 queda validada; sigue F5.7: contexto explícito,
   generationId/reanudación y confirmación solo de globos enviados.
+
+## F5.7: Contexto explícito y reanudación IA
+
+- Gateway arma cada `GenerateReply` con contexto versionado del archivo. Solo las
+  salidas humanas/IA con intent aceptado se incorporan; mensajes propios sin
+  correlación aceptada quedan fuera. Brain persiste el borrador por generationId
+  para reanudar y no agrega texto no enviado a su memoria legacy.
+- SQLite v9 agrega secuencia monotónica y frontera durable por conversación.
+  `/limpiar memoria` conserva el archivo, mueve la frontera y cancela trabajos con
+  contexto viejo. Las claves de outbox por globo permiten replay local tras
+  reinicio y evitan repetir globos aceptados.
+- La pausa global drena trabajos IA sin desactivar captura ni salida humana.
+  Release conserva `future_only`; `process_pending` responde 409 hasta F6.
+- Validación de Brain: Ruff limpio y 26 pruebas. F5.8 agrega la prueba integrada y
+  ejecuta el check completo del gateway.
+- Evidencia: [F5.7](F5.7-CONTEXTO-IA.md). F5.7 queda cerrada con commit propio;
+  sigue F5.8, aceptación integrada con transportes falsos.

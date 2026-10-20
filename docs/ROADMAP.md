@@ -289,10 +289,11 @@ Compositor todavía no ofrece enviar.
   tras crash queda para reconciliar, sin retry automático ciego. Reconducir `/notify`
   y envíos directos. Evidencia: [F5.6](F5.6-OUTBOX.md); outbox SQLite v8, pruebas
   de concurrencia/reinicio y campañas heredadas pausadas ante ambigüedad.
-- [ ] **F5.7 — Contexto y reanudación IA:** GenerateReply con generationId y
+- [x] **F5.7 — Contexto y reanudación IA:** GenerateReply con generationId y
   contexto explícito/versionado, incluir mensajes humanos, invalidar respuestas
   canceladas y confirmar solo globos enviados. Release usa `future_only`; la pausa
-  global conserva captura y respuesta humana autorizada.
+  global conserva captura y respuesta humana autorizada. Evidencia:
+  [F5.7](F5.7-CONTEXTO-IA.md); archivo SQLite v9 y pruebas de replay/contexto.
 - [ ] **F5.8 — Aceptación integrada:** ejecutar la matriz siguiente con transportes
   falsos, incluyendo reinicios y fallos entre commit/red/ACK. Los defectos que no
   bloqueen la unidad se registran en backlog con prioridad y fase límite.

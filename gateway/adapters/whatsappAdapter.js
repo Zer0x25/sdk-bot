@@ -317,6 +317,31 @@ class WhatsappAdapter extends ChannelAdapter {
         logError.error(`Archivo WhatsApp: ${code}. Captura no confirmada; revisar intervalo afectado.`);
     }
 
+    deferUnknownSelfHandoff(observation) {
+        const conversationId = observation?.result?.message?.conversationId;
+        if (!conversationId || !this.archive) return;
+        const target = observation.remote;
+        const providerMessageId = observation.providerMessageId;
+        const timer = setTimeout(async () => {
+            try {
+                const intents = await this.archive.outboundIntents({ conversationId, limit: 500 });
+                if (providerMessageId && intents.some(intent => intent.providerMessageId === providerMessageId
+                    && intent.state === 'accepted')) return;
+                const { setNumberState } = require('../services/stateService');
+                const result = await setNumberState(target, 'handoff', { channel: 'whatsapp',
+                    accountId: this.accountId, reason: 'external_self' });
+                if (!result.success) {
+                    logError.error(`No se pudo pausar IA tras una salida propia no correlacionada (${result.code || result.message || 'error'}).`);
+                } else {
+                    log.warn(`Salida propia no correlacionada archivada para ${target}; IA pausada hasta liberación humana.`);
+                }
+            } catch (error) {
+                logError.error(`No se pudo revisar la salida propia de ${target}: ${error?.code || error?.message || error}`);
+            }
+        }, 500);
+        timer.unref?.();
+    }
+
     captureBatch(sock, messages, source) {
         if (!Array.isArray(messages) || this.sock !== sock) return;
         let session;
@@ -335,6 +360,9 @@ class WhatsappAdapter extends ChannelAdapter {
                 }
                 if (observation.scope !== 'individual') return;
                 if (observation.result.status !== 'quarantined') this.emit('archived_message', { raw: msg, source, observation });
+                if (source === 'live' && msg.key?.fromMe && observation.result.status === 'created') {
+                    this.deferUnknownSelfHandoff(observation);
+                }
                 if (source !== 'live' || observation.result.status !== 'created' || observation.requiresReview
                     || observation.result.message.content.type === 'oversized') return;
                 // The archive records fromMe independently of the legacy echo guard.
