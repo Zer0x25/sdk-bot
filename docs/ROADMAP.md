@@ -294,9 +294,10 @@ Compositor todavía no ofrece enviar.
   canceladas y confirmar solo globos enviados. Release usa `future_only`; la pausa
   global conserva captura y respuesta humana autorizada. Evidencia:
   [F5.7](F5.7-CONTEXTO-IA.md); archivo SQLite v9 y pruebas de replay/contexto.
-- [ ] **F5.8 — Aceptación integrada:** ejecutar la matriz siguiente con transportes
+- [x] **F5.8 — Aceptación integrada:** ejecutar la matriz siguiente con transportes
   falsos, incluyendo reinicios y fallos entre commit/red/ACK. Los defectos que no
-  bloqueen la unidad se registran en backlog con prioridad y fase límite.
+  bloqueen la unidad se registran en backlog con prioridad y fase límite. Evidencia:
+  [F5.8](F5.8-ACEPTACION-INTEGRADA.md); lint, tipos, panel y 310 pruebas Node pasan.
 
 **Aceptación obligatoria con transportes/proveedores falsos:**
 

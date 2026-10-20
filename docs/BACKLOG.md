@@ -85,6 +85,8 @@ salvo indicación contraria. La evidencia detallada y líneas están en la basel
 | BUG-070 | P2 | Cerrado F4.3: el replay de más de 50 mensajes tras una desconexión podía dejar un hueco visible entre mensajes recientes e historial en caché. | La UI solo consultaba la página más reciente de 50 mensajes; el snapshot anterior quedaba más atrás. | F4.3 pagina el replay hasta solapar el snapshot cargado. Pruebas verifican 51 mensajes, ancla estable y un segundo evento durante un fetch activo. CI 39485451344, head del PR a390c71 (código f7c3acc). |
 | BUG-071 | P2 | Abierto: `/ignorar contactos de agenda` puede informar un total inflado cuando varios registros apuntan a la misma conversación o esta ya estaba ignorada. | El camino SQLite cuenta cada resultado exitoso, incluidos `unchanged`, sin deduplicar por conversationId. El cambio de control sigue siendo correcto; solo el resumen del comando puede exagerar el número. | F5 o posterior: contar conversaciones distintas y solo transiciones efectivas; probar alias/duplicados y una segunda ejecución idempotente. |
 | BUG-072 | P2 | Abierto: `/telegram/test` envía una sonda de configuración directamente por Bot API, fuera del outbox. | El endpoint debe poder probar un token borrador antes de que el adaptador dueño de esa cuenta se conecte; un timeout y un segundo click pueden duplicar el mensaje de prueba. | F6 o antes de exponer el test a reintentos automáticos: probar token/cuenta con el adaptador común cuando esté activo, y mantener sonda de token borrador con clave durable o confirmar su entrega incierta. No bloquea salidas de conversaciones ni avisos del gateway. |
+| BUG-073 | P2 | Abierto F5.8: el eco propio de WhatsApp puede marcarse como salida humana si el ACK del proveedor tarda más de 500 ms. | `deferUnknownSelfHandoff` consulta intents ya `accepted`; mientras el `sendMessage` local siga en `sending`, su ID de proveedor aún no está disponible y el timer puede activar handoff aunque el eco provenga de IA. El test cubre ACK rápido y salida desconocida, no un proveedor lento. | F5.8 antes de operar WA con salidas lentas: mantener observaciones pendientes hasta correlacionar o agotar una ventana definida; probar eco antes del ACK con transporte demorado y confirmar que IA solo se pausa para una salida externa. No bloquea el caso normal ni la captura del mensaje. |
+| BUG-074 | P2 | Abierto F5.8: las respuestas durables de `generations` en Brain no tienen retención. | La tabla conserva generación, respuesta y proveedor para permitir replay idempotente; no se poda junto con la ventana de mensajes y puede crecer sin límite y guardar texto sensible después de limpiar el contexto conversacional. | F8 o antes de uso prolongado con datos reales: definir retención que cubra el periodo de replay, podar respuestas expiradas sin reabrir generación obsoleta y validar límite de disco, limpieza y replay dentro/fuera de ventana. |
 
 ## Clasificación para la unidad activa
 
@@ -107,6 +109,10 @@ CI y BUG-065 elimina una carrera en la prueba del evento durable. El perfil de c
 requiere repetición con 2 CPU/4 GiB;
 el host medido tenía 3 CPU/10,45 GiB. No extrapolar archivo/polling a control, roles, salida durable
 ni carga/aceptación completa F2.
+
+F5.7/F5.8 implementan el contexto explícito y pasan aceptación integrada sintética.
+BUG-073 y BUG-074 son riesgos no bloqueantes; los cierres no se basan en canales ni
+archivos runtime.
 
 ## Cerrados
 

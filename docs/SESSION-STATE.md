@@ -733,5 +733,23 @@ Cierres históricos: commits F2C.1/F2C.2/F2D/F2E.1 están en el log local; F2B.3
   Release conserva `future_only`; `process_pending` responde 409 hasta F6.
 - Validación de Brain: Ruff limpio y 26 pruebas. F5.8 agrega la prueba integrada y
   ejecuta el check completo del gateway.
-- Evidencia: [F5.7](F5.7-CONTEXTO-IA.md). F5.7 queda cerrada con commit propio;
-  sigue F5.8, aceptación integrada con transportes falsos.
+- Evidencia: [F5.7](F5.7-CONTEXTO-IA.md). Commit F5.7: `52f2130`.
+
+## F5.8: Aceptación integrada
+
+- Se ejecutó la matriz con archivo SQLite temporal, proveedor IA falso y transportes
+  falsos. Cubre cancelación entre globos, takeover con llamada de red incierta,
+  idempotencia/reinicio del outbox, mensajes humanos en el prompt, replay de una
+  respuesta aceptada, salida desconocida desde el teléfono, pausa global y frontera
+  de `/limpiar memoria`.
+- Se corrigieron fixtures de archivo v4–v7 que bajaban `user_version` sin quitar
+  las columnas v9 o modelaban una tabla `messages` incompleta. No hizo falta un
+  cambio correctivo en la migración de producción.
+- Gateway `npm run check`: ESLint y TypeScript limpios; panel typecheck, 13 pruebas
+  Vitest, build y servido del build pasan; suite Node 310/310. Brain: Ruff limpio y
+  26 pruebas pasan.
+- BUG-073 (eco WA antes de ACK lento) y BUG-074 (retención de respuestas de
+  generación) quedan abiertos como mejoras no bloqueantes con aceptación y fase
+  límite en [BACKLOG.md](BACKLOG.md). No se usaron canales reales ni datos runtime.
+- Evidencia: [F5.8](F5.8-ACEPTACION-INTEGRADA.md). Fase 5 queda validada; el próximo
+  paso es iniciar F6 después de publicar la rama.
