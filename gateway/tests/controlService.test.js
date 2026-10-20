@@ -223,3 +223,21 @@ test('F5.4 policy updates are actor-audited and notification events allow no con
         assert.equal(db.prepare('SELECT conversation_id FROM events WHERE payload LIKE ?').get('%policy.updated%').conversation_id, null);
     } finally { db.close(); }
 });
+
+test('F5.5 job snapshots become obsolete after control and global policy versions change', async t => {
+    const { archive, accountId, migrationId } = await fixture(t);
+    await cutover(archive, migrationId);
+    const service = createControlService(archive, { drainConversation: () => ({ drained: true }) });
+    const identity = { accountId, channel: 'whatsapp', kind: 'whatsapp_jid', exactValue: '111@s.whatsapp.net' };
+    const initial = await service.readForIdentity(identity);
+    assert.equal(await service.isSnapshotCurrent(initial.controlSnapshot), true);
+
+    await service.setGlobalPolicy({ globalMode: 'ignored_all' });
+    assert.equal(await service.isSnapshotCurrent(initial.controlSnapshot), false);
+    await service.setGlobalPolicy({ globalMode: 'allowed_all' });
+    const refreshed = await service.readForIdentity(identity);
+    assert.equal(await service.isSnapshotCurrent(refreshed.controlSnapshot), true);
+
+    await service.setAccessForLegacyTarget({ targetId: '111', channel: 'whatsapp', accountId, policy: 'ignored' });
+    assert.equal(await service.isSnapshotCurrent(refreshed.controlSnapshot), false);
+});

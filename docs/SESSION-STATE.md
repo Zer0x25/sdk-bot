@@ -656,6 +656,26 @@ ausencia de Vite/CA. Commit separado de la UI.
 - F5.4 queda validada y con commit local; sin push hasta cerrar F5. Sigue **F5.5:
   barrera y coordinación de jobs**.
 
+## F5.5: Barrera y coordinación de jobs
+
+- El buffer y el lock de generación usan `conversationId` cuando SQLite es autoridad,
+  también cuando un hilo llega por identidades remotas distintas. Cada trabajo lleva
+  `controlVersion`, `contextVersion` y `policyVersion`; la captura se vuelve a
+  comprobar al vencer debounce, al entrar al pool, antes/después de generar, antes
+  de typing, en el retry y antes de cada globo/pausa.
+- Un cambio de control aborta el fetch de generación, cancela esperas de typing y
+  evita que se envíen globos siguientes. Al cambiar acceso, lifecycle o perfil se
+  drena el trabajo obsoleto; un cambio de política global invalida trabajos/buffers
+  afectados. La operación de takeover espera el mismo drenaje antes de confirmar.
+- Con autoridad SQLite, el arranque archiva el JSONL heredado y deja una cola nueva
+  vacía. La cola no se reabre ni reejecuta al reiniciar con la autoridad nueva. No se
+  inspeccionó ni modificó la cola runtime; la prueba usa un archivo temporal.
+- Evidencia: [F5.5](F5.5-JOB-BARRIER.md). 2 pruebas de barrera IA, 7 de servicio y
+  12 de queue/dispatch pasan; también pasan 12 pruebas Telegram, lint y typecheck.
+  BUG-050 sigue abierto para el outbox F5.6.
+- F5.5 queda validada y con commit local; sin push hasta cerrar F5. Sigue **F5.6:
+  outbox y salida común**.
+
 ## Pendientes materiales
 
 - F5 aborda toma de control, cancelación de IA, contexto y outbox; BUG-046/050

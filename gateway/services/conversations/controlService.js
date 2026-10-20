@@ -17,7 +17,7 @@ class ControlServiceError extends Error {
 
 function fail(code, status) { throw new ControlServiceError(code, status); }
 
-/** @param {any} archive @param {{drainConversation?: ((conversationId:string) => any) | null, onPolicyChanged?: (policy:any) => void,
+/** @param {any} archive @param {{drainConversation?: ((conversationId:string) => any) | null, onPolicyChanged?: (policy:any) => any,
  * validateProfile?: (profileKey:string) => boolean | Promise<boolean>}} [options] @returns {any} */
 function createControlService(archive, { drainConversation = null, onPolicyChanged = () => {}, validateProfile = async () => false } = {}) {
     if (!archive || typeof archive.controlState !== 'function' || typeof archive.writeControlState !== 'function') {
@@ -76,6 +76,9 @@ function createControlService(archive, { drainConversation = null, onPolicyChang
         const result = await archive.writeControlState({ conversationId, actorId, expectedVersion, state: next });
         if (result.status === 'missing') fail('CONVERSATION_NOT_FOUND', 404);
         if (result.status === 'conflict') fail('CONTROL_VERSION_CONFLICT', 409);
+        if (result.status === 'updated' && current.automationMode === 'ai' && drainConversation) {
+            await drainConversation(conversationId);
+        }
         return result;
     }
 
@@ -90,6 +93,13 @@ function createControlService(archive, { drainConversation = null, onPolicyChang
     function profileReviewCleared(current) {
         const reviewReasons = current.reviewReasons.filter(reason => !['invalid_profile_key','profile_inventory_unavailable','profile_missing'].includes(reason));
         return { reviewReasons, requiresReview: reviewReasons.length > 0 };
+    }
+
+    function generationEligible(control, policy) {
+        if (!control || control.requiresReview || policy.requiresReview || control.lifecycle !== 'open'
+            || control.automationMode === 'human' || control.accessPolicy === 'ignored') return false;
+        if (control.accessPolicy === 'allowed') return control.automationMode === 'ai';
+        return control.accessPolicy === 'neutral' && policy.globalMode === 'allowed_all';
     }
 
     async function continueTakeover(operation, control) {
@@ -122,8 +132,23 @@ function createControlService(archive, { drainConversation = null, onPolicyChang
         async readForIdentity(identity) {
             const authority = await archive.controlAuthority();
             if (authority.mode !== 'sqlite') return { authority: authority.mode, target: null };
+            if (!authority.serviceReady) fail('CONTROL_SERVICE_NOT_READY', 503);
             const target = await archive.controlByIdentity(identity);
-            return { authority: 'sqlite', target };
+            const policy = await archive.controlPolicy();
+            const controlSnapshot = target ? { conversationId: target.conversationId,
+                controlVersion: target.control.controlVersion, contextVersion: target.control.contextVersion,
+                policyVersion: policy.policyVersion } : null;
+            return { authority: 'sqlite', target, controlSnapshot };
+        },
+        async isSnapshotCurrent(expected) {
+            if (!expected || typeof expected.conversationId !== 'string') return false;
+            try { await assertAuthority(); } catch { return false; }
+            const control = await archive.controlState(expected.conversationId);
+            const policy = await archive.controlPolicy();
+            return control?.controlVersion === expected.controlVersion
+                && control?.contextVersion === expected.contextVersion
+                && policy.policyVersion === expected.policyVersion
+                && generationEligible(control, policy);
         },
         async updateConversation({ conversationId, actorId, expectedVersion, lifecycle, accessPolicy, profileKey }) {
             if (profileKey !== undefined) await assertProfile(profileKey);
@@ -211,13 +236,13 @@ function createControlService(archive, { drainConversation = null, onPolicyChang
                 globalMode: globalMode ?? current.globalMode,
                 globalProfileKey: globalProfileKey === undefined ? current.globalProfileKey : globalProfileKey });
             if (result.status === 'conflict') fail('POLICY_VERSION_CONFLICT', 409);
-            if (result.status === 'updated') onPolicyChanged(result.policy);
+            if (result.status === 'updated') await onPolicyChanged(result.policy);
             return result;
         },
         async refreshPolicy() {
             await assertAuthority();
             const policy = await archive.controlPolicy();
-            onPolicyChanged(policy);
+            await onPolicyChanged(policy);
             return policy;
         },
         async projectStateForLegacyTarget(targetId, stateType, context = {}) {

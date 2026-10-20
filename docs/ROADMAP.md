@@ -278,10 +278,11 @@ Compositor todavía no ofrece enviar.
   autoridad a SQLite. Migración v6→v7 conserva eventos y agrega operaciones
   recuperables; la aceptación de corte se ejecutó sobre fixtures, sin datos runtime.
   Evidencia: [F5.4](F5.4-CONTROL-SERVICE.md).
-- [ ] **F5.5 — Barrera y coordinación de jobs:** serializar por conversación y
+- [x] **F5.5 — Barrera y coordinación de jobs:** serializar por conversación y
   comprobar controlVersion, policyVersion y contextVersion en debounce, pool,
   generación, typing, pausas, retries y cada globo. Cancelar trabajos obsoletos;
-  migrar/inutilizar JSONL y operaciones antiguas sin replay tras reiniciar.
+  al activar SQLite se archiva la cola JSONL heredada para impedir replay tras
+  reiniciar. Evidencia: [F5.5](F5.5-JOB-BARRIER.md).
 - [ ] **F5.6 — Outbox y salida común:** SendMessage para persona/IA/avisos y puerto
   de campañas con su intent/política. Persistir intención antes de red, usar
   idempotencia local, estados reales y delivery_unknown; una respuesta ambigua

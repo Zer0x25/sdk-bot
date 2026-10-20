@@ -112,11 +112,11 @@ async function notifyAdminError(adapter, metadata, textMessage, errorDetails) {
  * 🤝 Petición al brain con reintento 1x en errores TRANSITORIOS.
  * No se reintentan errores 4xx (422 de validación = bug, no transitorio).
  */
-async function requestBrain(payload) {
+async function requestBrain(payload, jobSignal = null) {
     const response = await fetch(BRAIN_API_URL, {
         method: 'POST',
         headers: authHeaders({ 'Content-Type': 'application/json' }),
-        signal: AbortSignal.timeout(90000), // 90 segundos de timeout para permitir generación de textos largos o modelos lentos
+        signal: jobSignal ? AbortSignal.any([jobSignal, AbortSignal.timeout(90000)]) : AbortSignal.timeout(90000),
         body: JSON.stringify(payload)
     });
 
@@ -139,6 +139,33 @@ async function requestBrain(payload) {
     return data;
 }
 
+function cancelledJob() {
+    return Object.assign(new Error('La generación quedó obsoleta por un cambio de control.'), { code: 'CONTROL_JOB_CANCELLED' });
+}
+
+async function assertJobCurrent(opts) {
+    if (opts.signal?.aborted) throw cancelledJob();
+    if (typeof opts.isCurrent === 'function' && !await opts.isCurrent()) throw cancelledJob();
+    if (state.IS_BOT_PAUSED && opts.controlSnapshot) throw cancelledJob();
+}
+
+/** @returns {Promise<void>} */
+function waitForJob(ms, signal) {
+    return new Promise((resolve, reject) => {
+        if (signal?.aborted) { reject(cancelledJob()); return; }
+        const onAbort = () => {
+            clearTimeout(timer);
+            reject(cancelledJob());
+        };
+        const timer = setTimeout(() => {
+            signal?.removeEventListener('abort', onAbort);
+            resolve();
+        }, ms);
+        signal?.addEventListener('abort', onAbort, { once: true });
+    });
+}
+
+/** @param {any} opts */
 async function processAIChat(textMessage, remoteJid, metadata, adapter, opts = {}) {
     // opts.fromQueue = true cuando el mensaje viene de la cola persistente (F4-P4):
     // no re-encolar y no repetir la alerta al admin (el flush lo gestiona).
@@ -169,20 +196,24 @@ async function processAIChat(textMessage, remoteJid, metadata, adapter, opts = {
     try {
         let data;
         try {
-            data = await requestBrain(payload);
+            await assertJobCurrent(opts);
+            data = await requestBrain(payload, opts.signal);
         } catch (error) {
+            if (opts.signal?.aborted || /** @type {any} */ (error)?.code === 'CONTROL_JOB_CANCELLED') throw cancelledJob();
             // ↻ Retry 1x solo en errores transitorios (red, timeout, 5xx). 4xx = bug, no reintentar.
             const err = /** @type {Error & {status?: number}} */ (error);
             if (!err.status || err.status >= 500) {
                 brainStats.retries += 1;
                 log.warn(`↻ Error transitorio del cerebro (${err.message}). Reintentando (1/1)...`);
-                await new Promise(r => setTimeout(r, 1500));
-                data = await requestBrain(payload);
+                await waitForJob(1500, opts.signal);
+                await assertJobCurrent(opts);
+                data = await requestBrain(payload, opts.signal);
             } else {
                 throw err;
             }
         }
 
+        await assertJobCurrent(opts);
         if (data.response) {
             brainStats.lastOkAt = new Date().toISOString();
             log.info(`[BOT RESPONDE A ${displayName}]: ${data.response}`);
@@ -193,7 +224,8 @@ async function processAIChat(textMessage, remoteJid, metadata, adapter, opts = {
             // 🧠 1. Simulación de Lectura / Pensamiento Humano (antes de teclear)
             const readDelay = calculateReadDelay(textMessage);
             log.info(`[SIMULACIÓN HUMANA] 📖 Leyendo/pensando durante ${(readDelay / 1000).toFixed(2)}s...`);
-            await new Promise(r => setTimeout(r, readDelay));
+            await waitForJob(readDelay, opts.signal);
+            await assertJobCurrent(opts);
 
             // 🧩 2. Divisón inteligente en globos (Multi-Bubble)
             const bubbles = splitIntoHumanBubbles(data.response);
@@ -204,19 +236,22 @@ async function processAIChat(textMessage, remoteJid, metadata, adapter, opts = {
                 const typingDelay = calculateTypingDelay(bubble);
 
                 log.info(`[SIMULACIÓN HUMANA] ⌨️ Tecleando globo ${i + 1}/${bubbles.length} (${bubble.length} chars) durante ${(typingDelay / 1000).toFixed(2)}s...`);
-                
+                await assertJobCurrent(opts);
                 await adapter.sendPresenceUpdate('composing', remoteJid);
-                await new Promise(r => setTimeout(r, typingDelay));
+                await waitForJob(typingDelay, opts.signal);
+                await assertJobCurrent(opts);
 
                 const sentMsg = await adapter.sendMessage(remoteJid, bubble);
                 registerSentMessage(sentMsg);
 
                 // ☕ Pausa humana entre globos consecutivos
                 if (i < bubbles.length - 1) {
+                    await assertJobCurrent(opts);
                     await adapter.sendPresenceUpdate('paused', remoteJid).catch(() => {});
                     const pauseBetweenBubbles = calculatePauseBetweenBubbles();
                     log.info(`[SIMULACIÓN HUMANA] ☕ Pausa entre globos de ${(pauseBetweenBubbles / 1000).toFixed(2)}s...`);
-                    await new Promise(r => setTimeout(r, pauseBetweenBubbles));
+                    await waitForJob(pauseBetweenBubbles, opts.signal);
+                    await assertJobCurrent(opts);
                 }
             }
         } else {
@@ -227,6 +262,10 @@ async function processAIChat(textMessage, remoteJid, metadata, adapter, opts = {
             await notifyAdminError(adapter, metadata, textMessage, data.error || "Respuesta vacía del cerebro IA");
         }
     } catch (error) {
+        if (opts.signal?.aborted || /** @type {any} */ (error)?.code === 'CONTROL_JOB_CANCELLED') {
+            log.info(`[CONTROL F5] Trabajo IA cancelado para ${remoteJid}; no se continúa con otros globos.`);
+            return;
+        }
         brainStats.lastErrorAt = new Date().toISOString();
         brainStats.lastErrorMsg = errMsg(error);
         logError.error("Error al conectar con el cerebro: " + errMsg(error));
@@ -262,7 +301,8 @@ async function handleBrainFailure(error, textMessage, remoteJid, metadata, adapt
     let queued = false;
     if (transitory) {
         // 📥 Encolar en disco: el mensaje del cliente no se pierde
-        queued = enqueue({ jid: remoteJid, text: textMessage, metadata });
+        queued = enqueue({ jid: remoteJid, text: textMessage, metadata,
+            ...(opts.controlSnapshot ? { controlSnapshot: opts.controlSnapshot } : {}) });
         scheduleFlush();
     }
 

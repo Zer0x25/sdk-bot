@@ -84,6 +84,26 @@ test('saveHead persiste el contador de intentos', () => {
     }
 });
 
+test('la autoridad SQLite archiva e invalida jobs JSONL heredados sin replay tras reiniciar', () => {
+    const t = withTempQueuePath();
+    try {
+        const queue = freshQueue();
+        queue.enqueue(item({ text: 'antiguo 1' }));
+        queue.enqueue(item({ text: 'antiguo 2' }));
+        const result = queue.invalidateLegacyReplay();
+        assert.equal(result.invalidated, 2);
+        assert.ok(result.archivedPath);
+        assert.equal(require('node:fs').readFileSync(result.archivedPath, 'utf8').includes('antiguo 1'), true);
+        assert.equal(queue.getQueueStats().pending, 0);
+        assert.equal(require('node:fs').readFileSync(t.queuePath, 'utf8'), '');
+
+        const reopened = freshQueue();
+        assert.equal(reopened.getQueueStats().pending, 0);
+    } finally {
+        t.restore();
+    }
+});
+
 test('flush procesa la cola con el handler registrado', async () => {
     const t = withTempQueuePath();
     try {

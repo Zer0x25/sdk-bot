@@ -5,7 +5,7 @@ const { bulkUpsertContactsMetadata, cleanContactsDB, contactStore, contactIdenti
 const contactSyncQueue = require('./services/contactSyncQueue');
 const { flushToDisk } = require('./services/db');
 const { getCountryFromPhone } = require('./services/metadataService');
-const { handleIncomingMessage, handlePresenceUpdate, drainConversation } = require('./handlers/messageHandler');
+const { handleIncomingMessage, handlePresenceUpdate, drainConversation, drainAllConversations } = require('./handlers/messageHandler');
 const messageQueue = require('./services/messageQueue');
 const broadcastService = require('./services/broadcastService');
 const { startStatusServer, channels } = require('./services/statusServer');
@@ -143,10 +143,18 @@ async function startGateway() {
         onPolicyChanged: policy => {
             state.GLOBAL_MODE = policy.globalMode;
             state.CURRENT_PROFILE = policy.globalProfileKey || 'default';
+            return drainAllConversations();
         }
     });
     setControlService(conversationControl);
-    if ((await conversationArchive.controlAuthority()).mode === 'sqlite') await conversationControl.refreshPolicy();
+    const controlAuthority = await conversationArchive.controlAuthority();
+    if (controlAuthority.mode === 'sqlite') {
+        await conversationControl.refreshPolicy();
+        const invalidatedQueue = messageQueue.invalidateLegacyReplay();
+        if (invalidatedQueue.invalidated) {
+            log.warn(`Control SQLite: ${invalidatedQueue.invalidated} trabajos JSONL heredados quedaron archivados sin replay.`);
+        }
+    }
     await conversationControl.recoverPendingOperations();
     await conversationControl.setServiceReady(true);
     archiveRetention = await require('./services/conversations/retention').startRetention(conversationArchive,
