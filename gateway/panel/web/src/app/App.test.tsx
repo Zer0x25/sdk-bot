@@ -470,6 +470,11 @@ describe('inbox shell and real API integration', () => {
     const sources = installEventSourceMock();
     renderApp('/inbox/' + conversationId);
     await screen.findByText('¿En qué puedo ayudarte?');
+    const history = document.querySelector('.message-history') as HTMLDivElement;
+    Object.defineProperty(history, 'scrollHeight', { configurable: true, value: 1200 });
+    Object.defineProperty(history, 'clientHeight', { configurable: true, value: 300 });
+    history.scrollTop = 200;
+    fireEvent.scroll(history);
 
     const source = sources[0];
     act(() => source.open());
