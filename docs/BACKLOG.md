@@ -74,7 +74,7 @@ salvo indicación contraria. La evidencia detallada y líneas están en la basel
 | BUG-059 | P2 | Cerrado F4.1: el check global de ESLint fallaba después de compilar la bandeja. | El lint recorría `panel/web/dist` y analizaba el bundle ES module como CommonJS; también detectó escapes innecesarios en la prueba de servido del build. | Se excluyó el artefacto generado y se simplificó la expresión de prueba. `npm run check` completo y build Docker de la fase pasan. |
 | BUG-060 | P2 | Cerrado F4.1: el runner Node incluía el setup de Vitest como si fuera otra prueba del gateway. | La carpeta `panel/web/src/test` hizo que `node --test` descubriera `setup.ts`, que solo instala matchers y generaba un warning de formato ESM. | El setup se movió a `src/vitestSetup.ts`; Vitest lo carga explícitamente y `node --test` deja de ejecutarlo como prueba. |
 | BUG-061 | P2 | Cerrado F4.1: el build Docker fallaba al instalar paquetes detrás del CA de red de este entorno. | `npm ci` falló dentro de la imagen base con `Exit handler never called` a los 73 s, incluso serial; el host resuelve npm y confía en `NODE_EXTRA_CA_CERTS`, pero la imagen limpia no tiene ese CA. | El builder acepta un BuildKit secret opcional y lo asigna a `NODE_EXTRA_CA_CERTS` solo durante `npm ci`. Build se valida con TLS verificado y el cert no queda en capas ni en la imagen. |
-| BUG-062 | P1 | Abierto: dependencias de medios transitivas de Baileys tienen avisos DoS/proceso-crash; `sharp@0.35.3` (high) y `music-metadata@11.14.0` (moderate). | `npm audit --omit=dev`; árbol `npm ls` los ubica bajo `@whiskeysockets/baileys@7.0.0-rc14`. No los introduce la UI F4.1. `npm audit fix --dry-run` ofrece versiones corregidas sin cambiar dependencias directas. | Remediar en unidad aislada antes de continuar bandeja: actualizar lockfile dentro de rangos existentes, `npm audit --omit=dev` limpio y full gateway checks + Docker runtime probado. |
+| BUG-062 | P1 | Cerrado en unidad de seguridad después de F4.1: dependencias de medios transitivas de Baileys tenían avisos DoS/proceso-crash; `sharp@0.35.3` (high) y `music-metadata@11.14.0` (moderate). | `npm audit --omit=dev` y `npm ls` los ubicaron bajo `@whiskeysockets/baileys@7.0.0-rc14`; no los introdujo la UI. | `npm audit fix` movió solo el lockfile a `sharp@0.35.5` y `music-metadata@11.16.1` sin cambiar rangos directos. Auditoría completa y de producción limpias; suites y Docker verificadas. Evidencia: [DEPENDENCY-SECURITY-BUG-062](DEPENDENCY-SECURITY-BUG-062.md). |
 
 ## Clasificación para la unidad activa
 
@@ -90,8 +90,8 @@ F2B.3 conserva BUG-033/034/036 cerrados y BUG-037 P2/F8 antes de STT real.
 BUG-035 pairing queda F8; F3.1 cierra BUG-056/057. BUG-024 sigue antes de
 operadores limitados; BUG-014 antes de Python paralelo. F3.2 implementa replay SSE
 y `resync.required` para cursores expirados sin retener el archivo sin límite. F4.1
-cierra BUG-058/059/060 de UI y BUG-061 de instalación Docker detrás de CA. BUG-062
-es una alerta abierta P1 de dependencias transitivas para medios. El perfil de carga completo
+cierra BUG-058/059/060 de UI y BUG-061 de instalación Docker detrás de CA. La
+unidad de seguridad cerró BUG-062 sin cambiar versiones directas. El perfil de carga completo
 requiere repetición con 2 CPU/4 GiB;
 el host medido tenía 3 CPU/10,45 GiB. No extrapolar archivo/polling a control, roles, salida durable
 ni carga/aceptación completa F2.

@@ -30,8 +30,8 @@ registra salidas aceptadas y deduplica ecos WA; conserva autoría external_self.
 F2E.2 cierra la carga sintética completa y F3.1 implementa la API autenticada de
 lectura, filtros, páginas y cursor local de lectura. F3.2 completa SSE, replay y
 resynchronización ante cursores fuera de retención. F4.1 ya entrega el shell visual
-de la bandeja. Antes de F4.2 se cierra BUG-062, una alerta P1 de dependencias media
-heredadas vía Baileys; luego se conecta lista e historial reales.
+de la bandeja y la unidad de seguridad cerró BUG-062 en dependencias de medios.
+La siguiente unidad es F4.2: conectar lista e historial reales.
 BUG-050 conserva salidas ambiguas; BUG-051 es puerta antes de usar archivos
 preexistentes reales. La atribución IA/operador queda en F5 junto a su outbox.
 Sin canales reales ni migración.

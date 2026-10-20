@@ -1,6 +1,6 @@
 # Estado de continuidad — SDK-Bot
 
-Actualización: 2026-10-20. Última unidad cerrada: **F4.1; shell visual React/Vite servido bajo `/inbox`**. El historial real continúa sin conectar.
+Actualización: 2026-10-20. Última unidad cerrada: **BUG-062; seguridad de dependencias transitivas**. F4.1 está cerrada; sigue F4.2.
 
 ## Objetivo vigente
 
@@ -474,20 +474,28 @@ proxy vuelve a resolver y firmar actor/capacidad al reconectar.
   dentro de la imagen confirma bundle/contratos presentes y Vite ausente del runtime.
   El CA solo se monta durante `npm ci`, no queda en capas. BUG-061 cierra la
   adaptación del builder a instalaciones detrás de CA corporativo.
-- `npm audit --omit=dev` encontró BUG-062 P1 en `sharp@0.35.3` y
-  `music-metadata@11.14.0`, ambos transitivos de Baileys. `npm audit fix --dry-run`
-  propone versiones corregidas bajo el rango actual; se remedian en un commit
-  independiente antes de continuar F4.2.
+- La auditoría inicial encontró BUG-062 P1 en `sharp@0.35.3` y
+  `music-metadata@11.14.0`, transitivos de Baileys. Se cerró en un commit de lockfile
+  separado; la evidencia está abajo y en
+  [DEPENDENCY-SECURITY-BUG-062](DEPENDENCY-SECURITY-BUG-062.md).
 - No hubo navegador E2E con viewport ni prueba visual manual; queda como límite
   registrado, junto con la conexión de API pendiente. El CSS incluye breakpoints,
   y Vitest verifica regiones, navegación y foco por teclado.
 
-## Siguiente unidad exacta: remediar BUG-062 P1; después F4.2
+## BUG-062 completado: dependencias de medios
 
-Primero actualizar las dependencias transitivas vulnerables sin cambiar el rango
-directo de Baileys; ejecutar auditoría, suite y build Docker y cerrar BUG-062 con un
-commit propio. Después conectar lista, selección en URL, detalle e historial
-paginado con la API autenticada; envío y control humano siguen fuera de F4.2.
+`npm audit fix` actualizó solo `gateway/package-lock.json`: `sharp@0.35.5` y
+`music-metadata@11.16.1` bajo el Baileys existente. Auditoría completa y producción
+dan cero vulnerabilidades; gateway check conserva 269 pruebas y 3 Vitest. Docker
+Node 22 se reconstruyó con el CA temporal y probó runtime, bundle, contrato y
+ausencia de Vite/CA. Commit separado de la UI.
+
+## Siguiente unidad exacta: F4.2 / lista e historial reales
+
+Conectar la lista de conversaciones, selección en URL, detalle y mensajes paginados
+con la API autenticada existente. Agregar estados de carga, vacío, error y cobertura
+parcial, ficha contextual segura y paginación hacia atrás. No habilitar envío ni
+control humano en esta unidad; F4.3 aborda SSE y resynchronización.
 
 ## Pendientes materiales
 
