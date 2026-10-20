@@ -5,11 +5,12 @@ BUG-064 y BUG-065 están cerrados y sus arreglos pasaron CI. Release Please run 
 falló primero con E800, error interno de GraphQL de GitHub durante la búsqueda de
 commits; el segundo intento pasó y actualizó la PR #2 a `chore(main): release
 0.3.0`, incluyendo la funcionalidad de la #4. La PR de release sigue abierta;
-`.release-please-config.json` configura el release como borrador. Su check de CI
-quedó `action_required` sin jobs en una actualización del actor
-`github-actions[bot]`; el flujo actual usa `GITHUB_TOKEN` y no muestra aprobaciones
-pendientes. BUG-066 registra este bloqueo y la verificación pendiente del token. BUG-067 elimina una advertencia
-por un input inválido de la acción. F4.3 sigue después de completar la publicación.
+`.release-please-config.json` configura el release como borrador. Su primer check
+quedó `action_required` sin jobs; la reejecución manual pasó los cinco jobs y la
+PR #2 ahora está `CLEAN` (run 39418373438, intento 2). BUG-066 registra cómo
+eliminar esa reejecución manual en futuros releases. BUG-067 elimina una
+advertencia por un input inválido de la acción. F4.3 sigue después de completar
+la publicación.
 
 ## Objetivo vigente
 
