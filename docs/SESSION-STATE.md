@@ -3,14 +3,18 @@
 Actualización: 2026-10-20. F4.2 se fusionó en main en 7526edc (PR #4).
 BUG-064 y BUG-065 están cerrados y sus arreglos pasaron CI. Release Please run #32
 falló primero con E800, error interno de GraphQL de GitHub durante la búsqueda de
-commits; el segundo intento pasó y actualizó la PR #2 a `chore(main): release
-0.3.0`, incluyendo la funcionalidad de la #4. La PR de release sigue abierta;
-`.release-please-config.json` configura el release como borrador. Su primer check
-quedó `action_required` sin jobs; la reejecución manual pasó los cinco jobs y la
-PR #2 ahora está `CLEAN` (run 39418373438, intento 2). BUG-066 registra cómo
-eliminar esa reejecución manual en futuros releases. BUG-067 elimina una
-advertencia por un input inválido de la acción. F4.3 sigue después de completar
-la publicación.
+commits; el segundo intento pasó y generó la PR #2 `chore(main): release 0.3.0`,
+que ya se fusionó en 9b0d0b5. BUG-067 eliminó un input inválido de la acción.
+
+La revisión de workflows encontró que cada merge ejecutaba CI tanto en la PR como
+en `main`, y disparaba el deploy Homelab aunque su runner `self-hosted` ya no está
+disponible. BUG-068 cierra esa duplicación: CI queda en PRs a `main` y también se
+puede lanzar manualmente; Release Please conserva el evento `push` a `main`, y el
+deploy automático se retiró. El despliegue de producción sigue el procedimiento
+manual documentado en README. La nueva PR de release #6 (`0.4.0`) volvió a quedar
+`action_required` con cero jobs (run 39420100563); BUG-066 permanece abierto para
+resolver la autorización de checks de Release Please. `.release-please-config.json`
+mantiene las releases como borrador y F4.3 sigue pendiente.
 
 ## Objetivo vigente
 
