@@ -1,20 +1,22 @@
 # Estado de continuidad — SDK-Bot
 
 Actualización: 2026-10-20. F4.2 se fusionó en main en 7526edc (PR #4).
-BUG-064 y BUG-065 están cerrados y sus arreglos pasaron CI. Release Please run #32
-falló primero con E800, error interno de GraphQL de GitHub durante la búsqueda de
-commits; el segundo intento pasó y generó la PR #2 `chore(main): release 0.3.0`,
-que ya se fusionó en 9b0d0b5. BUG-067 eliminó un input inválido de la acción.
+BUG-064 y BUG-065 están cerrados y sus arreglos pasaron CI. Release PR #2 actualizó
+el manifiesto a 0.3.0 en 9b0d0b5; PR #6 fusionó la versión 0.4.0 en bfe3fa9.
 
-La revisión de workflows encontró que cada merge ejecutaba CI tanto en la PR como
-en `main`, y disparaba el deploy Homelab aunque su runner `self-hosted` ya no está
-disponible. BUG-068 cierra esa duplicación: CI queda en PRs a `main` y también se
-puede lanzar manualmente; Release Please conserva el evento `push` a `main`, y el
-deploy automático se retiró. El despliegue de producción sigue el procedimiento
-manual documentado en README. La nueva PR de release #6 (`0.4.0`) volvió a quedar
-`action_required` con cero jobs (run 39420100563); BUG-066 permanece abierto para
-resolver la autorización de checks de Release Please. `.release-please-config.json`
-mantiene las releases como borrador y F4.3 sigue pendiente.
+Release Please run #36 (39476647006) creó el release v0.4.0 como borrador y luego
+abrió PR #8 v0.5.0 con el mismo changelog que PR #6: ambas añaden 153 líneas.
+El log del run confirma `Expected 1 releases, only found 0` y que buscó el tag
+`v0.4.0`; GitHub no publica el tag mientras el release siga en borrador. BUG-069
+registra la causa. `release-please-config.json` cambia a `draft: false` para que
+las futuras fusiones de PR de release publiquen también el release/tag. El draft
+v0.4.0 existente y la PR duplicada #8 aún requieren reconciliación manual; no
+fusionar la #8 como una versión nueva.
+
+BUG-066 sigue abierto: checks de PRs generadas por Release Please pueden quedar
+`action_required` sin jobs. BUG-067 eliminó el input inválido `draft` de la
+acción. BUG-068 retiró el deploy Homelab y duplicación CI post-merge. F4.3 sigue
+pendiente.
 
 ## Objetivo vigente
 
