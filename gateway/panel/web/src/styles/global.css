@@ -273,3 +273,15 @@ button:focus-visible, a:focus-visible, [tabindex]:focus-visible {
 @media (prefers-reduced-motion: reduce) {
   *, *::before, *::after { scroll-behavior: auto !important; transition-duration: .01ms !important; animation-duration: .01ms !important; animation-iteration-count: 1 !important; }
 }
+
+
+.live-sync-status { display: inline-flex; align-items: center; gap: 6px; color: var(--muted); white-space: nowrap; }
+.live-sync-dot { width: 7px; height: 7px; flex: 0 0 7px; border-radius: 50%; background: #d49a52; }
+.live-sync-status.is-connected { color: #42765a; }
+.live-sync-status.is-connected .live-sync-dot { background: #58a978; box-shadow: 0 0 0 3px rgb(88 169 120 / 13%); }
+.live-sync-status.is-reconnecting { color: #946a31; }
+.live-sync-status.is-reconnecting .live-sync-dot { background: #d49a52; }
+
+.new-messages-banner { position: sticky; top: 0; z-index: 2; display: flex; align-items: center; gap: 10px; align-self: center; border: 1px solid #cfe5d7; border-radius: 999px; padding: 6px 8px 6px 12px; color: #2f6747; background: rgb(255 255 255 / 96%); box-shadow: 0 5px 18px rgb(24 54 39 / 12%); font-size: 11px; font-weight: 650; }
+.new-messages-banner .text-button { border: 0; border-radius: 999px; padding: 5px 9px; color: #fff; background: #397b55; font-size: 10px; font-weight: 700; }
+.new-messages-banner .text-button:hover { background: #2e6947; }
