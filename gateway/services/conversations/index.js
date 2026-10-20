@@ -44,7 +44,8 @@ function createArchive(options = {}) {
         const size = Buffer.byteLength(encoded);
         // Snapshot caller-owned objects before asynchronous readiness/dispatch.
         input = JSON.parse(encoded);
-        const count = method === 'ingestBatch' && Array.isArray(input) ? input.length : 1;
+        const count = method === 'ingestBatch' && Array.isArray(input) ? input.length
+            : method === 'captureTelegramBatch' && Array.isArray(input?.updates) ? input.updates.length : 1;
         if (!count || elements + count > 1000 || bytes + size > 32 * 1024 * 1024) return Promise.reject(unavailable('ARCHIVE_SATURATED'));
         elements += count; bytes += size;
         const id = ++nextId;
@@ -63,6 +64,8 @@ function createArchive(options = {}) {
         ready,
         snapshot: () => call('snapshot'),
         registerAccount: input => call('registerAccount', input),
+        telegramCursor: accountId => call('telegramCursor', accountId),
+        captureTelegramBatch: input => call('captureTelegramBatch', input),
         resolve: input => call('resolve', input),
         bindAlias: input => call('bindAlias', input),
         ingestBatch: input => call('ingestBatch', input),

@@ -1,6 +1,6 @@
 # SDK-Bot: arquitectura de la plataforma de conversaciones
 
-Fecha: 2026-10-19. Estado: **diseño para implementación incremental**.
+Fecha: 2026-10-20. Estado: **diseño para implementación incremental**.
 El código todavía usa `gateway/`, `brain/`, `stt/` y un panel estático.
 Las carpetas, tablas, servicios y endpoints de destino no existen todavía,
 salvo indicación expresa. F1A implementa `packages/contracts` y workspace raíz
@@ -10,7 +10,8 @@ instalados como dependencia local del gateway. F2A añade repositorios SQLite co
 worker y snapshot durable de sesión; F2B.1 protege el reset CLI antes de captura.
 F2B.2 conecta captura base WA y F2B.3 añade enriquecimiento multimedia durable
 ([evidencia y límites](MULTIMEDIA-WHATSAPP-F2B3.md)). F2C.1 elimina el lector paralelo de descubrimiento TG
-([evidencia](TELEGRAM-DUENO-UNICO-F2C1.md)); archivo/cursor TG y resto de API v1 pendientes.
+([evidencia](TELEGRAM-DUENO-UNICO-F2C1.md)); F2C.2 ya captura Telegram con cuenta
+verificada y cursor durable por bot ([evidencia](TELEGRAM-CAPTURA-F2C2.md)); resto de API v1 pendiente.
 Ver [CAPTURA-WHATSAPP-F2B2](CAPTURA-WHATSAPP-F2B2.md). Evidencia: [CONTRATOS-V1.md](CONTRATOS-V1.md) y
 [FRONTERA-AUTENTICADA-V1.md](FRONTERA-AUTENTICADA-V1.md) y
 [ARCHIVO-CONVERSACIONES-F2A.md](ARCHIVO-CONVERSACIONES-F2A.md).
@@ -37,7 +38,7 @@ un marcador visible aunque todavía no pueda abrirse o descargarse.
 | Memoria IA | `brain/memory.py`: append_exchange, barrido y límites; `.env.tuning`: 7 días y ~5000 tokens de contexto | Es contexto de generación, no archivo íntegro del chat. |
 | Historial WA | `gateway/store/chatStore.js`: Map, máximo por chat y expulsión por inactividad | Se pierde al reiniciar; fromMe se normaliza como assistant sin distinguir humano. |
 | Captura WA | `gateway/adapters/whatsappAdapter.js`: messages.upsert procesa m.messages[0], filtra mensajes del bot y deriva audio antes de emitir texto | Capturar todos los mensajes y separar archivo de decisión de respuesta. |
-| Captura Telegram | `gateway/adapters/telegramAdapter.js`: texto/audio y lastUpdateId adelantado antes de terminar el trabajo | Revisar confirmación y persistencia del cursor. Bot API no da un archivo histórico arbitrario. |
+| Captura Telegram | `telegramAdapter.js` verifica `getMe`, normaliza mensajes individuales y espera `captureTelegramBatch`; el worker confirma mensaje, evento y cursor del bot en una transacción | El cursor sobrevive reinicios y rotación de token del mismo bot. Bot API no da un archivo histórico arbitrario; grupos/eventos se excluyen y no se conservan binarios (audio deja marcador/transcripción). |
 | Handoff | stateService.js, contactsRepository.js y commands/chatControl.js | Mezcla permisos y automatización, TTL de 24 h y resolución por dígitos; no garantiza cancelación. |
 | Envío IA | `services/brainService.js`: petición, esperas, typing y varios globos | Falta barrera común de validación antes de cada envío. |
 | Memoria prematura | `brain/main.py`: /chat llama append_exchange antes de entregar al gateway | Una generación cancelada puede quedar en contexto como si se hubiera enviado. |
@@ -49,8 +50,9 @@ En esa baseline, upsertMessage del store RAM no tenía llamadas y las guardas
 de socket WA solo cubrían connection.update. F2B.2 corrige lotes, cache live y
 callbacks obsoletos con captura SQLite; evidencia y límites en
 [CAPTURA-WHATSAPP-F2B2](CAPTURA-WHATSAPP-F2B2.md). F2C.1 conecta descubrimiento Telegram
-al adapter configurado, sin un getUpdates independiente; ciclo HTTP/offset por token
-corregidos. Cursor durable/captura TG siguen F2C.2. Referencias y alcance de las pruebas en
+al adapter configurado, sin un getUpdates independiente. F2C.2 añade cuenta verificada,
+IDs exactos, captura/cursor transaccionales y resultado STT durable sobre el mismo mensaje.
+Referencias y alcance de las pruebas en
 [BASELINE-CONVERSACIONES.md](BASELINE-CONVERSACIONES.md).
 
 ## 3. Arquitectura y límites

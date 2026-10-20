@@ -33,7 +33,7 @@ function requestJson({ path, method = 'GET', body, signal, timeoutMs }) {
             res.on('end', () => {
                 ended = true;
                 try {
-                    parsed = JSON.parse(new TextDecoder('utf-8', { fatal: true }).decode(Buffer.concat(chunks)));
+                    parsed = parseTelegramJson(new TextDecoder('utf-8', { fatal: true }).decode(Buffer.concat(chunks)));
                     // Preserve classification even for an invalid/non-JSON 4xx body.
                     if (res.statusCode >= 400) parsed = { ok: false, error_code: res.statusCode };
                 } catch { if (res.statusCode >= 400) parsed = { ok: false, error_code: res.statusCode }; else error ||= failure('TG_RESPONSE_INVALID'); }
@@ -59,4 +59,36 @@ function failure(code, message = 'No se pudo completar la consulta de Telegram. 
     return Object.assign(new Error(message), { code });
 }
 
-module.exports = { requestJson, failure };
+/** JSON.parse rounds integer tokens above 2^53. Telegram uses JSON numbers for
+ * provider IDs, so quote unsafe integer tokens before parsing. Safe integers
+ * and all non-ID values retain their normal JSON types. */
+function parseTelegramJson(source) {
+    let output = '';
+    for (let i = 0; i < source.length;) {
+        const char = source[i];
+        if (char === '"') {
+            const start = i++;
+            while (i < source.length) {
+                if (source[i] === '\\') { i += 2; continue; }
+                if (source[i++] === '"') break;
+            }
+            output += source.slice(start, i);
+            continue;
+        }
+        if (char === '-' || char >= '0' && char <= '9') {
+            const match = /^-?(?:0|[1-9]\d*)(?:\.\d+)?(?:[eE][+-]?\d+)?/.exec(source.slice(i));
+            if (match) {
+                const token = match[0];
+                const integer = !/[.eE]/.test(token);
+                output += integer && !Number.isSafeInteger(Number(token)) ? JSON.stringify(token) : token;
+                i += token.length;
+                continue;
+            }
+        }
+        output += char;
+        i++;
+    }
+    return JSON.parse(output);
+}
+
+module.exports = { requestJson, failure, parseTelegramJson };

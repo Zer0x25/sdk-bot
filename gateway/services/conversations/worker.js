@@ -33,10 +33,18 @@ function initialize() {
     // SQLite owns the OS lock for the full connection lifetime; crash releases it.
     db.exec('BEGIN IMMEDIATE; COMMIT;');
     const version = one('PRAGMA user_version').user_version;
-    if (version > 1) fail('SCHEMA_TOO_NEW');
+    if (version > 2) fail('SCHEMA_TOO_NEW');
     if (version === 0) transaction(() => {
         db.exec(schema);
         run('INSERT INTO archive_meta VALUES(1,?,?)', randomUUID(), '0');
+    });
+    if (one('PRAGMA user_version').user_version === 1) transaction(() => {
+        db.exec(`CREATE TABLE telegram_cursors (
+            account_id TEXT PRIMARY KEY REFERENCES accounts(id) ON DELETE CASCADE,
+            last_update_id TEXT CHECK(last_update_id IS NULL OR last_update_id='0' OR
+                (length(last_update_id)<=20 AND last_update_id NOT GLOB '*[^0-9]*' AND substr(last_update_id,1,1) BETWEEN '1' AND '9')),
+            updated_at TEXT NOT NULL
+        ); PRAGMA user_version=2;`);
     });
     if (one('PRAGMA integrity_check').integrity_check !== 'ok' || all('PRAGMA foreign_key_check').length) fail('ARCHIVE_CORRUPT');
     if (workerData.restore) transaction(() => {
@@ -53,7 +61,7 @@ function initialize() {
         transaction(() => pending.forEach(row => updateTranscription({ messageId: row.id, expectedStatus: 'pending', status: 'failed' })));
         after = pending[pending.length - 1].id;
     }
-    return { ...snapshot(), schemaVersion: 1, journalMode: one('PRAGMA journal_mode').journal_mode,
+    return { ...snapshot(), schemaVersion: 2, journalMode: one('PRAGMA journal_mode').journal_mode,
         synchronous: one('PRAGMA synchronous').synchronous, threadId: require('node:worker_threads').threadId };
 }
 function registerAccount(input) {
@@ -68,6 +76,52 @@ function registerAccount(input) {
     if (one('SELECT id FROM accounts WHERE id=?', id)) fail('ACCOUNT_CONFLICT');
     run('INSERT INTO accounts VALUES(?,?,?)', id, input.channel, input.providerKey);
     return one('SELECT * FROM accounts WHERE id=?', id);
+}
+function telegramCursor(accountId) {
+    assertValid('Id', accountId);
+    const account = one('SELECT channel FROM accounts WHERE id=?', accountId);
+    if (!account || account.channel !== 'telegram') fail('ACCOUNT_MISMATCH');
+    return one('SELECT last_update_id FROM telegram_cursors WHERE account_id=?', accountId)?.last_update_id ?? null;
+}
+function canonicalUpdateId(value) {
+    if (typeof value !== 'string' || !/^(0|[1-9]\d{0,19})$/.test(value)) fail('INVALID_TELEGRAM_UPDATE_ID');
+    if (BigInt(value) > 18446744073709551615n) fail('INVALID_TELEGRAM_UPDATE_ID');
+    return value;
+}
+function captureTelegramBatch(input) {
+    assertValid('Id', input.accountId);
+    if (!Array.isArray(input.updates) || input.updates.length > 100) fail('INVALID_TELEGRAM_BATCH');
+    const account = one('SELECT channel FROM accounts WHERE id=?', input.accountId);
+    if (!account || account.channel !== 'telegram') fail('ACCOUNT_MISMATCH');
+    const row = one('SELECT last_update_id FROM telegram_cursors WHERE account_id=?', input.accountId);
+    let cursor = row?.last_update_id ?? null;
+    let previousInBatch = null;
+    const results = [];
+    for (const update of input.updates) {
+        const updateId = canonicalUpdateId(update?.updateId);
+        const value = BigInt(updateId);
+        if (previousInBatch !== null && value <= previousInBatch) fail('INVALID_TELEGRAM_BATCH');
+        previousInBatch = value;
+        if (cursor !== null && value <= BigInt(cursor)) {
+            results.push({ updateId, status: 'stale' });
+            continue;
+        }
+        if (update.message !== null) {
+            const message = update.message;
+            if (message.identity?.accountId !== input.accountId || message.identity?.channel !== 'telegram'
+                || message.identity?.kind !== 'telegram_chat_id' || message.source !== 'live'
+                || message.direction !== 'inbound' || message.authorKind !== 'customer') fail('INVALID_TELEGRAM_CAPTURE');
+            const result = ingest(message);
+            results.push({ updateId, status: result.status, result });
+        } else results.push({ updateId, status: 'excluded' });
+        cursor = updateId;
+    }
+    if (cursor !== null && cursor !== (row?.last_update_id ?? null)) {
+        run(`INSERT INTO telegram_cursors(account_id,last_update_id,updated_at) VALUES(?,?,?)
+            ON CONFLICT(account_id) DO UPDATE SET last_update_id=excluded.last_update_id,updated_at=excluded.updated_at`,
+        input.accountId, cursor, new Date().toISOString());
+    }
+    return { lastUpdateId: cursor, results };
 }
 function lookup(key) {
     assertValid('IdentityKey', key);
@@ -208,6 +262,11 @@ function dispatch(method, input) {
         case 'purge': return transaction(() => purge(input));
         case 'snapshot': return snapshot();
         case 'registerAccount': return transaction(() => registerAccount(input));
+        case 'telegramCursor': return telegramCursor(input);
+        case 'captureTelegramBatch': {
+            if (!input || !Array.isArray(input.updates) || !input.updates.length) fail('INVALID_TELEGRAM_BATCH');
+            return transaction(() => captureTelegramBatch(input));
+        }
         case 'resolve': return transaction(() => resolve(input));
         case 'bindAlias': return transaction(() => bindAlias(input));
         case 'ingestBatch': {

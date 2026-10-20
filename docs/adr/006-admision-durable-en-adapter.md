@@ -1,7 +1,7 @@
 # ADR 006: admisión durable antes del consumidor legacy
 
-Fecha: 2026-10-19. Estado: aceptada para la transición F2.
-Complementa ADR-003/005; implementación inicial WA en F2B.2.
+Fecha: 2026-10-20. Estado: aceptada para la transición F2.
+Complementa ADR-003/005; implementada para WA en F2B.2 y Telegram en F2C.2.
 
 ## Contexto
 
@@ -15,9 +15,9 @@ El archivo F2A necesita conservar también historia, ecos y marcadores multimedi
 
 Se amplían los puntos 2 y 4 de ADR-003: durante la transición, el adapter puede
 esperar un coordinador de admisión durable inyectado por el gateway antes de
-emitir `message` al consumidor legacy. La persistencia está en
-`services/conversations/whatsappCapture.js`, no en el handler ni en SQL dentro
-del adapter. El gateway compone el único archivo, su purga y su ciclo de vida.
+emitir `message` al consumidor legacy. La persistencia está en los servicios
+de captura del canal, no en el handler ni en SQL dentro del adapter. El gateway
+compone el único archivo, su purga y su ciclo de vida.
 
 - El adapter conserva normalización de transporte, clasificación de origen y
   protección de su socket; ningún segundo consumidor lee Baileys.
@@ -32,12 +32,16 @@ del adapter. El gateway compone el único archivo, su purga y su ciclo de vida.
   traslada autoridad de acceso/control desde JSON.
 - `archived_message` alimenta consumidores de cache solo tras commit. Emitirlo
   no constituye una API pública ni un ACK adicional al proveedor.
+- Telegram normaliza lotes de `getUpdates` y entrega mensajes/cursor a una sola
+  RPC del worker; el siguiente `offset` se calcula después de recibir su commit.
+  Updates administrativos, grupos y tipos no admitidos pueden avanzar cursor si
+  su `update_id` es válido, dentro de la misma transacción.
 
 Las decisiones de negocio de respuesta/comandos permanecen en pipeline y los
 efectos legacy en su handler. F5 deberá concentrar despacho/control en los casos
 de uso comunes; no extender esta excepción a decisiones de acceso dentro de los
-adapters. Telegram reutilizará el principio de admisión con su cursor durable F2C,
-sin copiar reglas WA ni agregar polling.
+adapters. Telegram conserva su dueño único de polling de ADR-003 y solo agrega
+admisión durable; no copia reglas WA ni crea otro lector.
 
 ## Consecuencias y validación
 
@@ -50,3 +54,14 @@ Pruebas de commit previo, fallo después de commit, saturación, sockets antiguo
 reapertura y composición del entry real en
 [CAPTURA-WHATSAPP-F2B2](../CAPTURA-WHATSAPP-F2B2.md). Los límites de transporte y
 proceso de ADR-001/002 y el dueño único de ADR-003 se conservan.
+
+Telegram añade `getMe` para obtener un `providerKey` estable del bot sin persistir
+el token. La migración v2 crea cursores por cuenta; captura de cada lote, eventos,
+proyección y cursor se confirman en una sola transacción. Audio se archiva primero
+como marcador y el STT actualiza el mismo mensaje antes de emitir texto legacy.
+Updates admin/grupo/tipos excluidos pueden confirmar el cursor sin crear mensaje
+de conversación. El despacho del pipeline y de comandos admin ocurre después del
+commit y no es durable: F2D debe añadir replay idempotente de mensajes (BUG-045),
+y F5 un inbox durable de comandos (BUG-046). Redelivery stale de comando ya se
+filtra en F2C.2 (BUG-047). Evidencia, matriz de exclusiones y límites:
+[TELEGRAM-CAPTURA-F2C2](../TELEGRAM-CAPTURA-F2C2.md).

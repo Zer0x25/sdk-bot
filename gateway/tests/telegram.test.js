@@ -177,7 +177,9 @@ test('TelegramAdapter es el único dueño de getUpdates y emite el mensaje del a
     // Config con token+chatId; el update llega del chat admin
     saveSettingsDB({ globalMode: 'ignored_all', telegramToken: 'mockTok', telegramChatId: '555' });
     const TelegramAdapter = require('../adapters/telegramAdapter');
-    const adapter = new TelegramAdapter();
+    const { createTelegramArchive } = require('./helpers/telegramArchive');
+    const adapter = new TelegramAdapter({ archive: createTelegramArchive(),
+        getMe: async () => ({ ok: true, result: { id: 42, is_bot: true } }) });
     /** @type {any[]} */
     const seen = [];
     adapter.on('message', m => seen.push(m));
@@ -196,7 +198,8 @@ test('TelegramAdapter es el único dueño de getUpdates y emite el mensaje del a
         process.nextTick(() => {
             if (pollCalls === 1) {
                 res.emit('data', JSON.stringify({ ok: true, result: [
-                    { update_id: 7, message: { text: '/estado', chat: { id: 555 }, from: { first_name: 'Admin' } } }
+                    { update_id: 7, message: { message_id: 7, date: 1792368000, text: '/estado',
+                        chat: { id: 555, type: 'private' }, from: { first_name: 'Admin' } } }
                 ] }));
             } else {
                 res.emit('data', JSON.stringify({ ok: true, result: [] }));
@@ -239,6 +242,6 @@ test('TelegramAdapter es el único dueño de getUpdates y emite el mensaje del a
     // Un único loop: offsets consecutivos sobre la MISMA fuente de updates
     const gu = gets.filter(p => p.includes('getUpdates'));
     assert.ok(gu.length >= 2, `hubo polling (${gu.length} llamadas)`);
-    assert.match(gu[0], /offset=1&/);
-    assert.match(gu[1], /offset=8&/, 'offset = update_id + 1 consumido por el dueño único');
+    assert.match(gu[0], /offset=0&/);
+    assert.match(gu[1], /offset=8&/, 'offset = update_id + 1 tras confirmar el archivo');
 });

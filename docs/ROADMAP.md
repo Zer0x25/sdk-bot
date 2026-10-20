@@ -1,6 +1,6 @@
 # Hoja de ruta: plataforma de conversaciones SDK-Bot
 
-Actualización: 2026-10-19. Arquitectura: [ARCHITECTURE.md](ARCHITECTURE.md).
+Actualización: 2026-10-20. Arquitectura: [ARCHITECTURE.md](ARCHITECTURE.md).
 Decisión: [ADR-005](adr/005-plataforma-conversaciones.md).
 Estado por sesión: [SESSION-STATE.md](SESSION-STATE.md).
 Prompt reutilizable: [PROMPT-CONTINUIDAD.md](PROMPT-CONTINUIDAD.md).
@@ -24,7 +24,9 @@ cerrada. F1A y F1B completadas: workspace mínimo, contratos/tipos y frontera
 autenticada probados. F2A completada (repositorios del archivo); F2B.1 cierra la puerta de reset CLI.
 F2B.2 conecta captura base WA y F2B.3 completa enriquecimiento multimedia durable.
 F2C.1 completa dueño único del polling/descubrimiento Telegram.
-Siguiente: F2C.2, captura base TG con cursor durable y namespace exacto.
+F2C.2 completa la captura base TG con cursor durable y namespace exacto.
+Siguiente: replay idempotente de entrada post-commit (BUG-045), luego reconciliar
+salidas/eco externo y completar la carga de aceptación F2.
 Sin canales reales ni migración.
 
 ## Alcance y entregas
@@ -114,7 +116,7 @@ alterado/vencido y desarrollo explícito, sin conectarse a canales reales.
 
 ## Fase 2 — Historial durable y captura completa
 
-**Depende de:** Fase 1. **Estado: F2A/F2B/F2C.1 completadas; F2C.2 y carga completa pendientes.**
+**Depende de:** Fase 1. **Estado: F2A/F2B/F2C completadas; reconciliación y carga completa pendientes.**
 Evidencia: [ARCHIVO-CONVERSACIONES-F2A](ARCHIVO-CONVERSACIONES-F2A.md).
 F2B.1 completa la puerta BUG-029/031 del reset CLI; evidencia en
 [RESET-SEGURO-F2B1](RESET-SEGURO-F2B1.md). F2B integra WA; F2C Telegram/ack; carga
@@ -140,10 +142,17 @@ abort físico queda como puerta de aceptación STT real F8, sin prometerlo aquí
   cerrados: observación del adapter configurado sin lector/offset extra, cierre HTTP
   antes de reemplazo, offset RAM separado al cambiar token y setup parcial usable.
   [Evidencia](TELEGRAM-DUENO-UNICO-F2C1.md); esto no prueba ACK/captura durable.
-- [ ] F2C.2 Captura base Telegram antes de adelantar/confirmar cursor durable.
-  Reprocesar un update tras crash sin duplicarlo; cuenta verificada sin token en
-  archivo y namespace de IDs/eco. BUG-005/008/009 pendientes en TG. Completar
-  enriquecimiento multimedia TG antes de cerrar F2C, en unidad separada si procede.
+- [x] F2C.2 Captura Telegram antes de calcular el offset siguiente. `getMe`
+  establece `telegram_bot:<id>` como cuenta estable, sin token en SQLite. Mensajes,
+  huellas, eventos/proyección y cursor se confirman juntos; updates válidos de
+  administración, grupos y tipos excluidos avanzan en la misma transacción.
+  IDs JSON grandes conservan precisión, el mismo `message_id` en chats/cuentas
+  distintos no colisiona y el STT de audio actualiza el mismo mensaje. Cierra
+  BUG-005/009/044/047 y la parte de archivo TG de BUG-008; BUG-008 conserva su alcance
+  legacy de resolución por dígitos. [Evidencia](TELEGRAM-CAPTURA-F2C2.md).
+- [ ] F2D Replay durable de mensajes archivados tras reinicio (BUG-045): recuperar
+  trabajo del pipeline desde eventos/outbox tras caída entre commit y emisión,
+  idempotencia y prueba de reinicio sin pérdida ni doble despacho.
 - [ ] Persistir entrada aunque IA esté pausada, ignorando o en human. Reconciliar
   salida IA, humana desde teléfono y avisos por origen; separar chats administrativos.
 - [x] F2B.3 Multimedia durable: BUG-033/034/036 reparados. Mismo ID/huella;
@@ -157,6 +166,8 @@ abort físico queda como puerta de aceptación STT real F8, sin prometerlo aquí
 **Aceptación:** reinicio conserva mensajes; lote, reimportación y ecos no duplican;
 canales/cuentas/IDs con signo no colisionan; audio fallido sigue visible. Carga con
 miles de mensajes sin bloquear pings del transporte falso; progreso observable.
+F2C.2 prueba reapertura/cursor y redelivery. La reconciliación durable de salidas
+IA/humanas y la carga completa siguen pendientes antes de cerrar F2.
 
 ## Fase 3 — API de lectura y eventos en vivo
 

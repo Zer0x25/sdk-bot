@@ -7,11 +7,14 @@ const { withTempDbPaths } = require('./helpers/tmpPaths');
 const temporary = withTempDbPaths(); after(() => temporary.restore());
 const { saveSettingsDB, getSettingsDB } = require('../services/db');
 const TelegramAdapter = require('../adapters/telegramAdapter');
+const { createTelegramArchive } = require('./helpers/telegramArchive');
 const bus = require('../services/internalBus');
 const https = require('node:https');
 const tick = () => new Promise(r => setImmediate(r));
 const deferred = () => { let resolve; const promise = new Promise(r => { resolve = r; }); return { promise, resolve }; };
-const update = (id = 1, chat = '555', body = { text: '/start' }) => ({ update_id: id, message: { message_id: id, chat: { id: chat }, from: { first_name: 'Synthetic' }, ...body } });
+const update = (id = 1, chat = '555', body = { text: '/start' }) => ({ update_id: id, message: {
+    message_id: id, date: 1792368000, chat: { id: chat, type: 'private' }, from: { first_name: 'Synthetic' }, ...body
+} });
 async function until(predicate) {
     const deadline = Date.now() + 2500;
     while (!predicate() && Date.now() < deadline) await new Promise(r => setTimeout(r, 1));
@@ -36,7 +39,9 @@ function transport({ delayedAbort = false } = {}) {
 }
 async function fixture(t, options = {}, network = transport()) {
     saveSettingsDB({ telegramToken: 'fixture_A', telegramChatId: '555', globalMode: 'ignored_all' });
-    const adapter = new TelegramAdapter({ getUpdates: network.getUpdates, updateMenu: async () => {}, discoveryTimeoutMs: 30, retryMs: 20, ...options });
+    const archive = options.archive || createTelegramArchive();
+    const adapter = new TelegramAdapter({ archive, getMe: async () => ({ ok: true, result: { id: 42, is_bot: true } }),
+        getUpdates: network.getUpdates, updateMenu: async () => {}, discoveryTimeoutMs: 30, retryMs: 20, ...options });
     const seen = []; adapter.on('message', m => seen.push(m));
     await adapter.connect();
     t.after(async () => {
@@ -44,7 +49,7 @@ async function fixture(t, options = {}, network = transport()) {
         for (const call of network.calls) call.finish();
         await closing;
     });
-    return { adapter, network, seen };
+    return { adapter, network, seen, archive };
 }
 
 test('BUG-004: concurrent discovery observes the sole poll, never steals messages or adds getUpdates/offsets', async t => {
@@ -54,7 +59,7 @@ test('BUG-004: concurrent discovery observes the sole poll, never steals message
     network.calls[0].finish({ ok: true, result: [update(7), update(8, '-9007199254740993', { voice: { file_id: 'fixture' } })] });
     assert.deepEqual(await Promise.all(readers), ['555','555','555']);
     await until(() => network.calls.length === 2);
-    assert.equal(network.calls[1].offset, 9); assert.equal(network.peak(), 1);
+    assert.equal(network.calls[1].offset, '9'); assert.equal(network.peak(), 1);
     assert.equal(seen.length, 1); assert.equal(seen[0].text, '/start');
     assert.equal(await adapter.discoverChatId('fixture_A'), '-9007199254740993');
     assert.equal(network.calls.length, 2); assert.equal(adapter.chatWaiters.size, 0);
@@ -71,7 +76,7 @@ test('discovery rejects drafts/standby, expires cache, and a restarted adapter o
     await adapter.disconnect();
     const restarted = await fixture(t);
     await assert.rejects(restarted.adapter.discoverChatId('fixture_A'), { code: 'TG_CHAT_NOT_OBSERVED' });
-    assert.equal(restarted.network.calls.length, 1); assert.equal(restarted.network.calls[0].offset, 1);
+    assert.equal(restarted.network.calls.length, 1); assert.equal(restarted.network.calls[0].offset, '0');
     saveSettingsDB({}); await restarted.adapter.connect();
     await assert.rejects(restarted.adapter.discoverChatId('fixture_A'), { code: 'TG_SAVE_TOKEN_FIRST' });
     assert.equal(restarted.adapter.status, 'standby');
@@ -86,7 +91,7 @@ test('discovery bounds waiters and cancellation/timeouts remove them without can
     for (const c of controllers) c.abort();
     assert.ok((await settled).every(r => r.status === 'rejected' && r.reason.code === 'TG_REQUEST_CANCELLED'));
     assert.equal(adapter.chatWaiters.size, 0); assert.equal(network.calls[0].aborted, false);
-    assert.equal(network.calls.length, 1); assert.equal(adapter.lastUpdateId, 0);
+    assert.equal(network.calls.length, 1); assert.equal(adapter.lastUpdateId, null);
 });
 
 test('BUG-038: reconnect waits for real request settlement; superseded connects cannot start another poll', async t => {
@@ -101,18 +106,21 @@ test('BUG-038: reconnect waits for real request settlement; superseded connects 
     network.calls[0].finish({ ok: true, result: [update(900)] });
     await Promise.all([b, c]);
     assert.equal(network.calls.length, 2); assert.equal(network.calls[1].token, 'fixture_C');
-    assert.equal(network.calls[1].offset, 1); assert.equal(network.peak(), 1);
+    assert.equal(network.calls[1].offset, '0'); assert.equal(network.peak(), 1);
     assert.equal(seen.length, 0); assert.equal(adapter.lastChat, null);
 });
 
-test('BUG-039: same token retains RAM offset; changing token resets it instead of acknowledging another bot', async t => {
-    const { adapter, network } = await fixture(t);
+test('verified bot identity preserves cursor on credential rotation and isolates a different bot account', async t => {
+    const { adapter, network } = await fixture(t, { getMe: async ({ token }) => ({ ok: true,
+        result: { id: token === 'fixture_B' ? 43 : 42, is_bot: true } }) });
     network.calls[0].finish({ ok: true, result: [update(900)] });
     await until(() => network.calls.length === 2);
     await adapter.connect();
-    assert.equal(network.calls[2].offset, 901);
+    assert.equal(network.calls[2].offset, '901');
+    saveSettingsDB({ telegramToken: 'fixture_ROTATED' }); await adapter.connect();
+    assert.equal(network.calls[3].offset, '901'); assert.equal(network.calls[3].token, 'fixture_ROTATED');
     saveSettingsDB({ telegramToken: 'fixture_B' }); await adapter.connect();
-    assert.equal(network.calls[3].offset, 1); assert.equal(network.calls[3].token, 'fixture_B');
+    assert.equal(network.calls[4].offset, '0'); assert.equal(network.calls[4].token, 'fixture_B');
     assert.equal(network.peak(), 1); assert.equal(adapter.lastChat, null);
 });
 
@@ -125,7 +133,7 @@ test('disconnect invalidates discovery immediately but waits for in-flight reque
     await rejected; await tick(); assert.equal(closed, false);
     network.calls[0].finish({ ok: true, result: [update(30)] });
     await stopping; assert.equal(adapter.status, 'disconnected'); assert.equal(seen.length, 0);
-    assert.equal(adapter.lastUpdateId, 0); assert.equal(adapter.lastChat, null);
+    assert.equal(adapter.lastUpdateId, null); assert.equal(adapter.lastChat, null);
 });
 
 test('BUG-040: 4xx stops visibly, while provider/network errors back off and remain cancellable', async t => {

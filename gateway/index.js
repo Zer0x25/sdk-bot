@@ -193,7 +193,7 @@ async function startGateway() {
     });
 
     // 2. Iniciar Telegram
-    const telegram = new TelegramAdapter();
+    const telegram = new TelegramAdapter({ archive: conversationArchive });
     adapters.set('telegram', telegram);
     internalBus.setTelegramChatIdResolver((token, options) => telegram.discoverChatId(token, options));
 

@@ -33,7 +33,7 @@ async function fixture(t, options = {}) {
 test('worker: migration, WAL FULL, transaction, minimal event and durable session watermark after reopen', async t => {
     const { archive, dbPath } = await fixture(t);
     const info = await archive.ready;
-    assert.equal(info.schemaVersion, 1); assert.equal(info.journalMode, 'wal'); assert.equal(info.synchronous, 2);
+    assert.equal(info.schemaVersion, 2); assert.equal(info.journalMode, 'wal'); assert.equal(info.synchronous, 2);
     assert.ok(info.threadId > 0);
     const [created] = await archive.ingestBatch([message()]);
     assertValid('Message', created.message); assertValid('Event', created.event);

@@ -27,6 +27,11 @@ export interface Archive {
     ready: Promise<Contract<'EventCursor'> & { schemaVersion: number; journalMode: string; synchronous: number; threadId: number }>;
     snapshot(): Promise<Contract<'EventCursor'>>;
     registerAccount(input: { id?: string; channel: 'whatsapp' | 'telegram'; providerKey: string }): Promise<{ id: string; channel: string; provider_key: string }>;
+    telegramCursor(accountId: string): Promise<string | null>;
+    captureTelegramBatch(input: { accountId: string; updates: Array<{ updateId: string; message: ArchiveInput | null }> }): Promise<{
+        lastUpdateId: string | null;
+        results: Array<{ updateId: string; status: 'stale' | 'excluded' | IngestResult['status']; result?: IngestResult }>;
+    }>;
     resolve(identity: Contract<'IdentityKey'>): Promise<ArchiveIdentity>;
     bindAlias(input: { canonical: Contract<'IdentityKey'>; alias: Contract<'IdentityKey'>; evidence: { kind: 'adapter' | 'admin'; reference: string } }): Promise<{ status: 'linked' | 'existing'; identity: ArchiveIdentity } | { status: 'quarantined'; quarantineId: string }>;
     ingestBatch(input: ArchiveInput[]): Promise<IngestResult[]>;

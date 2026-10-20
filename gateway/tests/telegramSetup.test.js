@@ -30,3 +30,18 @@ test('panel setup can save token without chat ID, reload partial setup, discover
     await elements.tgResetBtn.events.click(); assert.equal(elements.tgToken.value, ''); assert.equal(elements.tgChatId.value, '');
     assert.equal(stored.token, ''); assert.equal(saves.length, 3);
 });
+
+test('panel reports a stopped Telegram capture instead of a generic disconnected state', async () => {
+    const elements = Object.fromEntries(['tgToken','tgChatId','tgMsg','tgStatus','tgTestBtn','tgSaveBtn','tgResetBtn']
+        .map(id => [id, { value: '', style: {}, textContent: '', addEventListener() {} }]));
+    const context = vm.createContext({
+        $: id => elements[id.slice(1)], maskToken: value => value,
+        getStatus: async () => ({ channels: { telegram: { connection: 'standby', lastDisconnectReason: 'error_captura' } } }),
+        getTelegramSettings: async () => ({}), testTelegramToken: async () => ({}), saveTelegramSettings: async () => ({}), console
+    });
+    const source = fs.readFileSync(path.join(__dirname, '../panel/public/js/tabs/telegram.js'), 'utf8').replace(/^import .*;\n/gm, '').replace(/^export /gm, '');
+    vm.runInContext(source, context);
+    await context.refreshTgStatus();
+    assert.match(elements.tgStatus.textContent, /captura se detuvo/i);
+    assert.equal(elements.tgStatus.className, 'bad');
+});

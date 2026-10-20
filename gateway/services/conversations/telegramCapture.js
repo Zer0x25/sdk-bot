@@ -1,0 +1,111 @@
+// Bot API IDs cross JSON, HTTP and SQLite; keep them canonical decimal text.
+const BOT_ID_MAX = 18446744073709551615n;
+const UPDATE_MAX = 18446744073709551615n;
+const MESSAGE_MAX = 18446744073709551615n;
+const MAX_BATCH = 100;
+const MAX_BATCH_BYTES = 32 * 1024 * 1024;
+
+function failure(code) { return Object.assign(new Error('Captura Telegram no confirmada.'), { code }); }
+
+function decimalId(value, { signed = false, allowZero = false, max = MESSAGE_MAX } = {}) {
+    let text;
+    if (typeof value === 'string') text = value;
+    else if (Number.isSafeInteger(value)) text = String(value);
+    else return null;
+    const pattern = signed ? /^-?(0|[1-9]\d{0,19})$/ : /^(0|[1-9]\d{0,19})$/;
+    if (!pattern.test(text) || text === '-0') return null;
+    const unsigned = text.startsWith('-') ? text.slice(1) : text;
+    const parsed = BigInt(unsigned);
+    if (!allowZero && parsed === 0n || parsed > max) return null;
+    return text;
+}
+
+function verifiedBotId(response) {
+    if (response?.ok !== true || response.result?.is_bot !== true) return null;
+    return decimalId(response.result.id, { max: BOT_ID_MAX });
+}
+
+function telegramIdentity(accountId, chatId) {
+    return { accountId, channel: 'telegram', kind: 'telegram_chat_id', exactValue: chatId };
+}
+
+function timestamp(value) {
+    const seconds = decimalId(value, { allowZero: true, max: 253402300799n });
+    if (seconds === null) return null;
+    return new Date(Number(BigInt(seconds) * 1000n)).toISOString();
+}
+
+function normalizedContent(message) {
+    const media = message.voice || message.audio ? 'audio'
+        : message.photo ? 'image'
+            : message.video || message.video_note || message.animation ? 'video'
+                : message.document ? 'document' : null;
+    const bodyText = media ? message.caption : message.text;
+    if (typeof bodyText === 'string' && !bodyText.isWellFormed()) throw failure('TG_CONTENT_INVALID');
+    const caption = media && typeof bodyText === 'string' && bodyText.length ? bodyText : undefined;
+    if (!media && typeof bodyText === 'string' && bodyText.length) return { type: 'text', text: bodyText };
+    return { type: media || 'unsupported', availability: 'not_stored', transcript: null,
+        transcriptionStatus: 'not_requested', ...(caption ? { caption } : {}) };
+}
+
+/** Build one durable message or mark the update as an intentionally excluded
+ * Telegram event. Admin delivery remains a legacy pipeline action after commit. */
+function normalizeUpdate(update, accountId, adminChatId = '') {
+    if (!update || typeof update !== 'object' || Array.isArray(update)) throw failure('TG_UPDATE_INVALID');
+    const updateId = decimalId(update.update_id, { allowZero: true, max: UPDATE_MAX });
+    if (updateId === null) throw failure('TG_UPDATE_ID_INVALID');
+    if (update.message === undefined || update.message === null) return { updateId, message: null, legacy: null };
+    const message = update.message;
+    if (typeof message !== 'object' || Array.isArray(message)) throw failure('TG_MESSAGE_INVALID');
+    const chat = message.chat;
+    const chatId = decimalId(chat?.id, { signed: true, max: MESSAGE_MAX });
+    const messageId = decimalId(message.message_id, { max: MESSAGE_MAX });
+    const occurredAt = timestamp(message.date);
+    if (chatId === null) throw failure('TG_CHAT_ID_INVALID');
+    if (messageId === null) throw failure('TG_MESSAGE_ID_INVALID');
+    if (!occurredAt) throw failure('TG_TIMESTAMP_INVALID');
+    if (typeof chat.type !== 'string' || !chat.type.length || chat.type.length > 32) throw failure('TG_CHAT_TYPE_INVALID');
+
+    const isAdmin = Boolean(adminChatId && chatId === adminChatId);
+    if (isAdmin) {
+        const content = normalizedContent(message);
+        const text = content.type === 'text' ? content.text : content.caption || '';
+        return { updateId, message: null, legacy: { message, chatId, text, isAdminChannel: true,
+            audio: content.type === 'audio' } };
+    }
+    if (chat.type !== 'private') return { updateId, message: null, legacy: null };
+
+    const content = normalizedContent(message);
+    const text = content.type === 'text' ? content.text : content.caption || '';
+    const archiveInput = { identity: telegramIdentity(accountId, chatId), providerMessageId: messageId,
+        source: 'live', direction: 'inbound', authorKind: 'customer', occurredAt, content };
+    return { updateId, message: archiveInput, legacy: { message, chatId, text, isAdminChannel: false,
+        audio: content.type === 'audio' } };
+}
+
+function normalizeUpdates(updates, accountId, adminChatId = '') {
+    if (!Array.isArray(updates) || updates.length > MAX_BATCH) throw failure('TG_BATCH_INVALID');
+    let bytes;
+    try { bytes = Buffer.byteLength(JSON.stringify(updates)); }
+    catch { throw failure('TG_BATCH_INVALID'); }
+    if (bytes > MAX_BATCH_BYTES) throw failure('TG_BATCH_TOO_LARGE');
+    return updates.map(update => normalizeUpdate(update, accountId, adminChatId));
+}
+
+function createTelegramCapture(archive) {
+    if (!archive) throw failure('TG_ARCHIVE_UNAVAILABLE');
+    return {
+        async openBot(botId) {
+            const verifiedId = decimalId(botId, { max: BOT_ID_MAX });
+            if (!verifiedId) throw failure('TG_ACCOUNT_UNVERIFIED');
+            const account = await archive.registerAccount({ channel: 'telegram', providerKey: `telegram_bot:${verifiedId}` });
+            const lastUpdateId = await archive.telegramCursor(account.id);
+            return { accountId: account.id, lastUpdateId };
+        },
+        commitBatch(accountId, updates) {
+            return archive.captureTelegramBatch({ accountId, updates: updates.map(({ updateId, message }) => ({ updateId, message })) });
+        }
+    };
+}
+
+module.exports = { decimalId, verifiedBotId, telegramIdentity, normalizeUpdate, normalizeUpdates, createTelegramCapture };

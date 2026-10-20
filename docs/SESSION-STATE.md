@@ -1,6 +1,6 @@
 # Estado de continuidad — SDK-Bot
 
-Actualización: 2026-10-19. Última unidad cerrada: **F2C.1; dueño único de polling/descubrimiento TG probado**.
+Actualización: 2026-10-20. Última unidad cerrada: **F2C.2; captura Telegram y cursor durable por bot**.
 
 ## Objetivo vigente
 
@@ -50,6 +50,14 @@ respuesta humana desde el chat y retorno seguro a IA con contexto actualizado.
   HTTP cancelable/cierre antes de reemplazo, offset RAM separado al cambiar token,
   backoff/4xx y setup parcial. BUG-004/038–042 cerrados; BUG-043 salida diferido F5.
   [TELEGRAM-DUENO-UNICO-F2C1](TELEGRAM-DUENO-UNICO-F2C1.md).
+- F2C.2: `getMe` verifica el bot y deriva `telegram_bot:<id>` estable; la migración
+  v2 añade cursores por cuenta. Cada lote confirma mensajes, huellas, eventos,
+  proyección y cursor antes del offset siguiente. JSON conserva IDs enteros no
+  seguros; mensajes deduplican por bot/chat/message_id. Administración, grupos y
+  tipos excluidos avanzan cursor transaccionalmente. El audio se archiva como
+  marcador y STT actualiza el mismo mensaje antes del pipeline. BUG-005/009/044/047
+  y la porción TG de BUG-008 cerrados; BUG-045 replay post-commit y BUG-046 inbox
+  admin quedan diferidos. Evidencia: [TELEGRAM-CAPTURA-F2C2](TELEGRAM-CAPTURA-F2C2.md).
 - Sin migrar datos antiguos ni conectar cuentas reales. No hay bandeja nueva, páginas/SSE públicos,
   API de envío/control ni barrera de automatización v1.
 
@@ -93,7 +101,9 @@ Detalles de reproducción y logs efímeros están en la baseline.
   física tiene BUG-037 antes de aceptación STT real F8.
 - F2C.1 repara el descubridor paralelo testAndGetChatId y las carreras del request
   en reconnect; descubrimiento solo observa al owner configurado, sin nuevos offsets.
-- Telegram adelanta cursor en RAM sin ack durable del consumidor asíncrono.
+- F2C.2 persiste captura y cursor Telegram antes de emitir al legacy. Sigue una
+  ventana de caída post-commit sin replay del pipeline (BUG-045); el comando admin
+  se confirma antes de ejecución y tampoco tiene inbox durable (BUG-046/F5).
 - Handoff/pause no cancelan jobs admitidos ni protegen cada envío; flush de cola
   tampoco reevalúa el control. Brain guarda respuestas antes de entregarlas.
 - Identidades/anti-bucle usan índices o IDs sin namespace suficiente; comandos
@@ -320,43 +330,43 @@ Detalles de reproducción y logs efímeros están en la baseline.
   Fixture 75 expectativas intacto; no carga completa. Sin cuentas/getUpdates/getMe/
   envíos/STT/OAuth reales, push ni GitHub Actions. Windows/Termux pendientes.
 
-## Siguiente unidad exacta: Fase 2 / F2C.2
+## Validación ejecutada en F2C.2
 
-**Entregable:** captura base Telegram con cursor durable y ACK tras commit,
-identidad de cuenta verificada y deduplicación por namespace. Reparar BUG-005/009
-y la parte de archivo TG de BUG-008. F2C.1 ya proporciona dueño único; no volver a
-crear un poller/lector de descubrimiento. F2 completa sigue abierta.
+La evidencia y límites de esta unidad están en
+[TELEGRAM-CAPTURA-F2C2](TELEGRAM-CAPTURA-F2C2.md).
 
-1. Leer AGENTS, estado, arquitectura/ADR001–006, SPEC/VALIDACION, informes del
-   archivo/WA y [F2C.1](TELEGRAM-DUENO-UNICO-F2C1.md), backlog y git status.
-   Conservar worker SQL único/Node>=22.13, reset/locks y JSON como autoridad de control.
-2. Cuenta desde getMe comprobado del proveedor (sustituido en tests), nunca token
-   como accountId/providerKey durable. Otra cuenta tiene otro namespace; rotación
-   de credencial de la misma conserva cuenta/cursor. No almacenar tokens en SQLite.
-3. Definir lectura JSON sin pérdida de precisión antes de convertir IDs. Validar
-   update_id/message_id/chat.id, signo, fecha/origen, tipo individual y exclusiones
-   de administración/grupos/eventos. No convertir por Number IDs no seguros ni
-   avanzar a NaN ante payload malformado. Limitar lote/bytes y conservar backpressure.
-4. Añadir cursor por cuenta al archivo mediante migración probada. Captura base,
-   huella, procedencia, evento/proyección y progreso del lote/updates excluidos se
-   confirman de forma coherente antes del siguiente getUpdates(offset). Un error
-   no adelanta ACK ni emite a legacy; crash/redelivery deduplica. No retry ciego de
-   RPC incierto. Captura debe funcionar con IA pausada/ignored/human y STT apagado.
-5. Enlazar archivo antes de legacy/STT y eliminar filtro global message_id de TG
-   como autoridad de dedup (BUG-009). Mismo ID en otro chat/cuenta no se pierde;
-   historia/reentrega/marcadores no disparan automatización nueva. Multimedia base
-   antes de descarga/STT; completar enriquecimiento TG como unidad posterior si
-   hace falta, sin declarar F2C cerrada con transcript solo en RAM.
-6. Pruebas aisladas de commit/crash/cursor, pérdida de precisión, batch/exclusiones,
-   namespace, token rotado/cuenta nueva, saturación/reapertura/retención. Mantener
-   contrato de observación de F2C.1 y regresiones WA; sin proveedor real.
-7. Checks Node22/24/distribución, evidencia/backlog/roadmap/estado y commit de una
-   unidad revisable. Generador/carga completa VALIDACION sigue puerta para cerrar F2.
+- Gateway `npm run check` en copias del árbol staged: Node 24.19.0 y mínimo
+  Node 22.13.0, lint/tipos y **242 pruebas** pasan en ambos. Node 22 emite la
+  advertencia conocida de `node:sqlite` experimental.
+- Docker cacheado `sdkbot-f2b3:local`, Node 22.23.3, `--network none`, imagen de
+  producción sin dependencias de desarrollo: **242 pruebas** pasan con el snapshot
+  completo versionado y dependencias runtime; no se reconstruyó imagen ni se ejecutó
+  Compose. La primera pasada montó solo `gateway/` y falló tres pruebas que requieren
+  perfiles versionados de `brain/`; la repetición incluyó el árbol completo y pasó.
+- Las 8 pruebas nuevas de `telegramCapture.test.js` cubren migración v1→v2,
+  reapertura/offset, IDs mayores de 2^53, rollback de lote, redelivery, namespace,
+  exclusiones, despacho admin stale y descarga de audio limitada por stream.
+- Códigos y perfiles fueron los del repositorio versionado en copias temporales;
+  no se copiaron DB, secretos ni estado local. No se llamaron proveedores/canales,
+  STT real, Docker build, ni pruebas de carga de 1M mensajes.
+
+## Siguiente unidad exacta: F2D / replay de mensajes capturados
+
+BUG-045 es P1 y deja incompleta la entrega de F2: una caída justo después del
+commit puede omitir el procesamiento heredado aunque el mensaje y cursor estén
+guardados. La siguiente unidad debe diseñar y probar replay/outbox idempotente desde
+archivo/eventos; inyectar caída entre commit y consumidor, reiniciar y demostrar
+recuperación sin pérdida ni doble despacho. Reconciliación de salidas humanas/IA y
+carga sintética de [VALIDACION-V1](VALIDACION-V1.md) siguen pendientes: medir 1M
+mensajes, 2.000 chats, 5 cuentas, duplicados/eventos, throughput, p95/p99, RSS,
+latencia del event loop, saturación FIFO y reapertura, sin estado real/proveedores.
 
 ## Pendientes materiales
 
-- Telegram aún no archiva ni confirma cursor durable: BUG-005/008/009 y carga F2.
-  El offset RAM separado por token F2C.1 no equivale a identidad de cuenta/cursor.
+- Telegram ya archiva y confirma el cursor por bot: BUG-005/009/044 y la porción
+  de archivo de BUG-008 están cerrados. BUG-045 bloquea completar F2 hasta añadir
+  replay durable; BUG-046/F5 protege comandos admin ante caída. Bot API no permite
+  recuperar historia arbitraria perdida antes de la retención de `getUpdates`.
 - Bandeja React/API de lectura/eventos F3/F4; control humano, cancelación de IA,
   corte/outbox/contexto y backups operativos F5/F8. external_self no suspende IA
   con garantía v1. Purga del archivo inicial/diaria ya conectada.
@@ -374,10 +384,12 @@ crear un poller/lector de descubrimiento. F2 completa sigue abierta.
 
 Actualizar estado y solo checkboxes demostrados; hacer commit probado e informar
 hash. El [prompt estable](PROMPT-CONTINUIDAD.md) consulta este estado sin reescritura.
-BUG-005–012 (009/010 parciales), BUG-014/024/035/037/043 siguen abiertos.
-BUG-016 probado en repositorio/alias del adapter, sin afirmar F2 completa.
+BUG-005/009/044/047 cerrados; BUG-006/007/008/010/011/012/014/024/035/037/043/045/046
+siguen abiertos o parciales según backlog. BUG-016 probado en repositorio/alias
+del adapter, sin afirmar F2 completa.
 
 Cierre F2C.1: commit local `git log --grep="close F2C.1"`; BUG-004/038–042 cerrados.
+Cierre F2C.2: commit local `git log --grep="close F2C.2"`; BUG-005/009/044/047 cerrados.
 Cierre F2B.3: `42b8321`; BUG-033/034/036 cerrados.
 Cierre F2B.2: `7d99f36`; BUG-001/002/003/032 cerrados.
 Cierre F2B.1: `4bb4ec3`; BUG-029/031 cerrados.

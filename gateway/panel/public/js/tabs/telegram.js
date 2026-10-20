@@ -35,6 +35,10 @@ export async function refreshTgStatus() {
       setTgStatus('● Token inválido o revocado: genera uno nuevo con @BotFather y guárdalo aquí.', 'bad');
     } else if (reason === 'error_polling') {
       setTgStatus('● Telegram rechazó la conexión. Revisa la configuración y vuelve a guardar.', 'bad');
+    } else if (reason === 'identidad_no_verificada') {
+      setTgStatus('● Telegram no confirmó que el token pertenezca a un bot. Revisa el token.', 'bad');
+    } else if (['error_archivo', 'error_captura', 'archivo_no_disponible', 'respuesta_invalida'].includes(reason)) {
+      setTgStatus('● La captura se detuvo sin confirmar más mensajes. Revisa el archivo y reinicia el gateway.', 'bad');
     } else if (reason === 'sin_token') {
       setTgStatus('● Sin token configurado: sigue los pasos de abajo para vincular tu bot.', 'warn');
     } else {
