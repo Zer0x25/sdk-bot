@@ -64,10 +64,10 @@ function transport() {
     return { calls, getUpdates };
 }
 
-async function runAdapter(t, archive, { token = 'token_fixture_A', botId = 42, network = transport(), sendHttpRequest } = {}) {
+async function runAdapter(t, archive, { token = 'token_fixture_A', botId = 42, network = transport(), sendHttpRequest, getMe } = {}) {
     saveSettingsDB({ telegramToken: token, telegramChatId: '555', globalMode: 'ignored_all' });
-    const adapter = new TelegramAdapter({ archive, getMe: async () => ({ ok: true,
-        result: { id: botId, is_bot: true } }), getUpdates: network.getUpdates,
+    const adapter = new TelegramAdapter({ archive, getMe: getMe || (async () => ({ ok: true,
+        result: { id: botId, is_bot: true } })), getUpdates: network.getUpdates,
     updateMenu: async () => {}, retryMs: 10, sendHttpRequest });
     const seen = [];
     adapter.on('message', msg => seen.push(msg));
@@ -101,6 +101,26 @@ function sendTransport(body, statusCode = 200) {
                 } else res.emit('data', bytes);
                 res.emit('end'); req.emit('close');
             });
+        };
+        return req;
+    } };
+}
+
+function controlledSendTransport() {
+    const calls = [];
+    return { calls, request(options, callback) {
+        let payload = '';
+        const req = new EventEmitter();
+        req.write = chunk => { payload += chunk; };
+        req.end = chunk => {
+            if (chunk) payload += chunk;
+            const call = { options, payload: JSON.parse(payload), respond(statusCode, body) {
+                const res = new EventEmitter(); res.statusCode = statusCode; callback(res);
+                process.nextTick(() => { res.emit('data', Buffer.from(body)); res.emit('end'); });
+            } };
+            calls.push(call);
+            // A broken mutable-token retry must settle too, so the regression fails promptly.
+            if (calls.length > 1) process.nextTick(() => call.respond(200, '{"ok":false,"error_code":500}'));
         };
         return req;
     } };
@@ -141,6 +161,54 @@ test('accepted Telegram Bot API sends enter the archive; HTTP 200 ok:false is re
     assert.equal(sender.calls.length - previousCalls, 2);
     assert.equal(sender.calls[previousCalls].payload.parse_mode, 'Markdown');
     assert.equal('parse_mode' in sender.calls[previousCalls + 1].payload, false);
+});
+
+test('BUG-043: a Markdown retry is blocked after Telegram rotates to another account', async t => {
+    const { archive } = await archiveFixture(t);
+    const sender = controlledSendTransport();
+    const network = transport();
+    const { adapter } = await runAdapter(t, archive, { network, sendHttpRequest: sender.request,
+        getMe: async ({ token }) => ({ ok: true, result: { id: token === 'token_fixture_A' ? 42 : 43, is_bot: true } }) });
+    const originalAccountId = adapter.accountId;
+    const sending = adapter.sendMessage('telegram:700', 'texto para cuenta A');
+    await until(() => sender.calls.length === 1);
+    assert.equal(sender.calls[0].options.path, '/bottoken_fixture_A/sendMessage');
+
+    saveSettingsDB({ telegramToken: 'token_fixture_B', telegramChatId: '555', globalMode: 'ignored_all' });
+    await adapter.connect();
+    await until(() => network.calls.length === 2);
+    assert.notEqual(adapter.accountId, originalAccountId);
+
+    sender.calls[0].respond(400, "Bad Request: can't parse entities");
+    await assert.rejects(sending, { code: 'TG_CONNECTION_CHANGED' });
+    assert.equal(sender.calls.length, 1, 'the retry must not use the replacement bot token');
+});
+
+test('BUG-043: an accepted send is archived under the account captured at dispatch', async t => {
+    const { archive } = await archiveFixture(t);
+    const sender = controlledSendTransport();
+    const network = transport();
+    const { adapter } = await runAdapter(t, archive, { network, sendHttpRequest: sender.request,
+        getMe: async ({ token }) => ({ ok: true, result: { id: token === 'token_fixture_A' ? 42 : 43, is_bot: true } }) });
+    const originalAccountId = adapter.accountId;
+    const sending = adapter.sendMessage('telegram:700', 'texto aceptado por A');
+    await until(() => sender.calls.length === 1);
+
+    saveSettingsDB({ telegramToken: 'token_fixture_B', telegramChatId: '700', globalMode: 'ignored_all' });
+    await adapter.connect();
+    await until(() => network.calls.length === 2);
+    const replacementAccountId = adapter.accountId;
+    assert.notEqual(replacementAccountId, originalAccountId);
+
+    sender.calls[0].respond(200, JSON.stringify({ ok: true, result: { message_id: 77, date: 1792368000,
+        text: 'texto aceptado por A', chat: { id: 700, type: 'private' } } }));
+    await sending;
+    const identity = await archive.resolve({ accountId: originalAccountId, channel: 'telegram', kind: 'telegram_chat_id', exactValue: '700' });
+    const messages = await archive.messages({ conversationId: identity.conversation_id });
+    assert.equal(messages.length, 1);
+    assert.equal(messages[0].content.text, 'texto aceptado por A');
+    const replacementIdentity = await archive.resolve({ accountId: replacementAccountId, channel: 'telegram', kind: 'telegram_chat_id', exactValue: '700' });
+    assert.equal((await archive.messages({ conversationId: replacementIdentity.conversation_id })).length, 0);
 });
 
 test('F2C.2 migrates v1 archives and persists Telegram cursor per verified bot through reopen', async t => {

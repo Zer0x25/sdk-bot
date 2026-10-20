@@ -285,9 +285,9 @@ class TelegramAdapter extends ChannelAdapter {
         }));
     }
 
-    async archiveAcceptedSend(chatId, message) {
-        if (!this.archive || !this.accountId) return;
-        const input = normalizeSentMessage(message, this.accountId, chatId, this.adminChatId);
+    async archiveAcceptedSend(accountId, chatId, message, adminChatId) {
+        if (!this.archive || !accountId) return;
+        const input = normalizeSentMessage(message, accountId, chatId, adminChatId);
         if (!input) return;
         try {
             const [stored] = await this.trackArchive(this.archive.ingestBatch([input]));
@@ -299,11 +299,13 @@ class TelegramAdapter extends ChannelAdapter {
     }
 
     async sendMessage(normalizedJid, text, options = {}) {
-        if (!this.token) throw new Error('Telegram token no configurado');
+        const token = this.token;
+        const accountId = this.accountId;
+        const adminChatId = this.adminChatId;
+        const generation = this.pollGeneration;
+        if (!token) throw new Error('Telegram token no configurado');
         const tgChatId = normalizedJid.replace('telegram:', '');
-        const useMarkdown = options.useMarkdown !== false;
-
-        return new Promise((resolve, reject) => {
+        const send = useMarkdown => new Promise((resolve, reject) => {
             const payload = { chat_id: tgChatId, text: text };
             if (useMarkdown) payload.parse_mode = 'Markdown';
 
@@ -312,7 +314,7 @@ class TelegramAdapter extends ChannelAdapter {
                 hostname: 'api.telegram.org',
                 family: 4,
                 port: 443,
-                path: `/bot${this.token}/sendMessage`,
+                path: `/bot${token}/sendMessage`,
                 method: 'POST',
                 headers: {
                     'Content-Type': 'application/json',
@@ -326,17 +328,20 @@ class TelegramAdapter extends ChannelAdapter {
                     try { body = new TextDecoder('utf-8', { fatal: true }).decode(Buffer.concat(chunks)); }
                     catch { reject(failure('TG_SEND_RESPONSE_INVALID')); return; }
                     if (useMarkdown && res.statusCode === 400 && body.includes("can't parse entities")) {
-                        // Retry without markdown, even when the provider body is not valid JSON.
-                        this.sendMessage(normalizedJid, text, { ...options, useMarkdown: false })
-                            .then(resolve)
-                            .catch(reject);
+                        const sameSession = this.isGeneration(generation, token) && this.accountId === accountId;
+                        if (!sameSession) {
+                            reject(failure('TG_CONNECTION_CHANGED', 'La conexión de Telegram cambió antes del reintento.'));
+                            return;
+                        }
+                        // Retry only while the original token/account still owns the adapter.
+                        send(false).then(resolve).catch(reject);
                         return;
                     }
                     let bodyJson;
                     try { bodyJson = parseTelegramJson(body); }
                     catch { reject(failure('TG_SEND_RESPONSE_INVALID')); return; }
                     if (res.statusCode === 200 && bodyJson?.ok === true) {
-                        await this.archiveAcceptedSend(tgChatId, bodyJson.result);
+                        await this.archiveAcceptedSend(accountId, tgChatId, bodyJson.result, adminChatId);
                         resolve(bodyJson);
                     } else {
                         reject(failure(bodyJson?.ok === false ? 'TG_SEND_REJECTED' : 'TG_SEND_HTTP_ERROR',
@@ -349,6 +354,8 @@ class TelegramAdapter extends ChannelAdapter {
             req.write(data);
             req.end();
         });
+
+        return send(options.useMarkdown !== false);
     }
 
     async sendPresenceUpdate(status, normalizedJid) {
