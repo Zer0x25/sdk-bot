@@ -1,12 +1,16 @@
 # Estado de continuidad — SDK-Bot
 
-Actualización: 2026-10-20. F4.2 publicada en origin/work; PR #4 hacia main.
-BUG-064 de compatibilidad Node/jsdom corregido en 9555029: Gateway CI usa
-22.22.2/24, contratos conserva 22.13/24 y el runtime mínimo no cambia. Actions
-detectó BUG-065, una carrera en una prueba de eventos; la prueba ahora espera la
-notificación del worker y usa un RPC como barrera. El arreglo está publicado en
-ea8cbef y GitHub Actions pasó los cinco jobs en el run 39416446833. PR #4 sigue
-abierta hacia main; después del merge sigue F4.3.
+Actualización: 2026-10-20. F4.2 se fusionó en main en 7526edc (PR #4).
+BUG-064 y BUG-065 están cerrados y sus arreglos pasaron CI. Release Please run #32
+falló primero con E800, error interno de GraphQL de GitHub durante la búsqueda de
+commits; el segundo intento pasó y actualizó la PR #2 a `chore(main): release
+0.3.0`, incluyendo la funcionalidad de la #4. La PR de release sigue abierta;
+`.release-please-config.json` configura el release como borrador. Su primer check
+quedó `action_required` sin jobs; la reejecución manual pasó los cinco jobs y la
+PR #2 ahora está `CLEAN` (run 39418373438, intento 2). BUG-066 registra cómo
+eliminar esa reejecución manual en futuros releases. BUG-067 elimina una
+advertencia por un input inválido de la acción. F4.3 sigue después de completar
+la publicación.
 
 ## Objetivo vigente
 
