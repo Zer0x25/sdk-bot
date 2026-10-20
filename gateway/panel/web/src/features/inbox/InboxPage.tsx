@@ -187,7 +187,7 @@ export function InboxPage() {
           if (conversationId) {
             void queryClient.fetchQuery({
               queryKey: ['inbox', 'live-messages', conversationId],
-              queryFn: () => getMessages(conversationId),
+              queryFn: () => getMessages(conversationId, {}),
               staleTime: 0
             }).catch(() => undefined);
           }

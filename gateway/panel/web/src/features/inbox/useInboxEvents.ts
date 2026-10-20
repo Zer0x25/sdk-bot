@@ -66,7 +66,7 @@ export function useInboxEvents(conversationId?: string) {
       for (const id of dirtyMessages) {
         void queryClient.fetchQuery({
           queryKey: ['inbox', 'live-messages', id],
-          queryFn: () => getMessages(id),
+          queryFn: () => getMessages(id, {}),
           staleTime: 0
         }).catch(() => undefined);
       }
@@ -106,7 +106,7 @@ export function useInboxEvents(conversationId?: string) {
         if (selectedId) {
           void queryClient.fetchQuery({
             queryKey: ['inbox', 'live-messages', selectedId],
-            queryFn: () => getMessages(selectedId),
+            queryFn: () => getMessages(selectedId, {}),
             staleTime: 0
           }).catch(() => undefined);
         }
@@ -118,8 +118,11 @@ export function useInboxEvents(conversationId?: string) {
       listDirty = true;
       if (typeof id === 'string') {
         dirtyConversations.add(id);
-        if (id === conversationRef.current
-          && (event.type === 'message.created' || event.type === 'message.updated')) {
+        const messageChanged = event.type === 'message.created' || event.type === 'message.updated';
+        if (messageChanged) {
+          void queryClient.invalidateQueries({ queryKey: ['inbox', 'messages', id], refetchType: 'none' });
+        }
+        if (id === conversationRef.current && messageChanged) {
           dirtyMessages.add(id);
           if (event.type === 'message.created') setNewMessageCount(count => count + 1);
         }
