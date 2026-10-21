@@ -5,6 +5,22 @@ based on [Conventional Commits](https://www.conventionalcommits.org/) and this
 file is maintained automatically by
 [release-please](https://github.com/googleapis/release-please).
 
+## [0.6.0](https://github.com/Zer0x25/sdk-bot/compare/v0.5.0...v0.6.0) (2026-10-21)
+
+
+### Features
+
+* add durable conversation control and human inbox actions ([#12](https://github.com/Zer0x25/sdk-bot/issues/12)) ([31f4ab7](https://github.com/Zer0x25/sdk-bot/commit/31f4ab7e7411e83050a38cd8a03f1f71e61bcc3f))
+* **inbox:** stream live conversation updates ([cf1a1cd](https://github.com/Zer0x25/sdk-bot/commit/cf1a1cd5025b3309d98a15d33d36871bfb4daa37))
+* **inbox:** stream live conversation updates ([ce44c72](https://github.com/Zer0x25/sdk-bot/commit/ce44c72f99559812eb83d88f08f617faa514b6dd))
+
+
+### Bug Fixes
+
+* **inbox:** fill replay gaps across message pages ([536c4ca](https://github.com/Zer0x25/sdk-bot/commit/536c4cae26fe641af2e5a4281122277584e8e3b7))
+* **inbox:** guard stream setup and correct event test ([aaf55c3](https://github.com/Zer0x25/sdk-bot/commit/aaf55c3e229be0e4b309952381893d88d5e45f4c))
+* **inbox:** keep live message cache type-safe ([50ae7f8](https://github.com/Zer0x25/sdk-bot/commit/50ae7f893a2d2d94b56e8318df7dbee0eb951b9b))
+
 ## [0.5.0](https://github.com/Zer0x25/sdk-bot/compare/v0.4.0...v0.5.0) (2026-10-20)
 
 
