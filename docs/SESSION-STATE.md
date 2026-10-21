@@ -826,35 +826,38 @@ Cierres históricos: commits F2C.1/F2C.2/F2D/F2E.1 están en el log local; F2B.3
 
 - El 2026-10-21 se conectó una sola instancia local en `work` (`1d76ec2`) con
   WhatsApp abierto, Brain saludable y cola vacía. El marcador
-  `F6.4-WA-20261021-01` se archivó una vez en la bandeja/log. Sin respuesta IA bajo
-  `ignored_all`, que se mantuvo durante la sesión.
-- Para seguir se permitió solo el contacto identificado por el marcador; la UI
-  rechazó `Tomar control` y la API devolvió `CONTROL_AUTHORITY_NOT_ACTIVE`. El
-  runtime conserva autoridad `legacy`, por lo que no se envió respuesta humana, no
-  se probó `process_pending` y no se pidió una segunda entrada. Se restauró el
-  contacto a `neutro`; verificación final: `globalMode=ignored_all`.
-- No se ejecutó reset ni corte de autoridad. Takeover/respuesta humana, segunda
-  entrada, `process_pending`/release y respuesta IA siguen pendientes hasta
-  preparar y verificar el corte documentado en F5.3/F5.4. Teclado y viewport
-  móvil se revisaron parcialmente: Tab alcanzó la navegación con foco visible y
-  390 × 844 px no produjo desbordamiento horizontal. La pestaña original siguió
-  en `Reconectando`, aunque `/api/v1/events` respondió HTTP 200 como SSE; una
-  pestaña nueva llegó a `En vivo` y cargó la lista. No se seleccionó un chat en
-  la pestaña nueva, así que compositor y controles del hilo siguen pendientes.
-  El preflight live de F5.3 fue de
-  solo lectura y bloqueó: 43/1007
-  registros importables, 962 identidades sin conversación destino y 2 ambiguas.
-  El segundo dry-run con `--exclude-no-conversation` excluyó los 962 contactos y
-  conservó las 2 parejas teléfono/LID ambiguas como bloqueos. No se hizo staging
-  ni corte. Después se reinició la instancia única: WhatsApp y Telegram `open`,
-  Brain saludable, cola en cero, `ignored_all` y panel HTTP 200. Después llegó
-  un inbound nuevo: la última conversación WhatsApp mostró
-  `lastActivityAt=2026-10-21T06:49:51Z` y `unreadCount=1`. El log del gateway
-  registró `MENSAJE IGNORADO - MODO GLOBAL ESTRICTO` a `06:49:51.279Z`. `/status`
-  confirmó WhatsApp/Telegram `open`, Brain `ok`, cola en cero y
-  `globalMode=ignored_all`. La captura tras reinicio y la persistencia del modo
-  quedaron verificadas; no hubo respuesta automática. La simulación F6.3
-  permanece separada del smoke real.
+  `F6.4-WA-20261021-01` se archivó una vez en la bandeja/log. El inbound posterior
+  al primer reinicio actualizó la actividad a `2026-10-21T06:49:51Z`, quedó con
+  `unreadCount=1` y el log registró `ignored_all_strict` a `06:49:51.279Z`; no hubo
+  respuesta automática. La simulación F6.3 permanece separada del smoke real.
+- En el primer intento de takeover, la UI recibió `CONTROL_AUTHORITY_NOT_ACTIVE`
+  porque la autoridad aún era `legacy`; no se envió respuesta y el contacto volvió
+  a `neutro`. La razón de no probar respuesta humana/release debió explicarse en
+  ese momento: F5.3 bloqueaba el corte por dos identidades ambiguas y no existía
+  una decisión parcial documentada.
+- Para respetar “mantenerlas bloqueadas”, se añadió `--preserve-ambiguous-blocked`.
+  Solo se admite si todas las cuarentenas son `identity_ambiguous`, `globalMode` es
+  `ignored_all` y sus cuatro conversaciones candidatas ya están inactivas. El
+  plan deja las dos entradas en cuarentena y no escribe esos controles. 14 pruebas
+  enfocadas de importación/migración pasan; lint, typecheck, `git diff --check` y
+  el build de la bandeja React pasan.
+- El dry-run live mostró 43 importados (41 contactos `neutral/off` y 2 settings),
+  962 excluidos por no tener conversación, 2 ambiguos y 0 con revisión requerida.
+  La revisión confirmó los cuatro candidatos inactivos bajo `ignored_all`. El
+  staging y corte terminaron con código 0; autoridad `sqlite`, servicio listo,
+  `ignored_all` conservado y `controlsChanged=0` en esas cuatro conversaciones.
+  No se eligió ni unió ninguna identidad.
+- Se reinició una sola instancia con listeners en `127.0.0.1`, bandeja React
+  habilitada y actor dev. Brain, Gateway y panel responden; WhatsApp y Telegram
+  figuran `open`, Brain `/health` = `ok`, cola en cero y `globalMode=ignored_all`.
+  La API v1 devuelve HTTP 503 `SERVICE_UNAVAILABLE` porque falta
+  `SDK_PANEL_GATEWAY_SECRET` en Gateway y panel. El hilo no carga, por lo que aún
+  no se hicieron takeover, respuesta humana, segunda entrada ni release. No se
+  ejecutó reset ni hubo otro inbound después del corte.
+- Teclado y viewport móvil se revisaron parcialmente: Tab alcanzó la navegación
+  con foco visible y 390 × 844 px no produjo desbordamiento horizontal. La sesión
+  necesita el secreto compartido v1 antes de validar hilo/compositor y continuar
+  el smoke real.
 - **F6.4 pendiente**; Fase 6 no queda cerrada y no se pasa a Fase 7.
 
 ## Revisión del backlog antes de F7

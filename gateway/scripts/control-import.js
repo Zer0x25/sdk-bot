@@ -10,7 +10,8 @@ function safeErrorCode(error) {
 }
 function parseArgs(args) {
     const result = { apply: false, cutover: false, resumeCutover: false, rollback: false,
-        acceptSourceRemovals: false, acceptIdentityChanges: false, excludeContactsWithoutConversation: false, migrationId: null };
+        acceptSourceRemovals: false, acceptIdentityChanges: false, excludeContactsWithoutConversation: false,
+        preserveAmbiguousQuarantine: false, migrationId: null };
     for (let index = 0; index < args.length; index += 1) {
         const arg = args[index];
         if (arg === '--apply') result.apply = true;
@@ -20,6 +21,7 @@ function parseArgs(args) {
         else if (arg === '--accept-source-removals') result.acceptSourceRemovals = true;
         else if (arg === '--accept-identity-changes') result.acceptIdentityChanges = true;
         else if (arg === '--exclude-no-conversation') result.excludeContactsWithoutConversation = true;
+        else if (arg === '--preserve-ambiguous-blocked') result.preserveAmbiguousQuarantine = true;
         else if (arg === '--migration-id') {
             const value = args[index + 1];
             if (!value || value.startsWith('--')) throw Object.assign(new Error('INVALID_MIGRATION_ID'), { code: 'INVALID_MIGRATION_ID' });
@@ -31,6 +33,7 @@ function parseArgs(args) {
     if (result.resumeCutover && (result.apply || result.cutover || result.rollback)) throw Object.assign(new Error('INVALID_ARGUMENT'), { code: 'INVALID_ARGUMENT' });
     if (result.rollback && (result.apply || result.cutover || result.resumeCutover)) throw Object.assign(new Error('INVALID_ARGUMENT'), { code: 'INVALID_ARGUMENT' });
     if ((result.rollback || result.resumeCutover) && result.excludeContactsWithoutConversation) throw Object.assign(new Error('INVALID_ARGUMENT'), { code: 'INVALID_ARGUMENT' });
+    if ((result.rollback || result.resumeCutover) && result.preserveAmbiguousQuarantine) throw Object.assign(new Error('INVALID_ARGUMENT'), { code: 'INVALID_ARGUMENT' });
     if (result.cutover && !result.apply) throw Object.assign(new Error('INVALID_ARGUMENT'), { code: 'INVALID_ARGUMENT' });
     if ((result.acceptSourceRemovals || result.acceptIdentityChanges) && !result.apply) throw Object.assign(new Error('INVALID_ARGUMENT'), { code: 'INVALID_ARGUMENT' });
     if ((result.rollback || result.resumeCutover) && !result.migrationId) throw Object.assign(new Error('MIGRATION_ID_REQUIRED'), { code: 'MIGRATION_ID_REQUIRED' });
@@ -96,7 +99,7 @@ async function rollback(archive, migrationId) {
 async function run(args = process.argv.slice(2)) {
     const options = parseArgs(args);
     if (options.help) {
-        process.stdout.write('Read-only by default. Use --exclude-no-conversation to explicitly exclude contacts whose phone/LID has no exact conversation target in the archive snapshot; invalid and ambiguous identities still block. Use --apply to stage a verified migration; --cutover also requests activation and is gated until F5.4 registers the SQLite control service. Accept source removals or identity remaps only with the explicit --accept-source-removals / --accept-identity-changes flags. Use --resume-cutover or --rollback with --migration-id after an interrupted cutover.\n');
+        process.stdout.write('Read-only by default. Use --exclude-no-conversation to explicitly exclude contacts whose phone/LID has no exact conversation target. Ambiguous identities block by default; --preserve-ambiguous-blocked keeps them quarantined only when globalMode is ignored_all and every candidate conversation is already automation-inactive. Use --apply to stage a verified migration; --cutover also requests activation and is gated until F5.4 registers the SQLite control service. Accept source removals or identity remaps only with the explicit --accept-source-removals / --accept-identity-changes flags. Use --resume-cutover or --rollback with --migration-id after an interrupted cutover.\n');
         return 0;
     }
     const paths = {
@@ -134,7 +137,8 @@ async function run(args = process.argv.slice(2)) {
             const report = buildControlImportReport({ contacts: sources.contacts.value, settings: sources.settings.value,
                 conversations: await allConversationRows(archive), profileKeys: sources.profileKeys, sourceManifest,
                 archive: { dataEpoch: archiveSnapshot.dataEpoch, seq: archiveSnapshot.seq, schemaVersion: ready.schemaVersion },
-                excludeContactsWithoutConversation: options.excludeContactsWithoutConversation });
+                excludeContactsWithoutConversation: options.excludeContactsWithoutConversation,
+                preserveAmbiguousQuarantine: options.preserveAmbiguousQuarantine });
             process.stdout.write(`${JSON.stringify(report, null, 2)}\n`);
             return report.cutoverAllowed ? 0 : 2;
         }
@@ -145,16 +149,19 @@ async function run(args = process.argv.slice(2)) {
         const report = buildControlImportReport({ contacts: sources.contacts.value, settings: sources.settings.value,
             conversations: await allConversationRows(archive), profileKeys: sources.profileKeys, sourceManifest,
             archive: { dataEpoch: archiveSnapshot.dataEpoch, seq: archiveSnapshot.seq, schemaVersion: ready.schemaVersion },
-            excludeContactsWithoutConversation: options.excludeContactsWithoutConversation });
+            excludeContactsWithoutConversation: options.excludeContactsWithoutConversation,
+            preserveAmbiguousQuarantine: options.preserveAmbiguousQuarantine });
         const migrationId = options.migrationId || migrationIdFor(archiveSnapshot.dataEpoch);
         const staged = await stageReport(archive, migrationId, report, {
             acceptSourceRemovals: options.acceptSourceRemovals,
-            acceptIdentityChanges: options.acceptIdentityChanges
+            acceptIdentityChanges: options.acceptIdentityChanges,
+            preserveAmbiguousQuarantine: options.preserveAmbiguousQuarantine
         }, manifest => assertSourcesUnchanged(paths, manifest || {}));
         await assertSourcesUnchanged(paths, staged.report.sourceManifest);
         let result = { migrationId, runId: staged.runId, status: staged.status,
             cutoverAllowed: staged.report.cutoverAllowed, counts: staged.report.counts,
-            blockers: staged.report.blockers, exclusions: staged.report.exclusions,
+            blockers: staged.report.blockers, warnings: staged.report.warnings,
+            quarantineDecision: staged.report.quarantineDecision, exclusions: staged.report.exclusions,
             authority: await archive.controlAuthority() };
         let exitCode = staged.status === 'verified' ? 0 : 2;
         if (options.cutover && staged.status === 'verified') {

@@ -164,6 +164,43 @@ function contactPlan(legacyKey, record, globalMode, globalProfile, profileKeys, 
         ownerId: null, takenAt, handoffReason, requiresReview, reviewReasons: [...new Set(reviewReasons)], profileKey: profile } };
 }
 
+function automationBlockedByPolicy(conversation, globalMode) {
+    if (!conversation || typeof conversation !== 'object') return false;
+    const accessPolicy = conversation.access_policy ?? conversation.accessPolicy;
+    const automationMode = conversation.automation_mode ?? conversation.automationMode;
+    const lifecycle = conversation.lifecycle;
+    const requiresReview = conversation.requires_review === 1 || conversation.requiresReview === true;
+    if (requiresReview || lifecycle !== 'open' || automationMode === 'human' || accessPolicy === 'ignored') return true;
+    if (accessPolicy === 'allowed') return automationMode !== 'ai';
+    if (accessPolicy === 'neutral') return globalMode !== 'allowed_all' || automationMode !== 'ai';
+    return false;
+}
+
+function ambiguousQuarantineDecision(entries, conversations, globalMode, requested) {
+    if (!requested) return null;
+    const quarantined = entries.filter(entry => entry.disposition === 'quarantined');
+    const byId = new Map(conversations.map(conversation => [conversation.id, conversation]));
+    const allAmbiguous = quarantined.length > 0 && quarantined.every(entry => entry.reason === 'identity_ambiguous'
+        && Array.isArray(entry.candidateTargetIds) && entry.candidateTargetIds.length > 0);
+    const targetIds = [...new Set(quarantined.flatMap(entry => entry.candidateTargetIds || []))];
+    const targetsBlocked = allAmbiguous && targetIds.length > 0
+        && targetIds.every(id => automationBlockedByPolicy(byId.get(id), globalMode));
+    const applied = globalMode === 'ignored_all' && allAmbiguous && targetsBlocked;
+    return {
+        decision: applied ? 'keep_blocked' : 'blocked',
+        requested: true,
+        applied,
+        quarantinedCount: quarantined.length,
+        candidateConversationCount: targetIds.length,
+        globalMode,
+        controlsChanged: 0,
+        ...(applied ? { reason: 'ambiguous_targets_already_inactive_under_ignored_all' }
+            : { reason: globalMode !== 'ignored_all' ? 'global_mode_must_be_ignored_all'
+                : !allAmbiguous ? 'only_identity_ambiguous_records_can_be_preserved'
+                    : 'candidate_conversation_not_proven_inactive' })
+    };
+}
+
 function buildControlImportReport(input) {
     if (!isRecord(input?.contacts) || !isRecord(input?.settings)) fail('INVALID_IMPORT_SOURCE');
     if (!Array.isArray(input.conversations)) fail('INVALID_CONVERSATION_SNAPSHOT');
@@ -265,7 +302,13 @@ function buildControlImportReport(input) {
             previous.count = (previous.count || 1) + (blocker.count || 1);
         }
     }
-    const uniqueBlockers = [...blockerMap.values()];
+    let uniqueBlockers = [...blockerMap.values()];
+    const quarantineDecision = ambiguousQuarantineDecision(entries, input.conversations, globalMode,
+        input.preserveAmbiguousQuarantine === true);
+    if (quarantineDecision?.applied) {
+        uniqueBlockers = uniqueBlockers.filter(blocker => blocker.code !== 'source_records_quarantined');
+    }
+    const cutoverAllowed = uniqueBlockers.length === 0;
     const sourceManifest = {
         ...manifest,
         contacts: { ...manifest.contacts, sourceRecordCount: Object.keys(input.contacts).length },
@@ -279,12 +322,13 @@ function buildControlImportReport(input) {
         schemaVersion: 1,
         dryRun: true,
         generatedAt: input.generatedAt || new Date().toISOString(),
-        status: uniqueBlockers.length ? 'review_required' : 'ready',
-        cutoverAllowed: uniqueBlockers.length === 0,
+        status: !cutoverAllowed ? 'review_required' : quarantineDecision?.applied ? 'ready_with_quarantines' : 'ready',
+        cutoverAllowed,
         sourceManifest,
         globalPolicy: { globalMode, globalModeSource, globalProfile: globalProfile.value,
             globalProfileSource: globalProfile.source, globalPausedDuringCutover: true,
             legacyPausePersisted: false },
+        ...(quarantineDecision ? { quarantineDecision } : {}),
         settingsOutOfScopeKeyCount: Object.keys(input.settings).filter(key => !['globalMode','currentProfile'].includes(key)).length,
         ...(input.excludeContactsWithoutConversation ? { exclusions: {
             noConversationTarget: {
@@ -298,6 +342,8 @@ function buildControlImportReport(input) {
         } } : {}),
         counts,
         blockers: uniqueBlockers,
+        ...(quarantineDecision?.applied ? { warnings: [{ code: 'ambiguous_records_kept_blocked',
+            count: quarantineDecision.quarantinedCount }] } : {}),
         entries: entries.sort((a, b) => a.sourceKey.localeCompare(b.sourceKey))
     };
 }

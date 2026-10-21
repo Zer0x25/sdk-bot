@@ -79,6 +79,49 @@ test('F5.3 migrates an existing v5 archive in place and preserves staged control
     assert.deepEqual(await archive.snapshot(), { dataEpoch: 'fixture-v5-epoch', seq: '7' });
 });
 
+test('F5.3 cutover can explicitly keep ambiguous neutral contacts quarantined without changing candidate controls', async t => {
+    const { archive } = await fixture(t, ['111', '555']);
+    const secondAccountId = randomUUID();
+    await archive.registerAccount({ id: secondAccountId, channel: 'whatsapp', providerKey: 'ambiguous-control-migration-fixture' });
+    await archive.ingestBatch([message(secondAccountId, '555', 'ambiguous-second-account')]);
+
+    const rows = await archive.conversationRows();
+    const ambiguousTargets = rows.filter(row => row.identity_keys.some(identity => identity.exactValue === '555@s.whatsapp.net'));
+    assert.equal(ambiguousTargets.length, 2);
+    const initialAmbiguousControls = new Map(await Promise.all(ambiguousTargets.map(async row => [row.id, await archive.controlState(row.id)])));
+    const contacts = {
+        testChat: { phone: '111', estado: 'permitido' },
+        ambiguous: { phone: '555', estado: 'neutro' }
+    };
+    const report = await reportFor(archive, contacts, { globalMode: 'ignored_all', currentProfile: 'default' },
+        '2026-10-20T12:00:00.000Z', { preserveAmbiguousQuarantine: true });
+    assert.equal(report.cutoverAllowed, true);
+    assert.equal(report.status, 'ready_with_quarantines');
+    assert.equal(report.quarantineDecision.quarantinedCount, 1);
+    const ambiguousEntry = report.entries.find(entry => entry.source === 'contact' && entry.reason === 'identity_ambiguous');
+    assert.equal(ambiguousEntry.disposition, 'quarantined');
+
+    const migrationId = 'f5-control-preserve-ambiguous-fixture';
+    const staged = await stage(archive, migrationId, report, { preserveAmbiguousQuarantine: true });
+    assert.equal(staged.verified.status, 'verified');
+    await archive.setControlServiceReady({ ready: true });
+    await archive.startControlCutover({ migrationId });
+    for (;;) {
+        const batch = await archive.applyControlCutoverBatch({ migrationId, limit: 10 });
+        if (batch.remaining === 0) break;
+    }
+    const cutover = await archive.finishControlCutover({ migrationId });
+    assert.equal(cutover.authority.mode, 'sqlite');
+    assert.equal((await archive.controlPolicy()).globalMode, 'ignored_all');
+    assert.equal((await archive.controlState(report.entries.find(entry => entry.source === 'contact'
+        && entry.disposition === 'imported').targetId)).automationMode, 'ai');
+    for (const [conversationId, initial] of initialAmbiguousControls) {
+        assert.deepEqual(await archive.controlState(conversationId), initial);
+    }
+    const entries = await archive.controlImportEntries({ runId: staged.begin.runId });
+    assert.equal(entries.find(entry => entry.reason === 'identity_ambiguous').disposition, 'quarantined');
+});
+
 test('F5.4 v6 to v7 migration preserves the event timeline and permits audited global policy events', async t => {
     const { archive, databasePath } = await fixture(t, ['909']);
     const created = await archive.ingestBatch([message((await archive.accounts())[0].id, '909', 'v6-event')]);
@@ -274,10 +317,16 @@ test('F5.3 rolls back batches before authority is switched and keeps versions mo
 });
 
 test('F5.3 CLI applies a staged report only and keeps authority legacy until the integrated service is ready', async t => {
-    const { archive, databasePath } = await fixture(t, ['555']);
-    const contact = { person: { phone: '555', estado: 'permitido' } };
-    const accountRows = await archive.conversationRows();
-    const conversationId = accountRows[0].id;
+    const { archive, databasePath } = await fixture(t, ['555', '777']);
+    const secondAccountId = randomUUID();
+    await archive.registerAccount({ id: secondAccountId, channel: 'whatsapp', providerKey: 'ambiguous-cli-fixture' });
+    await archive.ingestBatch([message(secondAccountId, '777', 'ambiguous-cli-second-account')]);
+    const contact = { person: { phone: '555', estado: 'permitido' }, ambiguous: { phone: '777', estado: 'neutro' } };
+    const rows = await archive.conversationRows();
+    const conversationId = rows.find(row => row.identity_keys.some(identity => identity.exactValue === '555@s.whatsapp.net')).id;
+    const ambiguousTargets = rows.filter(row => row.identity_keys.some(identity => identity.exactValue === '777@s.whatsapp.net'));
+    assert.equal(ambiguousTargets.length, 2);
+    const initialAmbiguousControls = new Map(await Promise.all(ambiguousTargets.map(async row => [row.id, await archive.controlState(row.id)])));
     const contactsPath = path.join(path.dirname(databasePath), 'contacts.json');
     const settingsPath = path.join(path.dirname(databasePath), 'settings.json');
     const profilesPath = path.join(path.dirname(databasePath), 'profiles');
@@ -285,22 +334,36 @@ test('F5.3 CLI applies a staged report only and keeps authority legacy until the
     await fs.mkdir(profilesPath);
     await fs.writeFile(path.join(profilesPath, 'default.md'), '# fixture\n');
     await fs.writeFile(contactsPath, JSON.stringify(contact));
-    await fs.writeFile(settingsPath, JSON.stringify({ globalMode: 'allowed_all', currentProfile: 'default' }));
+    await fs.writeFile(settingsPath, JSON.stringify({ globalMode: 'ignored_all', currentProfile: 'default' }));
     await archive.close();
     const env = { ...process.env, SDK_CONTACTS_DB_PATH: contactsPath, SDK_SETTINGS_DB_PATH: settingsPath,
         SDK_BRAIN_PROFILES_DIR: profilesPath, SDK_CONVERSATIONS_DB_PATH: databasePath, SDK_GATEWAY_LOCK_PATH: lockPath };
     const command = [path.join(__dirname, '..', 'scripts', 'control-import.js')];
     const migrationId = 'f5-control-cli-fixture';
-    const staged = spawnSync(process.execPath, [...command, '--apply', '--migration-id', migrationId], { encoding: 'utf8', env });
+    const staged = spawnSync(process.execPath, [...command, '--apply', '--preserve-ambiguous-blocked', '--migration-id', migrationId], { encoding: 'utf8', env });
     assert.equal(staged.status, 0, staged.stderr || staged.stdout);
-    assert.equal(JSON.parse(staged.stdout).status, 'verified');
-    const requestCutover = spawnSync(process.execPath, [...command, '--apply', '--cutover', '--migration-id', migrationId], { encoding: 'utf8', env });
-    assert.equal(requestCutover.status, 2);
-    assert.deepEqual(JSON.parse(requestCutover.stdout).blockers, [{ code: 'CONTROL_SERVICE_NOT_READY' }]);
+    const stagedResult = JSON.parse(staged.stdout);
+    assert.equal(stagedResult.status, 'verified');
+    assert.equal(stagedResult.cutoverAllowed, true);
+    assert.deepEqual(stagedResult.warnings, [{ code: 'ambiguous_records_kept_blocked', count: 1 }]);
+    assert.equal(stagedResult.quarantineDecision.decision, 'keep_blocked');
     const reopened = createArchive({ path: databasePath });
-    t.after(() => reopened.close());
+    t.after(async () => reopened.close().catch(() => {}));
     await reopened.ready;
-    assert.equal((await reopened.controlAuthority()).mode, 'legacy');
-    assert.equal((await reopened.controlImportStatus(migrationId)).status, 'verified');
-    assert.equal((await reopened.controlState(conversationId)).automationMode, 'off');
+    await reopened.setControlServiceReady({ ready: true });
+    await reopened.close();
+    const requestCutover = spawnSync(process.execPath, [...command, '--apply', '--cutover', '--preserve-ambiguous-blocked',
+        '--migration-id', migrationId], { encoding: 'utf8', env });
+    assert.equal(requestCutover.status, 0, requestCutover.stderr || requestCutover.stdout);
+    assert.equal(JSON.parse(requestCutover.stdout).cutover.status, 'cutover');
+    const afterCutover = createArchive({ path: databasePath });
+    t.after(() => afterCutover.close());
+    await afterCutover.ready;
+    assert.equal((await afterCutover.controlAuthority()).mode, 'sqlite');
+    assert.equal((await afterCutover.controlPolicy()).globalMode, 'ignored_all');
+    assert.equal((await afterCutover.controlState(conversationId)).automationMode, 'ai');
+    for (const [id, initial] of initialAmbiguousControls) assert.deepEqual(await afterCutover.controlState(id), initial);
+    const migration = await afterCutover.controlImportStatus(migrationId);
+    assert.equal(migration.run.report.counts.quarantined, 1);
+    assert.equal(migration.status, 'cutover');
 });

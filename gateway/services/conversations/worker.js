@@ -1242,6 +1242,16 @@ function addImportBlocker(report, code, count = 1) {
     if (existing) existing.count = (existing.count || 0) + count;
     else report.blockers.push({ code, count });
 }
+function preservedAmbiguousQuarantines(report) {
+    const quarantined = report.entries.filter(entry => entry.disposition === 'quarantined');
+    if (!quarantined.length) return true;
+    const decision = report.quarantineDecision;
+    return decision?.decision === 'keep_blocked' && decision.applied === true
+        && decision.globalMode === 'ignored_all' && report.globalPolicy?.globalMode === 'ignored_all'
+        && decision.quarantinedCount === quarantined.length
+        && quarantined.every(entry => entry.reason === 'identity_ambiguous'
+            && Array.isArray(entry.candidateTargetIds) && entry.candidateTargetIds.length > 0);
+}
 function normalizeDeltaReport(report, previousReport, decisions = {}) {
     const next = JSON.parse(JSON.stringify(report));
     if (!previousReport || !Array.isArray(previousReport.entries)) return next;
@@ -1301,7 +1311,9 @@ function normalizeDeltaReport(report, previousReport, decisions = {}) {
     if (acceptedIdentityChanges) next.delta = { ...(next.delta || {}), acceptedIdentityChanges };
     next.blockers = next.blockers.filter(blocker => blocker.code !== 'source_records_quarantined' && blocker.code !== 'records_require_review');
     reportCounts(next);
-    if (next.counts.quarantined) addImportBlocker(next, 'source_records_quarantined', next.counts.quarantined);
+    const keepAmbiguousBlocked = decisions.preserveAmbiguousQuarantine === true
+        && next.quarantineDecision?.applied === true && preservedAmbiguousQuarantines(next);
+    if (next.counts.quarantined && !keepAmbiguousBlocked) addImportBlocker(next, 'source_records_quarantined', next.counts.quarantined);
     if (next.counts.requiresReview) addImportBlocker(next, 'records_require_review', next.counts.requiresReview);
     if (next.exclusions?.noConversationTarget) {
         const candidates = next.entries.filter(entry => entry.reason === 'no_conversation_target'
@@ -1313,8 +1325,9 @@ function normalizeDeltaReport(report, previousReport, decisions = {}) {
         next.exclusions.noConversationTarget.blockedCount = candidates.length - excluded;
     }
     next.entries.sort((a, b) => a.sourceKey.localeCompare(b.sourceKey));
-    next.status = next.blockers.length ? 'review_required' : 'ready';
-    next.cutoverAllowed = next.blockers.length === 0;
+    if (next.quarantineDecision) next.quarantineDecision.applied = keepAmbiguousBlocked;
+    next.status = next.blockers.length ? 'review_required' : keepAmbiguousBlocked ? 'ready_with_quarantines' : 'ready';
+    next.cutoverAllowed = next.blockers.length === 0 && (!next.counts.quarantined || keepAmbiguousBlocked);
     return next;
 }
 function beginControlImport(input) {
@@ -1407,7 +1420,7 @@ function verifyControlImport(input) {
     if (staged !== report.entries.length) fail('IMPORT_STAGE_INCOMPLETE');
     const invalid = one("SELECT COUNT(*) AS n FROM control_import_entries WHERE run_id=? AND ((disposition='imported' AND status!='pending') OR (disposition='quarantined' AND status!='quarantined') OR (disposition='excluded' AND status!='excluded'))", input.runId).n;
     if (invalid) fail('IMPORT_STAGE_INCONSISTENT');
-    const noCutover = report.cutoverAllowed !== true || report.blockers.length > 0;
+    const noCutover = report.cutoverAllowed !== true || report.blockers.length > 0 || !preservedAmbiguousQuarantines(report);
     const status = noCutover ? 'blocked' : 'verified';
     const now = new Date().toISOString();
     run('UPDATE control_import_runs SET status=?,verified_at=? WHERE id=?', status, now, input.runId);
@@ -1578,7 +1591,7 @@ function applyControlCutoverBatch(input) {
 }
 function verifyAppliedImport(migration, runRow) {
     const report = JSON.parse(runRow.report_json);
-    if (report.cutoverAllowed !== true || report.blockers.length) fail('IMPORT_CUTOVER_BLOCKED');
+    if (report.cutoverAllowed !== true || report.blockers.length || !preservedAmbiguousQuarantines(report)) fail('IMPORT_CUTOVER_BLOCKED');
     const pending = one("SELECT COUNT(*) AS n FROM control_import_entries WHERE run_id=? AND disposition='imported' AND status!='applied'", runRow.id).n;
     if (pending) fail('IMPORT_APPLY_INCOMPLETE');
     const entries = all("SELECT entry_json FROM control_import_entries WHERE run_id=? AND disposition='imported' ORDER BY source_key", runRow.id)

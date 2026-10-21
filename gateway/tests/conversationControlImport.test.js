@@ -130,6 +130,49 @@ test('F5.3 explicitly excludes only contacts without an exact conversation and k
     assert.ok(!serialized.includes('allowedWithoutConversation'));
 });
 
+test('F5.3 only preserves ambiguous quarantine when ignored_all already blocks every candidate conversation', () => {
+    const id = suffix => `00000000-0000-4000-8000-${suffix.padStart(12, '0')}`;
+    const contacts = { ambiguous: { phone: '555', estado: 'neutro' } };
+    const settings = { globalMode: 'ignored_all', currentProfile: 'default' };
+    const conversations = [
+        { id: id('1'), channel: 'whatsapp', access_policy: 'neutral', automation_mode: 'off', lifecycle: 'open', requires_review: 0,
+            identity_keys: [{ kind: 'whatsapp_jid', exactValue: '555@s.whatsapp.net' }] },
+        { id: id('2'), channel: 'whatsapp', access_policy: 'neutral', automation_mode: 'off', lifecycle: 'open', requires_review: 0,
+            identity_keys: [{ kind: 'whatsapp_jid', exactValue: '555@s.whatsapp.net' }] }
+    ];
+    const input = { contacts, settings, conversations, profileKeys: ['default'], sourceManifest: {
+        contacts: { present: true, sha256: 'a'.repeat(64) }, settings: { present: true, sha256: 'b'.repeat(64) }
+    }, archive: { dataEpoch: id('9'), seq: '44', schemaVersion: 10 } };
+
+    const preserved = buildControlImportReport({ ...input, preserveAmbiguousQuarantine: true });
+    assert.equal(preserved.status, 'ready_with_quarantines');
+    assert.equal(preserved.cutoverAllowed, true);
+    assert.deepEqual(preserved.blockers, []);
+    assert.deepEqual(preserved.warnings, [{ code: 'ambiguous_records_kept_blocked', count: 1 }]);
+    assert.deepEqual(preserved.quarantineDecision, { decision: 'keep_blocked', requested: true, applied: true,
+        quarantinedCount: 1, candidateConversationCount: 2, globalMode: 'ignored_all', controlsChanged: 0,
+        reason: 'ambiguous_targets_already_inactive_under_ignored_all' });
+    assert.equal(preserved.entries.find(entry => entry.source === 'contact').disposition, 'quarantined');
+
+    const activeCandidate = buildControlImportReport({ ...input, preserveAmbiguousQuarantine: true,
+        conversations: conversations.map((conversation, index) => index === 0
+            ? { ...conversation, access_policy: 'allowed', automation_mode: 'ai' } : conversation) });
+    assert.equal(activeCandidate.cutoverAllowed, false);
+    assert.equal(activeCandidate.quarantineDecision.applied, false);
+    assert.ok(activeCandidate.blockers.some(blocker => blocker.code === 'source_records_quarantined'));
+
+    const allowedGlobalMode = buildControlImportReport({ ...input, settings: { ...settings, globalMode: 'allowed_all' },
+        preserveAmbiguousQuarantine: true,
+        conversations: conversations.map(conversation => ({ ...conversation, automation_mode: 'ai' })) });
+    assert.equal(allowedGlobalMode.cutoverAllowed, false);
+    assert.equal(allowedGlobalMode.quarantineDecision.reason, 'global_mode_must_be_ignored_all');
+
+    const otherQuarantine = buildControlImportReport({ ...input, contacts: { ...contacts, missing: { estado: 'neutro' } },
+        preserveAmbiguousQuarantine: true });
+    assert.equal(otherQuarantine.cutoverAllowed, false);
+    assert.equal(otherQuarantine.quarantineDecision.reason, 'only_identity_ambiguous_records_can_be_preserved');
+});
+
 test('F5.2 CLI reports from read-only SQLite and leaves JSON sources and archive bytes unchanged', async t => {
     const dir = await fs.mkdtemp(path.join(os.tmpdir(), 'sdkbot-control-dry-run-'));
     const databasePath = path.join(dir, 'archive.db');
