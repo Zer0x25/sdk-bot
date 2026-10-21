@@ -847,9 +847,14 @@ Cierres históricos: commits F2C.1/F2C.2/F2D/F2E.1 están en el log local; F2B.3
   El segundo dry-run con `--exclude-no-conversation` excluyó los 962 contactos y
   conservó las 2 parejas teléfono/LID ambiguas como bloqueos. No se hizo staging
   ni corte. Después se reinició la instancia única: WhatsApp y Telegram `open`,
-  Brain saludable, cola en cero, `ignored_all` y panel HTTP 200. No llegó un
-  inbound nuevo después de ese reinicio. La simulación F6.3 permanece separada
-  del smoke real.
+  Brain saludable, cola en cero, `ignored_all` y panel HTTP 200. Después llegó
+  un inbound nuevo: la última conversación WhatsApp mostró
+  `lastActivityAt=2026-10-21T06:49:51Z` y `unreadCount=1`. El log del gateway
+  registró `MENSAJE IGNORADO - MODO GLOBAL ESTRICTO` a `06:49:51.279Z`. `/status`
+  confirmó WhatsApp/Telegram `open`, Brain `ok`, cola en cero y
+  `globalMode=ignored_all`. La captura tras reinicio y la persistencia del modo
+  quedaron verificadas; no hubo respuesta automática. La simulación F6.3
+  permanece separada del smoke real.
 - **F6.4 pendiente**; Fase 6 no queda cerrada y no se pasa a Fase 7.
 
 ## Revisión del backlog antes de F7
