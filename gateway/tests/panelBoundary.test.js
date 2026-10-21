@@ -363,8 +363,73 @@ test('proxy valida cada respuesta v1 con su contrato y no deja pasar rutas sin e
     assert.equal(responseContract('GET', '/v1/accounts', 200), 'AccountsResponse');
     assert.equal(responseContract('GET', '/v1/conversations/00000000-0000-4000-8000-000000000001', 200), 'ConversationResponse');
     assert.equal(responseContract('GET', '/v1/conversations/00000000-0000-4000-8000-000000000001/messages', 200), 'MessagesResponse');
+    assert.equal(responseContract('GET', '/v1/conversations/00000000-0000-4000-8000-000000000001/pending-resume', 200), 'PendingResumeResponse');
+    assert.equal(responseContract('GET', '/v1/operations/00000000-0000-4000-8000-000000000001', 200), 'Operation');
+    assert.equal(responseContract('POST', '/v1/conversations/00000000-0000-4000-8000-000000000001/messages', 202), 'SendMessageResponse');
     assert.equal(responseContract('POST', '/v1/conversations/00000000-0000-4000-8000-000000000001/read', 200), 'ReadResponse');
+    assert.equal(responseContract('POST', '/v1/conversations/00000000-0000-4000-8000-000000000001/takeover', 200), 'TakeoverConfirmedResponse');
+    assert.equal(responseContract('POST', '/v1/conversations/00000000-0000-4000-8000-000000000001/takeover', 202), 'TakeoverPendingResponse');
+    assert.equal(responseContract('POST', '/v1/conversations/00000000-0000-4000-8000-000000000001/release', 200), 'TakeoverConfirmedResponse');
+    assert.equal(responseContract('PATCH', '/v1/conversations/00000000-0000-4000-8000-000000000001', 200), 'TakeoverConfirmedResponse');
     assert.equal(responseContract('GET', '/v1/unknown', 200), null);
+});
+
+test('proxy conserva las respuestas exitosas de takeover, envío y release v1', async () => {
+    const conversationId = crypto.randomUUID();
+    const at = '2026-10-21T00:00:00.000Z';
+    const conversation = {
+        id: conversationId,
+        accountId: crypto.randomUUID(),
+        contactId: crypto.randomUUID(),
+        canonicalIdentityId: crypto.randomUUID(),
+        control: {
+            accessPolicy: 'neutral', automationMode: 'human', lifecycle: 'open', ownerId: actor.id,
+            controlVersion: '2', contextVersion: '1', status: 'confirmed', takenAt: at,
+            handoffReason: 'operator', profileKey: null, requiresReview: false, reviewReasons: []
+        },
+        aggregateVersion: '1', lastActivityAt: null,
+        historyCoverage: { kind: 'capturing_since', capturingSince: at },
+        unreadCount: 0, requiresReview: false
+    };
+    const operation = {
+        id: crypto.randomUUID(), conversationId, actorId: actor.id, type: 'takeover',
+        status: 'taking_control', controlVersion: '2', uncertainMessageIds: [], createdAt: at, completedAt: null
+    };
+    const cases = [
+        { method: 'POST', path: `/v1/conversations/${conversationId}/messages`, status: 202,
+            body: { messageId: crypto.randomUUID(), clientMessageId: crypto.randomUUID() } },
+        { method: 'POST', path: `/v1/conversations/${conversationId}/takeover`, status: 200,
+            body: { conversation } },
+        { method: 'POST', path: `/v1/conversations/${conversationId}/takeover`, status: 202,
+            body: { operation } },
+        { method: 'POST', path: `/v1/conversations/${conversationId}/release`, status: 200,
+            body: { conversation } },
+        { method: 'PATCH', path: `/v1/conversations/${conversationId}`, status: 200,
+            body: { conversation } }
+    ];
+    let nextCase = 0;
+    const upstream = http.createServer((req, res) => {
+        const entry = cases[nextCase++];
+        if (entry?.method !== req.method || entry?.path !== req.url) { res.writeHead(404).end(); return; }
+        res.writeHead(entry.status, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify(entry.body));
+    });
+    const upstreamUrl = await listen(upstream);
+    const front = http.createServer((req, res) => proxy(req, res, req.url, {
+        internal: upstreamUrl, secret, actor, requestId: crypto.randomUUID(), v1: true
+    }));
+    const frontUrl = await listen(front);
+    try {
+        for (const entry of cases) {
+            const response = await fetch(frontUrl + entry.path, {
+                method: entry.method,
+                headers: { 'content-type': 'application/json' },
+                ...(entry.method === 'PATCH' || entry.method === 'POST' ? { body: '{}' } : {})
+            });
+            assert.equal(response.status, entry.status);
+            assert.deepEqual(await response.json(), entry.body);
+        }
+    } finally { await close(front); await close(upstream); }
 });
 
 test('proxy SSE transmite y cierra upstream al desconectar, sin actividad y al vencer sesión', async () => {

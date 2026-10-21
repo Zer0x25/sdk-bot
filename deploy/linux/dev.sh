@@ -27,6 +27,29 @@ STATUS_HOST="${STATUS_HOST:-0.0.0.0}"
 
 log() { printf '%s\n' "$*"; }
 
+# Gateway and panel must share the v1 signing key. The panel loads this file
+# itself; copy only this variable into the launcher environment for Gateway.
+# Do not source the .env file as shell code.
+load_panel_gateway_secret() {
+    [ "${SDK_PANEL_GATEWAY_SECRET+x}" = x ] && return 0
+    local dotenv="$REPO/gateway/panel/.env" line value
+    [ -f "$dotenv" ] || return 0
+    while IFS= read -r line || [ -n "$line" ]; do
+        if [[ "$line" =~ ^[[:space:]]*SDK_PANEL_GATEWAY_SECRET[[:space:]]*=(.*)$ ]]; then
+            value="${BASH_REMATCH[1]}"
+            value="${value%$'\r'}"
+            value="${value#"${value%%[![:space:]]*}"}"
+            value="${value%"${value##*[![:space:]]}"}"
+            case "$value" in
+                \"*\") value="${value#\"}"; value="${value%\"}" ;;
+                \'*\') value="${value#\'}"; value="${value%\'}" ;;
+            esac
+            export SDK_PANEL_GATEWAY_SECRET="$value"
+            return 0
+        fi
+    done < "$dotenv"
+}
+
 usage() {
     printf 'Uso:\n'
     printf '  bash deploy/linux/dev.sh up [brain|gateway|panel|all]\n'
@@ -93,6 +116,7 @@ cmd_up() {
     # Idempotente: mata lo que ya corra (PID file o puerto) antes de relanzar,
     # para no dejar instancias zombie duplicadas ni conflictos de puerto.
     cmd_down >/dev/null
+    load_panel_gateway_secret
     if [ "${1:-}" = "all" ] || [ $# -eq 0 ]; then
         launch_brain; sleep 1; launch_gateway; launch_panel
         disown -a 2>/dev/null || true
