@@ -856,9 +856,17 @@ Cierres históricos: commits F2C.1/F2C.2/F2D/F2E.1 están en el log local; F2B.3
   ejecutó reset ni hubo otro inbound después del corte.
 - Teclado y viewport móvil se revisaron parcialmente: Tab alcanzó la navegación
   con foco visible y 390 × 844 px no produjo desbordamiento horizontal. La sesión
-  necesita el secreto compartido v1 antes de validar hilo/compositor y continuar
-  el smoke real.
-- **F6.4 pendiente**; Fase 6 no queda cerrada y no se pasa a Fase 7.
+  aún no tenía configurado el secreto compartido v1 en ese punto, por lo que no se
+  pudo validar entonces el hilo/compositor ni continuar el smoke real.
+- El smoke live de WhatsApp completó takeover, respuesta humana, entrada durante
+  `human` y release con `process_pending`; el panel mostró una respuesta de IA
+  enviada una vez. Para la prueba se habilitó temporalmente `conversations:write`
+  en un panel adicional de loopback y luego se cerró; el actor del panel original
+  conservó sus capacidades. El chat de prueba quedó `neutral/off` y
+  `globalMode=ignored_all` se verificó al final. La evidencia no inspeccionó el
+  payload de contexto live. Telegram y la validación completa de teclado, compositor
+  y controles móviles siguen pendientes; F6.4/Fase 6 no se cierran aún. Ver
+  [F6.4](F6.4-SMOKE-CANAL.md).
 
 ## Revisión del backlog antes de F7
 

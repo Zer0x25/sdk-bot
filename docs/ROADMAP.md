@@ -331,13 +331,13 @@ Compositor todavía no ofrece enviar.
   contexto correcto. Evidencia y límites: [F6.3](F6.3-FLUJO-CONVERSACION.md).
 - [ ] **F6.4** Smoke manual en cuenta de prueba WA/TG conectada; una única
   instancia y resultados separados de simulación. No ejecutar reset para
-  fabricar datos. WhatsApp inbound se verificó una vez el 2026-10-21; el control
-  quedó bloqueado porque el runtime conserva autoridad `legacy` y devolvió
-  `CONTROL_AUTHORITY_NOT_ACTIVE`. Un dry-run explícito clasificó como excluidos
-  los 962 contactos sin destino exacto; 2 parejas teléfono/LID siguen ambiguas
-  entre 1007 registros. Se detuvo sin staging/corte hasta resolverlas.
-  Estado y procedimiento: [F6.4](F6.4-SMOKE-CANAL.md). El resto del recorrido
-  sigue pendiente; WhatsApp y Telegram están reconectados localmente.
+  fabricar datos. El 2026-10-21 se completó el recorrido live de WhatsApp hasta
+  release con `process_pending`; una respuesta IA figura enviada. `ignored_all`
+  quedó activo y el chat de prueba volvió a `neutral/off`. El contexto real del
+  proveedor no se instrumentó; quedan pendientes la revisión completa de teclado,
+  compositor y controles móviles, además del smoke de Telegram. Las dos parejas
+  teléfono/LID ambiguas permanecen en cuarentena. Estado y evidencia:
+  [F6.4](F6.4-SMOKE-CANAL.md).
 
 **Aceptación:** flujo operativo completo, reinicios/reconexión, móvil y teclado.
 Esta es la v1 útil; publicar/desplegar es una acción separada, no automática.
