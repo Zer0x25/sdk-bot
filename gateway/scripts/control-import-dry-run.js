@@ -72,10 +72,18 @@ async function allConversationRows(archive) {
 }
 
 async function main() {
-    if (process.argv.includes('--help')) {
-        process.stdout.write('Read-only F5 control migration report. Configure SDK_CONTACTS_DB_PATH, SDK_SETTINGS_DB_PATH, SDK_BRAIN_PROFILES_DIR, and SDK_CONVERSATIONS_DB_PATH.\n');
+    const args = process.argv.slice(2);
+    if (args.includes('--help')) {
+        process.stdout.write('Read-only F5 control migration report. Use --exclude-no-conversation to explicitly classify contacts with no exact archive target as excluded; ambiguous or invalid identities remain blocked. Configure SDK_CONTACTS_DB_PATH, SDK_SETTINGS_DB_PATH, SDK_BRAIN_PROFILES_DIR, and SDK_CONVERSATIONS_DB_PATH.\n');
         return;
     }
+    if (args.some(arg => arg !== '--exclude-no-conversation')) {
+        process.stdout.write(`${JSON.stringify({ schemaVersion: 1, dryRun: true, status: 'blocked', cutoverAllowed: false,
+            blockers: [{ code: 'INVALID_ARGUMENT' }] }, null, 2)}\n`);
+        process.exitCode = 2;
+        return;
+    }
+    const excludeContactsWithoutConversation = args.includes('--exclude-no-conversation');
     const contactsPath = process.env.SDK_CONTACTS_DB_PATH || path.join(__dirname, '..', 'contacts_db.json');
     const settingsPath = process.env.SDK_SETTINGS_DB_PATH || path.join(__dirname, '..', 'settings_db.json');
     const profilesPath = process.env.SDK_BRAIN_PROFILES_DIR || path.resolve(__dirname, '../../brain/profiles');
@@ -95,7 +103,8 @@ async function main() {
         const conversations = await allConversationRows(archive);
         const report = buildControlImportReport({ contacts: contacts.value, settings: settings.value,
             conversations, profileKeys, sourceManifest: manifest,
-            archive: { dataEpoch: archiveSnapshot.dataEpoch, seq: archiveSnapshot.seq, schemaVersion: ready.schemaVersion } });
+            archive: { dataEpoch: archiveSnapshot.dataEpoch, seq: archiveSnapshot.seq, schemaVersion: ready.schemaVersion },
+            excludeContactsWithoutConversation });
         process.stdout.write(`${JSON.stringify(report, null, 2)}\n`);
         if (!report.cutoverAllowed) process.exitCode = 2;
     } catch (error) {

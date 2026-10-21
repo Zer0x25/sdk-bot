@@ -329,10 +329,15 @@ Compositor todavía no ofrece enviar.
 - [x] **F6.3** Flujo integrado: entrada -> hilo -> takeover -> mensaje humano ->
   recepción de cliente durante human -> release explícito -> respuesta IA con
   contexto correcto. Evidencia y límites: [F6.3](F6.3-FLUJO-CONVERSACION.md).
-- [ ] **F6.4** Smoke manual en cuenta de prueba WA/TG cuando esté disponible; una
-  única instancia y resultados separados de simulación. No ejecutar reset para
-  fabricar datos. Estado y procedimiento: [F6.4](F6.4-SMOKE-CANAL.md). Validación
-  externa pendiente porque el entorno no tiene una identidad de prueba configurada.
+- [ ] **F6.4** Smoke manual en cuenta de prueba WA/TG conectada; una única
+  instancia y resultados separados de simulación. No ejecutar reset para
+  fabricar datos. WhatsApp inbound se verificó una vez el 2026-10-21; el control
+  quedó bloqueado porque el runtime conserva autoridad `legacy` y devolvió
+  `CONTROL_AUTHORITY_NOT_ACTIVE`. Un dry-run explícito clasificó como excluidos
+  los 962 contactos sin destino exacto; 2 parejas teléfono/LID siguen ambiguas
+  entre 1007 registros. Se detuvo sin staging/corte hasta resolverlas.
+  Estado y procedimiento: [F6.4](F6.4-SMOKE-CANAL.md). El resto del recorrido
+  sigue pendiente; WhatsApp y Telegram están reconectados localmente.
 
 **Aceptación:** flujo operativo completo, reinicios/reconexión, móvil y teclado.
 Esta es la v1 útil; publicar/desplegar es una acción separada, no automática.

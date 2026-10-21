@@ -45,6 +45,9 @@ export interface ArchiveIdentity {
 export interface ControlImportReport {
     schemaVersion: 1; dryRun: true; status: string; cutoverAllowed: boolean;
     sourceManifest: Record<string, unknown>; counts: Record<string, number>;
+    exclusions?: { noConversationTarget: { decision: 'exclude'; candidateCount: number; excludedCount: number;
+        blockedCount: number; definition: string;
+        candidateLegacyControlStateCounts: Record<'allowed' | 'ignored' | 'handoff' | 'neutral' | 'unknown', number> } };
     blockers: Array<{ code: string; count?: number }>;
     entries: Array<Record<string, unknown>>; [key: string]: unknown;
 }

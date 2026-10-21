@@ -1254,9 +1254,17 @@ function normalizeDeltaReport(report, previousReport, decisions = {}) {
     for (const previous of priorContacts) {
         const currentEntry = current.get(previous.sourceKey);
         const previousTarget = previous.reviewTargetId || previous.targetId;
+        const excludedPreviouslyMapped = previousTarget && currentEntry?.disposition === 'excluded'
+            && currentEntry.reason === 'no_conversation_target';
         const targetChanged = currentEntry?.disposition === 'imported' && previousTarget
             && previousTarget !== currentEntry.targetId;
-        if (targetChanged && !decisions.acceptIdentityChanges) {
+        if (excludedPreviouslyMapped) {
+            currentEntry.disposition = 'quarantined';
+            currentEntry.reason = 'identity_target_missing';
+            currentEntry.reviewTargetId = previousTarget;
+            delete currentEntry.decision;
+            addImportBlocker(next, 'identity_target_missing');
+        } else if (targetChanged && !decisions.acceptIdentityChanges) {
             currentEntry.disposition = 'quarantined';
             currentEntry.reason = 'identity_target_changed';
             currentEntry.reviewTargetId = previousTarget;
@@ -1295,6 +1303,15 @@ function normalizeDeltaReport(report, previousReport, decisions = {}) {
     reportCounts(next);
     if (next.counts.quarantined) addImportBlocker(next, 'source_records_quarantined', next.counts.quarantined);
     if (next.counts.requiresReview) addImportBlocker(next, 'records_require_review', next.counts.requiresReview);
+    if (next.exclusions?.noConversationTarget) {
+        const candidates = next.entries.filter(entry => entry.reason === 'no_conversation_target'
+            || entry.reason === 'identity_target_missing');
+        const excluded = candidates.filter(entry => entry.reason === 'no_conversation_target'
+            && entry.disposition === 'excluded').length;
+        next.exclusions.noConversationTarget.candidateCount = candidates.length;
+        next.exclusions.noConversationTarget.excludedCount = excluded;
+        next.exclusions.noConversationTarget.blockedCount = candidates.length - excluded;
+    }
     next.entries.sort((a, b) => a.sourceKey.localeCompare(b.sourceKey));
     next.status = next.blockers.length ? 'review_required' : 'ready';
     next.cutoverAllowed = next.blockers.length === 0;

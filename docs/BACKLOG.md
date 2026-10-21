@@ -92,11 +92,18 @@ salvo indicación contraria. La evidencia detallada y líneas están en la basel
 | BUG-077 | P1 | Cerrado F6.3: importación/cutover del control rechazaba archivos SQLite v10. | El flujo integrado creó reporte y snapshot con schemaVersion 10, pero `buildControlImportReport` y `beginControlImport` solo permitían hasta v9; la aceptación se detenía antes del cutover. | Ambos validadores aceptan v10. El flujo integrado F6.3 completa el cutover y el resto del recorrido; pruebas enfocadas de importación pasan. Evidencia: [F6.3](F6.3-FLUJO-CONVERSACION.md). |
 | BUG-078 | P2 | Cerrado F6.3: intents de salida que quedaban en `sending` tras un crash no se recuperaban al iniciar una base ya migrada a v10. | La transición a `delivery_unknown` se ejecutaba solo durante la migración v9→v10; el siguiente reinicio de una base v10 dejaba el intent bloqueado en `sending`. | La recuperación se ejecuta al iniciar después de aplicar migraciones, para cualquier esquema actual. La prueba de reinicio verifica que pasa a `delivery_unknown` y exige conciliación explícita, sin reintentar el envío. Evidencia: [F6.3](F6.3-FLUJO-CONVERSACION.md). |
 
-## Revisión previa a F7 — 2026-10-20
+## Revisión previa a F7 — 2026-10-21
 
-- F6.4 sigue pendiente del smoke con una cuenta de prueba real. La hoja de ruta
-  hace depender F7 de una v1 estable, así que no se inicia F7 hasta completar ese
-  gate externo.
+- F6.4 tiene evidencia parcial: captura WA inbound una vez; el takeover local
+  devolvió `CONTROL_AUTHORITY_NOT_ACTIVE` porque el runtime conserva autoridad
+  `legacy`. El contacto de prueba volvió a `neutro` y `ignored_all` no cambió. No
+  iniciar F7 hasta completar el corte verificado y el smoke restante. El dry-run
+  live inicial bloqueó el corte: 43/1007 registros importables, 962 sin destino
+  exacto y 2 identidades ambiguas. Se añadió `--exclude-no-conversation` y una
+  segunda ejecución clasificó explícitamente los 962 contactos sin destino como
+  excluidos; siguen 2 ambigüedades teléfono/LID. No se aplicó staging ni corte;
+  resolver ambas parejas explícitamente antes de reintentar. Evidencia:
+  [F6.4](F6.4-SMOKE-CANAL.md) y [F5.3](F5.3-STAGING-CUTOVER.md).
 - Antes de implementar contactos con operadores limitados, cerrar BUG-024 o dejar
   explícito que el primer alcance de F7 sigue siendo solo administrador.
 - Antes de declarar paridad de comandos Telegram, resolver BUG-008 (resolución

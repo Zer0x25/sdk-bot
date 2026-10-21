@@ -613,6 +613,9 @@ ausencia de Vite/CA. Commit separado de la UI.
   `legacy`.
 - `npm run conversations:control-import` es de solo lectura por defecto. `--apply`
   guarda y verifica el plan por lotes; no escribe columnas de control activas.
+  `--exclude-no-conversation` registra explícitamente como excluidos solo los
+  contactos sin destino exacto en el snapshot; inválidos y ambiguos permanecen
+  bloqueados, y un destino desaparecido tras una importación previa exige revisión.
   Repetir la misma fuente retoma la ejecución idempotente. La delta detecta bajas y
   remapeos; ambos bloquean salvo `--accept-source-removals`/
   `--accept-identity-changes`, decisiones que quedan auditadas en el informe.
@@ -821,14 +824,27 @@ Cierres históricos: commits F2C.1/F2C.2/F2D/F2E.1 están en el log local; F2B.3
 
 ## F6.4: Smoke manual de canal
 
-- El estado del entorno cloud confirmó ejecución y conectividad, sin identidades de
-  salida WA/TG ni variables runtime de canal. No se inició un adaptador, no se
-  contactó un proveedor y no se hizo reset para fabricar datos.
-- Se dejó el procedimiento de una instancia, takeover, mensaje humano, entrada
-  durante human, release explícito, teclado/móvil y reinicio seguro en
-  [F6.4](F6.4-SMOKE-CANAL.md). La simulación F6.3 permanece separada del smoke real.
-- **F6.4 pendiente** hasta disponer de una cuenta de prueba conectada. Por tanto,
-  Fase 6 aún no queda cerrada y no se pasa a Fase 7 hasta completar ese smoke.
+- El 2026-10-21 se conectó una sola instancia local en `work` (`1d76ec2`) con
+  WhatsApp abierto, Brain saludable y cola vacía. El marcador
+  `F6.4-WA-20261021-01` se archivó una vez en la bandeja/log. Sin respuesta IA bajo
+  `ignored_all`, que se mantuvo durante la sesión.
+- Para seguir se permitió solo el contacto identificado por el marcador; la UI
+  rechazó `Tomar control` y la API devolvió `CONTROL_AUTHORITY_NOT_ACTIVE`. El
+  runtime conserva autoridad `legacy`, por lo que no se envió respuesta humana, no
+  se probó `process_pending` y no se pidió una segunda entrada. Se restauró el
+  contacto a `neutro`; verificación final: `globalMode=ignored_all`.
+- No se ejecutó reset ni corte de autoridad. Pasos humanos/IA, teclado, móvil y
+  verificación funcional tras reinicio quedan pendientes hasta preparar y
+  verificar el corte documentado en F5.3/F5.4. El preflight live de F5.3 fue de
+  solo lectura y bloqueó: 43/1007
+  registros importables, 962 identidades sin conversación destino y 2 ambiguas.
+  El segundo dry-run con `--exclude-no-conversation` excluyó los 962 contactos y
+  conservó las 2 parejas teléfono/LID ambiguas como bloqueos. No se hizo staging
+  ni corte. Después se reinició la instancia única: WhatsApp y Telegram `open`,
+  Brain saludable, cola en cero, `ignored_all` y panel HTTP 200. No llegó un
+  inbound nuevo después de ese reinicio. La simulación F6.3 permanece separada
+  del smoke real.
+- **F6.4 pendiente**; Fase 6 no queda cerrada y no se pasa a Fase 7.
 
 ## Revisión del backlog antes de F7
 

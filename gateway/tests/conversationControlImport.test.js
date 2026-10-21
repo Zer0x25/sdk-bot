@@ -90,6 +90,46 @@ test('F5.2 records effective application defaults when legacy settings omit curr
         report.counts.imported + report.counts.quarantined + report.counts.excluded);
 });
 
+test('F5.3 explicitly excludes only contacts without an exact conversation and keeps ambiguous identities blocked', () => {
+    const id = suffix => `00000000-0000-4000-8000-${suffix.padStart(12, '0')}`;
+    const contacts = {
+        allowedWithoutConversation: { phone: '777', estado: 'permitido' },
+        handoffWithoutConversation: { phone: '888', estado: 'handoff' },
+        ambiguous: { phone: '555', estado: 'ignorado' }
+    };
+    const input = { contacts, settings: { globalMode: 'ignored_all', currentProfile: 'default' },
+        conversations: [
+            { id: id('1'), channel: 'whatsapp', identity_keys: [{ kind: 'whatsapp_jid', exactValue: '555@s.whatsapp.net' }] },
+            { id: id('2'), channel: 'whatsapp', identity_keys: [{ kind: 'whatsapp_jid', exactValue: '555@s.whatsapp.net' }] }
+        ], profileKeys: ['default'], sourceManifest: {
+            contacts: { present: true, sha256: 'a'.repeat(64) }, settings: { present: true, sha256: 'b'.repeat(64) }
+        }, archive: { dataEpoch: id('9'), seq: '44', schemaVersion: 10 } };
+    const defaultReport = buildControlImportReport(input);
+    assert.equal(defaultReport.counts.quarantined, 3);
+    assert.equal(defaultReport.entries.find(entry => entry.reason === 'identity_not_found')?.disposition, 'quarantined');
+
+    const report = buildControlImportReport({ ...input, excludeContactsWithoutConversation: true });
+    assert.equal(report.cutoverAllowed, false);
+    assert.deepEqual(report.counts, { sourceRecords: 5, imported: 2, quarantined: 1, excluded: 2, requiresReview: 0 });
+    assert.deepEqual(report.exclusions.noConversationTarget, {
+        decision: 'exclude', candidateCount: 2, excludedCount: 2, blockedCount: 0,
+        definition: 'Contact phone/LID has no exact conversation identity in the archive snapshot.',
+        candidateLegacyControlStateCounts: { allowed: 1, ignored: 0, handoff: 1, neutral: 0, unknown: 0 }
+    });
+    const bySource = Object.fromEntries(Object.entries(contacts).map(([key]) => [key,
+        report.entries.find(entry => entry.sourceKey === `contact:${hash(Buffer.from(`contact\0${key}`))}`)]));
+    assert.equal(bySource.allowedWithoutConversation.disposition, 'excluded');
+    assert.equal(bySource.allowedWithoutConversation.reason, 'no_conversation_target');
+    assert.equal(bySource.allowedWithoutConversation.decision, 'exclude_no_conversation_target');
+    assert.equal(bySource.handoffWithoutConversation.disposition, 'excluded');
+    assert.equal(bySource.ambiguous.disposition, 'quarantined');
+    assert.equal(bySource.ambiguous.reason, 'identity_ambiguous');
+    const serialized = JSON.stringify(report);
+    assert.ok(!serialized.includes('555@s.whatsapp.net'));
+    assert.ok(!serialized.includes('777@s.whatsapp.net'));
+    assert.ok(!serialized.includes('allowedWithoutConversation'));
+});
+
 test('F5.2 CLI reports from read-only SQLite and leaves JSON sources and archive bytes unchanged', async t => {
     const dir = await fs.mkdtemp(path.join(os.tmpdir(), 'sdkbot-control-dry-run-'));
     const databasePath = path.join(dir, 'archive.db');
@@ -107,7 +147,10 @@ test('F5.2 CLI reports from read-only SQLite and leaves JSON sources and archive
 
     await fs.mkdir(profilesPath);
     await fs.writeFile(path.join(profilesPath, 'default.md'), '# fixture profile\n');
-    const contactBytes = Buffer.from(JSON.stringify({ alice: { phone: '56912345678', estado: 'permitido', savedName: 'Secret Name' } }));
+    const contactBytes = Buffer.from(JSON.stringify({
+        alice: { phone: '56912345678', estado: 'permitido', savedName: 'Secret Name' },
+        noConversation: { phone: '56900000000', estado: 'ignorado', savedName: 'Private Orphan' }
+    }));
     const settingsBytes = Buffer.from(JSON.stringify({ globalMode: 'allowed_all', currentProfile: 'default', telegramToken: 'secret-token-fixture' }));
     await fs.writeFile(contactsPath, contactBytes);
     await fs.writeFile(settingsPath, settingsBytes);
@@ -123,11 +166,12 @@ test('F5.2 CLI reports from read-only SQLite and leaves JSON sources and archive
     assert.deepEqual(JSON.parse(busy.stdout).blockers, [{ code: 'GATEWAY_RUNNING' }]);
     await fs.unlink(lockPath);
     const child = spawnSync(process.execPath, command, { encoding: 'utf8', env });
-    assert.equal(child.status, 0, child.stderr || child.stdout);
+    assert.equal(child.status, 2, child.stderr || child.stdout);
     const report = JSON.parse(child.stdout);
     assert.equal(report.dryRun, true);
-    assert.equal(report.cutoverAllowed, true);
-    assert.deepEqual(report.counts, { sourceRecords: 3, imported: 3, quarantined: 0, excluded: 0, requiresReview: 0 });
+    assert.equal(report.cutoverAllowed, false);
+    assert.deepEqual(report.counts, { sourceRecords: 4, imported: 3, quarantined: 1, excluded: 0, requiresReview: 0 });
+    assert.equal(report.entries.find(entry => entry.reason === 'identity_not_found')?.disposition, 'quarantined');
     assert.equal(report.sourceManifest.archive.schemaVersion, 10);
     assert.equal(hash(await fs.readFile(contactsPath)), hash(contactBytes));
     assert.equal(hash(await fs.readFile(settingsPath)), hash(settingsBytes));
@@ -135,6 +179,25 @@ test('F5.2 CLI reports from read-only SQLite and leaves JSON sources and archive
     assert.deepEqual((await fs.readdir(dir)).sort(), beforeFiles);
     assert.ok(!child.stdout.includes('secret-token-fixture'));
     assert.ok(!child.stdout.includes('Secret Name'));
+    assert.ok(!child.stdout.includes('Private Orphan'));
+
+    const excludedChild = spawnSync(process.execPath, [...command, '--exclude-no-conversation'], { encoding: 'utf8', env });
+    assert.equal(excludedChild.status, 0, excludedChild.stderr || excludedChild.stdout);
+    const excludedReport = JSON.parse(excludedChild.stdout);
+    assert.equal(excludedReport.cutoverAllowed, true);
+    assert.deepEqual(excludedReport.counts, { sourceRecords: 4, imported: 3, quarantined: 0, excluded: 1, requiresReview: 0 });
+    assert.deepEqual(excludedReport.exclusions.noConversationTarget, {
+        decision: 'exclude', candidateCount: 1, excludedCount: 1, blockedCount: 0,
+        definition: 'Contact phone/LID has no exact conversation identity in the archive snapshot.',
+        candidateLegacyControlStateCounts: { allowed: 0, ignored: 1, handoff: 0, neutral: 0, unknown: 0 }
+    });
+    assert.equal(hash(await fs.readFile(contactsPath)), hash(contactBytes));
+    assert.equal(hash(await fs.readFile(settingsPath)), hash(settingsBytes));
+    assert.equal(hash(await fs.readFile(databasePath)), beforeDb);
+    assert.deepEqual((await fs.readdir(dir)).sort(), beforeFiles);
+    assert.ok(!excludedChild.stdout.includes('secret-token-fixture'));
+    assert.ok(!excludedChild.stdout.includes('Secret Name'));
+    assert.ok(!excludedChild.stdout.includes('Private Orphan'));
 
     const readOnly = createArchive({ path: databasePath, readOnly: true });
     t.after(() => readOnly.close());

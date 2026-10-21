@@ -93,7 +93,8 @@ function globalProfilePlan(settings, profileKeys, entries, blockers) {
     return { value: raw, source, valid: true };
 }
 
-function contactPlan(legacyKey, record, globalMode, globalProfile, profileKeys, profileInventoryAvailable, index) {
+function contactPlan(legacyKey, record, globalMode, globalProfile, profileKeys, profileInventoryAvailable, index,
+    excludeContactsWithoutConversation = false) {
     if (isExcludedIdentity(legacyKey)) return { disposition: 'excluded', reason: 'out_of_scope_channel' };
     if (!isRecord(record)) return { disposition: 'quarantined', reason: 'invalid_contact_record' };
     const phone = typeof record.phone === 'string' ? record.phone : null;
@@ -107,7 +108,9 @@ function contactPlan(legacyKey, record, globalMode, globalProfile, profileKeys, 
     for (const candidate of candidates) {
         for (const [id, conversation] of index.get(candidate) || []) targets.set(id, conversation);
     }
-    if (!targets.size) return { disposition: 'quarantined', reason: 'identity_not_found' };
+    if (!targets.size) return excludeContactsWithoutConversation
+        ? { disposition: 'excluded', reason: 'no_conversation_target', decision: 'exclude_no_conversation_target' }
+        : { disposition: 'quarantined', reason: 'identity_not_found' };
     if (targets.size !== 1) return { disposition: 'quarantined', reason: 'identity_ambiguous',
         candidateTargetIds: [...targets.keys()].sort() };
     const targetId = targets.keys().next().value;
@@ -164,6 +167,9 @@ function contactPlan(legacyKey, record, globalMode, globalProfile, profileKeys, 
 function buildControlImportReport(input) {
     if (!isRecord(input?.contacts) || !isRecord(input?.settings)) fail('INVALID_IMPORT_SOURCE');
     if (!Array.isArray(input.conversations)) fail('INVALID_CONVERSATION_SNAPSHOT');
+    if (input.excludeContactsWithoutConversation !== undefined && typeof input.excludeContactsWithoutConversation !== 'boolean') {
+        fail('INVALID_EXCLUSION_DECISION');
+    }
     const profileInventoryAvailable = Array.isArray(input.profileKeys);
     const profileKeys = profileInventoryAvailable ? new Set(input.profileKeys.filter(safeProfileKey)) : null;
     const entries = [];
@@ -202,14 +208,24 @@ function buildControlImportReport(input) {
     const globalProfile = globalProfilePlan(input.settings, profileKeys, entries, blockers);
     const index = identityIndex(input.conversations);
     const contactEntries = [];
+    const candidateLegacyControlStateCounts = { allowed: 0, ignored: 0, handoff: 0, neutral: 0, unknown: 0 };
     for (const key of Object.keys(input.contacts).sort()) {
         const plan = contactPlan(key, input.contacts[key], globalMode, globalProfile.value,
-            profileKeys, profileInventoryAvailable, index);
+            profileKeys, profileInventoryAvailable, index, input.excludeContactsWithoutConversation === true);
         contactEntries.push({ sourceKey: sourceKey('contact', key), source: 'contact', sourceChecksum: recordChecksum(input.contacts[key]), disposition: plan.disposition,
             identityHint: contactIdentityHint(key, input.contacts[key]),
             ...(plan.reason ? { reason: plan.reason } : {}), ...(plan.targetId ? { targetId: plan.targetId } : {}),
+            ...(plan.decision ? { decision: plan.decision } : {}),
             ...(plan.candidateTargetIds ? { candidateTargetIds: plan.candidateTargetIds } : {}),
             ...(plan.control ? { control: plan.control } : {}) });
+        if (plan.reason === 'no_conversation_target') {
+            const state = input.contacts[key]?.estado;
+            if (state === 'permitido') candidateLegacyControlStateCounts.allowed += 1;
+            else if (state === 'ignorado') candidateLegacyControlStateCounts.ignored += 1;
+            else if (state === 'handoff') candidateLegacyControlStateCounts.handoff += 1;
+            else if (state === undefined || state === null || state === 'neutro') candidateLegacyControlStateCounts.neutral += 1;
+            else candidateLegacyControlStateCounts.unknown += 1;
+        }
     }
 
     const byTarget = new Map();
@@ -270,6 +286,16 @@ function buildControlImportReport(input) {
             globalProfileSource: globalProfile.source, globalPausedDuringCutover: true,
             legacyPausePersisted: false },
         settingsOutOfScopeKeyCount: Object.keys(input.settings).filter(key => !['globalMode','currentProfile'].includes(key)).length,
+        ...(input.excludeContactsWithoutConversation ? { exclusions: {
+            noConversationTarget: {
+                decision: 'exclude',
+                candidateCount: Object.values(candidateLegacyControlStateCounts).reduce((sum, count) => sum + count, 0),
+                excludedCount: Object.values(candidateLegacyControlStateCounts).reduce((sum, count) => sum + count, 0),
+                blockedCount: 0,
+                definition: 'Contact phone/LID has no exact conversation identity in the archive snapshot.',
+                candidateLegacyControlStateCounts
+            }
+        } } : {}),
         counts,
         blockers: uniqueBlockers,
         entries: entries.sort((a, b) => a.sourceKey.localeCompare(b.sourceKey))

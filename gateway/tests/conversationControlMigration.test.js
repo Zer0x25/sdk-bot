@@ -30,11 +30,11 @@ async function fixture(t, phones = ['111']) {
     await archive.ingestBatch(phones.map((phone, index) => message(accountId, phone, `migration-${index}`)));
     return { archive, databasePath, accountId };
 }
-async function reportFor(archive, contacts, settings = { globalMode: 'ignored_all', currentProfile: 'default' }, generatedAt = '2026-10-20T12:00:00.000Z') {
+async function reportFor(archive, contacts, settings = { globalMode: 'ignored_all', currentProfile: 'default' }, generatedAt = '2026-10-20T12:00:00.000Z', options = {}) {
     const snapshot = await archive.snapshot();
     const ready = await archive.ready;
     return buildControlImportReport({ contacts, settings, profileKeys: ['default'], conversations: await archive.conversationRows(),
-        sourceManifest: sourceManifest(contacts, settings), archive: { ...snapshot, schemaVersion: ready.schemaVersion }, generatedAt });
+        sourceManifest: sourceManifest(contacts, settings), archive: { ...snapshot, schemaVersion: ready.schemaVersion }, generatedAt, ...options });
 }
 async function stage(archive, migrationId, report, decisions = {}) {
     const begin = await archive.beginControlImport({ migrationId, report, decisions });
@@ -180,6 +180,37 @@ test('F5.3 keeps an identity remap blocked until an explicit review decision', a
     const acceptedEntries = await archive.controlImportEntries({ runId: accepted.begin.runId });
     assert.equal(acceptedEntries.find(entry => entry.source === 'contact').targetId,
         remappedReport.entries.find(entry => entry.source === 'contact').targetId);
+});
+
+test('F5.3 cannot turn a previously mapped contact into a no-conversation exclusion', async t => {
+    const { archive } = await fixture(t, ['555']);
+    const migrationId = 'f5-control-exclusion-target-missing';
+    const contacts = { person: { phone: '555', estado: 'permitido' } };
+    const originalReport = await reportFor(archive, contacts);
+    const original = await stage(archive, migrationId, originalReport);
+    assert.equal(original.verified.status, 'verified');
+
+    const snapshot = await archive.snapshot();
+    const ready = await archive.ready;
+    const changedSnapshot = buildControlImportReport({ contacts, settings: { globalMode: 'ignored_all', currentProfile: 'default' },
+        conversations: [], profileKeys: ['default'], sourceManifest: sourceManifest(contacts,
+            { globalMode: 'ignored_all', currentProfile: 'default' }),
+        archive: { ...snapshot, schemaVersion: ready.schemaVersion }, excludeContactsWithoutConversation: true });
+    const missing = await stage(archive, migrationId, changedSnapshot);
+    assert.equal(missing.verified.status, 'blocked');
+    assert.equal(missing.verified.report.cutoverAllowed, false);
+    assert.ok(missing.verified.report.blockers.some(blocker => blocker.code === 'identity_target_missing'));
+    assert.ok(missing.verified.report.blockers.some(blocker => blocker.code === 'source_records_quarantined'));
+    assert.deepEqual(missing.verified.report.exclusions.noConversationTarget,
+        { decision: 'exclude', candidateCount: 1, excludedCount: 0, blockedCount: 1,
+            definition: 'Contact phone/LID has no exact conversation identity in the archive snapshot.',
+            candidateLegacyControlStateCounts: { allowed: 1, ignored: 0, handoff: 0, neutral: 0, unknown: 0 } });
+    const entries = await archive.controlImportEntries({ runId: missing.begin.runId });
+    const entry = entries.find(candidate => candidate.source === 'contact');
+    assert.equal(entry.disposition, 'quarantined');
+    assert.equal(entry.reason, 'identity_target_missing');
+    assert.equal(entry.reviewTargetId, originalReport.entries.find(candidate => candidate.source === 'contact').targetId);
+    assert.equal((await archive.controlAuthority()).mode, 'legacy');
 });
 
 test('F5.3 gates cutover until F5.4 readiness and recovers a partial cutover after restart', async t => {
