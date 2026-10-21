@@ -94,6 +94,69 @@ def test_history_and_reset_memory():
     assert res_empty.json()["history"] == []
 
 
+def test_generate_reply_uses_explicit_context_and_resumes_idempotently():
+    client = TestClient(brain_main.app)
+    user = "generate_reply_explicit_context"
+    M.append_exchange("single", user, "legacy fantasma", "respuesta legacy")
+    request = {
+        "generation_id": "gen-test-explicit-1",
+        "conversation_id": "conversation-test-1",
+        "context_version": "7",
+        "through_message_id": "message-test-2",
+        "user_id": user,
+        "message": "pregunta actual",
+        "bot_id": "test-bot",
+        "context": [
+            {"role": "user", "author_kind": "customer", "content": "consulta anterior"},
+            {"role": "assistant", "author_kind": "operator", "content": "respuesta humana"},
+        ],
+    }
+    calls = []
+
+    async def fake_generate(**kwargs):
+        calls.append(kwargs)
+        return "respuesta generada", "Fake Provider", []
+
+    with patch.object(brain_main, "generate_ai_response", fake_generate):
+        first = client.post("/generate-reply", json=request)
+        resumed = client.post("/generate-reply", json=request)
+    assert first.status_code == 200
+    assert first.json()["replayed"] is False
+    assert resumed.status_code == 200
+    assert resumed.json()["replayed"] is True
+    assert len(calls) == 1
+    assert calls[0]["memory_history"] == [
+        {"role": "user", "content": "[Cliente] consulta anterior"},
+        {"role": "assistant", "content": "[Operador humano] respuesta humana"},
+    ]
+
+    invalidated = client.post("/invalidate-generation", json={
+        "generation_id": request["generation_id"], "context_version": request["context_version"]
+    })
+    assert invalidated.status_code == 200
+    assert client.post("/generate-reply", json=request).status_code == 409
+
+
+def test_generate_reply_rejects_generation_id_reuse_with_changed_context():
+    client = TestClient(brain_main.app)
+    request = {
+        "generation_id": "gen-test-explicit-conflict",
+        "conversation_id": "conversation-test-2",
+        "context_version": "1",
+        "through_message_id": "message-test-3",
+        "user_id": "generate_reply_context_conflict",
+        "message": "actual",
+        "context": [],
+    }
+    async def fake_generate(**_kwargs):
+        return "respuesta", "Fake Provider", []
+
+    with patch.object(brain_main, "generate_ai_response", fake_generate):
+        assert client.post("/generate-reply", json=request).status_code == 200
+        changed = {**request, "message": "mensaje distinto"}
+        assert client.post("/generate-reply", json=changed).status_code == 409
+
+
 def test_require_api_key_middleware():
     client = TestClient(brain_main.app)
 

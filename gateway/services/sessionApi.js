@@ -13,7 +13,7 @@ const CAPABILITIES = {
 };
 
 function capabilityFor(method, pathname) {
-    if (method === 'GET' && /^\/v1\/(session|accounts|conversations(?:\/[^/]+(?:\/messages)?)?|operations\/[^/]+|events)$/.test(pathname)) return 'conversations:read';
+    if (method === 'GET' && /^\/v1\/(session|accounts|conversations(?:\/[^/]+(?:\/(?:messages|pending-resume))?)?|operations\/[^/]+|events)$/.test(pathname)) return 'conversations:read';
     if (method === 'POST' && /^\/v1\/conversations\/[^/]+\/(takeover|release)$/.test(pathname)) return 'control:write';
     if (method === 'POST' && /^\/v1\/conversations\/[^/]+\/messages$/.test(pathname)) return 'messages:send';
     if (method === 'POST' && /^\/v1\/conversations\/[^/]+\/read$/.test(pathname)) return 'conversations:read';
@@ -448,14 +448,32 @@ function projectedControl(row, contact, globalPolicy, nowMs, identityConflict) {
     if (review) automationMode = 'off';
     return {
         control: { accessPolicy, automationMode, lifecycle: 'open', ownerId: null,
-            controlVersion: '1', contextVersion: '1', status: 'confirmed', takenAt, handoffReason },
+            controlVersion: '1', contextVersion: '1', status: 'confirmed', takenAt, handoffReason,
+            profileKey: null, requiresReview: Boolean(review), reviewReasons: [] },
         requiresReview: Boolean(review)
     };
 }
 
-function projectConversation(row, projection, globalPolicy, nowMs) {
+function sqliteProjectedControl(row, globalPolicy) {
+    const reviewReasons = row.control_review_reason ? row.control_review_reason.split(',').filter(Boolean) : [];
+    const requiresReview = row.requires_review === 1 || Boolean(globalPolicy.requiresReview);
+    let automationMode = row.automation_mode;
+    if (requiresReview || row.lifecycle === 'resolved' || row.access_policy === 'ignored') automationMode = 'off';
+    else if (row.automation_mode !== 'human' && row.access_policy === 'neutral') {
+        automationMode = globalPolicy.globalMode === 'allowed_all' ? 'ai' : 'off';
+    }
+    if (globalPolicy.globalPaused && automationMode === 'ai') automationMode = 'off';
+    return { control: { accessPolicy: row.access_policy, automationMode, lifecycle: row.lifecycle,
+        ownerId: row.owner_id, controlVersion: row.control_version, contextVersion: row.context_version,
+        status: row.control_status, takenAt: row.taken_at, handoffReason: row.handoff_reason,
+        profileKey: row.profile_key ?? null, requiresReview, reviewReasons }, requiresReview };
+}
+
+function projectConversation(row, projection, globalPolicy, nowMs, authority = 'legacy') {
     const match = matchingContact(row, projection);
-    const control = projectedControl(row, match.contact, globalPolicy, nowMs, match.conflict);
+    const control = authority === 'sqlite'
+        ? sqliteProjectedControl(row, globalPolicy)
+        : projectedControl(row, match.contact, globalPolicy, nowMs, match.conflict);
     const historyCoverage = row.capturing_since
         ? { kind: 'capturing_since', capturingSince: row.capturing_since }
         : row.history_observed
@@ -500,10 +518,51 @@ function accountStatus(statusValue) {
 function archiveBoundary(error) {
     if (error instanceof BoundaryError) return error;
     if (['INVALID_LIMIT', 'INVALID_CHANNEL', 'INVALID_READ_CURSOR', 'INVALID_INPUT'].includes(error?.code)) return invalid();
+    const pendingResumeErrors = {
+        PENDING_RESUME_NOT_AVAILABLE: 'La conversación no está disponible para reanudar entradas pendientes.',
+        PENDING_RESUME_SELECTION_STALE: 'La lista cambió. Actualiza las entradas pendientes y vuelve a seleccionarlas.',
+        PENDING_RESUME_MESSAGE_NOT_ELIGIBLE: 'Una entrada seleccionada ya no es elegible. Actualiza la lista.'
+    };
+    if (pendingResumeErrors[error?.code]) return new BoundaryError(409, error.code, pendingResumeErrors[error.code]);
+    if (error?.name === 'ControlServiceError') {
+        const status = error.status || 409;
+        const code = status === 422 ? 'VALIDATION_ERROR' : error.code || 'CONTROL_CONFLICT';
+        const messages = {
+            CONTROL_AUTHORITY_NOT_ACTIVE: 'El control de conversaciones aún no está activo.',
+            CONTROL_SERVICE_NOT_READY: 'El servicio de control no está listo.',
+            CONTROL_VERSION_CONFLICT: 'La conversación cambió; vuelve a cargarla.',
+            CONTROL_OWNER_CONFLICT: 'La conversación pertenece a otro operador.',
+            CONTROL_HUMAN_SEND_IN_FLIGHT: 'Espera a que termine el envío humano antes de cambiar el control.',
+            PENDING_RESUME_NOT_AVAILABLE: 'La conversación no está disponible para reanudar entradas pendientes.',
+            PENDING_RESUME_SELECTION_STALE: 'La lista cambió. Actualiza las entradas pendientes y vuelve a seleccionarlas.',
+            PENDING_RESUME_MESSAGE_NOT_ELIGIBLE: 'Una entrada seleccionada ya no es elegible. Actualiza la lista.',
+            IDENTITY_AMBIGUOUS: 'La identidad tiene más de una coincidencia; revisa canal y cuenta.',
+            CONVERSATION_NOT_FOUND: 'Conversación no encontrada.',
+            CONTROL_TARGET_NOT_FOUND: 'No se encontró una identidad exacta para ese contacto.'
+        };
+        return new BoundaryError(status, code, messages[error.code] || 'No se pudo cambiar el control de la conversación.');
+    }
+    const outbound = {
+        OUTBOUND_CONTROL_STALE: [409, 'CONTROL_VERSION_CONFLICT', 'El control cambió antes de iniciar el envío. Actualiza el chat.'],
+        OUTBOUND_CONTROL_OWNER_CONFLICT: [409, 'CONTROL_OWNER_CONFLICT', 'La conversación pertenece a otro operador.'],
+        OUTBOUND_DELIVERY_UNKNOWN: [409, 'OUTBOUND_DELIVERY_UNKNOWN', 'El proveedor pudo haber recibido el mensaje. Revisa el chat antes de intentar enviarlo de nuevo.'],
+        OUTBOUND_CLAIM_UNCERTAIN: [409, 'OUTBOUND_DELIVERY_UNKNOWN', 'El proveedor pudo haber recibido el mensaje. Revisa el chat antes de intentar enviarlo de nuevo.'],
+        OUTBOUND_IN_PROGRESS: [409, 'OUTBOUND_IN_PROGRESS', 'El envío sigue pendiente de confirmación.'],
+        OUTBOUND_CONTROL_REQUIRED: [409, 'CONTROL_VERSION_CONFLICT', 'La solicitud no incluye un estado de control válido.'],
+        OUTBOUND_ACCOUNT_CHANGED: [409, 'CHANNEL_NOT_READY', 'La cuenta del canal cambió antes del envío.'],
+        OUTBOUND_ACCOUNT_UNAVAILABLE: [409, 'CHANNEL_NOT_READY', 'La cuenta del canal no está disponible.'],
+        OUTBOUND_IDEMPOTENCY_CONFLICT: [409, 'IDEMPOTENCY_KEY_REUSED', 'El identificador del mensaje ya se usó con otro contenido.'],
+        OUTBOUND_REJECTED: [409, 'OUTBOUND_REJECTED', 'El canal rechazó el envío. Conservamos el borrador.']
+    };
+    if (outbound[error?.code]) {
+        const [status, code, message] = outbound[error.code];
+        return new BoundaryError(status, code, message);
+    }
     return new BoundaryError(503, 'SERVICE_UNAVAILABLE', 'Archivo de conversaciones no disponible.');
 }
 
-function createSessionApi(getPolicy, archive, getContacts = () => ({}), getChannelStatus = (_channel, _accountId) => 'disconnected') {
+/** @param {() => any} getPolicy @param {any} archive @param {() => any} [getContacts] @param {(channel:string,accountId:string) => any} [getChannelStatus] @param {any} [controlService] @param {(channel:string,accountId:string) => any} [getAdapter] */
+function createSessionApi(getPolicy, archive, getContacts = () => ({}), getChannelStatus = (_channel, _accountId) => 'disconnected', controlService = null, getAdapter = () => null) {
     const readRevisions = new Map();
     return async function route(req, res, context, pathname, requestBody = Buffer.alloc(0)) {
         const capability = capabilityFor(req.method, pathname);
@@ -540,6 +599,7 @@ function createSessionApi(getPolicy, archive, getContacts = () => ({}), getChann
                 const nowMs = Date.now();
                 const contacts = contactProjection(getContacts(), nowMs);
                 const policy = getPolicy();
+                const authority = await archive.controlAuthority();
                 const readRevision = readRevisions.get(context.actor.id) ?? 0;
                 const scope = stableHash({ actorId: context.actor.id, filters, contacts: contacts.revision,
                     policyVersion: policy.policyVersion, readRevision });
@@ -573,7 +633,7 @@ function createSessionApi(getPolicy, archive, getContacts = () => ({}), getChann
                     for (const row of rows) {
                         lastScanned = { lastActivityAt: row.last_activity_at, id: row.id };
                         scanned += 1;
-                        const conversation = projectConversation(row, contacts, policy, nowMs);
+                        const conversation = projectConversation(row, contacts, policy, nowMs, authority.mode);
                         if (!matchesConversation(conversation, filters, search)) continue;
                         if (items.length === limit) { moreMatches = true; break; }
                         items.push({ conversation, position: lastScanned });
@@ -610,10 +670,23 @@ function createSessionApi(getPolicy, archive, getContacts = () => ({}), getChann
                 const row = await archive.conversationView({ conversationId, actorId: context.actor.id });
                 if (!row) throw new BoundaryError(404, 'NOT_FOUND', 'Conversación no encontrada.');
                 const contacts = contactProjection(getContacts());
-                const conversation = projectConversation(row, contacts, getPolicy(), Date.now());
+                const authority = await archive.controlAuthority();
+                const conversation = projectConversation(row, contacts, getPolicy(), Date.now(), authority.mode);
                 return send(res, 200, assertValid('ConversationResponse', {
                     conversation, channelCapabilities: CAPABILITIES[row.channel], snapshot
                 }), context.requestId);
+            }
+            const pendingResume = /^\/v1\/conversations\/([^/]+)\/pending-resume$/.exec(pathname);
+            if (req.method === 'GET' && pendingResume) {
+                rejectQuery(req);
+                if (!archive) throw new BoundaryError(503, 'SERVICE_UNAVAILABLE', 'Archivo de conversaciones no disponible.');
+                const conversationId = conversationPathId(pendingResume[1]);
+                const authority = await archive.controlAuthority();
+                if (authority.mode !== 'sqlite') throw new BoundaryError(503, 'CONTROL_AUTHORITY_NOT_ACTIVE', 'El control de conversaciones aún no está activo.');
+                if (!authority.serviceReady) throw new BoundaryError(503, 'CONTROL_SERVICE_NOT_READY', 'El servicio de control no está listo.');
+                const result = await archive.pendingResumeMessages({ conversationId });
+                if (!result) throw new BoundaryError(404, 'NOT_FOUND', 'Conversación no encontrada.');
+                return send(res, 200, assertValid('PendingResumeResponse', result), context.requestId);
             }
             const messages = /^\/v1\/conversations\/([^/]+)\/messages$/.exec(pathname);
             if (req.method === 'GET' && messages) {
@@ -640,6 +713,104 @@ function createSessionApi(getPolicy, archive, getContacts = () => ({}), getChann
                     items: page.items, nextCursor, snapshot
                 }), context.requestId);
             }
+            if (req.method === 'POST' && messages) {
+                rejectQuery(req);
+                if (!controlService) throw new BoundaryError(503, 'CONTROL_SERVICE_NOT_READY', 'Servicio de control no disponible.');
+                if (!archive || typeof getAdapter !== 'function') throw new BoundaryError(503, 'SERVICE_UNAVAILABLE', 'Envío desde el panel no disponible.');
+                const conversationId = conversationPathId(messages[1]);
+                let request;
+                try { request = JSON.parse(requestBody.toString('utf8')); }
+                catch { throw invalid('Cuerpo JSON inválido.'); }
+                if (!validate('SendMessageRequest', request).valid) throw invalid('Solicitud de mensaje inválida.');
+                const idempotencyKey = `panel_${context.actor.id}_${conversationId}_${request.clientMessageId}`;
+                const existing = await archive.outboundIntent(idempotencyKey);
+                if (existing) {
+                    if (existing.source !== 'human' || existing.actorId !== context.actor.id
+                        || existing.conversationId !== conversationId || existing.payload?.text !== request.text
+                        || existing.policy?.clientMessageId !== request.clientMessageId) {
+                        throw new BoundaryError(409, 'IDEMPOTENCY_KEY_REUSED', 'El identificador del mensaje ya se usó con otro contenido.');
+                    }
+                    if (existing.state === 'accepted') {
+                        const message = existing.providerMessageId
+                            ? await archive.messageByProviderId({ conversationId, providerMessageId: existing.providerMessageId }) : null;
+                        if (!message) throw new BoundaryError(409, 'OUTBOUND_DELIVERY_UNKNOWN', 'El envío se aceptó, pero el mensaje no pudo reconciliarse con el historial. Revisa el chat antes de volver a enviarlo.');
+                        return send(res, 202, assertValid('SendMessageResponse', {
+                            messageId: message.id, clientMessageId: request.clientMessageId
+                        }), context.requestId);
+                    }
+                    if (existing.state === 'delivery_unknown') {
+                        throw new BoundaryError(409, 'OUTBOUND_DELIVERY_UNKNOWN', 'El proveedor pudo haber recibido el mensaje. Revisa el chat antes de intentar enviarlo de nuevo.');
+                    }
+                    if (existing.state === 'sending') {
+                        throw new BoundaryError(409, 'OUTBOUND_IN_PROGRESS', 'El envío sigue pendiente de confirmación.');
+                    }
+                    if (existing.state === 'rejected') {
+                        throw archiveBoundary(Object.assign(new Error(existing.errorCode || 'OUTBOUND_REJECTED'), {
+                            code: existing.errorCode || 'OUTBOUND_REJECTED'
+                        }));
+                    }
+                }
+                const authority = await archive.controlAuthority();
+                if (authority.mode !== 'sqlite') throw new BoundaryError(503, 'CONTROL_AUTHORITY_NOT_ACTIVE', 'El control de conversaciones aún no está activo.');
+                if (!authority.serviceReady) throw new BoundaryError(503, 'CONTROL_SERVICE_NOT_READY', 'El servicio de control no está listo.');
+                const state = await archive.controlState(conversationId);
+                if (!state) throw new BoundaryError(404, 'NOT_FOUND', 'Conversación no encontrada.');
+                if (state.controlVersion !== request.expectedVersion || state.status !== 'confirmed'
+                    || state.automationMode !== 'human' || state.lifecycle !== 'open' || state.requiresReview
+                    || state.accessPolicy === 'ignored') {
+                    throw new BoundaryError(409, 'CONTROL_VERSION_CONFLICT', 'El control cambió o la conversación aún no está disponible para responder. Actualiza el chat.');
+                }
+                const overrideOwner = Boolean(state.ownerId && state.ownerId !== context.actor.id
+                    && context.actor.capabilities.includes('control:override'));
+                if (state.ownerId && state.ownerId !== context.actor.id && !overrideOwner) {
+                    throw new BoundaryError(409, 'CONTROL_OWNER_CONFLICT', 'La conversación pertenece a otro operador.');
+                }
+                const row = await archive.conversationView({ conversationId, actorId: context.actor.id });
+                const address = await archive.conversationAddress({ conversationId });
+                if (!row || !address || address.accountId !== row.account_id || address.channel !== row.channel) {
+                    throw new BoundaryError(409, 'IDENTITY_AMBIGUOUS', 'No hay una identidad canónica segura para enviar a este chat.');
+                }
+                if (request.handledThroughInboundSeq !== undefined
+                    && BigInt(request.handledThroughInboundSeq) > BigInt(row.inbound_seq)) {
+                    throw new BoundaryError(409, 'CONTROL_VERSION_CONFLICT', 'Los mensajes visibles cambiaron. Actualiza el chat antes de responder.');
+                }
+                if (!CAPABILITIES[address.channel].reply || accountStatus(getChannelStatus(address.channel, address.accountId)) !== 'connected') {
+                    throw new BoundaryError(409, 'CHANNEL_NOT_READY', 'Conecta la cuenta del canal antes de enviar.');
+                }
+                const adapter = getAdapter(address.channel, address.accountId);
+                if (!adapter || adapter.accountId !== address.accountId) {
+                    throw new BoundaryError(409, 'CHANNEL_NOT_READY', 'La conexión del canal cambió. Actualiza su estado e inténtalo de nuevo.');
+                }
+                const policy = await archive.controlPolicy();
+                const controlSnapshot = { conversationId, controlVersion: state.controlVersion,
+                    contextVersion: state.contextVersion, policyVersion: policy.policyVersion };
+                let result;
+                try {
+                    result = await adapter.sendMessage(`${address.channel}:${address.exactValue}`, request.text, {
+                        source: 'human', actorId: context.actor.id, idempotencyKey, conversationId,
+                        controlSnapshot, policy: { clientMessageId: request.clientMessageId, overrideOwner,
+                            ...(request.handledThroughInboundSeq !== undefined
+                                ? { handledThroughInboundSeq: request.handledThroughInboundSeq } : {}) }, useMarkdown: false
+                    });
+                } catch (error) { throw archiveBoundary(error); }
+                const intent = result?._outbox;
+                if (!intent?.id || intent.state !== 'accepted') {
+                    throw new BoundaryError(409, 'OUTBOUND_IN_PROGRESS', 'El envío quedó guardado y espera confirmación.');
+                }
+                const message = intent.providerMessageId
+                    ? await archive.messageByProviderId({ conversationId, providerMessageId: intent.providerMessageId }) : null;
+                if (!message) throw new BoundaryError(409, 'OUTBOUND_DELIVERY_UNKNOWN', 'El envío se aceptó, pero el mensaje no pudo reconciliarse con el historial. Revisa el chat antes de volver a enviarlo.');
+                if (request.handledThroughInboundSeq !== undefined) {
+                    try {
+                        const read = await archive.markRead({ conversationId, actorId: context.actor.id,
+                            throughInboundSeq: request.handledThroughInboundSeq });
+                        if (read) readRevisions.set(context.actor.id, (readRevisions.get(context.actor.id) ?? 0) + 1);
+                    } catch { /* A successful provider send stays successful if the local read cursor needs a retry. */ }
+                }
+                return send(res, 202, assertValid('SendMessageResponse', {
+                    messageId: message.id, clientMessageId: request.clientMessageId
+                }), context.requestId);
+            }
             const read = /^\/v1\/conversations\/([^/]+)\/read$/.exec(pathname);
             if (req.method === 'POST' && read) {
                 rejectQuery(req);
@@ -653,6 +824,69 @@ function createSessionApi(getPolicy, archive, getContacts = () => ({}), getChann
                 if (!result) throw new BoundaryError(404, 'NOT_FOUND', 'Conversación no encontrada.');
                 readRevisions.set(context.actor.id, (readRevisions.get(context.actor.id) ?? 0) + 1);
                 return send(res, 200, assertValid('ReadResponse', result), context.requestId);
+            }
+            const takeover = /^\/v1\/conversations\/([^/]+)\/(takeover|release)$/.exec(pathname);
+            if (req.method === 'POST' && takeover) {
+                rejectQuery(req);
+                if (!controlService) throw new BoundaryError(503, 'CONTROL_SERVICE_NOT_READY', 'Servicio de control no disponible.');
+                const conversationId = conversationPathId(takeover[1]);
+                let request;
+                try { request = JSON.parse(requestBody.toString('utf8')); }
+                catch { throw invalid('Cuerpo JSON inválido.'); }
+                const contract = takeover[2] === 'takeover' ? 'TakeoverRequest' : 'ReleaseRequest';
+                if (!validate(contract, request).valid) throw invalid('Solicitud de control inválida.');
+                const idempotencyKey = req.headers?.['idempotency-key'];
+                if (!validate('IdempotencyKey', idempotencyKey).valid) {
+                    throw invalid('Falta Idempotency-Key válido.');
+                }
+                if (request.overrideOwner === true) requireCapability(context.actor, 'control:override');
+                if (takeover[2] === 'takeover') {
+                    const result = await controlService.takeover({ conversationId, actorId: context.actor.id,
+                        expectedVersion: request.expectedVersion, overrideOwner: request.overrideOwner === true, idempotencyKey });
+                    if (result.status === 'pending') {
+                        return send(res, 202, assertValid('TakeoverPendingResponse', { operation: result.operation }), context.requestId);
+                    }
+                } else {
+                    await controlService.release({ conversationId, actorId: context.actor.id,
+                        expectedVersion: request.expectedVersion, overrideOwner: request.overrideOwner === true,
+                        resumePolicy: request.resumePolicy || 'future_only',
+                        pendingInboundIds: request.pendingInboundIds || [], selectionVersion: request.selectionVersion });
+                }
+                const row = await archive.conversationView({ conversationId, actorId: context.actor.id });
+                if (!row) throw new BoundaryError(404, 'NOT_FOUND', 'Conversación no encontrada.');
+                const authority = await archive.controlAuthority();
+                const conversation = projectConversation(row, contactProjection(getContacts()), getPolicy(), Date.now(), authority.mode);
+                return send(res, 200, assertValid('TakeoverConfirmedResponse', { conversation }), context.requestId);
+            }
+            const update = /^\/v1\/conversations\/([^/]+)$/.exec(pathname);
+            if (req.method === 'PATCH' && update) {
+                rejectQuery(req);
+                if (!controlService) throw new BoundaryError(503, 'CONTROL_SERVICE_NOT_READY', 'Servicio de control no disponible.');
+                const conversationId = conversationPathId(update[1]);
+                if (!validate('IdempotencyKey', req.headers?.['idempotency-key']).valid) {
+                    throw invalid('Falta Idempotency-Key válido.');
+                }
+                let request;
+                try { request = JSON.parse(requestBody.toString('utf8')); }
+                catch { throw invalid('Cuerpo JSON inválido.'); }
+                if (!validate('UpdateConversationRequest', request).valid) throw invalid('Solicitud de actualización inválida.');
+                await controlService.updateConversation({ conversationId, actorId: context.actor.id,
+                    expectedVersion: request.expectedVersion, lifecycle: request.lifecycle,
+                    accessPolicy: request.accessPolicy });
+                const row = await archive.conversationView({ conversationId, actorId: context.actor.id });
+                if (!row) throw new BoundaryError(404, 'NOT_FOUND', 'Conversación no encontrada.');
+                const authority = await archive.controlAuthority();
+                const conversation = projectConversation(row, contactProjection(getContacts()), getPolicy(), Date.now(), authority.mode);
+                return send(res, 200, assertValid('TakeoverConfirmedResponse', { conversation }), context.requestId);
+            }
+            const operation = /^\/v1\/operations\/([^/]+)$/.exec(pathname);
+            if (req.method === 'GET' && operation) {
+                rejectQuery(req);
+                if (!controlService) throw new BoundaryError(503, 'CONTROL_SERVICE_NOT_READY', 'Servicio de control no disponible.');
+                const operationId = conversationPathId(operation[1]);
+                const result = await controlService.operation(operationId);
+                if (!result) throw new BoundaryError(404, 'NOT_FOUND', 'Operación no encontrada.');
+                return send(res, 200, assertValid('Operation', result), context.requestId);
             }
             throw new BoundaryError(404, 'NOT_FOUND', 'Ruta todavía no disponible.');
         } catch (error) {

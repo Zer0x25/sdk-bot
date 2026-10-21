@@ -21,8 +21,34 @@ mkdir -p "$PID_DIR"
 BRAIN_PORT="${BRAIN_PORT:-5100}"
 ADMIN_WEB_PORT="${ADMIN_WEB_PORT:-5201}"
 STATUS_PORT="${STATUS_PORT:-5300}"
+BRAIN_HOST="${BRAIN_HOST:-0.0.0.0}"
+ADMIN_WEB_HOST="${ADMIN_WEB_HOST:-0.0.0.0}"
+STATUS_HOST="${STATUS_HOST:-0.0.0.0}"
 
 log() { printf '%s\n' "$*"; }
+
+# Gateway and panel must share the v1 signing key. The panel loads this file
+# itself; copy only this variable into the launcher environment for Gateway.
+# Do not source the .env file as shell code.
+load_panel_gateway_secret() {
+    [ "${SDK_PANEL_GATEWAY_SECRET+x}" = x ] && return 0
+    local dotenv="$REPO/gateway/panel/.env" line value
+    [ -f "$dotenv" ] || return 0
+    while IFS= read -r line || [ -n "$line" ]; do
+        if [[ "$line" =~ ^[[:space:]]*SDK_PANEL_GATEWAY_SECRET[[:space:]]*=(.*)$ ]]; then
+            value="${BASH_REMATCH[1]}"
+            value="${value%$'\r'}"
+            value="${value#"${value%%[![:space:]]*}"}"
+            value="${value%"${value##*[![:space:]]}"}"
+            case "$value" in
+                \"*\") value="${value#\"}"; value="${value%\"}" ;;
+                \'*\') value="${value#\'}"; value="${value%\'}" ;;
+            esac
+            export SDK_PANEL_GATEWAY_SECRET="$value"
+            return 0
+        fi
+    done < "$dotenv"
+}
 
 usage() {
     printf 'Uso:\n'
@@ -56,7 +82,7 @@ launch_brain() {
     # nohup + & deja el listener como job del script; cmd_up hace `disown`
     # para que al terminar dev.sh no reciban SIGHUP. El PID escrito es el
     # listener real (nohup no hace doble fork), así cmd_down lo mata bien.
-    NODE_ENV=development BRAIN_PORT="$BRAIN_PORT" BRAIN_HOST=0.0.0.0 \
+    NODE_ENV=development BRAIN_PORT="$BRAIN_PORT" BRAIN_HOST="$BRAIN_HOST" \
         nohup "$REPO/brain/venv/bin/python" main.py > /tmp/sdk-bot-brain.log 2>&1 &
     echo $! > "$PID_DIR/brain.pid"
     log "🧠 brain -> pid $(cat "$PID_DIR/brain.pid") (log: /tmp/sdk-bot-brain.log)"
@@ -68,7 +94,7 @@ launch_gateway() {
     wait_port_free 5400
     cd "$REPO/gateway"
     NODE_ENV=development SDK_ADMIN_WEB_ENABLED=0 ADMIN_WEB_PORT="$ADMIN_WEB_PORT" STATUS_PORT="$STATUS_PORT" \
-        BRAIN_API_BASE="http://127.0.0.1:$BRAIN_PORT" ADMIN_WEB_HOST=0.0.0.0 STATUS_HOST=0.0.0.0 \
+        BRAIN_API_BASE="http://127.0.0.1:$BRAIN_PORT" ADMIN_WEB_HOST="$ADMIN_WEB_HOST" STATUS_HOST="$STATUS_HOST" \
         nohup npm start > /tmp/sdk-bot-gateway.log 2>&1 &
     echo $! > "$PID_DIR/gateway.pid"
     log "🌐 gateway -> pid $(cat "$PID_DIR/gateway.pid") (log: /tmp/sdk-bot-gateway.log)"
@@ -78,7 +104,7 @@ launch_panel() {
     ensure_gateway_deps
     wait_port_free "$ADMIN_WEB_PORT"
     cd "$REPO/gateway/panel"
-    NODE_ENV=development ADMIN_WEB_PORT="$ADMIN_WEB_PORT" ADMIN_WEB_HOST=0.0.0.0 \
+    NODE_ENV=development ADMIN_WEB_PORT="$ADMIN_WEB_PORT" ADMIN_WEB_HOST="$ADMIN_WEB_HOST" \
         GATEWAY_INTERNAL_URL="http://127.0.0.1:5400" \
         NODE_PATH="$REPO/gateway/node_modules" \
         nohup node index.js > /tmp/sdk-bot-panel.log 2>&1 &
@@ -90,6 +116,7 @@ cmd_up() {
     # Idempotente: mata lo que ya corra (PID file o puerto) antes de relanzar,
     # para no dejar instancias zombie duplicadas ni conflictos de puerto.
     cmd_down >/dev/null
+    load_panel_gateway_secret
     if [ "${1:-}" = "all" ] || [ $# -eq 0 ]; then
         launch_brain; sleep 1; launch_gateway; launch_panel
         disown -a 2>/dev/null || true
@@ -195,16 +222,16 @@ cmd_manual() {
     case "$TARGET" in
         brain)
             cd "$REPO/brain"
-            exec env NODE_ENV=development BRAIN_PORT="$BRAIN_PORT" BRAIN_HOST=0.0.0.0 venv/bin/python main.py
+            exec env NODE_ENV=development BRAIN_PORT="$BRAIN_PORT" BRAIN_HOST="$BRAIN_HOST" venv/bin/python main.py
             ;;
         gateway)
             cd "$REPO/gateway"
             exec env NODE_ENV=development SDK_ADMIN_WEB_ENABLED=0 ADMIN_WEB_PORT="$ADMIN_WEB_PORT" STATUS_PORT="$STATUS_PORT" \
-                BRAIN_API_BASE="http://127.0.0.1:$BRAIN_PORT" ADMIN_WEB_HOST=0.0.0.0 STATUS_HOST=0.0.0.0 npm start
+                BRAIN_API_BASE="http://127.0.0.1:$BRAIN_PORT" ADMIN_WEB_HOST="$ADMIN_WEB_HOST" STATUS_HOST="$STATUS_HOST" npm start
             ;;
         panel)
             cd "$REPO/gateway/panel"
-            exec env NODE_ENV=development ADMIN_WEB_PORT="$ADMIN_WEB_PORT" ADMIN_WEB_HOST=0.0.0.0 \
+            exec env NODE_ENV=development ADMIN_WEB_PORT="$ADMIN_WEB_PORT" ADMIN_WEB_HOST="$ADMIN_WEB_HOST" \
                 GATEWAY_INTERNAL_URL="http://127.0.0.1:5400" node index.js
             ;;
         ambos)

@@ -1,6 +1,7 @@
 # Estado de continuidad — SDK-Bot
 
-Actualización: 2026-10-20. F4.2 se fusionó en main en 7526edc (PR #4).
+Actualización: 2026-10-20. El checkout se sincronizó con `origin/main` en
+`df1f111` antes de iniciar F5. F4.2 se fusionó en main en 7526edc (PR #4).
 BUG-064 y BUG-065 están cerrados y sus arreglos pasaron CI. Release PR #2 actualizó
 el manifiesto a 0.3.0 en 9b0d0b5; PR #6 fusionó la versión 0.4.0 en bfe3fa9.
 
@@ -64,7 +65,8 @@ respuesta humana desde el chat y retorno seguro a IA con contexto actualizado.
   BUG-037 descarga Baileys sin abort físico queda puerta F8 antes de STT real.
 - F2C.1: descubrimiento TG observa el adapter configurado sin getUpdates extra;
   HTTP cancelable/cierre antes de reemplazo, offset RAM separado al cambiar token,
-  backoff/4xx y setup parcial. BUG-004/038–042 cerrados; BUG-043 salida diferido F5.
+  backoff/4xx y setup parcial. BUG-004/038–043 cerrados; el retry Telegram quedó
+  ligado a la cuenta de origen antes de continuar con control F5.
   [TELEGRAM-DUENO-UNICO-F2C1](TELEGRAM-DUENO-UNICO-F2C1.md).
 - F2C.2: `getMe` verifica el bot y deriva `telegram_bot:<id>` estable; la migración
   v2 añade cursores por cuenta. Cada lote confirma mensajes, huellas, eventos,
@@ -352,8 +354,9 @@ Detalles de reproducción y logs efímeros están en la baseline.
   aplican pausa cancelable. POST de prueba de notificación acotado y sin retry.
 - Reproducción 42b8321 confirma dos lectores, petición A viva al abrir B, offset
   124 heredado, retry inmediato de 500, UTF-8 corrupto y UI parcial bloqueada.
-  BUG-004/038/039/040/041/042 cerrados. BUG-043 inspeccionado y diferido F5:
-  retry Markdown de salida relee token mutable; no se presenta como reparado.
+  BUG-004/038/039/040/041/042 cerrados. Esa revisión detectó BUG-043, que se
+  cerró posteriormente con una guarda de cuenta/generación en el retry Telegram;
+  ver la sección F5 anterior. El hallazgo original fue reparado.
 - Docker sdkbot-f2b3:local con dependencias de producción, código afectado/tests
   actuales readonly y profiles como Compose: **97 tests** pasan Node22.23.3,
   --network none. No imagen nueva, compose up ni despliegue.
@@ -547,9 +550,138 @@ ausencia de Vite/CA. Commit separado de la UI.
 - No se probaron canales reales ni E2E manual en navegador. La revisión visual del
   viewport móvil sigue pendiente; F4.3 se validó con pruebas de componente/CI.
 
+## F5: BUG-043 cerrado — reintento Telegram ligado a la cuenta de origen
+
+- `TelegramAdapter.sendMessage` captura token, accountId, adminChatId y generación
+  al iniciar el envío. Si llega un 400 de formato después de una rotación, el
+  reintento se detiene con `TG_CONNECTION_CHANGED`; no usa el token nuevo.
+- Una respuesta aceptada que llega tarde se archiva bajo la cuenta y configuración
+  admin capturadas por esa intención, aunque el adapter ya esté conectado a otra.
+- Evidencia: regresiones con transporte controlado en
+  `gateway/tests/telegramCapture.test.js`; `cd gateway && npm run check` pasó con
+  lint, typecheck, 13 pruebas Vitest, build servido y 271 pruebas Node en Node
+  24.19.0/Linux.
+- Commit local de código y regresiones: `8a84f8c`. F5 no está completada; este
+  cierre solo elimina una puerta de seguridad del dispatcher Telegram.
+
+## F5.1: Estado de control durable
+
+- SQLite v5 añade acceso, modo, lifecycle, propietario, versiones, estado de
+  operación y metadatos de handoff por conversación. Migrar v4 conserva filas y
+  asigna defaults neutrales con IA apagada.
+- `writeControlState` aplica CAS con expectedVersion, registra actor en auditoría,
+  incrementa controlVersion/aggregateVersion y añade control.changed de forma
+  atómica. Conflicto obsoleto no cambia estado/seq; estado y auditoría sobreviven
+  una reapertura.
+- La bandeja sigue proyectando contactos/settings JSON; los campos SQLite son
+  staging hasta completar el informe y corte. No hay endpoints de control ni
+  barrera de envíos conectados todavía. Sin bugs de producto nuevos en esta unidad;
+  los fallos iniciales fueron fixtures v1/v2 que simulaban versiones antiguas con
+  columnas v5 presentes; se corrigieron y sus migraciones pasan.
+- Evidencia: [F5.1](F5.1-CONTROL-DURABLE.md). `cd gateway && npm run check` pasó:
+  lint, typecheck, 13 Vitest, build/serving del panel y 273 pruebas Node en Node
+  24.19.0/Linux.
+- Commit local por F5.1: incluido en el historial de esta rama; sin push mientras
+  F5 siga abierta: `2ac25ca`. F5.2 también está cerrada y committeada localmente;
+  el siguiente punto es F5.3.
+
+## F5.2: Dry-run verificable de importación
+
+- `npm run conversations:control-dry-run` lee contactos/settings JSON y el
+  inventario de perfiles, consulta solo conversaciones SQLite y emite checksum
+  por archivo/registro, target exacto, recuentos y motivo de revisión/cuarentena.
+- Mapea `phone`/`lid` solo por identidad WhatsApp exacta. Ambigüedad entre cuentas,
+  identidades faltantes y reglas contradictorias se ponen en cuarentena; grupos
+  conocidos se excluyen. Handoff importado sigue en human aunque su TTL legacy
+  haya vencido. Settings de proveedor no se imprimen ni migran aquí.
+- La CLI bloquea el lock del gateway activo, sidecars WAL/SHM/journal y esquemas
+  distintos de v6. SQLite abre immutable/read-only; prueba no cambia bytes de JSON
+  ni DB y no crea sidecars. No se leyó ningún contacts/settings real ni se ejecutó
+  un corte. Un informe con blockers devuelve exit 2; `cutoverAllowed` queda falso.
+- Evidencia: [F5.2](F5.2-IMPORT-DRY-RUN.md). `cd gateway && npm run check` pasó:
+  lint, typecheck, 13 Vitest, build/serving del panel y 275 pruebas Node en Node
+  24.19.0/Linux. Las dos pruebas F5.2 cubren la política y la CLI read-only.
+- No aparecieron bugs de producto nuevos para backlog. El siguiente punto exacto
+  es **F5.3: staging idempotente, corte de autoridad y recuperación**, todavía sin
+  ejecutar contra datos del entorno.
+
+## F5.3: Staging, delta y corte recuperable
+
+- SQLite migra v5→v6 en el mismo archivo, conserva epoch/secuencia/controles y
+  agrega perfil/revisión por conversación, política global, authority y tablas de
+  migrationId, ejecuciones, entradas y snapshots. La autoridad inicial continúa
+  `legacy`.
+- `npm run conversations:control-import` es de solo lectura por defecto. `--apply`
+  guarda y verifica el plan por lotes; no escribe columnas de control activas.
+  `--exclude-no-conversation` registra explícitamente como excluidos solo los
+  contactos sin destino exacto en el snapshot; inválidos y ambiguos permanecen
+  bloqueados, y un destino desaparecido tras una importación previa exige revisión.
+  Repetir la misma fuente retoma la ejecución idempotente. La delta detecta bajas y
+  remapeos; ambos bloquean salvo `--accept-source-removals`/
+  `--accept-identity-changes`, decisiones que quedan auditadas en el informe.
+- `--cutover` solo acepta staging verificado y requiere que F5.4 registre el servicio
+  común listo. La aplicación es por lotes de 100 con snapshot por control; cada
+  cambio emite `control.changed`. Una interrupción deja al gateway y dry-run
+  bloqueados hasta `--resume-cutover` o `--rollback`; el rollback conserva versiones
+  monotónicas. Cada conversación cambiada emite `control.changed`. Se revalidan los
+  hashes de JSON/perfiles antes de verificar y activar.
+- Se corrigió el caso de F5.2 donde settings omitía `currentProfile`: ahora el
+  informe incluye valores efectivos por defecto. No se ejecutó `--apply` contra
+  datos runtime, ni se cambió autoridad. BUG-050 permanece F5.6; BUG-051 sigue como
+  puerta antes de migrar un archivo real. No apareció otro defecto para backlog.
+- Evidencia: [F5.3](F5.3-STAGING-CUTOVER.md). 9 pruebas enfocadas pasan. `cd gateway
+  && npm run check` pasó lint, typecheck, 13 Vitest, build/serving del panel y 282
+  pruebas Node en Node 24.19.0/Linux.
+- F5.3 queda validada y se compromete localmente; sin push hasta cerrar F5. El
+  siguiente punto exacto es **F5.4: servicio compartido y activación segura del
+  corte**, integrado en API, comandos y estado.
+
+## F5.4: Servicio de control compartido y activación
+
+- `ControlService` centraliza takeover, release, lifecycle, acceso, perfil y política
+  global. API autenticada, comandos heredados y estado escriben en la misma autoridad
+  con expectedVersion y actor; los destinos legacy se buscan por identidad exacta,
+  canal y cuenta, y se rechazan coincidencias ambiguas.
+- El takeover guarda operación/idempotency key y versión antes de drenar. El gateway
+  espera buffers ACK y salida activa antes de confirmar; al reiniciar retoma
+  operaciones pendientes de forma segura. La migración v6→v7 conserva la línea de
+  eventos, admite eventos de política sin conversación y crea la tabla de operaciones.
+- El gateway registra readiness; el corte verificado de autoridad se probó con DB
+  temporal. No se leyó ni modificó el archivo de control runtime ni se ejecutó un
+  corte sobre datos reales. La política global se aplica a conversaciones neutrales;
+  una revisión requerida, cierre o exclusión mantiene la IA bloqueada.
+- Se corrigió durante validación el valor de schemaVersion devuelto al abrir v7,
+  aceptación de v7 en el informe de staging y la proyección importada de revisión y
+  perfil. BUG-071 documenta un resumen inflado en `/ignorar contactos de agenda`;
+  el control aplicado permanece correcto y el ajuste queda para después.
+- Evidencia: [F5.4](F5.4-CONTROL-SERVICE.md). 6 pruebas del servicio, 7 pruebas de
+  migración/corte, 15 contratos, lint y typecheck pasan.
+- F5.4 queda validada y con commit local; sin push hasta cerrar F5. Sigue **F5.5:
+  barrera y coordinación de jobs**.
+
+## F5.5: Barrera y coordinación de jobs
+
+- El buffer y el lock de generación usan `conversationId` cuando SQLite es autoridad,
+  también cuando un hilo llega por identidades remotas distintas. Cada trabajo lleva
+  `controlVersion`, `contextVersion` y `policyVersion`; la captura se vuelve a
+  comprobar al vencer debounce, al entrar al pool, antes/después de generar, antes
+  de typing, en el retry y antes de cada globo/pausa.
+- Un cambio de control aborta el fetch de generación, cancela esperas de typing y
+  evita que se envíen globos siguientes. Al cambiar acceso, lifecycle o perfil se
+  drena el trabajo obsoleto; un cambio de política global invalida trabajos/buffers
+  afectados. La operación de takeover espera el mismo drenaje antes de confirmar.
+- Con autoridad SQLite, el arranque archiva el JSONL heredado y deja una cola nueva
+  vacía. La cola no se reabre ni reejecuta al reiniciar con la autoridad nueva. No se
+  inspeccionó ni modificó la cola runtime; la prueba usa un archivo temporal.
+- Evidencia: [F5.5](F5.5-JOB-BARRIER.md). 2 pruebas de barrera IA, 7 de servicio y
+  12 de queue/dispatch pasan; también pasan 12 pruebas Telegram, lint y typecheck.
+  BUG-050 quedó abierto al cerrar F5.5 y se cerró después en F5.6.
+- F5.5 queda validada y con commit local; sin push hasta cerrar F5. Sigue **F5.6:
+  outbox y salida común**.
+
 ## Pendientes materiales
 
-- F5 aborda toma de control, cancelación de IA, contexto y outbox; BUG-043/046/050
+- F5 aborda toma de control, cancelación de IA, contexto y outbox; BUG-046/050
   son puertas de esa entrega y BUG-051 antes de migrar archivos preexistentes.
 - BUG-010 sigue parcial; BUG-035/037 quedan para F8. Windows/Termux y canales reales
   no están validados; la historia previa que conservan los proveedores es limitada.
@@ -560,6 +692,193 @@ ausencia de Vite/CA. Commit separado de la UI.
 Actualizar estado y solo checkboxes demostrados; hacer commit probado e informar
 hash. Consultar [BACKLOG.md](BACKLOG.md) para el estado y aceptación de cada bug.
 
-BUG-005/009/044/045/047/052/053/054/055/070 están cerrados; BUG-006/007/008/010/011/012/014/024/035/037/043/046/050/051 siguen abiertos o parciales según el backlog. BUG-016 fue probado en repositorio y alias del adapter, sin afirmar F2 completa.
+BUG-005/006/007/009/012/043/044/045/047/050/052/053/054/055/070 están cerrados; BUG-008/010/011/014/024/035/037/046/051/071/072 siguen abiertos o parciales según el backlog. BUG-016 fue probado en repositorio y alias del adapter, sin afirmar F2 completa.
 
 Cierres históricos: commits F2C.1/F2C.2/F2D/F2E.1 están en el log local; F2B.3 `42b8321`, F2B.2 `7d99f36`, F2B.1 `4bb4ec3`, F2A `37525a1`.
+
+## F5.6: Outbox y salida común
+
+- `ChannelAdapter.sendMessage` ahora es el puerto común; WhatsApp y Telegram
+  implementan `sendMessageRaw` detrás de él. La migración SQLite v7→v8 agrega
+  intents con idempotency key/fingerprint, cuenta/destino, actor/origen/política,
+  control snapshot y estados `intent`, `sending`, `accepted`, `rejected` y
+  `delivery_unknown`.
+- El intent se confirma antes de la llamada de red. Duplicados aceptados devuelven
+  el resultado persistido; claves con contenido distinto fallan. Un `sending` al
+  iniciar se convierte en `delivery_unknown`; no hay retry automático y se añadió
+  API interna de consulta/conciliación con actor y nota obligatorios. El claim IA
+  verifica control/contexto/política en la transacción de SQLite.
+- La IA guarda clave por globo; una salida fallida/ambigua no vuelve a encolar toda
+  la generación. La cola antigua usa su UUID durable. Campañas usan una clave por
+  broadcast/destino y escriben la clave antes del proveedor. Campañas anteriores
+  que quedaron `sending` sin recibo se pausan para revisión. `/notify` requiere una
+  clave y usa el adaptador; avisos Telegram usan el mismo puerto.
+- BUG-012 y BUG-050 se cerraron con pruebas. BUG-072 anota que `/telegram/test`
+  conserva una sonda directa para tokens borrador aún no conectados. BUG-071 sigue
+  como defecto de resumen no bloqueante.
+- Evidencia: [F5.6](F5.6-OUTBOX.md); migración/concurrencia/reinicio, transportes
+  WA/TG y campañas pasan. `gateway npm run check` pasa con lint, tipos, 13 pruebas
+  Vitest, build y 301 pruebas Node. No se leyeron ni modificaron archivos runtime.
+- F5.6 queda validada; sigue F5.7: contexto explícito,
+  generationId/reanudación y confirmación solo de globos enviados.
+
+## F5.7: Contexto explícito y reanudación IA
+
+- Gateway arma cada `GenerateReply` con contexto versionado del archivo. Solo las
+  salidas humanas/IA con intent aceptado se incorporan; mensajes propios sin
+  correlación aceptada quedan fuera. Brain persiste el borrador por generationId
+  para reanudar y no agrega texto no enviado a su memoria legacy.
+- SQLite v9 agrega secuencia monotónica y frontera durable por conversación.
+  `/limpiar memoria` conserva el archivo, mueve la frontera y cancela trabajos con
+  contexto viejo. Las claves de outbox por globo permiten replay local tras
+  reinicio y evitan repetir globos aceptados.
+- La pausa global drena trabajos IA sin desactivar captura ni salida humana.
+  Release conserva `future_only`; `process_pending` responde 409 hasta F6.
+- Validación de Brain: Ruff limpio y 26 pruebas. F5.8 agrega la prueba integrada y
+  ejecuta el check completo del gateway.
+- Evidencia: [F5.7](F5.7-CONTEXTO-IA.md). Commit F5.7: `52f2130`.
+
+## F5.8: Aceptación integrada
+
+- Se ejecutó la matriz con archivo SQLite temporal, proveedor IA falso y transportes
+  falsos. Cubre cancelación entre globos, takeover con llamada de red incierta,
+  idempotencia/reinicio del outbox, mensajes humanos en el prompt, replay de una
+  respuesta aceptada, salida desconocida desde el teléfono, pausa global y frontera
+  de `/limpiar memoria`.
+- Se corrigieron fixtures de archivo v4–v7 que bajaban `user_version` sin quitar
+  las columnas v9 o modelaban una tabla `messages` incompleta. No hizo falta un
+  cambio correctivo en la migración de producción.
+- Gateway `npm run check`: ESLint y TypeScript limpios; panel typecheck, 13 pruebas
+  Vitest, build y servido del build pasan; suite Node 310/310. Brain: Ruff limpio y
+  26 pruebas pasan.
+- BUG-073 (eco WA antes de ACK lento) y BUG-074 (retención de respuestas de
+  generación) quedan abiertos como mejoras no bloqueantes con aceptación y fase
+  límite en [BACKLOG.md](BACKLOG.md). No se usaron canales reales ni datos runtime.
+- Evidencia: [F5.8](F5.8-ACEPTACION-INTEGRADA.md). Fase 5 queda validada; el próximo
+  paso es iniciar F6 después de publicar la rama.
+
+## F6.1: Control humano y envío desde el hilo
+
+- Se conectaron los botones de tomar/devolver control y resolver/reabrir. La toma
+  de control pendiente se consulta por operación; el compositor exige permiso,
+  canal conectado/compatible, lifecycle abierto, identidad sin revisión y control
+  humano confirmado con propietario autorizado.
+- `POST /messages` usa la identidad canónica de la conversación y un intent durable
+  ligado a actor/conversación/`clientMessageId`. El worker revalida snapshot y
+  propietario al reclamar; release, reasignación y resolución esperan si un envío
+  humano ya está en curso. La aceptación se reconcilia con el mensaje archivado y
+  publica `message.updated` con autor y `clientMessageId`.
+- La UI conserva el borrador ante errores, muestra estado optimista y exige
+  confirmación informada cuando el resultado HTTP/proveedor sea incierto. Se fuerza
+  texto plano para Telegram. Las incertidumbres sobreviven al cambio de conversación;
+  una operación todavía `sending` consulta su misma clave y no ofrece crear otro
+  intent. El mensaje archivado limpia la incertidumbre y el optimismo. Se amplió
+  `ErrorCode` tras encontrar que la frontera no podía serializar los códigos de
+  conflicto implementados en F5.
+- Evidencia: [F6.1](F6.1-ENVIO-HUMANO.md). `npm run contracts:generate`, `cd
+  gateway && npm ci`, `npm run lint`, `npm run typecheck` y `npm run panel:typecheck`
+  completados; lint y tipos limpios. No se ejecutaron suites de pruebas en esta
+  entrega. No se usó una cuenta de canal real.
+
+## F6.2: Selección explícita de entradas al devolver el control
+
+- La migración SQLite v9→v10 agrega watermarks de entrada atendida y corte de
+  reanudación. En bases existentes ambos parten del `inbound_seq` actual, así que
+  una actualización no ofrece mensajes históricos como pendientes por accidente.
+- `future_only` conserva acceso/perfil y fija el corte en la transacción que
+  devuelve el control; los despachos antiguos pendientes quedan omitidos. La
+  ruta de despacho vuelve a comprobar el corte antes de iniciar automatización.
+- `process_pending` presenta como máximo 100 entradas live, recientes (24 h), no
+  atendidas y con texto/transcripción/caption procesable. El operador marca IDs
+  explícitos. La selección lleva una huella de control, política, watermarks e
+  integridad del payload; el servidor valida esa huella y la lista dentro de la
+  transacción que cambia el control. Entradas excluidas permanecen en el historial.
+- La aceptación durable de una salida humana o IA avanza el watermark según la
+  entrada declarada. Una entrega `sending` o `delivery_unknown` bloquea
+  `process_pending`; `future_only` sigue disponible. BUG-075 deja la conciliación
+  autenticada de entregas inciertas para F7. BUG-076 registra los metadatos de
+  contacto que no están disponibles al reconstruir ciertos replays antiguos.
+- Evidencia: [F6.2](F6.2-REANUDACION-PENDIENTES.md). `gateway` lint, typecheck y
+  panel typecheck; contratos generados y typecheck pasan. No se ejecutaron suites
+  de pruebas ni se usó una cuenta real.
+- Próximo: **F6.3**, recorrido E2E de entrada, takeover, respuesta humana, entrada
+  durante human, release y respuesta IA con contexto; después F6.4 smoke en cuenta
+  de prueba cuando esté disponible. Fase 6 sigue incompleta.
+
+## F6.3: Flujo integrado de conversación
+
+- La prueba `f63ConversationFlow.test.js` recorre SQLite, cola durable, API de
+  bandeja/hilo, takeover, salida humana archivada, entrada durante human, selección
+  explícita `process_pending` y siguiente respuesta IA con contexto ordenado. Usa
+  Brain y transporte falsos; no usa una cuenta ni proveedor real.
+- El cutover integrado expuso BUG-077, validadores de importación que rechazaban
+  schema v10; se corrigieron y el cutover pasa. También se corrigió BUG-078 para que
+  todo inicio recupere intents `sending` a `delivery_unknown`, incluso cuando la base
+  ya está en v10. Ambos quedan cerrados con prueba.
+- Siete suites enfocadas: 56/56; gateway lint, typecheck y panel typecheck pasan;
+  contratos generados y typecheck pasan; `git diff --check` pasa. Evidencia:
+  [F6.3](F6.3-FLUJO-CONVERSACION.md).
+- F6.3 completada. Próximo: F6.4, smoke manual con cuenta WA/TG de prueba cuando
+  esté disponible. La presentación del hilo en navegador tampoco se validó aquí;
+  registrar ese límite junto al smoke. Fase 6 sigue incompleta.
+
+## F6.4: Smoke manual de canal
+
+- El 2026-10-21 se conectó una sola instancia local en `work` (`1d76ec2`) con
+  WhatsApp abierto, Brain saludable y cola vacía. El marcador
+  `F6.4-WA-20261021-01` se archivó una vez en la bandeja/log. El inbound posterior
+  al primer reinicio actualizó la actividad a `2026-10-21T06:49:51Z`, quedó con
+  `unreadCount=1` y el log registró `ignored_all_strict` a `06:49:51.279Z`; no hubo
+  respuesta automática. La simulación F6.3 permanece separada del smoke real.
+- En el primer intento de takeover, la UI recibió `CONTROL_AUTHORITY_NOT_ACTIVE`
+  porque la autoridad aún era `legacy`; no se envió respuesta y el contacto volvió
+  a `neutro`. La razón de no probar respuesta humana/release debió explicarse en
+  ese momento: F5.3 bloqueaba el corte por dos identidades ambiguas y no existía
+  una decisión parcial documentada.
+- Para respetar “mantenerlas bloqueadas”, se añadió `--preserve-ambiguous-blocked`.
+  Solo se admite si todas las cuarentenas son `identity_ambiguous`, `globalMode` es
+  `ignored_all` y sus cuatro conversaciones candidatas ya están inactivas. El
+  plan deja las dos entradas en cuarentena y no escribe esos controles. 14 pruebas
+  enfocadas de importación/migración pasan; lint, typecheck, `git diff --check` y
+  el build de la bandeja React pasan.
+- El dry-run live mostró 43 importados (41 contactos `neutral/off` y 2 settings),
+  962 excluidos por no tener conversación, 2 ambiguos y 0 con revisión requerida.
+  La revisión confirmó los cuatro candidatos inactivos bajo `ignored_all`. El
+  staging y corte terminaron con código 0; autoridad `sqlite`, servicio listo,
+  `ignored_all` conservado y `controlsChanged=0` en esas cuatro conversaciones.
+  No se eligió ni unió ninguna identidad.
+- Se reinició una sola instancia con listeners en `127.0.0.1`, bandeja React
+  habilitada y actor dev. Brain, Gateway y panel responden; WhatsApp y Telegram
+  figuran `open`, Brain `/health` = `ok`, cola en cero y `globalMode=ignored_all`.
+  La API v1 devuelve HTTP 503 `SERVICE_UNAVAILABLE` porque falta
+  `SDK_PANEL_GATEWAY_SECRET` en Gateway y panel. El hilo no carga, por lo que aún
+  no se hicieron takeover, respuesta humana, segunda entrada ni release. No se
+  ejecutó reset ni hubo otro inbound después del corte.
+- Teclado y viewport móvil se revisaron parcialmente: Tab alcanzó la navegación
+  con foco visible y 390 × 844 px no produjo desbordamiento horizontal. La sesión
+  aún no tenía configurado el secreto compartido v1 en ese punto, por lo que no se
+  pudo validar entonces el hilo/compositor ni continuar el smoke real.
+- El smoke live de WhatsApp completó takeover, respuesta humana, entrada durante
+  `human` y release con `process_pending`; el panel mostró una respuesta de IA
+  enviada una vez. Para la prueba se habilitó temporalmente `conversations:write`
+  en un panel adicional de loopback y luego se cerró; el actor del panel original
+  conservó sus capacidades. El chat de prueba quedó `neutral/off` y
+  `globalMode=ignored_all` se verificó al final. La evidencia no inspeccionó el
+  payload de contexto live. Telegram y la validación completa de teclado, compositor
+  y controles móviles siguen pendientes; F6.4/Fase 6 no se cierran aún. Ver
+  [F6.4](F6.4-SMOKE-CANAL.md).
+
+## Revisión del backlog antes de F7
+
+- Se confirmó que `work` y `origin/work` están sincronizados en `5a77104`. No se
+  iniciará F7 mientras F6.4 siga pendiente, porque la hoja de ruta exige v1 estable.
+- BUG-006/007 tenían evidencia de cierre F5.5/F5.7/F5.8, pero sus filas seguían
+  abiertas; BACKLOG.md ahora refleja los cierres y referencias de aceptación.
+- Gates por alcance de F7: BUG-024 antes de habilitar operadores limitados;
+  BUG-008/046 antes de afirmar paridad segura de comandos Telegram; BUG-035 en la
+  aceptación del pairing; BUG-072 prohíbe asumir retry seguro del test de token.
+  BUG-075/076 quedan condicionados a ofrecer conciliación o paridad de replay.
+- BUG-010/011 requieren aceptación o reparación si se conserva paridad de comandos
+  legacy. BUG-051 bloquea migrar un archivo runtime existente; BUG-071/073/074 y
+  BUG-066/069 siguen en sus límites anotados. No se ejecutaron pruebas en esta
+  revisión documental.

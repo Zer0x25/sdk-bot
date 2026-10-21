@@ -88,9 +88,10 @@ flowchart LR
     P --> UI
 ```
 
-En la transición actual, `legacy_dispatch` es una outbox de **entrada** para
-cerrar el corte commit→handler. El outbox de salida, la barrera de control y la
-idempotencia de proveedores siguen en F5; no confundirlos.
+`legacy_dispatch` es una outbox de **entrada** para cerrar el corte commit→handler.
+F5.6 agrega `outbound_intents` como outbox de **salida**, delante de ambos
+adaptadores; no confundir los dos ledgers. El estado local de salida no sustituye
+la idempotencia del proveedor: los resultados ambiguos requieren conciliación.
 
 - Solo el gateway mantiene sockets/polling y escribe su DB. Una réplica por cuenta
   de WhatsApp. Abrir el nuevo panel jamás inicia otro transporte.
@@ -339,11 +340,16 @@ y POST `/read`. `Conversation.displayName` es nullable y solo se completa con un
 coincidencia exacta de identidad WhatsApp con la agenda; el DTO nunca devuelve
 teléfono, JID, LID ni referencia del proveedor. Los estados de control actuales son
 una proyección de solo lectura de la agenda/settings heredados. Sus versiones
-wire comienzan en `1`; F5 trasladará autoridad y versionado al dominio SQLite.
+wire comienzan en `1`. F5.1 añadió columnas de control versionado y auditoría a
+SQLite v5, con defaults neutrales e IA apagada. F5.3 actualiza el esquema a v6,
+añade política/perfil y staging recuperable. F5.4 migra a v7, conserva eventos al
+permitir eventos de política global y agrega operaciones de takeover recuperables.
+El servicio común conecta API, comandos heredados y pipeline al control SQLite;
+la autoridad cambia solo después del staging y corte verificados.
 La cobertura indica `capturing_since`, `provider_sync_observed` o `partial_import`;
 `capturingSince` es null cuando el archivo no tiene un punto de observación.
 
-El archivo SQLite v4 conserva `read_cursors(actor_id, conversation_id,
+El archivo SQLite v6 conserva `read_cursors(actor_id, conversation_id,
 through_inbound_seq)` con avance monotónico y aislado por actor; no envía recibos
 remotos. El resumen calcula no leídos desde secuencias entrantes archivadas. Los
 cursores de mensajes usan `(occurredAt,id)`; los cursores de conversaciones llevan

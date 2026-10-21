@@ -13,6 +13,7 @@
  * en el proceso Python del brain.
  */
 const { BRAIN_API_BASE, BRAIN_API_URL, BRAIN_API_KEY, state, registerSentMessage } = require('../config');
+const { createHash, randomUUID } = require('node:crypto');
 const { cat, errMsg } = require("../services/logger");
 const { num } = require('../tuning');
 const { enqueue, scheduleFlush } = require("./messageQueue");
@@ -112,11 +113,11 @@ async function notifyAdminError(adapter, metadata, textMessage, errorDetails) {
  * 🤝 Petición al brain con reintento 1x en errores TRANSITORIOS.
  * No se reintentan errores 4xx (422 de validación = bug, no transitorio).
  */
-async function requestBrain(payload) {
-    const response = await fetch(BRAIN_API_URL, {
+async function requestBrain(payload, jobSignal = null, endpoint = BRAIN_API_URL) {
+    const response = await fetch(endpoint, {
         method: 'POST',
         headers: authHeaders({ 'Content-Type': 'application/json' }),
-        signal: AbortSignal.timeout(90000), // 90 segundos de timeout para permitir generación de textos largos o modelos lentos
+        signal: jobSignal ? AbortSignal.any([jobSignal, AbortSignal.timeout(90000)]) : AbortSignal.timeout(90000),
         body: JSON.stringify(payload)
     });
 
@@ -125,8 +126,9 @@ async function requestBrain(payload) {
     if (!response.ok) {
         // FastAPI devuelve {"detail": [...]} en 422 (validación) — loguear la causa real
         const detail = (data && data.detail) ? JSON.stringify(data.detail) : `HTTP ${response.status}`;
-        const err = /** @type {Error & {status?: number}} */ (new Error(`Brain rechazó la petición (${response.status}): ${detail}`));
+        const err = /** @type {Error & {status?: number; code?: string}} */ (new Error(`Brain rechazó la petición (${response.status}): ${detail}`));
         err.status = response.status;
+        if (typeof data?.detail === 'string') err.code = data.detail;
         throw err;
     }
 
@@ -139,6 +141,50 @@ async function requestBrain(payload) {
     return data;
 }
 
+async function invalidateBrainGeneration(generationId, contextVersion) {
+    try {
+        await fetch(`${BRAIN_API_BASE}/invalidate-generation`, {
+            method: 'POST', headers: authHeaders({ 'Content-Type': 'application/json' }),
+            signal: AbortSignal.timeout(3000),
+            body: JSON.stringify({ generation_id: generationId, context_version: contextVersion })
+        });
+    } catch (error) {
+        log.warn(`No se pudo registrar la invalidación de ${generationId}: ${errMsg(error)}`);
+    }
+}
+
+function stableGenerationId(conversationId, contextVersion, sourceMessageIds) {
+    const digest = createHash('sha256').update(JSON.stringify({ conversationId, contextVersion, sourceMessageIds })).digest('hex');
+    return `gen_${digest}`;
+}
+
+function cancelledJob() {
+    return Object.assign(new Error('La generación quedó obsoleta por un cambio de control.'), { code: 'CONTROL_JOB_CANCELLED' });
+}
+
+async function assertJobCurrent(opts) {
+    if (opts.signal?.aborted) throw cancelledJob();
+    if (typeof opts.isCurrent === 'function' && !await opts.isCurrent()) throw cancelledJob();
+    if (state.IS_BOT_PAUSED && opts.controlSnapshot) throw cancelledJob();
+}
+
+/** @returns {Promise<void>} */
+function waitForJob(ms, signal) {
+    return new Promise((resolve, reject) => {
+        if (signal?.aborted) { reject(cancelledJob()); return; }
+        const onAbort = () => {
+            clearTimeout(timer);
+            reject(cancelledJob());
+        };
+        const timer = setTimeout(() => {
+            signal?.removeEventListener('abort', onAbort);
+            resolve();
+        }, ms);
+        signal?.addEventListener('abort', onAbort, { once: true });
+    });
+}
+
+/** @param {any} opts */
 async function processAIChat(textMessage, remoteJid, metadata, adapter, opts = {}) {
     // opts.fromQueue = true cuando el mensaje viene de la cola persistente (F4-P4):
     // no re-encolar y no repetir la alerta al admin (el flush lo gestiona).
@@ -147,10 +193,15 @@ async function processAIChat(textMessage, remoteJid, metadata, adapter, opts = {
     brainStats.aiCalls += 1;
     brainStats.lastAiAt = new Date().toISOString();
     const displayName = metadata.savedName || metadata.pushName || 'Usuario';
+    const sourceMessageIds = Array.isArray(opts.sourceMessageIds) ? [...new Set(opts.sourceMessageIds)] : [];
+    const generationId = opts.generationId || (opts.controlSnapshot?.conversationId && sourceMessageIds.length
+        ? stableGenerationId(opts.controlSnapshot.conversationId, opts.controlSnapshot.contextVersion, sourceMessageIds)
+        : randomUUID());
+    const explicitContext = Boolean(opts.controlSnapshot && adapter.archive && sourceMessageIds.length);
     const langLog = metadata.language ? ` | Idioma: ${metadata.language}` : '';
     log.info(`\n[ENVIANDO A IA] De: ${displayName} (${remoteJid}) | País: ${metadata.country}${langLog}`);
     
-    const payload = {
+    let payload = {
         user_id: remoteJid,
         message: textMessage,
         bot_profile: metadata.perfil || state.CURRENT_PROFILE,
@@ -165,24 +216,53 @@ async function processAIChat(textMessage, remoteJid, metadata, adapter, opts = {
         bio: metadata.bio,
         is_business: metadata.isBusiness
     };
+    let endpoint = BRAIN_API_URL;
+    let contextVersion = opts.controlSnapshot?.contextVersion || null;
 
     try {
+        if (opts.controlSnapshot && !explicitContext) {
+            throw Object.assign(new Error('AI_CONTEXT_SOURCE_REQUIRED'), { code: 'AI_CONTEXT_SOURCE_REQUIRED' });
+        }
+        if (explicitContext) {
+            const context = await adapter.archive.aiContext({
+                conversationId: opts.controlSnapshot.conversationId,
+                expectedContextVersion: opts.controlSnapshot.contextVersion,
+                throughMessageId: sourceMessageIds[sourceMessageIds.length - 1],
+                excludeMessageIds: sourceMessageIds, excludeGenerationId: generationId
+            });
+            if (!context || !context.throughMessageId) throw Object.assign(new Error('AI_CONTEXT_ANCHOR_MISSING'), { code: 'AI_CONTEXT_ANCHOR_MISSING' });
+            contextVersion = context.contextVersion;
+            payload = { ...payload, generation_id: generationId, conversation_id: context.conversationId,
+                context_version: context.contextVersion, through_message_id: context.throughMessageId,
+                context: context.messages.flatMap(message => {
+                    const content = message.content;
+                    const text = content.type === 'text' ? content.text : content.transcript || content.caption || '';
+                    if (!text) return [];
+                    return [{ role: message.authorKind === 'customer' ? 'user' : 'assistant',
+                        author_kind: message.authorKind, content: text }];
+                }) };
+            endpoint = `${BRAIN_API_BASE}/generate-reply`;
+        }
         let data;
         try {
-            data = await requestBrain(payload);
+            await assertJobCurrent(opts);
+            data = await requestBrain(payload, opts.signal, endpoint);
         } catch (error) {
+            if (opts.signal?.aborted || /** @type {any} */ (error)?.code === 'CONTROL_JOB_CANCELLED') throw cancelledJob();
             // ↻ Retry 1x solo en errores transitorios (red, timeout, 5xx). 4xx = bug, no reintentar.
             const err = /** @type {Error & {status?: number}} */ (error);
             if (!err.status || err.status >= 500) {
                 brainStats.retries += 1;
                 log.warn(`↻ Error transitorio del cerebro (${err.message}). Reintentando (1/1)...`);
-                await new Promise(r => setTimeout(r, 1500));
-                data = await requestBrain(payload);
+                await waitForJob(1500, opts.signal);
+                await assertJobCurrent(opts);
+                data = await requestBrain(payload, opts.signal, endpoint);
             } else {
                 throw err;
             }
         }
 
+        await assertJobCurrent(opts);
         if (data.response) {
             brainStats.lastOkAt = new Date().toISOString();
             log.info(`[BOT RESPONDE A ${displayName}]: ${data.response}`);
@@ -193,7 +273,8 @@ async function processAIChat(textMessage, remoteJid, metadata, adapter, opts = {
             // 🧠 1. Simulación de Lectura / Pensamiento Humano (antes de teclear)
             const readDelay = calculateReadDelay(textMessage);
             log.info(`[SIMULACIÓN HUMANA] 📖 Leyendo/pensando durante ${(readDelay / 1000).toFixed(2)}s...`);
-            await new Promise(r => setTimeout(r, readDelay));
+            await waitForJob(readDelay, opts.signal);
+            await assertJobCurrent(opts);
 
             // 🧩 2. Divisón inteligente en globos (Multi-Bubble)
             const bubbles = splitIntoHumanBubbles(data.response);
@@ -204,19 +285,29 @@ async function processAIChat(textMessage, remoteJid, metadata, adapter, opts = {
                 const typingDelay = calculateTypingDelay(bubble);
 
                 log.info(`[SIMULACIÓN HUMANA] ⌨️ Tecleando globo ${i + 1}/${bubbles.length} (${bubble.length} chars) durante ${(typingDelay / 1000).toFixed(2)}s...`);
-                
+                await assertJobCurrent(opts);
                 await adapter.sendPresenceUpdate('composing', remoteJid);
-                await new Promise(r => setTimeout(r, typingDelay));
+                await waitForJob(typingDelay, opts.signal);
+                await assertJobCurrent(opts);
 
-                const sentMsg = await adapter.sendMessage(remoteJid, bubble);
+                const sentMsg = await adapter.sendMessage(remoteJid, bubble, {
+                    source: 'ai', generationId, bubbleIndex: i,
+                    ...(sourceMessageIds.length ? { policy: { handledMessageIds: sourceMessageIds } } : {}),
+                    idempotencyKey: `${generationId}:bubble:${i}`,
+                    isCurrent: async () => !state.IS_BOT_PAUSED && (!opts.isCurrent || await opts.isCurrent()),
+                    ...(opts.controlSnapshot ? { controlSnapshot: opts.controlSnapshot,
+                        conversationId: opts.controlSnapshot.conversationId } : {})
+                });
                 registerSentMessage(sentMsg);
 
                 // ☕ Pausa humana entre globos consecutivos
                 if (i < bubbles.length - 1) {
+                    await assertJobCurrent(opts);
                     await adapter.sendPresenceUpdate('paused', remoteJid).catch(() => {});
                     const pauseBetweenBubbles = calculatePauseBetweenBubbles();
                     log.info(`[SIMULACIÓN HUMANA] ☕ Pausa entre globos de ${(pauseBetweenBubbles / 1000).toFixed(2)}s...`);
-                    await new Promise(r => setTimeout(r, pauseBetweenBubbles));
+                    await waitForJob(pauseBetweenBubbles, opts.signal);
+                    await assertJobCurrent(opts);
                 }
             }
         } else {
@@ -227,9 +318,30 @@ async function processAIChat(textMessage, remoteJid, metadata, adapter, opts = {
             await notifyAdminError(adapter, metadata, textMessage, data.error || "Respuesta vacía del cerebro IA");
         }
     } catch (error) {
+        const caught = /** @type {Error & {status?: number; code?: string}} */ (error);
+        if (opts.signal?.aborted || /** @type {any} */ (error)?.code === 'CONTROL_JOB_CANCELLED') {
+            if (explicitContext && contextVersion) await invalidateBrainGeneration(generationId, contextVersion);
+            log.info(`[CONTROL F5] Trabajo IA cancelado para ${remoteJid}; no se continúa con otros globos.`);
+            return;
+        }
+        if (explicitContext && ['OUTBOUND_CONTROL_STALE','AI_CONTEXT_VERSION_STALE','AI_CONTEXT_ANCHOR_MISSING','GENERATION_INVALIDATED'].includes(caught.code || '')) {
+            if (contextVersion) await invalidateBrainGeneration(generationId, contextVersion);
+            log.info(`[CONTROL F5] Generación ${generationId} invalidada para ${remoteJid}; no se continúa con otros globos.`);
+            return;
+        }
+        if (opts.controlSnapshot && ['AI_CONTEXT_SOURCE_REQUIRED','AI_CONTEXT_ANCHOR_MISSING'].includes(caught.code || '')) {
+            caught.status = 422;
+        }
         brainStats.lastErrorAt = new Date().toISOString();
         brainStats.lastErrorMsg = errMsg(error);
         logError.error("Error al conectar con el cerebro: " + errMsg(error));
+        if (hasOutboundAttempt(error)) {
+            const outboundError = /** @type {any} */ (error);
+            const detail = isAmbiguousOutbound(error) ? 'incierta' : 'fallida';
+            logError.error(`Salida IA ${detail} (${outboundError?.outboundIntentId || 'sin id'}); se suspende el replay automático de la generación.`);
+            if (opts.fromQueue) throw error;
+            return;
+        }
         await handleBrainFailure(error, textMessage, remoteJid, metadata, adapter, opts);
         // 📥 F4-P4: en modo cola, el error debe llegar al flush (que marca el intento
         // y reintenta después). En el flujo normal, el error queda manejado aquí.
@@ -237,6 +349,15 @@ async function processAIChat(textMessage, remoteJid, metadata, adapter, opts = {
     } finally {
         await adapter.sendPresenceUpdate('paused', remoteJid).catch(() => {});
     }
+}
+
+function isAmbiguousOutbound(error) {
+    return error?.outboundState === 'delivery_unknown' || error?.outboundState === 'sending'
+        || ['OUTBOUND_DELIVERY_UNKNOWN','OUTBOUND_IN_PROGRESS','OUTBOUND_CLAIM_UNCERTAIN'].includes(error?.code);
+}
+
+function hasOutboundAttempt(error) {
+    return Boolean(error?.outboundIntentId || error?.outboundState);
 }
 
 // ⏱️ Alerta al admin como máximo cada 15 minutos (F4-P4: evita spam de mensajes
@@ -262,7 +383,9 @@ async function handleBrainFailure(error, textMessage, remoteJid, metadata, adapt
     let queued = false;
     if (transitory) {
         // 📥 Encolar en disco: el mensaje del cliente no se pierde
-        queued = enqueue({ jid: remoteJid, text: textMessage, metadata });
+        queued = enqueue({ jid: remoteJid, text: textMessage, metadata,
+            ...(Array.isArray(opts.sourceMessageIds) && opts.sourceMessageIds.length ? { sourceMessageIds: opts.sourceMessageIds } : {}),
+            ...(opts.controlSnapshot ? { controlSnapshot: opts.controlSnapshot } : {}) });
         scheduleFlush();
     }
 

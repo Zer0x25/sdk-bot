@@ -9,9 +9,17 @@ function responseContract(method, pathname, status) {
     if (method === 'GET' && pathname === '/v1/session') return 'SessionResponse';
     if (method === 'GET' && pathname === '/v1/accounts') return 'AccountsResponse';
     if (method === 'GET' && pathname === '/v1/conversations') return 'ConversationsResponse';
+    if (method === 'GET' && /^\/v1\/operations\/[^/]+$/.test(pathname)) return 'Operation';
+    if (method === 'GET' && /^\/v1\/conversations\/[^/]+\/pending-resume$/.test(pathname)) return 'PendingResumeResponse';
     if (method === 'GET' && /^\/v1\/conversations\/[^/]+$/.test(pathname)) return 'ConversationResponse';
     if (method === 'GET' && /^\/v1\/conversations\/[^/]+\/messages$/.test(pathname)) return 'MessagesResponse';
+    if (method === 'POST' && /^\/v1\/conversations\/[^/]+\/messages$/.test(pathname)) return 'SendMessageResponse';
     if (method === 'POST' && /^\/v1\/conversations\/[^/]+\/read$/.test(pathname)) return 'ReadResponse';
+    const control = /^\/v1\/conversations\/[^/]+\/(takeover|release)$/.exec(pathname);
+    if (method === 'POST' && control) {
+        return control[1] === 'takeover' && status === 202 ? 'TakeoverPendingResponse' : 'TakeoverConfirmedResponse';
+    }
+    if (method === 'PATCH' && /^\/v1\/conversations\/[^/]+$/.test(pathname)) return 'TakeoverConfirmedResponse';
     return null;
 }
 

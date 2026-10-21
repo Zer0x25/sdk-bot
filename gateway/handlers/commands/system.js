@@ -5,10 +5,16 @@ const { state } = require('../../config');
 const { getContactsDB } = require('../../services/db');
 const { getCountryFromPhone } = require('../../services/metadataService');
 const { requestCleanReset } = require('../../services/resetCleanFlow');
+const { cat } = require('../../services/logger');
 const { syntaxError, summarizeListCounts, buildMenu } = require('../commandHelpers');
+const logError = cat('ERROR');
 
 function runPausar() {
     state.IS_BOT_PAUSED = true;
+    // Cancel active AI waits and buffered replies; archive capture remains owned
+    // by the adapters and manual outbound messages use the human outbox path.
+    const { drainAllConversations } = require('../messageHandler');
+    void drainAllConversations().catch(error => logError.error(`No se pudieron cancelar todos los trabajos IA: ${error?.message || error}`));
     return "⏸️ *Bot Pausado Globalmente.* El auto-respondedor de IA ha sido desactivado para todos los chats.";
 }
 

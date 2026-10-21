@@ -481,6 +481,28 @@
               "type": "null"
             }
           ]
+        },
+        "profileKey": {
+          "anyOf": [
+            { "type": "string", "pattern": "^[A-Za-z0-9_.-]{1,80}$" },
+            { "type": "null" }
+          ]
+        },
+        "requiresReview": {
+          "type": "boolean"
+        },
+        "reviewReasons": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "enum": [
+              "invalid_legacy_state",
+              "invalid_profile_key",
+              "profile_inventory_unavailable",
+              "profile_missing"
+            ]
+          },
+          "uniqueItems": true
         }
       },
       "required": [
@@ -492,7 +514,10 @@
         "contextVersion",
         "status",
         "takenAt",
-        "handoffReason"
+        "handoffReason",
+        "profileKey",
+        "requiresReview",
+        "reviewReasons"
       ],
       "additionalProperties": false,
       "description": "Forma de proyección; elegibilidad/cancelación/barrera se verifican en servicio de dominio F5."
@@ -1094,17 +1119,52 @@
               "minItems": 1,
               "maxItems": 100,
               "uniqueItems": true
+            },
+            "selectionVersion": {
+              "type": "string",
+              "pattern": "^[0-9a-f]{64}$"
             }
           },
           "required": [
             "expectedVersion",
             "resumePolicy",
-            "pendingInboundIds"
+            "pendingInboundIds",
+            "selectionVersion"
           ],
           "additionalProperties": false
         }
       ],
       "description": "Selección pendiente explícita; servicio comprueba live/no atendida/24h/versión. No reanima jobs antiguos."
+    },
+    "PendingResumeCandidate": {
+      "type": "object",
+      "properties": {
+        "messageId": { "$ref": "#/$defs/Id" },
+        "inboundSeq": { "$ref": "#/$defs/Sequence" },
+        "occurredAt": { "$ref": "#/$defs/Timestamp" },
+        "ingestedAt": { "$ref": "#/$defs/Timestamp" },
+        "contentType": { "type": "string", "enum": ["text", "audio", "image", "video", "document"] },
+        "preview": { "type": "string", "maxLength": 240 }
+      },
+      "required": ["messageId", "inboundSeq", "occurredAt", "ingestedAt", "contentType", "preview"],
+      "additionalProperties": false
+    },
+    "PendingResumeResponse": {
+      "type": "object",
+      "properties": {
+        "conversationId": { "$ref": "#/$defs/Id" },
+        "controlVersion": { "$ref": "#/$defs/Version" },
+        "selectionVersion": { "type": "string", "pattern": "^[0-9a-f]{64}$" },
+        "candidates": { "type": "array", "items": { "$ref": "#/$defs/PendingResumeCandidate" }, "maxItems": 100 },
+        "candidateCount": { "type": "integer", "minimum": 0 },
+        "truncated": { "type": "boolean" },
+        "excludedPendingDispatchCount": { "type": "integer", "minimum": 0 },
+        "excludedUnprocessableCount": { "type": "integer", "minimum": 0 },
+        "uncertainOutboundCount": { "type": "integer", "minimum": 0 },
+        "automationMayBeBlocked": { "type": "boolean" }
+      },
+      "required": ["conversationId", "controlVersion", "selectionVersion", "candidates", "candidateCount", "truncated", "excludedPendingDispatchCount", "excludedUnprocessableCount", "uncertainOutboundCount", "automationMayBeBlocked"],
+      "additionalProperties": false
     },
     "SendMessageRequest": {
       "type": "object",
@@ -1162,13 +1222,18 @@
         },
         "lifecycle": {
           "$ref": "#/$defs/Lifecycle"
+        },
+        "accessPolicy": {
+          "$ref": "#/$defs/AccessPolicy"
         }
       },
-      "required": [
-        "expectedVersion",
-        "lifecycle"
+      "required": ["expectedVersion"],
+      "anyOf": [
+        { "properties": { "lifecycle": { "$ref": "#/$defs/Lifecycle" } }, "required": ["lifecycle"] },
+        { "properties": { "accessPolicy": { "$ref": "#/$defs/AccessPolicy" } }, "required": ["accessPolicy"] }
       ],
-      "additionalProperties": false
+      "additionalProperties": false,
+      "description": "CAS por controlVersion; se requiere al menos un cambio de lifecycle, acceso o perfil."
     },
     "Operation": {
       "type": "object",
@@ -1287,9 +1352,25 @@
         "IDEMPOTENCY_CONFLICT",
         "IDEMPOTENCY_RESULT_EXPIRED",
         "CONTROL_NOT_CONFIRMED",
+        "CHANNEL_NOT_READY",
+        "CONVERSATION_NOT_FOUND",
+        "CONTROL_AUTHORITY_NOT_ACTIVE",
+        "CONTROL_HUMAN_SEND_IN_FLIGHT",
+        "CONTROL_OPERATION_MISSING",
+        "CONTROL_OWNER_CONFLICT",
+        "CONTROL_SERVICE_NOT_READY",
+        "CONTROL_TARGET_NOT_FOUND",
+        "CONTROL_VERSION_CONFLICT",
         "ACCESS_IGNORED",
         "CURSOR_EXPIRED",
         "DATA_EPOCH_MISMATCH",
+        "IDEMPOTENCY_KEY_REUSED",
+        "OUTBOUND_DELIVERY_UNKNOWN",
+        "OUTBOUND_IN_PROGRESS",
+        "OUTBOUND_REJECTED",
+        "PENDING_RESUME_MESSAGE_NOT_ELIGIBLE",
+        "PENDING_RESUME_NOT_AVAILABLE",
+        "PENDING_RESUME_SELECTION_STALE",
         "SERVICE_UNAVAILABLE",
         "TIMEOUT",
         "INTERNAL_ERROR"

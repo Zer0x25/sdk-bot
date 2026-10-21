@@ -102,6 +102,7 @@ function createEntityDtos(profile, accountIds, contactIndex) {
         control: {
             accessPolicy: 'neutral', automationMode: 'off', lifecycle: 'open', ownerId: null,
             controlVersion: '1', contextVersion: '1', status: 'confirmed', takenAt: null, handoffReason: null,
+            profileKey: null, requiresReview: false, reviewReasons: [],
         },
         aggregateVersion: String(profile.messagesPerConversation + 1),
         lastActivityAt,

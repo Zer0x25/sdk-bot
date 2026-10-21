@@ -5,7 +5,7 @@ const { bulkUpsertContactsMetadata, cleanContactsDB, contactStore, contactIdenti
 const contactSyncQueue = require('./services/contactSyncQueue');
 const { flushToDisk } = require('./services/db');
 const { getCountryFromPhone } = require('./services/metadataService');
-const { handleIncomingMessage, handlePresenceUpdate } = require('./handlers/messageHandler');
+const { handleIncomingMessage, handlePresenceUpdate, drainConversation, drainAllConversations } = require('./handlers/messageHandler');
 const messageQueue = require('./services/messageQueue');
 const broadcastService = require('./services/broadcastService');
 const { startStatusServer, channels } = require('./services/statusServer');
@@ -14,6 +14,7 @@ const messageSyncQueue = require('./services/messageSyncQueue');
 const { isWiping } = require('./services/factoryReset');
 const { cat } = require('./services/logger');
 const internalBus = require('./services/internalBus');
+const { setControlService } = require('./services/stateService');
 
 const WhatsappAdapter = require('./adapters/whatsappAdapter');
 const TelegramAdapter = require('./adapters/telegramAdapter');
@@ -129,9 +130,34 @@ module.exports.getAdapter = getAdapter; // Expose for pipeline
 let conversationArchive;
 let archiveRetention;
 let legacyDispatchPump;
+let conversationControl;
 async function startGateway() {
     conversationArchive = require('./services/conversations').createArchive();
     await conversationArchive.ready;
+    conversationControl = require('./services/conversations/controlService').createControlService(conversationArchive, {
+        drainConversation,
+        onResumePending: () => legacyDispatchPump?.trigger(),
+        validateProfile: async profileKey => {
+            const profiles = await require('./services/brainService').getAvailableProfiles();
+            return Array.isArray(profiles) && profiles.some(profile => profile.key === profileKey);
+        },
+        onPolicyChanged: policy => {
+            state.GLOBAL_MODE = policy.globalMode;
+            state.CURRENT_PROFILE = policy.globalProfileKey || 'default';
+            return drainAllConversations();
+        }
+    });
+    setControlService(conversationControl);
+    const controlAuthority = await conversationArchive.controlAuthority();
+    if (controlAuthority.mode === 'sqlite') {
+        await conversationControl.refreshPolicy();
+        const invalidatedQueue = messageQueue.invalidateLegacyReplay();
+        if (invalidatedQueue.invalidated) {
+            log.warn(`Control SQLite: ${invalidatedQueue.invalidated} trabajos JSONL heredados quedaron archivados sin replay.`);
+        }
+    }
+    await conversationControl.recoverPendingOperations();
+    await conversationControl.setServiceReady(true);
     archiveRetention = await require('./services/conversations/retention').startRetention(conversationArchive,
         () => log.error('Archivo: falló la purga diaria; revisar retención.'));
     require('./services/factoryReset').setBeforeReset(async () => {
@@ -140,7 +166,11 @@ async function startGateway() {
         await archiveRetention.close();
         await conversationArchive.close();
     });
-    internalBus.startInternalBus({ archive: conversationArchive,
+    internalBus.startInternalBus({ archive: conversationArchive, controlService: conversationControl,
+        getAdapter: (channel, accountId) => {
+            const adapter = adapters.get(channel);
+            return adapter?.accountId === accountId ? adapter : null;
+        },
         getChannelStatus: (channel, accountId) => {
             const adapter = adapters.get(channel);
             if (!adapter || adapter.accountId !== accountId) return 'disconnected';

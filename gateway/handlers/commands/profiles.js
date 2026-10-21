@@ -141,7 +141,9 @@ async function runPerfil({ adapter, remoteJid, queryParam, rawMsg }) {
     }
 
     if (contactTarget) {
-        const res = setContactProfile(contactTarget, profileKey);
+        const res = await setContactProfile(contactTarget, profileKey, {
+            channel: adapter?.channel || 'whatsapp', accountId: adapter?.accountId || null
+        });
         if (res.success) {
             return `🎭 Perfil *${valid.nombre}* (\`${profileKey}\`) asignado al contacto:\n\`${res.target}\``;
         }
@@ -149,7 +151,7 @@ async function runPerfil({ adapter, remoteJid, queryParam, rawMsg }) {
     }
 
     // 🌐 Perfil global
-    const globalRes = setCurrentProfile(profileKey);
+    const globalRes = await setCurrentProfile(profileKey);
     if (globalRes.success) {
         return `🎭 Perfil global de bot cambiado a: *${valid.nombre}* (\`${profileKey}\`)`;
     }

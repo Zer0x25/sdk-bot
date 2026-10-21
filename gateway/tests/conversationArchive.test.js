@@ -7,6 +7,7 @@ const path = require('node:path');
 const { randomUUID } = require('node:crypto');
 const { spawn } = require('node:child_process');
 const { once } = require('node:events');
+const { DatabaseSync } = require('node:sqlite');
 const { assertValid } = require('@sdk-bot/contracts');
 const { createArchive } = require('../services/conversations');
 const { retentionCutoff } = require('../services/conversations/eventRetention');
@@ -66,7 +67,7 @@ test('event retention computes an exact 50,000-event replay window after each co
 test('worker: migration, WAL FULL, transaction, minimal event and durable session watermark after reopen', async t => {
     const { archive, dbPath } = await fixture(t);
     const info = await archive.ready;
-    assert.equal(info.schemaVersion, 4); assert.equal(info.journalMode, 'wal'); assert.equal(info.synchronous, 2);
+    assert.equal(info.schemaVersion, 10); assert.equal(info.journalMode, 'wal'); assert.equal(info.synchronous, 2);
     assert.ok(info.threadId > 0);
     const [created] = await archive.ingestBatch([message()]);
     assertValid('Message', created.message); assertValid('Event', created.event);
@@ -85,6 +86,78 @@ test('worker: migration, WAL FULL, transaction, minimal event and durable sessio
     assert.deepEqual(await reopened.ingestBatch([message()]), [{ status: 'duplicate', messageId: created.message.id, conversationId: created.message.conversationId }]);
     await reopened.close();
     await assert.rejects(reopened.snapshot());
+});
+
+test('F5.1: control state uses CAS, increments its own version and commits audit event atomically', async t => {
+    const { archive, dbPath } = await fixture(t);
+    const [created] = await archive.ingestBatch([message()]);
+    const conversationId = created.message.conversationId;
+    const actorId = randomUUID();
+    const initial = await archive.controlState(conversationId);
+    assert.deepEqual(initial, {
+        accessPolicy: 'neutral', automationMode: 'off', lifecycle: 'open', ownerId: null,
+        controlVersion: '1', contextVersion: '1', status: 'confirmed', takenAt: null, handoffReason: null,
+        profileKey: null, requiresReview: false, reviewReasons: []
+    });
+
+    const before = await archive.snapshot();
+    const state = { accessPolicy: 'neutral', automationMode: 'human', lifecycle: 'open', ownerId: actorId,
+        status: 'confirmed', takenAt: '2026-10-20T12:00:00.000Z', handoffReason: 'operator' };
+    const changed = await archive.writeControlState({ conversationId, actorId, expectedVersion: '1', state });
+    assert.equal(changed.status, 'updated');
+    assert.equal(changed.control.controlVersion, '2');
+    assert.equal(changed.control.contextVersion, '1');
+    assert.equal(changed.control.ownerId, actorId);
+    assert.equal(changed.event.type, 'control.changed');
+    assert.deepEqual(changed.event.data, { conversationId, aggregateVersion: '3', controlVersion: '2' });
+    assert.equal((await archive.snapshot()).seq, String(BigInt(before.seq) + 1n));
+    assert.deepEqual(await archive.events({ after: before.seq }), [changed.event]);
+
+    const stale = await archive.writeControlState({ conversationId, actorId: randomUUID(), expectedVersion: '1', state: {
+        accessPolicy: 'allowed', automationMode: 'ai', lifecycle: 'open', ownerId: null,
+        status: 'confirmed', takenAt: null, handoffReason: null
+    } });
+    assert.equal(stale.status, 'conflict');
+    assert.equal(stale.control.controlVersion, '2');
+    assert.equal((await archive.snapshot()).seq, String(BigInt(before.seq) + 1n));
+
+    await archive.close();
+    const db = new DatabaseSync(dbPath);
+    try {
+        assert.equal(db.prepare("SELECT actor_id FROM events WHERE payload LIKE '%control.changed%'").get().actor_id, actorId);
+    } finally { db.close(); }
+    const reopened = require('../services/conversations').createArchive({ path: dbPath });
+    t.after(() => reopened.close());
+    await reopened.ready;
+    assert.deepEqual(await reopened.controlState(conversationId), changed.control);
+    assert.deepEqual(await reopened.events({ after: before.seq }), [changed.event]);
+});
+
+test('F5.1: v4 migration keeps conversations and stages conservative control defaults', async t => {
+    const dir = await fs.mkdtemp(path.join(os.tmpdir(), 'sdkbot-control-v4-'));
+    const dbPath = path.join(dir, 'archive.db');
+    const conversationId = randomUUID();
+    t.after(() => fs.rm(dir, { recursive: true, force: true }));
+    const db = new DatabaseSync(dbPath);
+    db.exec(`CREATE TABLE archive_meta (id INTEGER PRIMARY KEY, epoch TEXT NOT NULL, seq TEXT NOT NULL);
+        CREATE TABLE conversations (id TEXT PRIMARY KEY, aggregate_version TEXT NOT NULL DEFAULT '1', inbound_seq TEXT NOT NULL DEFAULT '0');
+        CREATE TABLE events (seq TEXT PRIMARY KEY, conversation_id TEXT NOT NULL, message_id TEXT, created_at TEXT NOT NULL, payload TEXT NOT NULL);
+        CREATE TABLE messages (id TEXT PRIMARY KEY, conversation_id TEXT, payload TEXT NOT NULL);
+        INSERT INTO archive_meta VALUES(1,'v4-epoch','0');
+        PRAGMA user_version=4;`);
+    db.prepare('INSERT INTO conversations(id,aggregate_version) VALUES(?,?)').run(conversationId, '7');
+    db.close();
+    const archive = createArchive({ path: dbPath });
+    t.after(() => archive.close());
+    const ready = await archive.ready;
+    assert.equal(ready.schemaVersion, 10);
+    assert.deepEqual(await archive.controlState(conversationId), {
+        accessPolicy: 'neutral', automationMode: 'off', lifecycle: 'open', ownerId: null,
+        controlVersion: '1', contextVersion: '1', status: 'confirmed', takenAt: null, handoffReason: null,
+        profileKey: null, requiresReview: false, reviewReasons: []
+    });
+    assert.equal((await archive.conversation(conversationId)).aggregate_version, '7');
+    assert.deepEqual(await archive.snapshot(), { dataEpoch: 'v4-epoch', seq: '0' });
 });
 
 test('full batch rollback also removes new identities, events, fingerprints and sequence changes', async t => {
@@ -268,7 +341,7 @@ test('v1 conversation reads project safe contacts, filter/paginate stably, and k
     const at = '2026-01-03T00:00:00.000Z';
     const [alice1] = await archive.ingestBatch([message(key('111@s.whatsapp.net'), 'alice-1', { occurredAt: at })]);
     await archive.ingestBatch([message(key('111@s.whatsapp.net'), 'alice-2', { occurredAt: at })]);
-    await archive.ingestBatch([message(key('222@s.whatsapp.net'), 'bea-1', { occurredAt: at })]);
+    const [beaMessage] = await archive.ingestBatch([message(key('222@s.whatsapp.net'), 'bea-1', { occurredAt: at })]);
     await archive.ingestBatch([message(key('333@s.whatsapp.net'), 'unknown-1', { occurredAt: at, source: 'history' })]);
     const empty = await archive.resolve(key('444@s.whatsapp.net'));
     const historicalTelegram = await archive.registerAccount({ channel: 'telegram', providerKey: 'old-telegram-account' });
@@ -276,6 +349,11 @@ test('v1 conversation reads project safe contacts, filter/paginate stably, and k
         alice: { phone: '111', lid: null, savedName: 'Ana', estado: 'permitido' },
         bea: { phone: '222', lid: null, savedName: 'Bea', estado: 'handoff', handoffAt: new Date().toISOString() }
     });
+    // F5.1 persists staged SQLite control without switching the legacy read authority.
+    await archive.writeControlState({ conversationId: beaMessage.message.conversationId, actorId: randomUUID(), expectedVersion: '1', state: {
+        accessPolicy: 'neutral', automationMode: 'off', lifecycle: 'resolved', ownerId: null,
+        status: 'confirmed', takenAt: null, handoffReason: null
+    } });
     const oldSecret = process.env.SDK_PANEL_GATEWAY_SECRET;
     const secret = 'test-session-api-boundary-secret-with-32-bytes';
     process.env.SDK_PANEL_GATEWAY_SECRET = secret;
@@ -376,6 +454,27 @@ test('v1 conversation reads project safe contacts, filter/paginate stably, and k
         if (oldSecret === undefined) delete process.env.SDK_PANEL_GATEWAY_SECRET;
         else process.env.SDK_PANEL_GATEWAY_SECRET = oldSecret;
     }
+});
+
+test('F6.2 migrates v9 watermarks to the current inbound sequence without replaying old messages', async t => {
+    const { archive, dbPath } = await fixture(t);
+    const [created] = await archive.ingestBatch([message()]);
+    const conversationId = created.message.conversationId;
+    assert.equal(created.message.inboundSeq, '1');
+    await archive.close();
+
+    const db = new DatabaseSync(dbPath);
+    db.exec(`ALTER TABLE conversations DROP COLUMN handled_inbound_seq;
+        ALTER TABLE conversations DROP COLUMN resume_after_inbound_seq;
+        PRAGMA user_version=9;`);
+    db.close();
+
+    const migrated = createArchive({ path: dbPath });
+    t.after(() => migrated.close());
+    assert.equal((await migrated.ready).schemaVersion, 10);
+    const row = await migrated.conversation(conversationId);
+    assert.equal(row.handled_inbound_seq, '1');
+    assert.equal(row.resume_after_inbound_seq, '1');
 });
 
 test('startup failure rejects readiness and queued calls, never creates placeholder snapshots', async t => {

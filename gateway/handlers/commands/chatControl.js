@@ -3,35 +3,31 @@
  */
 const { getContactsDB } = require('../../services/db');
 const { clearAIMemory } = require('../../services/brainService');
-const { setNumberState } = require('../../services/stateService');
-const { resolveTarget, getGlobalMode, syntaxError } = require('../commandHelpers');
+const { setNumberState, releaseControl, getControlService } = require('../../services/stateService');
+const { resolveTarget, syntaxError } = require('../commandHelpers');
 
-function runIa({ queryParam }) {
+async function runIa({ queryParam, adapter }) {
     const t = resolveTarget(queryParam, 'ia');
     if (!t.ok) return t.error;
-    const res = setNumberState(t.targetId, 'neutral');
+    const res = await releaseControl(t.targetId, { channel: adapter?.channelName || adapter?.channel || 'whatsapp', accountId: adapter?.accountId || null });
     if (res.success) {
         return `🤖 *IA Reactivada para el cliente:*\n\`${res.target}\`. (Pasó a estado: ${res.state})`;
     }
-    return syntaxError('ia', `No pude reactivar la IA para *${t.targetId}*.`);
+    return syntaxError('ia', `No pude reactivar la IA para *${t.targetId}*: ${res.message || 'conflicto de control'}.`);
 }
 
-function runHumano({ queryParam }) {
+async function runHumano({ queryParam, adapter }) {
     const t = resolveTarget(queryParam, 'humano');
     if (!t.ok) return t.error;
-    // Coherencia con el pipeline: en Modo Global estricto (ignored_all) el bot
-    // no atiende clientes salvo whitelist, así que /humano tampoco aplica.
-    if (getGlobalMode() === 'ignored_all') {
-        return syntaxError('humano', 'El bot está en *Modo Global Estricto* (Ignorar a Todos). Reactívalo con `/permitir *` antes de pausar la IA por cliente.');
+    const res = await setNumberState(t.targetId, 'handoff', { channel: adapter?.channelName || adapter?.channel || 'whatsapp', accountId: adapter?.accountId || null });
+    if (!res.success) return syntaxError('humano', `No pude activar atención humana para *${t.targetId}*: ${res.message || 'conflicto de control'}.`);
+    if (res.pending) {
+        return `🤝 *Toma de control pendiente para:* \`${res.target}\`. La salida que ya comenzó está terminando; consulta la operación en el panel.`;
     }
-    const res = setNumberState(t.targetId, 'handoff');
-    if (res.success) {
-        return `🤝 *Atención Humana activada para:*\n\`${res.target}\`.\nLa IA permanecerá en silencio durante 24 horas (volverá a estado neutro automáticamente, o reactiva antes con \`/ia ${res.target}\`).`;
-    }
-    return syntaxError('humano', `No pude activar atención humana para *${t.targetId}*.`);
+    return `🤝 *Atención Humana activada para:*\n\`${res.target}\`. La IA seguirá en silencio hasta que uses \`/ia ${res.target}\`.`;
 }
 
-async function runLimpiar({ queryParam }) {
+async function runLimpiar({ queryParam, adapter }) {
     const t = resolveTarget(queryParam, 'limpiar');
     if (!t.ok) return t.error;
     const targetId = t.targetId;
@@ -39,8 +35,18 @@ async function runLimpiar({ queryParam }) {
     const record = Object.values(db).find(c => (c.phone && c.phone.includes(targetId)) || (c.lid && c.lid.includes(targetId)));
 
     const targetJid = record ? (record.phone ? `${record.phone}@s.whatsapp.net` : `${record.lid}@lid`) : (targetId.length < 15 ? `${targetId}@s.whatsapp.net` : `${targetId}@lid`);
+    const controlService = getControlService();
+    const channel = adapter?.channelName || adapter?.channel || 'whatsapp';
+    if (controlService && await controlService.isActive()) {
+        try {
+            await controlService.clearContextForLegacyTarget({ targetId,
+                channel, accountId: adapter?.accountId || null });
+            return `🧹 *Contexto de IA reiniciado para:*\n${record ? (record.savedName || record.pushName || targetId) : targetId}. El archivo conversacional se conserva; la IA usará solo los mensajes posteriores a este punto.`;
+        } catch (error) {
+            return syntaxError('limpiar', `No pude invalidar el contexto para *${targetId}*: ${error?.code || error?.message || 'conflicto de control'}.`);
+        }
+    }
     const success = await clearAIMemory(targetJid);
-
     if (success) {
         return `🧹 *Memoria de IA borrada con éxito para:*\n${record ? (record.savedName || record.pushName || targetId) : targetId}. El historial conversacional ha sido reiniciado.`;
     }

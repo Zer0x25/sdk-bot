@@ -4,6 +4,7 @@ const control: Contract<'TakeoverRequest'> = { expectedVersion: '1' };
 const release: Contract<'ReleaseRequest'> = { expectedVersion: '2' };
 const releasePending: Contract<'ReleaseRequest'> = {
   expectedVersion: '2', resumePolicy: 'process_pending', pendingInboundIds: ['id'],
+  selectionVersion: '0'.repeat(64),
 };
 const query: Contract<'MessagesQuery'> = {};
 const queryThroughApi: NonNullable<operations['listMessages']['parameters']['query']> = {};

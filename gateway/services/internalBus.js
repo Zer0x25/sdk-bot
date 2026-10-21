@@ -43,7 +43,6 @@ const {
     importProfileFile, deleteProfileFile, reloadProfiles
 } = require('./brainService');
 const { getContactsDB, getSettingsDB, saveSettingsDB } = require('./db');
-const { sendTelegramMessage } = require('./telegramService');
 const { requestJson: telegramRequest, failure: telegramFailure } = require('./telegramHttp');
 const { runAdminCommand } = require('./adminCommandRunner');
 const { findKeyByDigits } = require('./contactsRepository');
@@ -124,22 +123,22 @@ function getContactDetail(key) {
     return publicContact(found, getContactsDB()[found]);
 }
 
-/** @param {string} key @param {string} estado */
-function setContactEstado(key, estado) {
+/** @param {string} key @param {string} estado @param {{channel?:string,accountId?:string|null}} [context] */
+async function setContactEstado(key, estado, context = {}) {
     const stateType = ESTADO_TO_TYPE[estado];
     if (!stateType) return { success: false, message: `Estado inválido: ${estado}` };
-    return setNumberState(key, stateType);
+    return setNumberState(key, stateType, { channel: context.channel || 'whatsapp', accountId: context.accountId || null });
 }
 
-/** @param {string} key @param {string} perfil */
-function setContactPerfil(key, perfil) {
+/** @param {string} key @param {string} perfil @param {{channel?:string,accountId?:string|null}} [context] */
+async function setContactPerfil(key, perfil, context = {}) {
     if (perfil === '' || perfil === 'default' || perfil === 'none' || perfil === null) {
-        return setContactProfile(key, 'default');
+        return setContactProfile(key, 'default', { channel: context.channel || 'whatsapp', accountId: context.accountId || null });
     }
     if (!perfil || !/^[a-z0-9_-]{1,32}$/i.test(perfil)) {
         return { success: false, message: 'Perfil no válido' };
     }
-    return setContactProfile(key, perfil);
+    return setContactProfile(key, perfil, { channel: context.channel || 'whatsapp', accountId: context.accountId || null });
 }
 
 // Rutas de logs con override por env (tests con archivos fake, nunca tocar los reales)
@@ -231,8 +230,9 @@ function notifyAdmin(message) {
     try {
         const s = getSettingsDB();
         if (s.telegramToken && s.telegramChatId) {
-            // sendTelegramMessage lee token/chatId de settings si no se pasan overrides.
-            sendTelegramMessage(`🔔 *SDK-Bot*\n\n${message}`)
+            const adapter = require('../index').getAdapter('telegram');
+            if (!adapter) return;
+            adapter.sendMessage(`telegram:${s.telegramChatId}`, `🔔 *SDK-Bot*\n\n${message}`, { source: 'notice' })
                 .catch((/** @type {any} */ e) => logError.error(`🔔 [ADMIN] No se pudo avisar por Telegram: ${e && e.message ? e.message : e}`));
         }
     } catch (/** @type {any} */ e) {
@@ -957,18 +957,29 @@ function routeApi(req, res, pathname, params) {
     }
 
     if (pathname === '/command' && req.method === 'POST') {
-        readBody(req).then((b) => runAdminCommand(b.command).then((r) => sendJson(res, 200, r)));
+        readBody(req).then((b) => runAdminCommand(b.command,
+            { channel: 'whatsapp', accountId: activeSock?.accountId || null }).then((r) => sendJson(res, 200, r)));
         return;
     }
     if (pathname === '/notify' && req.method === 'POST') {
         readBody(req).then(async (b) => {
             if (!activeSock) return sendJson(res, 500, { success: false, message: 'No socket activo' });
             if (!b.jid || !b.message) return sendJson(res, 400, { success: false, message: 'Falta jid o message' });
+            const idempotencyKey = b.idempotencyKey || req.headers['idempotency-key'];
+            if (typeof idempotencyKey !== 'string' || !idempotencyKey.length || idempotencyKey.length > 256) {
+                return sendJson(res, 400, { success: false, code: 'IDEMPOTENCY_KEY_REQUIRED',
+                    message: 'Falta idempotencyKey para evitar envíos duplicados ante un timeout.' });
+            }
             try {
-                await activeSock.sendMessage(b.jid, b.message);
-                sendJson(res, 200, { success: true });
+                const sent = await activeSock.sendMessage(b.jid, b.message, {
+                    source: 'notice', idempotencyKey,
+                    policy: { kind: 'internal_notify' }
+                });
+                sendJson(res, 200, { success: true, outbound: sent?._outbox || null });
             } catch (e) {
-                sendJson(res, 500, { success: false, message: errMsg(e) });
+                const error = /** @type {any} */ (e);
+                sendJson(res, 500, { success: false, code: error?.code || 'NOTIFY_FAILED',
+                    idempotencyKey, outboundState: error?.outboundState || null, message: errMsg(error) });
             }
         });
         return;
@@ -1002,10 +1013,11 @@ function routeApi(req, res, pathname, params) {
             return;
         }
         if (req.method === 'POST' && cm[1] && cm[2]) {
-            readBody(req).then((parsed) => {
+            readBody(req).then(async (parsed) => {
+                const context = { channel: 'whatsapp', accountId: activeSock?.accountId || null };
                 const result = cm[2] === 'estado'
-                    ? setContactEstado(cm[1], String(parsed.estado || ''))
-                    : setContactPerfil(cm[1], String(parsed.perfil || ''));
+                    ? await setContactEstado(cm[1], String(parsed.estado || ''), context)
+                    : await setContactPerfil(cm[1], String(parsed.perfil || ''), context);
                 sendJson(res, result.success ? 200 : 400, result);
             }).catch((e) => sendJson(res, 500, { ok: false, error: errMsg(e) }));
             return;
@@ -1091,7 +1103,7 @@ function startInternalBus(opts = {}) {
         !['127.0.0.1', '::1', 'localhost'].includes(host);
     const verify = createVerifier({ secret });
     const sessionApi = createSessionApi(() => { getSettingsDB(); return getGlobalPolicy(); }, opts.archive,
-        getContactsDB, opts.getChannelStatus);
+        getContactsDB, opts.getChannelStatus, opts.controlService, opts.getAdapter);
     const server = http.createServer(async (req, res) => {
         let u;
         try { u = new URL(req.url || '/', 'http://gateway.local'); }

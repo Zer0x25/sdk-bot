@@ -1,14 +1,18 @@
+import asyncio
 import atexit
+import hashlib
+import json
 import os
 import secrets
 import signal
 import socket
 import sys
 import time
+from typing import Literal
 
 from fastapi import FastAPI, HTTPException, Request
 from fastapi.responses import JSONResponse
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 from config import (
     BRAIN_API_KEY,
@@ -20,7 +24,18 @@ from config import (
     OPENROUTER_MODEL,
 )
 from logging_setup import make_logger
-from memory import append_exchange, clear_history, get_db_stats, get_history
+from memory import (
+    CHARS_PER_TOKEN,
+    MAX_HISTORY_MESSAGES,
+    MAX_HISTORY_TOKENS,
+    append_exchange,
+    clear_history,
+    get_db_stats,
+    get_generation,
+    get_history,
+    invalidate_generation,
+    save_generation,
+)
 from profiles import (
     build_system_prompt,
     delete_profile,
@@ -65,6 +80,22 @@ class ChatRequest(BaseModel):
 class ResetMemoryRequest(BaseModel):
     user_id: str
     bot_id: str | None = None
+
+class ContextMessage(BaseModel):
+    role: Literal["user", "assistant"]
+    author_kind: Literal["customer", "ai", "operator", "external_self", "system", "unknown"]
+    content: str = Field(max_length=65536)
+
+class GenerateReplyRequest(ChatRequest):
+    generation_id: str = Field(min_length=1, max_length=256)
+    conversation_id: str = Field(min_length=1, max_length=128)
+    context_version: str = Field(min_length=1, max_length=20, pattern=r"^[1-9][0-9]*$")
+    through_message_id: str = Field(min_length=1, max_length=128)
+    context: list[ContextMessage] = Field(max_length=500)
+
+class InvalidateGenerationRequest(BaseModel):
+    generation_id: str = Field(min_length=1, max_length=256)
+    context_version: str = Field(min_length=1, max_length=20, pattern=r"^[1-9][0-9]*$")
 
 class ImportProfileRequest(BaseModel):
     key: str
@@ -192,6 +223,115 @@ def history_endpoint(user_id: str, bot_id: str | None = None,
     si valen 0 se usan los límites globales."""
     bid = bot_id or "single"
     return {"user_id": user_id, "bot_id": bid, "history": get_history(bid, user_id, max_messages, max_tokens)}
+
+
+def _system_instruction(request: ChatRequest) -> str:
+    base_instruction = build_system_prompt(request.bot_profile)
+    user_info_parts = []
+    if request.saved_name:
+        user_info_parts.append(f"Nombre en Agenda del Admin: \"{request.saved_name}\"")
+    if request.push_name and request.push_name != request.saved_name:
+        user_info_parts.append(f"Nombre Público WhatsApp: \"{request.push_name}\"")
+    elif not request.saved_name and request.user_name and request.user_name != "Desconocido":
+        user_info_parts.append(f"Nombre: \"{request.user_name}\"")
+    if request.country and request.country != "Desconocido":
+        user_info_parts.append(f"Ubicación/País: {request.country}")
+    if request.language:
+        user_info_parts.append(f"Idioma Nativo del País de Origen: {request.language} (Si el usuario te escribe en su idioma nativo o si es oportuno, puedes responder u ofrecer continuar la atención en {request.language})")
+    if request.bio:
+        user_info_parts.append(f"Estado/Bio de WhatsApp: \"{request.bio}\"")
+    if request.is_business:
+        user_info_parts.append("Tipo de Cuenta: Empresa/Business")
+    if user_info_parts:
+        return f"{base_instruction}\n[Contexto de la Persona en WhatsApp: {', '.join(user_info_parts)}]"
+    return base_instruction
+
+
+def _explicit_history(context: list[ContextMessage]) -> list[dict[str, str]]:
+    labels = {
+        "customer": "Cliente",
+        "ai": "IA",
+        "operator": "Operador humano",
+        "external_self": "Teléfono del operador",
+        "system": "Sistema",
+        "unknown": "Autor desconocido",
+    }
+    history = [{"role": item.role, "content": f"[{labels[item.author_kind]}] {item.content}"}
+               for item in context]
+    if MAX_HISTORY_MESSAGES > 0:
+        history = history[-MAX_HISTORY_MESSAGES:]
+    max_chars = MAX_HISTORY_TOKENS * CHARS_PER_TOKEN
+    while MAX_HISTORY_TOKENS > 0 and len(history) > 1 and sum(len(item["content"]) for item in history) > max_chars:
+        history.pop(0)
+    return history
+
+
+_generation_locks: dict[str, asyncio.Lock] = {}
+
+
+def _generation_lock(generation_id: str) -> asyncio.Lock:
+    lock = _generation_locks.get(generation_id)
+    if lock is None:
+        lock = asyncio.Lock()
+        _generation_locks[generation_id] = lock
+    if len(_generation_locks) > 10000:
+        for key, candidate in list(_generation_locks.items()):
+            if key != generation_id and not candidate.locked():
+                _generation_locks.pop(key, None)
+                if len(_generation_locks) <= 5000:
+                    break
+    return lock
+
+
+@app.post("/generate-reply")
+async def generate_reply_endpoint(request: GenerateReplyRequest):
+    if RATE_LIMIT_ENABLED and _is_rate_limited(request.user_id):
+        raise HTTPException(status_code=429, detail="Demasiados mensajes por minuto. Espera unos segundos.")
+    canonical_request = request.model_dump(mode="json") if hasattr(request, "model_dump") else request.dict()
+    fingerprint = hashlib.sha256(json.dumps(canonical_request, ensure_ascii=False, sort_keys=True).encode("utf-8")).hexdigest()
+    lock = _generation_lock(request.generation_id)
+    async with lock:
+        prior = get_generation(request.generation_id)
+        if prior:
+            if prior["status"] == "invalidated":
+                raise HTTPException(status_code=409, detail="GENERATION_INVALIDATED")
+            if prior["fingerprint"] != fingerprint or prior["context_version"] != request.context_version:
+                raise HTTPException(status_code=409, detail="GENERATION_ID_CONFLICT")
+            return {"response": prior["response"], "provider": prior["provider"],
+                    "generation_id": request.generation_id, "context_version": request.context_version,
+                    "through_message_id": request.through_message_id, "replayed": True}
+
+        display_name = request.saved_name or request.push_name or request.user_name or "Desconocido"
+        safe_log(f"\n📩 [GENERATE REPLY] {display_name} | generationId={request.generation_id} | contextVersion={request.context_version}")
+        try:
+            response_text, provider_used, _ = await generate_ai_response(
+                system_instruction=_system_instruction(request), message=request.message,
+                memory_history=_explicit_history(request.context), user_id=request.user_id)
+            try:
+                stored = save_generation(request.generation_id, fingerprint, request.context_version,
+                                         response_text, provider_used)
+            except ValueError as err:
+                if str(err) in {"GENERATION_INVALIDATED", "GENERATION_ID_CONFLICT"}:
+                    raise HTTPException(status_code=409, detail=str(err)) from err
+                raise
+            if stored["status"] == "invalidated":
+                raise HTTPException(status_code=409, detail="GENERATION_INVALIDATED")
+            return {"response": stored["response"], "provider": stored["provider"],
+                    "generation_id": request.generation_id, "context_version": request.context_version,
+                    "through_message_id": request.through_message_id,
+                    "replayed": stored["status"] == "existing"}
+        except HTTPException:
+            raise
+        except Exception as err:
+            safe_log(f"❌ Error en GenerateReply: {err}")
+            return {"error": str(err)}
+
+
+@app.post("/invalidate-generation")
+async def invalidate_generation_endpoint(request: InvalidateGenerationRequest):
+    invalidate_generation(request.generation_id, request.context_version)
+    return {"status": "ok", "generation_id": request.generation_id,
+            "context_version": request.context_version, "invalidated": True}
 
 
 @app.get("/")

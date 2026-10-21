@@ -45,6 +45,16 @@ class WhatsappAdapter extends ChannelAdapter {
     getKnownAdminPhone() {
         try { return getSettingsDB().lastKnownAdminPhone || ''; } catch (e) { return ''; }
     }
+
+    async ensureOutboundAccountId() {
+        const sock = this.sock;
+        if (!sock?.user || !this.archive) throw Object.assign(new Error('WhatsApp no conectado.'), { code: 'WA_NOT_CONNECTED' });
+        const session = socketIdentity(sock.user);
+        const account = await this.archive.registerAccount({ channel: 'whatsapp', providerKey: session.providerKey });
+        if (this.sock !== sock) throw Object.assign(new Error('Socket WhatsApp reemplazado.'), { code: 'WA_SOCKET_REPLACED' });
+        this.accountId = account.id;
+        return account.id;
+    }
     /** Persiste el numero admin conocido en settings DB. */
     setKnownAdminPhone(phone) {
         try {
@@ -307,6 +317,31 @@ class WhatsappAdapter extends ChannelAdapter {
         logError.error(`Archivo WhatsApp: ${code}. Captura no confirmada; revisar intervalo afectado.`);
     }
 
+    deferUnknownSelfHandoff(observation) {
+        const conversationId = observation?.result?.message?.conversationId;
+        if (!conversationId || !this.archive) return;
+        const target = observation.remote;
+        const providerMessageId = observation.providerMessageId;
+        const timer = setTimeout(async () => {
+            try {
+                const intents = await this.archive.outboundIntents({ conversationId, limit: 500 });
+                if (providerMessageId && intents.some(intent => intent.providerMessageId === providerMessageId
+                    && intent.state === 'accepted')) return;
+                const { setNumberState } = require('../services/stateService');
+                const result = await setNumberState(target, 'handoff', { channel: 'whatsapp',
+                    accountId: this.accountId, reason: 'external_self' });
+                if (!result.success) {
+                    logError.error(`No se pudo pausar IA tras una salida propia no correlacionada (${result.code || result.message || 'error'}).`);
+                } else {
+                    log.warn(`Salida propia no correlacionada archivada para ${target}; IA pausada hasta liberación humana.`);
+                }
+            } catch (error) {
+                logError.error(`No se pudo revisar la salida propia de ${target}: ${error?.code || error?.message || error}`);
+            }
+        }, 500);
+        timer.unref?.();
+    }
+
     captureBatch(sock, messages, source) {
         if (!Array.isArray(messages) || this.sock !== sock) return;
         let session;
@@ -325,6 +360,9 @@ class WhatsappAdapter extends ChannelAdapter {
                 }
                 if (observation.scope !== 'individual') return;
                 if (observation.result.status !== 'quarantined') this.emit('archived_message', { raw: msg, source, observation });
+                if (source === 'live' && msg.key?.fromMe && observation.result.status === 'created') {
+                    this.deferUnknownSelfHandoff(observation);
+                }
                 if (source !== 'live' || observation.result.status !== 'created' || observation.requiresReview
                     || observation.result.message.content.type === 'oversized') return;
                 // The archive records fromMe independently of the legacy echo guard.
@@ -456,22 +494,31 @@ class WhatsappAdapter extends ChannelAdapter {
         });
     }
 
-    async sendMessage(normalizedJid, text, options = {}) {
-        if (!this.sock) throw new Error('WhatsApp no conectado');
+    async sendMessageRaw(normalizedJid, text, options = {}) {
+        if (!this.sock) throw Object.assign(new Error('WhatsApp no conectado'), { code: 'WA_NOT_CONNECTED', outboundOutcome: 'rejected' });
         const sock = this.sock;
         const waJid = normalizedJid.replace('whatsapp:', '');
         const session = socketIdentity(sock.user);
-        const remote = individualJid(waJid);
-        if (this.archive && remote && !session.self.includes(remote)) {
-            const identity = await this.archive.resolve({ accountId: (await this.archive.registerAccount({
-                channel: 'whatsapp', providerKey: session.providerKey })).id, channel: 'whatsapp',
-            kind: remote.endsWith('@lid') ? 'whatsapp_lid' : 'whatsapp_jid', exactValue: remote });
-            if ((await this.archive.conversation(identity.conversation_id)).requires_review) {
-                throw Object.assign(new Error('Identidad pendiente de revisión.'), { code: 'WA_IDENTITY_REVIEW_REQUIRED' });
-            }
+        if (options._outboundAccountId && options._outboundAccountId !== this.accountId) {
+            throw Object.assign(new Error('La cuenta WhatsApp cambió antes del envío.'), { code: 'OUTBOUND_ACCOUNT_CHANGED', outboundOutcome: 'rejected' });
         }
-        if (this.sock !== sock) throw new Error('Socket WhatsApp reemplazado');
-        const content = (text && typeof text === 'object') ? { ...text, ...options } : { text, ...options };
+        const remote = individualJid(waJid);
+        try {
+            if (this.archive && remote && !session.self.includes(remote)) {
+                const identity = await this.archive.resolve({ accountId: (await this.archive.registerAccount({
+                    channel: 'whatsapp', providerKey: session.providerKey })).id, channel: 'whatsapp',
+                kind: remote.endsWith('@lid') ? 'whatsapp_lid' : 'whatsapp_jid', exactValue: remote });
+                if ((await this.archive.conversation(identity.conversation_id)).requires_review) {
+                    throw Object.assign(new Error('Identidad pendiente de revisión.'), { code: 'WA_IDENTITY_REVIEW_REQUIRED' });
+                }
+            }
+        } catch (error) {
+            error.outboundOutcome = 'rejected';
+            throw error;
+        }
+        if (this.sock !== sock) throw Object.assign(new Error('Socket WhatsApp reemplazado'), { code: 'WA_SOCKET_REPLACED', outboundOutcome: 'rejected' });
+        const providerOptions = require('../services/outbound/sendMessage').withoutOutboundOptions(options);
+        const content = (text && typeof text === 'object') ? { ...text, ...providerOptions } : { text, ...providerOptions };
         const result = await sock.sendMessage(waJid, content);
         if (result?.key?.id) {
             const now = Date.now();

@@ -1,7 +1,8 @@
+/* global AbortController */
 const { state, registerSentMessage } = require('../config');
 const { enrichContactExtraData, isSelfChat } = require('../services/metadataService');
 const { upsertContactMetadata, isHandoffActive } = require('../services/contactsRepository');
-const { setNumberState } = require('../services/stateService');
+const { setNumberState, getControlService } = require('../services/stateService');
 const { processAIChat } = require('../services/brainService');
 const { enqueueAI, poolStats } = require('../services/aiQueue');
 const messageQueue = require('../services/messageQueue');
@@ -25,7 +26,20 @@ const logError = cat('ERROR');
 const messageBuffers = new Map();
 const activePresences = new Map();   // Mapa global en memoria RAM del estado de presencia
 const chatInFlight = new Set();      // JIDs con una llamada de IA en curso (serialización por chat)
+const conversationByRemote = new Map();
+const drainWaiters = new Map();
+const activeGenerationControllers = new Map();
 const TYPING_TTL_MS = num('GATEWAY_TYPING_TTL_MS', 5000);           // 5.0 segundos: el estado de tecleo expira si el teclado queda inactivo (tunable vía .env.tuning)
+
+function workKeyForRemote(remoteJid) {
+    return conversationByRemote.get(remoteJid) || remoteJid;
+}
+
+function clearConversationMappings(conversationId) {
+    for (const [remoteJid, id] of conversationByRemote) {
+        if (id === conversationId) conversationByRemote.delete(remoteJid);
+    }
+}
 
 // 🧠 PRECARGA DE HISTORIAL EN PRESENCIA (Opción C, "señal de intervención web-like")
 // Al detectar que el cliente está escribiendo (composing), precargamos el
@@ -159,8 +173,9 @@ function handlePresenceUpdate(id, presences) {
 
     // Buscar buffer que coincida con cualquiera de los candidatos (Phone o LID)
     for (const [bufferJid, buffer] of messageBuffers.entries()) {
-        const cleanBuffer = bufferJid.split('@')[0].split(':')[0].replace(/[^0-9]/g, '');
-        const isMatch = candidates.some(cid => bufferJid.includes(cid) || cleanBuffer.includes(cid));
+        const bufferRemote = buffer.remoteJid || bufferJid;
+        const cleanBuffer = bufferRemote.split('@')[0].split(':')[0].replace(/[^0-9]/g, '');
+        const isMatch = candidates.some(cid => bufferRemote.includes(cid) || cleanBuffer.includes(cid));
         
         if (isMatch) {
             buffer.lastActivity = Date.now();
@@ -173,7 +188,7 @@ function handlePresenceUpdate(id, presences) {
                     clearTimeout(buffer.timer);
                     buffer.timer = null;
                 }
-                log.info(`\n⌨️ [DE-BOUNCE MEMORIA] Cliente (${bufferJid}) ESTÁ ESCRIBIENDO (${presenceState}). Timer de 8s en pausa.`);
+                log.info(`\n⌨️ [DE-BOUNCE MEMORIA] Cliente (${bufferRemote}) ESTÁ ESCRIBIENDO (${presenceState}). Timer de 8s en pausa.`);
 
                 // Expiración automática a los 5s si deja de presionar teclas sin enviar evento paused
                 if (buffer.typingExpiryTimer) clearTimeout(buffer.typingExpiryTimer);
@@ -181,7 +196,7 @@ function handlePresenceUpdate(id, presences) {
                     if (buffer && buffer.isTyping) {
                         buffer.isTyping = false;
                         const delayMs = getAdaptiveDebounceMs(buffer.messages);
-                        log.info(`\n⏱️ [TECLADO LIBERADO] 5s inactivo en teclado (${bufferJid}). Iniciando timer de ${(delayMs / 1000).toFixed(1)}s.`);
+                        log.info(`\n⏱️ [TECLADO LIBERADO] 5s inactivo en teclado (${bufferRemote}). Iniciando timer de ${(delayMs / 1000).toFixed(1)}s.`);
                         if (!buffer.timer) {
                             buffer.timer = setTimeout(buffer.onTimeout, delayMs);
                         }
@@ -195,7 +210,7 @@ function handlePresenceUpdate(id, presences) {
                 
                 const delayMs = getAdaptiveDebounceMs(buffer.messages);
                 buffer.timer = setTimeout(buffer.onTimeout, delayMs);
-                log.info(`\n⏳ [PRESENCIA PAUSADA] Cliente (${bufferJid}) PAUSÓ escritura (${presenceState}). Reseteando timer a ${(delayMs / 1000).toFixed(1)}s.`);
+                log.info(`\n⏳ [PRESENCIA PAUSADA] Cliente (${bufferRemote}) PAUSÓ escritura (${presenceState}). Reseteando timer a ${(delayMs / 1000).toFixed(1)}s.`);
             }
         }
     }
@@ -210,6 +225,7 @@ async function handleIncomingMessage(stdMsg, { onDurableComplete } = {}) {
     const metadata = stdMsg.metadata;
     // We use the unified ID as the remoteJid now (e.g. 'whatsapp:123', 'telegram:456')
     const remoteJid = stdMsg.remoteId; 
+    const sourceMessageId = stdMsg.archiveMessageId || null;
     const { phoneNumber, lid, savedName, pushName } = metadata;
     const textMessage = stdMsg.text;
 
@@ -220,6 +236,9 @@ async function handleIncomingMessage(stdMsg, { onDurableComplete } = {}) {
         logError.error(`Adapter not found for channel ${stdMsg.channel}`);
         return;
     }
+
+    const isSelf = isSelfChat(remoteJid)
+        || (stdMsg.channel === 'telegram' && !!(metadata && metadata.isAdminChannel));
 
     // 🔔 SUSCRIBIR EN TIEMPO REAL A EVENTOS DE PRESENCIA (composing/paused) DE ESTE CLIENTE AL INICIAR
     // Solo si es whatsapp
@@ -233,7 +252,47 @@ async function handleIncomingMessage(stdMsg, { onDurableComplete } = {}) {
     }
 
     // 🗂️ GUARDAR / ACTUALIZAR CONTACTO EN BASE DE DATOS
-    const contactRecord = upsertContactMetadata(metadata, remoteJid) || { estado: 'neutro' };
+    let contactRecord = upsertContactMetadata(metadata, remoteJid) || { estado: 'neutro' };
+    let controlSnapshot = null;
+
+    // Tras el corte, SQLite es la autoridad. Resolver por canal, cuenta e ID
+    // exactos; si falta esa fila, fallar cerrado y reconocer la entrada durable.
+    if (!isSelf && stdMsg.rawId && adapter.accountId) {
+        try {
+            const controlService = getControlService();
+            const kind = stdMsg.channel === 'telegram' ? 'telegram_chat_id'
+                : stdMsg.rawId.endsWith('@lid') ? 'whatsapp_lid' : 'whatsapp_jid';
+            const result = await controlService?.readForIdentity({ accountId: adapter.accountId,
+                channel: stdMsg.channel, kind, exactValue: stdMsg.rawId });
+            if (result?.authority === 'sqlite') {
+                if (!result.target) {
+                    logError.error(`Control SQLite: identidad exacta sin conversación (${stdMsg.channel}).`);
+                    await onDurableComplete?.();
+                    return;
+                }
+                controlSnapshot = result.controlSnapshot;
+                conversationByRemote.set(remoteJid, result.target.conversationId);
+                if (conversationByRemote.size > 5000) conversationByRemote.delete(conversationByRemote.keys().next().value);
+                const control = result.target.control;
+                if (sourceMessageId && control.automationMode === 'ai'
+                    && !await adapter.archive.shouldProcessArchivedInbound({ messageId: sourceMessageId })) {
+                    await onDurableComplete?.();
+                    return;
+                }
+                let estado = 'neutro';
+                if (control.requiresReview || control.lifecycle === 'resolved' || control.accessPolicy === 'ignored'
+                    || (control.accessPolicy === 'allowed' && control.automationMode === 'off')) estado = 'ignorado';
+                else if (control.automationMode === 'human') estado = 'handoff';
+                else if (control.accessPolicy === 'allowed') estado = 'permitido';
+                contactRecord = { ...contactRecord, estado, handoffAt: null,
+                    perfil: control.profileKey };
+            }
+        } catch (error) {
+            logError.error(`No se pudo leer el control durable de ${remoteJid}; respuesta bloqueada: ${error?.code || error?.message || error}`);
+            await onDurableComplete?.();
+            return;
+        }
+    }
 
     // 🔄 Enriquecimiento asíncrono en segundo plano (Foto de Perfil & Bio) solo para WA
     if (stdMsg.channel === 'whatsapp' && adapter.sock) {
@@ -243,8 +302,6 @@ async function handleIncomingMessage(stdMsg, { onDurableComplete } = {}) {
     // Self-chat de WhatsApp (JID propio) o canal admin de Telegram: ambos son
     // "el admin hablando consigo mismo" y comparten SCENARIO 1 del pipeline
     // (comandos '/' + Asistente Personal IA + confirmaciones broadcast/F7).
-    const isSelf = isSelfChat(remoteJid)
-        || (stdMsg.channel === 'telegram' && !!(metadata && metadata.isAdminChannel));
     const displayName = savedName ? `${savedName} (Agenda)` : pushName;
 
     logAI.info(`\n🔍 [DEBUG CHAT] JID: ${remoteJid} | Phone: ${phoneNumber || 'N/A'} | LID: ${lid || 'N/A'} | From: "${displayName}" | isSelf: ${isSelf} | Texto: "${textMessage}"`);
@@ -256,7 +313,7 @@ async function handleIncomingMessage(stdMsg, { onDurableComplete } = {}) {
         // 🧹 Handoff expirado: el decisor ya lo trató como neutro; persistimos
         // el reset para que no "reviva" tras reiniciar (el decisor no muta BD).
         if (contactRecord && contactRecord.estado === 'handoff' && !isHandoffActive(contactRecord)) {
-            setNumberState(phoneNumber || lid, 'neutral');
+            await setNumberState(phoneNumber || lid, 'neutral', { channel: stdMsg.channel, accountId: adapter.accountId });
         }
     }
 
@@ -280,7 +337,14 @@ async function handleIncomingMessage(stdMsg, { onDurableComplete } = {}) {
 
         case 'handoff': {
             logAI.info(`\n🚨 [HANDOFF ACTIVADO] Cliente ${decision.displayName} (${decision.targetId}) solicitó atención humana.`);
-            setNumberState(decision.targetId, 'handoff');
+            const handoff = await setNumberState(stdMsg.rawId, 'handoff', {
+                channel: stdMsg.channel, accountId: adapter.accountId, reason: 'customer_request'
+            });
+            if (!handoff.success) {
+                logError.error(`No se pudo persistir la solicitud de atención humana (${remoteJid}): ${handoff.message}`);
+                await onDurableComplete?.();
+                return;
+            }
 
             // 1. Notificar al Admin en Self-Chat
             if (state.ADMIN_PHONE || state.ADMIN_LID) {
@@ -315,41 +379,54 @@ async function handleIncomingMessage(stdMsg, { onDurableComplete } = {}) {
         case 'respond': {
             // 🔒 SERIALIZACIÓN POR CHAT: si la IA ya está respondiendo para este cliente,
             // acumulamos mensajes sin timer; al terminar la llamada se programa el siguiente lote.
-            if (chatInFlight.has(remoteJid)) {
-                let inflightBuffer = messageBuffers.get(remoteJid);
+            const bufferKey = workKeyForRemote(remoteJid);
+            if (chatInFlight.has(bufferKey)) {
+                let inflightBuffer = messageBuffers.get(bufferKey);
                 if (inflightBuffer) {
                     inflightBuffer.messages.push(decision.text);
+                    if (sourceMessageId) (inflightBuffer.archiveMessageIds ||= []).push(sourceMessageId);
                     if (onDurableComplete) (inflightBuffer.dispatchAcks ||= []).push(onDurableComplete);
                     inflightBuffer.lastActivity = Date.now();
-                    inflightBuffer.onTimeout = createBufferTimeout(remoteJid, metadata, adapter);
+                    inflightBuffer.remoteJid = remoteJid;
+                    inflightBuffer.metadata = metadata;
+                    inflightBuffer.adapter = adapter;
+                    inflightBuffer.controlSnapshot = controlSnapshot;
+                    inflightBuffer.onTimeout = createBufferTimeout(bufferKey, metadata, adapter);
                     if (inflightBuffer.timer) clearTimeout(inflightBuffer.timer);
                     if (inflightBuffer.typingExpiryTimer) clearTimeout(inflightBuffer.typingExpiryTimer);
                     inflightBuffer.timer = null;
                 } else {
-                    messageBuffers.set(remoteJid, {
+                    messageBuffers.set(bufferKey, {
                         messages: [decision.text],
+                        archiveMessageIds: sourceMessageId ? [sourceMessageId] : [],
                         dispatchAcks: onDurableComplete ? [onDurableComplete] : [],
+                        remoteJid, metadata, adapter, controlSnapshot,
                         isTyping: false,
                         lastTypingTime: null,
                         lastActivity: Date.now(),
-                        onTimeout: createBufferTimeout(remoteJid, metadata, adapter),
+                        onTimeout: createBufferTimeout(bufferKey, metadata, adapter),
                         timer: null,
                         typingExpiryTimer: null
                     });
                 }
-                logAI.info(`⏳ [IA EN CURSO] Cliente (${displayName}) escribió mientras la IA responde. ${messageBuffers.get(remoteJid).messages.length} msg(s) en espera.`);
+                logAI.info(`⏳ [IA EN CURSO] Cliente (${displayName}) escribió mientras la IA responde. ${messageBuffers.get(bufferKey).messages.length} msg(s) en espera.`);
                 return onDurableComplete ? 'deferred' : undefined;
             }
 
-            let existingBuffer = messageBuffers.get(remoteJid);
+            let existingBuffer = messageBuffers.get(bufferKey);
 
-            const onTimeout = createBufferTimeout(remoteJid, metadata, adapter);
+            const onTimeout = createBufferTimeout(bufferKey, metadata, adapter);
 
             if (existingBuffer) {
                 if (existingBuffer.timer) clearTimeout(existingBuffer.timer);
                 existingBuffer.messages.push(decision.text);
+                if (sourceMessageId) (existingBuffer.archiveMessageIds ||= []).push(sourceMessageId);
                 if (onDurableComplete) (existingBuffer.dispatchAcks ||= []).push(onDurableComplete);
                 existingBuffer.onTimeout = onTimeout;
+                existingBuffer.remoteJid = remoteJid;
+                existingBuffer.metadata = metadata;
+                existingBuffer.adapter = adapter;
+                existingBuffer.controlSnapshot = controlSnapshot;
                 existingBuffer.lastActivity = Date.now();
 
                 // Resetear timer al recibir mensaje físico con delay estocástico/adaptativo
@@ -359,7 +436,9 @@ async function handleIncomingMessage(stdMsg, { onDurableComplete } = {}) {
             } else {
                 const newBuffer = {
                     messages: [decision.text],
+                    archiveMessageIds: sourceMessageId ? [sourceMessageId] : [],
                     dispatchAcks: onDurableComplete ? [onDurableComplete] : [],
+                    remoteJid, metadata, adapter, controlSnapshot,
                     isTyping: false,
                     lastTypingTime: null,
                     lastActivity: Date.now(),
@@ -370,7 +449,7 @@ async function handleIncomingMessage(stdMsg, { onDurableComplete } = {}) {
 
                 const delayMs = getAdaptiveDebounceMs(newBuffer.messages);
                 newBuffer.timer = setTimeout(onTimeout, delayMs);
-                messageBuffers.set(remoteJid, newBuffer);
+                messageBuffers.set(bufferKey, newBuffer);
                 log.info(`⏳ [DE-BOUNCE START] Primer mensaje de ${displayName}. Timer de ${(delayMs / 1000).toFixed(1)}s de silencio iniciado.`);
             }
             return onDurableComplete ? 'deferred' : undefined;
@@ -385,18 +464,33 @@ async function handleIncomingMessage(stdMsg, { onDurableComplete } = {}) {
  * Al expirar el silencio, verifica presencia local, envía a la IA y, si durante
  * la llamada llegaron mensajes nuevos, programa el siguiente lote (serializado).
  */
-function createBufferTimeout(remoteJid, metadata, adapter) {
-    const displayName = metadata.savedName ? `${metadata.savedName} (Agenda)` : (metadata.pushName || 'Desconocido');
-    const phoneNumber = metadata.phoneNumber;
-    const lid = metadata.lid;
-
+function createBufferTimeout(bufferKey, fallbackMetadata, fallbackAdapter) {
     return async function onTimeout() {
-        const buf = messageBuffers.get(remoteJid);
+        const buf = messageBuffers.get(bufferKey);
         if (!buf) return;
+        const remoteJid = buf.remoteJid || bufferKey;
+        const metadata = buf.metadata || fallbackMetadata;
+        const adapter = buf.adapter || fallbackAdapter;
+        const displayName = metadata.savedName ? `${metadata.savedName} (Agenda)` : (metadata.pushName || 'Desconocido');
+        const phoneNumber = metadata.phoneNumber;
+        const lid = metadata.lid;
 
         // 🔒 Guarda: si otra llamada de IA sigue en curso para este chat, no hacer nada
         // (el lote pendiente se reprograma cuando finalice la llamada activa).
-        if (chatInFlight.has(remoteJid)) return;
+        if (chatInFlight.has(bufferKey)) return;
+
+        const controlSnapshot = buf.controlSnapshot;
+        const controlService = controlSnapshot ? getControlService() : null;
+        if (controlSnapshot && !await controlService?.isSnapshotCurrent(controlSnapshot).catch(() => false)) {
+            if (buf.timer) clearTimeout(buf.timer);
+            if (buf.typingExpiryTimer) clearTimeout(buf.typingExpiryTimer);
+            const acknowledgements = buf.dispatchAcks?.splice(0) || [];
+            messageBuffers.delete(bufferKey);
+            await Promise.allSettled(acknowledgements.map(acknowledge => Promise.resolve().then(() => acknowledge())));
+            clearConversationMappings(controlSnapshot.conversationId);
+            notifyDrained(bufferKey);
+            return;
+        }
 
         // 🧠 REVISAR ESTADO EN LA MEMORIA LOCAL DE LA APP (Candidatos Múltiples)
         const candidates = getCandidateIdsForPresence(remoteJid);
@@ -429,25 +523,31 @@ function createBufferTimeout(remoteJid, metadata, adapter) {
 
         const fullBufferedText = buf.messages.join('\n');
         buf.messages = []; // Los mensajes procesados salen del buffer; no se borra el buffer aún
+        const sourceMessageIds = buf.archiveMessageIds?.splice(0) || [];
         const dispatchAcks = buf.dispatchAcks?.splice(0) || [];
 
         log.info(`\n📦 [DE-BOUNCE BATCH FINAL] Silencio confirmado. Procesando mensaje(s) de ${displayName}:\n"${fullBufferedText}"`);
 
-        chatInFlight.add(remoteJid);
+        const controller = new AbortController();
+        chatInFlight.add(bufferKey);
+        activeGenerationControllers.set(bufferKey, controller);
         try {
             // 🎯 La cola FIFO global limita las llamadas simultáneas a la IA
             const { active, queued } = poolStats();
             logAI.info(`🎯 [POOL AI] Esperando turno en cola global (activas: ${active}, en cola: ${queued})...`);
-            await enqueueAI(() => processAIChat(fullBufferedText, remoteJid, metadata, adapter));
+            const jobOptions = controlSnapshot ? { controlSnapshot, sourceMessageIds, signal: controller.signal,
+                isCurrent: () => controlService.isSnapshotCurrent(controlSnapshot) } : { signal: controller.signal };
+            await enqueueAI(() => processAIChat(fullBufferedText, remoteJid, metadata, adapter, jobOptions));
             for (const acknowledge of dispatchAcks) await acknowledge();
         } catch (error) {
             for (const acknowledge of dispatchAcks) await acknowledge.retry?.(error);
             logError.error(`⚠️ Error procesando mensaje durable de ${remoteJid}: ${error?.message || error}`);
         } finally {
-            chatInFlight.delete(remoteJid);
+            chatInFlight.delete(bufferKey);
+            if (activeGenerationControllers.get(bufferKey) === controller) activeGenerationControllers.delete(bufferKey);
 
             // Si llegaron mensajes durante la llamada de IA, programar el siguiente lote
-            const bufAfter = messageBuffers.get(remoteJid);
+            const bufAfter = messageBuffers.get(bufferKey);
             if (bufAfter && bufAfter.messages.length > 0) {
                 if (bufAfter.timer) clearTimeout(bufAfter.timer);
                 const delayMs = getAdaptiveDebounceMs(bufAfter.messages);
@@ -455,8 +555,12 @@ function createBufferTimeout(remoteJid, metadata, adapter) {
                 logAI.info(`⏳ [IA TERMINADA] Cliente (${displayName}) tiene ${bufAfter.messages.length} msg(s) en espera. Timer de ${(delayMs / 1000).toFixed(1)}s iniciado.`);
             } else if (bufAfter) {
                 if (bufAfter.timer) clearTimeout(bufAfter.timer);
-                messageBuffers.delete(remoteJid);
+                if (bufAfter.typingExpiryTimer) clearTimeout(bufAfter.typingExpiryTimer);
+                messageBuffers.delete(bufferKey);
+                if (controlSnapshot) clearConversationMappings(controlSnapshot.conversationId);
+                else conversationByRemote.delete(remoteJid);
             }
+            notifyDrained(bufferKey);
         }
     };
 }
@@ -472,6 +576,52 @@ function getRuntimeStats() {
         chatInFlight: chatInFlight.size,
         aiPool: poolStats()
     };
+}
+
+function notifyDrained(bufferKey) {
+    if (chatInFlight.has(bufferKey)) return;
+    const waiters = drainWaiters.get(bufferKey);
+    if (!waiters) return;
+    drainWaiters.delete(bufferKey);
+    for (const resolve of waiters) resolve();
+}
+
+function drainConversation(conversationId) {
+    const acknowledgements = [];
+    const buffer = messageBuffers.get(conversationId);
+    if (buffer) {
+        if (buffer.timer) clearTimeout(buffer.timer);
+        if (buffer.typingExpiryTimer) clearTimeout(buffer.typingExpiryTimer);
+        acknowledgements.push(...(buffer.dispatchAcks?.splice(0) || []));
+        messageBuffers.delete(conversationId);
+    }
+    const active = chatInFlight.has(conversationId);
+    activeGenerationControllers.get(conversationId)?.abort();
+    if (!active && !acknowledgements.length) {
+        clearConversationMappings(conversationId);
+        return { drained: true, uncertainMessageIds: [] };
+    }
+    const activeDrain = active ? new Promise(resolve => {
+        const waiters = drainWaiters.get(conversationId) || new Set();
+        waiters.add(resolve);
+        drainWaiters.set(conversationId, waiters);
+    }) : Promise.resolve();
+    return (async () => {
+        await Promise.allSettled(acknowledgements.map(acknowledge => Promise.resolve().then(() => acknowledge())));
+        await activeDrain;
+        clearConversationMappings(conversationId);
+        return { drained: true, uncertainMessageIds: [] };
+    })();
+}
+
+async function drainAllConversations() {
+    const conversations = new Set(conversationByRemote.values());
+    for (const key of activeGenerationControllers.keys()) {
+        if (conversationByRemote.get(key)) conversations.add(conversationByRemote.get(key));
+        else if (key.length === 36) conversations.add(key);
+    }
+    const results = await Promise.all([...conversations].map(conversationId => drainConversation(conversationId)));
+    return { drained: results.every(result => result?.drained !== false), conversations: conversations.size };
 }
 
 // 📥 F4-P4: procesar mensajes encolados cuando el brain vuelve
@@ -490,8 +640,20 @@ async function flushQueuedMessages() {
         const adapter = messageQueue.resolveAdapter(item.jid);
         if (!adapter) return;
 
+        const controlService = getControlService();
+        const authority = await controlService?.authority().catch(() => null);
+        if (controlService && !authority) return;
+        if (authority?.mode === 'sqlite') {
+            if (!item.controlSnapshot || !await controlService.isSnapshotCurrent(item.controlSnapshot).catch(() => false)) {
+                messageQueue.removeHead();
+                continue;
+            }
+            conversationByRemote.set(item.jid, item.controlSnapshot.conversationId);
+        }
+        const bufferKey = item.controlSnapshot?.conversationId || item.jid;
+
         // No pisar un chat con IA en curso (buffer timer activo)
-        if (chatInFlight.has(item.jid)) return;
+        if (chatInFlight.has(bufferKey)) return;
 
         if (item.attempts >= MAX_QUEUE_ATTEMPTS) {
             messageQueue.removeHead();
@@ -502,20 +664,39 @@ async function flushQueuedMessages() {
         const displayName = item.metadata.savedName || item.metadata.pushName || 'Desconocido';
         log.warn(`📥 [COLA] Respondiendo mensaje encolado de ${displayName} (${item.jid})...`);
 
-        chatInFlight.add(item.jid);
+        const controller = new AbortController();
+        chatInFlight.add(bufferKey);
+        activeGenerationControllers.set(bufferKey, controller);
         try {
-            await enqueueAI(() => processAIChat(item.text, item.jid, item.metadata, adapter, { fromQueue: true }));
+            const jobOptions = item.controlSnapshot ? { fromQueue: true, controlSnapshot: item.controlSnapshot,
+                sourceMessageIds: item.sourceMessageIds || [],
+                generationId: item.id, signal: controller.signal,
+                isCurrent: () => controlService.isSnapshotCurrent(item.controlSnapshot) }
+                : { fromQueue: true, generationId: item.id, sourceMessageIds: item.sourceMessageIds || [], signal: controller.signal };
+            await enqueueAI(() => processAIChat(item.text, item.jid, item.metadata, adapter, jobOptions));
             messageQueue.removeHead();
             // ⏱️ Pausa humana entre mensajes encolados (2-5s)
             await new Promise(r => setTimeout(r, 2000 + Math.random() * 3000));
-        } catch {
+        } catch (error) {
+            if (error?.outboundIntentId || error?.outboundState
+                || error?.outboundState === 'delivery_unknown' || error?.outboundState === 'sending'
+                || ['OUTBOUND_DELIVERY_UNKNOWN','OUTBOUND_IN_PROGRESS','OUTBOUND_CLAIM_UNCERTAIN'].includes(error?.code)) {
+                messageQueue.removeHead();
+                logError.error(`📥 [COLA] ${item.id} tiene una salida incierta; se retira para impedir un reenvío automático.`);
+                continue;
+            }
             // processAIChat gestiona sus propios errores internos; aquí solo se
             // marca el intento y se detiene el flush (el brain sigue caído).
             item.attempts += 1;
             messageQueue.saveHead();
             return;
         } finally {
-            chatInFlight.delete(item.jid);
+            chatInFlight.delete(bufferKey);
+            if (activeGenerationControllers.get(bufferKey) === controller) activeGenerationControllers.delete(bufferKey);
+            if (item.controlSnapshot) {
+                clearConversationMappings(item.controlSnapshot.conversationId);
+            }
+            notifyDrained(bufferKey);
         }
     }
 }
@@ -525,5 +706,7 @@ messageQueue.setFlushHandler(flushQueuedMessages);
 module.exports = {
     handleIncomingMessage,
     handlePresenceUpdate,
+    drainConversation,
+    drainAllConversations,
     getRuntimeStats
 };

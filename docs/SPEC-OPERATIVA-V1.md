@@ -124,6 +124,14 @@ pausa, contexto y versiones; no incluye backfill, mensajes expirados o anteriore
 al inicio de handoff ya atendidos. Si no hay entradas elegibles, no genera nada.
 La UI comunica que ai puede quedar bloqueada por acceso o pausa global.
 
+La vista de selección limita la lista a 100 y avisa si hay más; cada elemento lleva
+vista previa, tipo y secuencia. El servidor firma lógicamente la selección con una
+huella de control/política/watermarks y contenido, y la revalida junto con los IDs
+en la transacción de release. Un envío `sending` o `delivery_unknown` bloquea
+`process_pending` hasta reconciliarlo; nunca se reenvía ese envío como parte del
+replay. Los despachos que aún están `pending`/`waiting` y el contenido no procesable
+se excluyen y se cuentan en la vista previa.
+
 No inferir qué quedó atendido analizando texto humano: SendMessage puede declarar
 `handledThroughInboundSeq` del hilo mostrado, validado contra conversación/actor.
 Solo al confirmar sent se avanza ese watermark; entradas posteriores siguen

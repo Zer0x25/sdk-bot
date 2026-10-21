@@ -16,7 +16,8 @@ const actor = { id: id(4), displayName: 'Operador sintético', capabilities: ['c
 const conversation = {
   id: id(5), accountId: id(1), contactId: id(3), displayName: 'Contacto de prueba', canonicalIdentityId: id(2),
   control: { accessPolicy: 'neutral', automationMode: 'human', lifecycle: 'open',
-    ownerId: null, controlVersion: '3', contextVersion: '1', status: 'confirmed', takenAt: null, handoffReason: 'legacy_import' },
+    ownerId: null, controlVersion: '3', contextVersion: '1', status: 'confirmed', takenAt: null, handoffReason: 'legacy_import',
+    profileKey: null, requiresReview: false, reviewReasons: [] },
   aggregateVersion: '9007199254740993', lastActivityAt: now,
   historyCoverage: { kind: 'partial_import', capturingSince: now }, unreadCount: 2, requiresReview: false,
 };
@@ -175,10 +176,12 @@ test('control request forms preserve optional defaults and exclude actor spoofin
   accept('ReleaseRequest', input);
   assert.deepEqual(input, { expectedVersion: '3' });
   accept('TakeoverRequest', { ...input, overrideOwner: true });
-  accept('ReleaseRequest', { ...input, resumePolicy: 'process_pending', pendingInboundIds: [id(6)] });
+  const pendingResume = { ...input, resumePolicy: 'process_pending', pendingInboundIds: [id(6)], selectionVersion: 'a'.repeat(64) };
+  accept('ReleaseRequest', pendingResume);
   reject('ReleaseRequest', { ...input, resumePolicy: 'process_pending' });
-  reject('ReleaseRequest', { ...input, resumePolicy: 'process_pending', pendingInboundIds: [] });
-  reject('ReleaseRequest', { ...input, resumePolicy: 'process_pending', pendingInboundIds: [id(6),id(6)] });
+  reject('ReleaseRequest', { ...input, resumePolicy: 'process_pending', pendingInboundIds: [id(6)] });
+  reject('ReleaseRequest', { ...pendingResume, pendingInboundIds: [] });
+  reject('ReleaseRequest', { ...pendingResume, pendingInboundIds: [id(6),id(6)] });
   reject('ReleaseRequest', { ...input, resumePolicy: 'future_only', pendingInboundIds: [id(6)] });
   const send = { ...input, clientMessageId: id(6), text: 'Respuesta', handledThroughInboundSeq: '9007199254740993' };
   accept('SendMessageRequest', send);
@@ -188,8 +191,9 @@ test('control request forms preserve optional defaults and exclude actor spoofin
   accept('TakeoverPendingResponse', { operation });
   accept('TakeoverConfirmedResponse', { conversation });
   accept('UpdateConversationRequest', { ...input, lifecycle: 'resolved' });
+  accept('UpdateConversationRequest', { ...input, accessPolicy: 'allowed' });
   accept('ReadRequest', { throughInboundSeq: '0' });
-  reject('UpdateConversationRequest', { ...input, accessPolicy: 'allowed' });
+  reject('UpdateConversationRequest', input);
   accept('IdempotencyKey', 'synthetic-intent-01');
   reject('IdempotencyKey', 'too_short');
 });

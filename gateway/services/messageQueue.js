@@ -22,7 +22,7 @@ const QUEUE_FILE = process.env.SDK_MESSAGE_QUEUE_PATH || path.join(__dirname, '.
 const MAX_QUEUE_ITEMS = Number(process.env.SDK_MESSAGE_QUEUE_MAX || 50);
 const MAX_QUEUE_AGE_MS = 24 * 60 * 60 * 1000; // 24h: mensajes más viejos se descartan
 
-/** @type {Array<{id: string, jid: string, text: string, metadata: Object, createdAt: number, attempts: number}>} */
+/** @type {Array<{id: string, jid: string, text: string, metadata: Object, createdAt: number, attempts: number, controlSnapshot?: any, sourceMessageIds?: string[]}>} */
 let queue = [];
 
 /** @type {((item: any) => Promise<void>) | null} */
@@ -74,7 +74,7 @@ loadFromDisk();
 /**
  * Encola un mensaje del cliente. Devuelve true si entró en la cola,
  * false si la cola está llena (el mensaje se descarta).
- * @param {{jid: string, text: string, metadata: Object}} item
+ * @param {{jid: string, text: string, metadata: Object, controlSnapshot?: any, sourceMessageIds?: string[]}} item
  * @returns {boolean}
  */
 function enqueue(item) {
@@ -88,7 +88,9 @@ function enqueue(item) {
         text: item.text,
         metadata: item.metadata,
         createdAt: Date.now(),
-        attempts: 0
+        attempts: 0,
+        ...(Array.isArray(item.sourceMessageIds) && item.sourceMessageIds.length ? { sourceMessageIds: item.sourceMessageIds } : {}),
+        ...(item.controlSnapshot ? { controlSnapshot: item.controlSnapshot } : {})
     };
     queue.push(entry);
     try {
@@ -127,6 +129,32 @@ function saveHead() {
     } catch (e) {
         logError.error('📥 [COLA] Error al persistir la cola: ' + errMsg(e));
     }
+}
+
+/** Preserve only old unversioned jobs for review; versioned source IDs can resume safely. */
+function invalidateLegacyReplay() {
+    if (flushTimer) clearTimeout(flushTimer);
+    flushTimer = null;
+    const original = queue;
+    const replayable = original.filter(entry => entry?.controlSnapshot?.conversationId
+        && Array.isArray(entry.sourceMessageIds) && entry.sourceMessageIds.length > 0);
+    const legacy = original.filter(entry => !replayable.includes(entry));
+    const invalidated = legacy.length;
+    queue = replayable;
+    let archivedPath = /** @type {string|null} */ (null);
+    try {
+        if (legacy.length) {
+            archivedPath = `${QUEUE_FILE}.legacy-${Date.now()}-${crypto.randomUUID()}.jsonl`;
+            fs.writeFileSync(archivedPath, legacy.map(entry => JSON.stringify(entry)).join('\n') + '\n', { mode: 0o600 });
+        }
+        persist();
+    } catch (e) {
+        logError.error('📥 [COLA] No se pudo archivar la cola heredada: ' + errMsg(e));
+        queue = original;
+        if (archivedPath) { try { fs.unlinkSync(archivedPath); } catch { /* preserve the queue if archive creation failed */ } }
+        archivedPath = null;
+    }
+    return { invalidated, archivedPath };
 }
 
 function getQueueStats() {
@@ -209,6 +237,7 @@ module.exports = {
     peek,
     removeHead,
     saveHead,
+    invalidateLegacyReplay,
     getQueueStats,
     setFlushHandler,
     setSock,

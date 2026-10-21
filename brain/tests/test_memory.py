@@ -59,6 +59,22 @@ def test_clear_history(tmp_path):
     assert M.clear_history("bot1", "user1") is False
 
 
+def test_generation_ledger_is_idempotent_and_invalidated_generations_cannot_return(tmp_path):
+    _nueva_db(tmp_path)
+    assert M.save_generation("gen1", "fingerprint", "2", "respuesta", "fake") == {
+        "status": "generated", "response": "respuesta", "provider": "fake"
+    }
+    assert M.get_generation("gen1")["response"] == "respuesta"
+    assert M.save_generation("gen1", "fingerprint", "2", "otra", "fake")["response"] == "respuesta"
+    M.invalidate_generation("gen2", "3")
+    assert M.get_generation("gen2")["status"] == "invalidated"
+    try:
+        M.save_generation("gen2", "fingerprint", "3", "tardía", "fake")
+        raise AssertionError("una generación invalidada no puede quedar disponible")
+    except ValueError as error:
+        assert str(error) == "GENERATION_INVALIDATED"
+
+
 def test_truncado_por_cantidad(tmp_path, monkeypatch):
     # Fija el límite de cantidad para validar el recorte, independiente del
     # default activo en .env.tuning (que puede ser 0 = sin límite).

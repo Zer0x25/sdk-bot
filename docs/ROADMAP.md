@@ -34,7 +34,8 @@ la unidad de seguridad cerró BUG-062 en dependencias de medios y F4.2 conecta l
 lista e historial reales. F4.3 añade conexión SSE, actualización paginada sin
 huecos, ancla de scroll, contador de novedades, reconexión y resync. Evidencia:
 [F4.3](F4.3-STREAM-INBOX.md); BUG-070 cerrado.
-BUG-050 conserva salidas ambiguas; BUG-051 es puerta antes de usar archivos
+BUG-043 quedó cerrado con una guarda de reintento ligada a la cuenta Telegram de
+origen. BUG-050 conserva salidas ambiguas; BUG-051 es puerta antes de usar archivos
 preexistentes reales. La atribución IA/operador queda en F5 junto a su outbox.
 Sin canales reales ni migración.
 
@@ -252,28 +253,51 @@ Compositor todavía no ofrece enviar.
 
 **Depende de:** Fases 2–4.
 
-- [ ] Introducir coordinación por conversación, controlVersion y jobs cancelables
-  en debounce, pool global, petición, typing, pausas, reintentos y cola persistente.
-  Migrar o invalidar explícitamente trabajos JSONL previos y operaciones pendientes;
-  no reproducir trabajos con permisos/versiones obsoletos tras reinicio.
-- [ ] Migrar autoridad de acceso/control a SQLite mediante importación verificable
-  de contactos/handoff. JSON queda como fuente previa de rollback/exportación,
-  sin doble autoridad. Mapeo conservador: handoff -> human sin autorizar IA;
-  accessPolicy previa desconocida -> neutral. Confirmar la nueva semántica de TTL.
-- [ ] Comandos legacy y endpoints de estado llaman al mismo servicio de control;
-  reemplazar búsqueda ambigua de dígitos con identidad exacta por canal/cuenta.
-  Conservar aliases y explicar el cambio a control explícito sin caducidad.
-- [ ] Implementar takeover/release/operaciones con versión, propietario y auditoría;
-  estado tomando control mientras se drenan envíos ya iniciados con timeout.
-- [ ] Outbox y SendMessage comunes a humano/IA/avisos; reconducir `/notify` y
-  envíos directos. Campañas usan el puerto común conservando su política/intent.
-- [ ] Idempotencia de mensajes, intento antes de red, estados reales y
-  delivery_unknown. Recuperación tras crash sin reenvío automático de ambiguos.
-- [ ] Brain GenerateReply con generationId y contexto explícito/versionado o
-  protocolo equivalente de confirmación. Incluir mensajes humanos; invalidar
-  memoria de respuestas canceladas; confirmar solo globos realmente enviados.
-- [ ] Release future_only por defecto; no resucitar buffers viejos. Pausa global
-  corta IA pero conserva archivo y respuesta manual autorizada.
+- [x] **F5.1 — Estado de control durable:** SQLite v5 conserva acceso, modo,
+  lifecycle, propietario y versiones por conversación. CAS actualiza controlVersion
+  y aggregateVersion junto con el evento/auditoría en una transacción. Los defaults
+  de migración son neutrales y con IA apagada. JSON sigue alimentando las lecturas
+  hasta el corte verificable. Evidencia: [F5.1](F5.1-CONTROL-DURABLE.md).
+- [x] **F5.2 — Importación dry-run:** leer JSON sin mutarlo; checksum por origen,
+  reglas conservadoras de handoff/permisos, identidades exactas, conflictos y
+  cuarentena. El informe cuadra origen/importado/cuarentena/exclusiones y permite
+  revisión; no cambia autoridad ni inicia IA. CLI de solo lectura, bloquea gateway
+  activo/WAL pendiente. Evidencia: [F5.2](F5.2-IMPORT-DRY-RUN.md).
+- [x] **F5.3 — Staging y corte de autoridad:** esquema v6, importación idempotente
+  por migrationId, snapshot de fuentes/archivo, staging y verificación por lotes,
+  delta y rollback recuperable. Bajas/remapeos bloquean salvo aceptación explícita;
+  JSON se conserva. Si el corte cae a mitad, el gateway falla cerrado y exige
+  reanudar o rollback. La autoridad permanece legacy hasta que F5.4 registre el
+  servicio SQLite listo. Handoff vencido sigue human explícito. Evidencia:
+  [F5.3](F5.3-STAGING-CUTOVER.md).
+- [x] **F5.4 — Servicio de control compartido y activación:** takeover/release/
+  resolver y cambios de acceso con expectedVersion, actor/propietario, auditoría y
+  operación recuperable mientras drena una salida ya iniciada. API, comandos legacy
+  y estado llaman el mismo dominio; resolución exacta por canal/cuenta, sin dígitos
+  ambiguos. El gateway registra servicio listo y el corte verificado cambia la
+  autoridad a SQLite. Migración v6→v7 conserva eventos y agrega operaciones
+  recuperables; la aceptación de corte se ejecutó sobre fixtures, sin datos runtime.
+  Evidencia: [F5.4](F5.4-CONTROL-SERVICE.md).
+- [x] **F5.5 — Barrera y coordinación de jobs:** serializar por conversación y
+  comprobar controlVersion, policyVersion y contextVersion en debounce, pool,
+  generación, typing, pausas, retries y cada globo. Cancelar trabajos obsoletos;
+  al activar SQLite se archiva la cola JSONL heredada para impedir replay tras
+  reiniciar. Evidencia: [F5.5](F5.5-JOB-BARRIER.md).
+- [x] **F5.6 — Outbox y salida común:** SendMessage para persona/IA/avisos y puerto
+  de campañas con su intent/política. Persistir intención antes de red, usar
+  idempotencia local, estados reales y delivery_unknown; una respuesta ambigua
+  tras crash queda para reconciliar, sin retry automático ciego. Reconducir `/notify`
+  y envíos directos. Evidencia: [F5.6](F5.6-OUTBOX.md); outbox SQLite v8, pruebas
+  de concurrencia/reinicio y campañas heredadas pausadas ante ambigüedad.
+- [x] **F5.7 — Contexto y reanudación IA:** GenerateReply con generationId y
+  contexto explícito/versionado, incluir mensajes humanos, invalidar respuestas
+  canceladas y confirmar solo globos enviados. Release usa `future_only`; la pausa
+  global conserva captura y respuesta humana autorizada. Evidencia:
+  [F5.7](F5.7-CONTEXTO-IA.md); archivo SQLite v9 y pruebas de replay/contexto.
+- [x] **F5.8 — Aceptación integrada:** ejecutar la matriz siguiente con transportes
+  falsos, incluyendo reinicios y fallos entre commit/red/ACK. Los defectos que no
+  bloqueen la unidad se registran en backlog con prioridad y fase límite. Evidencia:
+  [F5.8](F5.8-ACEPTACION-INTEGRADA.md); lint, tipos, panel y 310 pruebas Node pasan.
 
 **Aceptación obligatoria con transportes/proveedores falsos:**
 
@@ -292,17 +316,28 @@ Compositor todavía no ofrece enviar.
 
 **Depende de:** Fase 5.
 
-- [ ] Cabecera Tomar control/Devolver a IA; compositor condicionado a estado confirmado,
-  permisos y propietario; estados taking_control, conflicto y envío incierto claros.
-- [ ] Envío optimista por clientMessageId, reconciliación por evento/HTTP y borrador
-  conservado si falla. Reintento ambiguo exige acción expresa informada.
-- [ ] Resolver/reabrir y lectura; devolver a IA conserva permisos y permite elegir
-  procesar pendientes, sin activarlo de forma silenciosa.
-- [ ] E2E completo: entrada -> hilo -> takeover -> mensaje humano -> recepción de
-  cliente durante human -> release -> siguiente respuesta IA con contexto correcto.
-- [ ] Smoke manual documentado en cuenta de prueba WA/TG cuando esté disponible;
-  una única instancia y resultados separados de simulación. No ejecutar reset para
-  fabricar datos. Registrar si la validación externa queda pendiente.
+- [x] **F6.1** Cabecera Tomar control/Devolver a IA, resolver/reabrir y compositor
+  condicionados a permisos, propietario y control confirmado. El compositor además
+  requiere cuenta conectada y compatible. El envío usa outbox durable,
+  `clientMessageId`, reconciliación de archivo/evento y borrador conservado; un
+  resultado incierto exige confirmación informada para generar otro envío. Evidencia
+  y límites: [F6.1](F6.1-ENVIO-HUMANO.md).
+- [x] **F6.2** Devolver a IA conserva la política de acceso y permite elegir
+  explícitamente `future_only` o seleccionar entradas pendientes verificables para
+  procesarlas; nunca reanudar pendientes sin elección. Evidencia y límites:
+  [F6.2](F6.2-REANUDACION-PENDIENTES.md).
+- [x] **F6.3** Flujo integrado: entrada -> hilo -> takeover -> mensaje humano ->
+  recepción de cliente durante human -> release explícito -> respuesta IA con
+  contexto correcto. Evidencia y límites: [F6.3](F6.3-FLUJO-CONVERSACION.md).
+- [ ] **F6.4** Smoke manual en cuenta de prueba WA/TG conectada; una única
+  instancia y resultados separados de simulación. No ejecutar reset para
+  fabricar datos. El 2026-10-21 se completó el recorrido live de WhatsApp hasta
+  release con `process_pending`; una respuesta IA figura enviada. `ignored_all`
+  quedó activo y el chat de prueba volvió a `neutral/off`. El contexto real del
+  proveedor no se instrumentó; quedan pendientes la revisión completa de teclado,
+  compositor y controles móviles, además del smoke de Telegram. Las dos parejas
+  teléfono/LID ambiguas permanecen en cuarentena. Estado y evidencia:
+  [F6.4](F6.4-SMOKE-CANAL.md).
 
 **Aceptación:** flujo operativo completo, reinicios/reconexión, móvil y teclado.
 Esta es la v1 útil; publicar/desplegar es una acción separada, no automática.

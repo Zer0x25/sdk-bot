@@ -84,6 +84,52 @@ test('saveHead persiste el contador de intentos', () => {
     }
 });
 
+test('la autoridad SQLite archiva e invalida jobs JSONL heredados sin replay tras reiniciar', () => {
+    const t = withTempQueuePath();
+    try {
+        const queue = freshQueue();
+        queue.enqueue(item({ text: 'antiguo 1' }));
+        queue.enqueue(item({ text: 'antiguo 2' }));
+        const result = queue.invalidateLegacyReplay();
+        assert.equal(result.invalidated, 2);
+        assert.ok(result.archivedPath);
+        assert.equal(require('node:fs').readFileSync(result.archivedPath, 'utf8').includes('antiguo 1'), true);
+        assert.equal(queue.getQueueStats().pending, 0);
+        assert.equal(require('node:fs').readFileSync(t.queuePath, 'utf8'), '');
+
+        const reopened = freshQueue();
+        assert.equal(reopened.getQueueStats().pending, 0);
+    } finally {
+        t.restore();
+    }
+});
+
+test('F5.7 preserves versioned queue entries with their durable source IDs across restart', () => {
+    const t = withTempQueuePath();
+    try {
+        const queue = freshQueue();
+        const versioned = item({ text: 'mensaje versionado', controlSnapshot: {
+            conversationId: '11111111-1111-4111-8111-111111111111', controlVersion: '3', contextVersion: '2', policyVersion: '4'
+        }, sourceMessageIds: ['22222222-2222-4222-8222-222222222222'] });
+        queue.enqueue(item({ text: 'mensaje viejo' }));
+        queue.enqueue(versioned);
+        const result = queue.invalidateLegacyReplay();
+        assert.equal(result.invalidated, 1);
+        assert.ok(result.archivedPath);
+        assert.equal(require('node:fs').readFileSync(result.archivedPath, 'utf8').includes('mensaje viejo'), true);
+        assert.equal(require('node:fs').readFileSync(result.archivedPath, 'utf8').includes('mensaje versionado'), false);
+        assert.equal(queue.peek().text, 'mensaje versionado');
+        assert.deepEqual(queue.peek().sourceMessageIds, versioned.sourceMessageIds);
+
+        const reopened = freshQueue();
+        assert.equal(reopened.peek().id, queue.peek().id);
+        assert.deepEqual(reopened.peek().controlSnapshot, versioned.controlSnapshot);
+        assert.deepEqual(reopened.peek().sourceMessageIds, versioned.sourceMessageIds);
+    } finally {
+        t.restore();
+    }
+});
+
 test('flush procesa la cola con el handler registrado', async () => {
     const t = withTempQueuePath();
     try {

@@ -64,6 +64,22 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/conversations/{conversationId}/pending-resume": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get: operations["listPendingResumeMessages"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/conversations/{conversationId}/read": {
         parameters: {
             query?: never;
@@ -227,6 +243,9 @@ export interface components {
             handoffReason: ("operator" | "customer_request" | "external_self" | "legacy_import" | "identity_conflict") | null;
             lifecycle: components["schemas"]["Lifecycle"];
             ownerId: components["schemas"]["Id"] | null;
+            profileKey: string | null;
+            requiresReview: boolean;
+            reviewReasons: ("invalid_legacy_state" | "invalid_profile_key" | "profile_inventory_unavailable" | "profile_missing")[];
             /** @enum {string} */
             status: "confirmed" | "taking_control";
             takenAt: components["schemas"]["Timestamp"] | null;
@@ -261,7 +280,7 @@ export interface components {
         /** @enum {string} */
         DeliveryStatus: "received" | "queued" | "sending" | "sent" | "delivered" | "read" | "failed" | "delivery_unknown" | "cancelled";
         /** @enum {string} */
-        ErrorCode: "UNAUTHENTICATED" | "FORBIDDEN" | "NOT_FOUND" | "VALIDATION_ERROR" | "VERSION_CONFLICT" | "OWNER_CONFLICT" | "IDENTITY_AMBIGUOUS" | "IDENTITY_CONFLICT" | "IDEMPOTENCY_CONFLICT" | "IDEMPOTENCY_RESULT_EXPIRED" | "CONTROL_NOT_CONFIRMED" | "ACCESS_IGNORED" | "CURSOR_EXPIRED" | "DATA_EPOCH_MISMATCH" | "SERVICE_UNAVAILABLE" | "TIMEOUT" | "INTERNAL_ERROR";
+        ErrorCode: "UNAUTHENTICATED" | "FORBIDDEN" | "NOT_FOUND" | "VALIDATION_ERROR" | "VERSION_CONFLICT" | "OWNER_CONFLICT" | "IDENTITY_AMBIGUOUS" | "IDENTITY_CONFLICT" | "IDEMPOTENCY_CONFLICT" | "IDEMPOTENCY_RESULT_EXPIRED" | "CONTROL_NOT_CONFIRMED" | "CHANNEL_NOT_READY" | "CONVERSATION_NOT_FOUND" | "CONTROL_AUTHORITY_NOT_ACTIVE" | "CONTROL_HUMAN_SEND_IN_FLIGHT" | "CONTROL_OPERATION_MISSING" | "CONTROL_OWNER_CONFLICT" | "CONTROL_SERVICE_NOT_READY" | "CONTROL_TARGET_NOT_FOUND" | "CONTROL_VERSION_CONFLICT" | "ACCESS_IGNORED" | "CURSOR_EXPIRED" | "DATA_EPOCH_MISMATCH" | "IDEMPOTENCY_KEY_REUSED" | "OUTBOUND_DELIVERY_UNKNOWN" | "OUTBOUND_IN_PROGRESS" | "OUTBOUND_REJECTED" | "PENDING_RESUME_MESSAGE_NOT_ELIGIBLE" | "PENDING_RESUME_NOT_AVAILABLE" | "PENDING_RESUME_SELECTION_STALE" | "SERVICE_UNAVAILABLE" | "TIMEOUT" | "INTERNAL_ERROR";
         /** @description Solo mensajes saneados. Sin raw, stack, rutas locales, tokens ni payload arbitrario. */
         ErrorResponse: {
             error: {
@@ -499,6 +518,27 @@ export interface components {
         PageCursor: string;
         /** @default 50 */
         PageLimit: number;
+        PendingResumeCandidate: {
+            /** @enum {string} */
+            contentType: "text" | "audio" | "image" | "video" | "document";
+            inboundSeq: components["schemas"]["Sequence"];
+            ingestedAt: components["schemas"]["Timestamp"];
+            messageId: components["schemas"]["Id"];
+            occurredAt: components["schemas"]["Timestamp"];
+            preview: string;
+        };
+        PendingResumeResponse: {
+            automationMayBeBlocked: boolean;
+            candidateCount: number;
+            candidates: components["schemas"]["PendingResumeCandidate"][];
+            controlVersion: components["schemas"]["Version"];
+            conversationId: components["schemas"]["Id"];
+            excludedPendingDispatchCount: number;
+            excludedUnprocessableCount: number;
+            selectionVersion: string;
+            truncated: boolean;
+            uncertainOutboundCount: number;
+        };
         ProviderMessageId: string;
         /** @description Cursor monotónico del actor y chat; no recibo del proveedor. */
         ReadRequest: {
@@ -524,6 +564,7 @@ export interface components {
             pendingInboundIds: components["schemas"]["Id"][];
             /** @constant */
             resumePolicy: "process_pending";
+            selectionVersion: string;
         };
         /** Format: unicode-text */
         search: string;
@@ -568,9 +609,15 @@ export interface components {
          */
         Timestamp: string;
         unreadOnly: boolean;
+        /** @description CAS por controlVersion; se requiere al menos un cambio de lifecycle, acceso o perfil. */
         UpdateConversationRequest: {
+            accessPolicy?: components["schemas"]["AccessPolicy"];
             expectedVersion: components["schemas"]["Version"];
+            lifecycle?: components["schemas"]["Lifecycle"];
+        } | {
             lifecycle: components["schemas"]["Lifecycle"];
+        } | {
+            accessPolicy: components["schemas"]["AccessPolicy"];
         };
         /** @description Versión positiva decimal como texto. No intercambiar controlVersion con aggregateVersion. */
         Version: string;
@@ -849,6 +896,34 @@ export interface operations {
             404: components["responses"]["404"];
             409: components["responses"]["409"];
             410: components["responses"]["410"];
+            422: components["responses"]["422"];
+            503: components["responses"]["503"];
+        };
+    };
+    listPendingResumeMessages: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                conversationId: components["schemas"]["Id"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Entradas live no atendidas, recientes y verificables que pueden elegirse al devolver el control. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["PendingResumeResponse"];
+                };
+            };
+            401: components["responses"]["401"];
+            403: components["responses"]["403"];
+            404: components["responses"]["404"];
+            409: components["responses"]["409"];
             422: components["responses"]["422"];
             503: components["responses"]["503"];
         };

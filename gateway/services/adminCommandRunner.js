@@ -16,8 +16,10 @@ const ADMIN_JID = 'admin-web@web';
 /**
  * @param {Array<{type: string, text?: string, fileName?: string, caption?: string, base64?: string}>} replies
  */
-function makeVirtualSock(replies) {
+function makeVirtualSock(replies, context = {}) {
     return {
+        channel: context.channel || 'whatsapp',
+        accountId: context.accountId || null,
         /** @param {any} text */
         async sendMessage(_jid, text, _options) {
             if (typeof text === 'string') {
@@ -43,13 +45,13 @@ function makeVirtualSock(replies) {
  * @param {any} input
  * @returns {Promise<{ok: boolean, replies: Array<{type: string, text?: string, fileName?: string, caption?: string, base64?: string}>}>}
  */
-async function runAdminCommand(input) {
+async function runAdminCommand(input, context = {}) {
     const text = String(input || '').trim();
     if (!text) return { ok: false, replies: [{ type: 'text', text: '⚠️ Comando vacío.' }] };
     const replies = [];
     const commandLine = text.startsWith('/') ? text : `/${text}`;
     try {
-        await handleAdminCommand(commandLine, ADMIN_JID, makeVirtualSock(replies), /** @type {any} */ ({}));
+        await handleAdminCommand(commandLine, ADMIN_JID, makeVirtualSock(replies, context), /** @type {any} */ ({}));
         return { ok: true, replies };
     } catch (e) {
         const { errMsg } = require('./logger');

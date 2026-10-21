@@ -42,7 +42,14 @@ estos grants no convierten el panel anterior en roles de equipo (BUG-024).
 Dev v1 exige NODE_ENV=development, OAuth desactivado y PANEL_DEV_ACTOR=true.
 Identidad estable dev:local y grants de esa clave. No hay fallback por IP,
 X-Status-Token, ausencia de credenciales ni producción. Legacy dev sigue abierto.
-No publicar ese modo local en redes no confiables.
+No publicar ese modo local en redes no confiables. Para probar la bandeja v1 en
+loopback, el launcher admite fijar los tres hosts:
+
+```bash
+BRAIN_HOST=127.0.0.1 ADMIN_WEB_HOST=127.0.0.1 STATUS_HOST=127.0.0.1 PANEL_DEV_ACTOR=true bash deploy/linux/dev.sh up all
+```
+
+Con ese actor, no usar `0.0.0.0` ni un túnel/reverse proxy sin autenticación.
 
 ## Firma y bus
 
