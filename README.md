@@ -2,12 +2,49 @@
 
 **Plataforma Multi-Canal (WhatsApp & Telegram) 100% Custom, Smart Sync & Automated Handoff** — Gateway de mensajería modular con arquitectura Adapter Hub en Node.js + Cerebro IA en Python FastAPI con router multi-proveedor (Groq → OpenRouter → Gemini).
 
-## Evolución: bandeja de conversaciones y atención humana
+## Bandeja de conversaciones
 
-La siguiente etapa propone historial persistente, una bandeja similar a WhatsApp
-Web y control humano con respuesta desde el chat. Es una **base de diseño y hoja
-de ruta**; contratos, sesión/frontera autenticada y captura WA/Telegram con cursor
-durable en SQLite ya están implementados. La bandeja y el control desde el chat siguen pendientes.
+La bandeja nueva está implementada como una aplicación React/TypeScript en
+`gateway/panel/web`. Se abre en `/inbox`, lee conversaciones e historial desde la
+API autenticada y recibe actualizaciones en vivo. También permite tomar control,
+responder como operador y devolverlo a la IA con selección explícita de mensajes
+pendientes. El panel anterior se conserva en `/`; la nueva bandeja está apagada
+por defecto y requiere `PANEL_CONVERSATIONS_UI_ENABLED=true`. La aceptación F6.4
+sigue parcial: se ejercitaron takeover, respuesta humana, entrada durante `human`
+y release en WhatsApp; quedan pendientes la verificación live del contexto, la
+revisión de teclado y móvil, y el smoke de Telegram
+([F6.1](docs/F6.1-ENVIO-HUMANO.md), [F6.2](docs/F6.2-REANUDACION-PENDIENTES.md),
+[F6.3](docs/F6.3-FLUJO-CONVERSACION.md), [F6.4](docs/F6.4-SMOKE-CANAL.md)).
+
+### Compilar y ejecutar localmente
+
+Usa Node.js 22.13.0 o superior. Desde la raíz del repositorio:
+
+```bash
+# Solo si faltan las dependencias del gateway o cambió su lockfile
+(cd gateway && npm ci)
+
+# Recompila después de cambiar la interfaz; el launcher no hace el build
+(cd gateway && npm run panel:build)
+
+# Arranca el stack local con /inbox habilitada
+PANEL_CONVERSATIONS_UI_ENABLED=true bash deploy/linux/dev.sh up all
+```
+
+El proceso existente del panel sirve el artefacto en
+<http://localhost:5201/inbox/>; no hace falta levantar un servidor Vite aparte.
+`up all` detiene y vuelve a iniciar los servicios locales. Para consultar su
+estado o detenerlos:
+
+```bash
+bash deploy/linux/dev.sh status
+bash deploy/linux/dev.sh down
+```
+
+Docker compila la interfaz durante el build de la imagen. La activación por
+Compose y el estado funcional de la bandeja están descritos en
+[README de Docker](deploy/docker/README.md), [F4.2: lectura HTTP](docs/F4.2-LECTURA-HTTP-REAL.md)
+y [F4.3: actualización en vivo](docs/F4.3-STREAM-INBOX.md).
 
 - [Contratos v1 y comandos del workspace](packages/contracts/README.md)
 - [Sesión y frontera autenticada v1](docs/FRONTERA-AUTENTICADA-V1.md)
