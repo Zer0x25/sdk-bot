@@ -837,9 +837,11 @@ Cierres históricos: commits F2C.1/F2C.2/F2D/F2E.1 están en el log local; F2B.3
   entrada, `process_pending`/release y respuesta IA siguen pendientes hasta
   preparar y verificar el corte documentado en F5.3/F5.4. Teclado y viewport
   móvil se revisaron parcialmente: Tab alcanzó la navegación con foco visible y
-  390 × 844 px no produjo desbordamiento horizontal. El hilo aún indicó
-  `Reconectando`, así que no se validaron compositor ni controles del hilo. El
-  preflight live de F5.3 fue de
+  390 × 844 px no produjo desbordamiento horizontal. La pestaña original siguió
+  en `Reconectando`, aunque `/api/v1/events` respondió HTTP 200 como SSE; una
+  pestaña nueva llegó a `En vivo` y cargó la lista. No se seleccionó un chat en
+  la pestaña nueva, así que compositor y controles del hilo siguen pendientes.
+  El preflight live de F5.3 fue de
   solo lectura y bloqueó: 43/1007
   registros importables, 962 identidades sin conversación destino y 2 ambiguas.
   El segundo dry-run con `--exclude-no-conversation` excluyó los 962 contactos y
