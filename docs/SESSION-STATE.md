@@ -833,9 +833,13 @@ Cierres históricos: commits F2C.1/F2C.2/F2D/F2E.1 están en el log local; F2B.3
   runtime conserva autoridad `legacy`, por lo que no se envió respuesta humana, no
   se probó `process_pending` y no se pidió una segunda entrada. Se restauró el
   contacto a `neutro`; verificación final: `globalMode=ignored_all`.
-- No se ejecutó reset ni corte de autoridad. Pasos humanos/IA, teclado, móvil y
-  verificación funcional tras reinicio quedan pendientes hasta preparar y
-  verificar el corte documentado en F5.3/F5.4. El preflight live de F5.3 fue de
+- No se ejecutó reset ni corte de autoridad. Takeover/respuesta humana, segunda
+  entrada, `process_pending`/release y respuesta IA siguen pendientes hasta
+  preparar y verificar el corte documentado en F5.3/F5.4. Teclado y viewport
+  móvil se revisaron parcialmente: Tab alcanzó la navegación con foco visible y
+  390 × 844 px no produjo desbordamiento horizontal. El hilo aún indicó
+  `Reconectando`, así que no se validaron compositor ni controles del hilo. El
+  preflight live de F5.3 fue de
   solo lectura y bloqueó: 43/1007
   registros importables, 962 identidades sin conversación destino y 2 ambiguas.
   El segundo dry-run con `--exclude-no-conversation` excluyó los 962 contactos y
