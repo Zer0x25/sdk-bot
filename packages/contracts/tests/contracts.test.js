@@ -176,10 +176,12 @@ test('control request forms preserve optional defaults and exclude actor spoofin
   accept('ReleaseRequest', input);
   assert.deepEqual(input, { expectedVersion: '3' });
   accept('TakeoverRequest', { ...input, overrideOwner: true });
-  accept('ReleaseRequest', { ...input, resumePolicy: 'process_pending', pendingInboundIds: [id(6)] });
+  const pendingResume = { ...input, resumePolicy: 'process_pending', pendingInboundIds: [id(6)], selectionVersion: 'a'.repeat(64) };
+  accept('ReleaseRequest', pendingResume);
   reject('ReleaseRequest', { ...input, resumePolicy: 'process_pending' });
-  reject('ReleaseRequest', { ...input, resumePolicy: 'process_pending', pendingInboundIds: [] });
-  reject('ReleaseRequest', { ...input, resumePolicy: 'process_pending', pendingInboundIds: [id(6),id(6)] });
+  reject('ReleaseRequest', { ...input, resumePolicy: 'process_pending', pendingInboundIds: [id(6)] });
+  reject('ReleaseRequest', { ...pendingResume, pendingInboundIds: [] });
+  reject('ReleaseRequest', { ...pendingResume, pendingInboundIds: [id(6),id(6)] });
   reject('ReleaseRequest', { ...input, resumePolicy: 'future_only', pendingInboundIds: [id(6)] });
   const send = { ...input, clientMessageId: id(6), text: 'Respuesta', handledThroughInboundSeq: '9007199254740993' };
   accept('SendMessageRequest', send);

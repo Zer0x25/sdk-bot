@@ -213,7 +213,7 @@ test('F5.4 API uses signed actor identity, expectedVersion and durable operation
     assert.equal(takeover.response.conversation.control.automationMode, 'human');
     const pendingRelease = await request('POST', `/v1/conversations/${target.conversationId}/release`, {
         expectedVersion: takeover.response.conversation.control.controlVersion,
-        resumePolicy: 'process_pending', pendingInboundIds: [randomUUID()]
+        resumePolicy: 'process_pending', pendingInboundIds: [randomUUID()], selectionVersion: 'a'.repeat(64)
     }, { 'idempotency-key': 'api-release-pending-future-feature' });
     assert.equal(pendingRelease.status, 409);
     assert.equal(pendingRelease.response.code, 'PENDING_RESUME_NOT_AVAILABLE');

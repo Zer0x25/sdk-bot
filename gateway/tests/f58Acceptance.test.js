@@ -15,7 +15,9 @@ const assert = require('node:assert/strict');
 const fs = require('node:fs/promises');
 const os = require('node:os');
 const path = require('node:path');
+const { createHash, randomUUID } = require('node:crypto');
 const { createArchive } = require('../services/conversations');
+const { buildControlImportReport } = require('../services/conversations/controlImport');
 const ChannelAdapter = require('../core/ChannelAdapter');
 const { processAIChat } = require('../services/brainService');
 
@@ -31,23 +33,64 @@ async function fixture(t) {
     return { archive, account };
 }
 
+async function migrateControl(archive) {
+    const contacts = {};
+    const settings = { globalMode: 'allowed_all', currentProfile: 'default' };
+    const checksum = value => createHash('sha256').update(JSON.stringify(value)).digest('hex');
+    const ready = await archive.ready;
+    const snapshot = await archive.snapshot();
+    const report = buildControlImportReport({ contacts, settings, profileKeys: ['default'],
+        conversations: await archive.conversationRows(), sourceManifest: {
+            contacts: { present: true, sha256: checksum(contacts) },
+            settings: { present: true, sha256: checksum(settings) }
+        }, archive: { ...snapshot, schemaVersion: ready.schemaVersion }, generatedAt: '2026-10-20T12:00:00.000Z' });
+    const migrationId = `f58-${randomUUID()}`;
+    const started = await archive.beginControlImport({ migrationId, report });
+    for (let offset = 0; offset < started.report.entryCount; offset += 100) {
+        await archive.stageControlImportBatch({ runId: started.runId, offset, limit: 100 });
+    }
+    assert.equal((await archive.verifyControlImport({ runId: started.runId })).status, 'verified');
+    await archive.setControlServiceReady({ ready: true });
+    await archive.startControlCutover({ migrationId });
+    for (;;) {
+        const batch = await archive.applyControlCutoverBatch({ migrationId, limit: 100 });
+        if (batch.remaining === 0) break;
+    }
+    await archive.finishControlCutover({ migrationId });
+}
+
 function inbound(accountId, providerMessageId, text, occurredAt) {
     return { identity: { accountId, channel: 'whatsapp', kind: 'whatsapp_jid', exactValue: DESTINATION },
         providerMessageId, source: 'live', direction: 'inbound', authorKind: 'customer', occurredAt,
         content: { type: 'text', text } };
 }
 
-async function acceptedHumanMessage(archive, accountId, conversationId, suffix, text) {
+async function acceptedHumanMessage(archive, accountId, conversationId, suffix, text, actorId) {
     const idempotencyKey = `operator-send-f58-${suffix}`;
+    const current = await archive.controlState(conversationId);
+    let control = current;
+    if (current.accessPolicy !== 'allowed' || current.automationMode !== 'human' || current.ownerId !== actorId) {
+        const updated = await archive.writeControlState({ conversationId, actorId,
+            expectedVersion: current.controlVersion,
+            state: { ...current, accessPolicy: 'allowed', automationMode: 'human', ownerId: actorId } });
+        assert.equal(updated.status, 'updated');
+        control = updated.control;
+    }
+    const policy = await archive.controlPolicy();
+    const clientMessageId = randomUUID();
     await archive.beginOutboundIntent({ idempotencyKey, accountId, conversationId, channel: 'whatsapp',
-        destination: DESTINATION, actorId: ACCOUNT_ID, source: 'human', payload: { text, options: {} } });
-    await archive.claimOutboundIntent({ idempotencyKey });
+        destination: DESTINATION, actorId, source: 'human', payload: { text, options: {} },
+        controlSnapshot: { conversationId, controlVersion: control.controlVersion,
+            contextVersion: control.contextVersion, policyVersion: policy.policyVersion },
+        policy: { clientMessageId } });
+    const claimed = await archive.claimOutboundIntent({ idempotencyKey });
+    assert.equal(claimed.status, 'claimed');
     await archive.finishOutboundIntent({ idempotencyKey, state: 'accepted', providerMessageId: `human-${suffix}` });
     const [saved] = await archive.ingestBatch([{ identity: { accountId, channel: 'whatsapp',
         kind: 'whatsapp_jid', exactValue: DESTINATION }, providerMessageId: `human-${suffix}`, source: 'live',
     direction: 'outbound', authorKind: 'external_self', occurredAt: `2026-10-20T11:30:0${suffix}.000Z`,
     content: { type: 'text', text } }]);
-    assert.equal(saved.status, 'created');
+    assert.equal(saved.status, 'duplicate');
 }
 
 class FakeWhatsAppAdapter extends ChannelAdapter {
@@ -73,9 +116,18 @@ test('F5.8 integrated acceptance: human context reaches GenerateReply and an acc
     const { archive, account } = await fixture(t);
     const [prior] = await archive.ingestBatch([inbound(account.id, 'prior-f58', 'consulta previa', '2026-10-20T11:00:00.000Z')]);
     const conversationId = prior.message.conversationId;
-    await acceptedHumanMessage(archive, account.id, conversationId, '1', 'primera respuesta humana');
-    await acceptedHumanMessage(archive, account.id, conversationId, '2', 'segunda respuesta humana');
+    await migrateControl(archive);
+    const operatorId = randomUUID();
+    await acceptedHumanMessage(archive, account.id, conversationId, '1', 'primera respuesta humana', operatorId);
+    await acceptedHumanMessage(archive, account.id, conversationId, '2', 'segunda respuesta humana', operatorId);
     const [current] = await archive.ingestBatch([inbound(account.id, 'current-f58', 'consulta actual', '2026-10-20T12:01:00.000Z')]);
+    const beforeAI = await archive.controlState(conversationId);
+    const activatedAI = await archive.writeControlState({ conversationId, actorId: operatorId,
+        expectedVersion: beforeAI.controlVersion,
+        state: { ...beforeAI, accessPolicy: 'allowed', automationMode: 'ai', ownerId: null } });
+    assert.equal(activatedAI.status, 'updated');
+    const activeControl = await archive.controlState(conversationId);
+    const activePolicy = await archive.controlPolicy();
     const adapter = new FakeWhatsAppAdapter(archive, account.id);
     const previousFetch = global.fetch;
     const requests = [];
@@ -87,7 +139,8 @@ test('F5.8 integrated acceptance: human context reaches GenerateReply and an acc
         if (String(url).endsWith('/invalidate-generation')) return { ok: true };
         throw new Error(`Unexpected fake transport URL: ${url}`);
     };
-    const snapshot = { conversationId, controlVersion: '1', contextVersion: '1', policyVersion: '1' };
+    const snapshot = { conversationId, controlVersion: activeControl.controlVersion,
+        contextVersion: activeControl.contextVersion, policyVersion: activePolicy.policyVersion };
     const options = { controlSnapshot: snapshot, sourceMessageIds: [current.message.id], isCurrent: async () => true };
     try {
         await processAIChat('consulta actual', `whatsapp:${DESTINATION}`, {}, adapter, options);

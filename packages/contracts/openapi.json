@@ -973,6 +973,9 @@
       "ReleaseRequest": {
         "$ref": "./schema.json#/$defs/ReleaseRequest"
       },
+      "PendingResumeCandidate": {
+        "$ref": "./schema.json#/$defs/PendingResumeCandidate"
+      },
       "PendingResumeResponse": {
         "$ref": "./schema.json#/$defs/PendingResumeResponse"
       },
