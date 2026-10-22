@@ -329,15 +329,16 @@ Compositor todavía no ofrece enviar.
 - [x] **F6.3** Flujo integrado: entrada -> hilo -> takeover -> mensaje humano ->
   recepción de cliente durante human -> release explícito -> respuesta IA con
   contexto correcto. Evidencia y límites: [F6.3](F6.3-FLUJO-CONVERSACION.md).
-- [ ] **F6.4** Smoke manual en cuenta de prueba WA/TG conectada; una única
-  instancia y resultados separados de simulación. No ejecutar reset para
+- [ ] **F6.4** Smoke manual en cuenta de prueba de WhatsApp; una única
+  instancia y resultados separados de simulación. Telegram se usa para
+  administración, así que el smoke de atención a clientes en ese canal no aplica.
+  No ejecutar reset para
   fabricar datos. El recorrido live de WhatsApp incluyó takeover, respuesta
   humana, segunda entrada y release con `process_pending`; la respuesta IA figura
   enviada una vez. El 2026-10-22 también se verificó el hilo/compositor móvil a
   390 × 844 y 320 × 844 px; `ignored_all` quedó activo y el chat volvió a
   `neutral/off`. Siguen pendientes la inspección del contexto live, el orden
-  completo del teclado y el smoke de cliente Telegram (el mensaje observado fue
-  del chat administrativo). Las dos parejas teléfono/LID ambiguas permanecen en
+  completo del teclado. Las dos parejas teléfono/LID ambiguas permanecen en
   cuarentena. Estado y evidencia: [F6.4](F6.4-SMOKE-CANAL.md).
 
 **Aceptación:** flujo operativo completo, reinicios/reconexión, móvil y teclado.

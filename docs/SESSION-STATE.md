@@ -905,8 +905,9 @@ Cierres históricos: commits F2C.1/F2C.2/F2D/F2E.1 están en el log local; F2B.3
   a 390 × 844 px el compositor estuvo habilitado durante takeover humano. El build
   de la bandeja pasó con `npm run panel:build`. La revisión completa del orden Tab
   sigue pendiente.
-- El marcador de Telegram se envió al chat administrativo/self-chat, enrutado por
-  `self_chat_ai`; su respuesta legacy no cuenta como smoke de cliente. No se
-  registró el payload de contexto del proveedor. F6.4/Fase 6 siguen abiertas por
-  el smoke de cliente Telegram, el contexto live y el orden completo de teclado.
-  [Evidencia](F6.4-SMOKE-CANAL.md).
+- Telegram se reserva para administración. El marcador enviado al chat
+  administrativo/self-chat se enrutó por `self_chat_ai` y produjo una respuesta
+  legacy; queda como observación de esa ruta. El smoke de atención a clientes TG
+  no aplica al alcance acordado. No se registró el payload de contexto del
+  proveedor. F6.4/Fase 6 siguen abiertas por el contexto live y el orden completo
+  de teclado. [Evidencia](F6.4-SMOKE-CANAL.md).
