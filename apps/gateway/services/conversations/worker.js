@@ -17,7 +17,8 @@ const READ_ONLY_METHODS = new Set(['snapshot','telegramCursor','pendingLegacyDis
     'pendingResumeMessages','shouldProcessArchivedInbound',
     'outboundIntent','outboundIntents',
     'conversation','conversations','conversationRows','conversationView','conversationAddress','accounts','messages','messagePage','searchMessages','messageByProviderId','aiContext',
-    'events','eventsPage','diagnostics','recoveryCheckpoint','summary','attachmentTarget','attachment','attachmentRegistry','pendingAttachmentDeletions','close']);
+    'events','eventsPage','diagnostics','recoveryCheckpoint','summary','attachmentTarget','attachment','attachmentRegistry','pendingAttachmentDeletions',
+    'assistantToolInvocation','assistantToolInvocations','close']);
 function fail(code) { throw Object.assign(new Error(code), { code }); }
 function one(sql, ...params) { return db.prepare(sql).get(...params); }
 function run(sql, ...params) { return db.prepare(sql).run(...params); }
@@ -44,12 +45,14 @@ function recoveryCheckpoint() {
     const digest = createHash('sha256');
     const attachmentDigest = createHash('sha256');
     const searchDigest = createHash('sha256');
+    const assistantToolDigest = createHash('sha256');
     const schemaVersion = one('PRAGMA user_version').user_version;
     let outboundIntentCount = 0;
     let unresolvedOutboundCount = 0;
     let attachmentCount = 0;
     let searchIndexCount = 0;
     let searchIndexMismatchCount = 0;
+    let assistantToolInvocationCount = 0;
     // Schema v6 predates the durable outbox; keep it readable so the gate can
     // report the schema mismatch instead of failing before comparing metadata.
     if (schemaVersion >= 7) {
@@ -84,10 +87,19 @@ function recoveryCheckpoint() {
                 SELECT s.rowid FROM message_search s LEFT JOIN expected e ON e.rowid=s.rowid WHERE e.rowid IS NULL
             ) SELECT COUNT(*) n FROM mismatches`).n;
     }
+    if (schemaVersion >= 14) {
+        for (const row of db.prepare(`SELECT invocation_key,request_fingerprint,result_fingerprint,actor_id,
+            conversation_id,tool_name,effect,status,attempt_count,created_at,updated_at
+            FROM assistant_tool_invocations ORDER BY invocation_key`).iterate()) {
+            assistantToolDigest.update(stable(row)).update('\n');
+            assistantToolInvocationCount += 1;
+        }
+    }
     return { ...snapshot(), schemaVersion,
         controlAuthority: controlAuthority(), outboundIntentCount, outboundIntentSha256: digest.digest('hex'),
         unresolvedOutboundCount, attachmentCount, attachmentSha256: attachmentDigest.digest('hex'),
         searchIndexCount, searchIndexSha256: searchDigest.digest('hex'), searchIndexMismatchCount,
+        assistantToolInvocationCount, assistantToolInvocationSha256: assistantToolDigest.digest('hex'),
         integrity: one('PRAGMA integrity_check').integrity_check,
         foreignKeys: all('PRAGMA foreign_key_check').length };
 }
@@ -108,7 +120,7 @@ function initialize() {
         // committed WAL records or touching another process's snapshot.
         db = new DatabaseSync(`${pathToFileURL(file).href}?immutable=1`, { readOnly: true });
         const schemaVersion = one('PRAGMA user_version').user_version;
-        if (![6, 7, 8, 9, 10, 11, 12, 13].includes(schemaVersion)) fail('SCHEMA_VERSION_REQUIRED');
+        if (![6, 7, 8, 9, 10, 11, 12, 13, 14].includes(schemaVersion)) fail('SCHEMA_VERSION_REQUIRED');
         if (one("SELECT migration_id FROM control_import_migrations WHERE status IN ('cutover_applying','rolling_back') LIMIT 1")) {
             fail('CONTROL_CUTOVER_RECOVERY_REQUIRED');
         }
@@ -128,7 +140,7 @@ function initialize() {
     // SQLite owns the OS lock for the full connection lifetime; crash releases it.
     db.exec('BEGIN IMMEDIATE; COMMIT;');
     const version = one('PRAGMA user_version').user_version;
-    if (version > 13) fail('SCHEMA_TOO_NEW');
+    if (version > 14) fail('SCHEMA_TOO_NEW');
     if (version === 0) transaction(() => {
         db.exec(schema);
         run('INSERT INTO archive_meta VALUES(1,?,?)', randomUUID(), '0');
@@ -368,6 +380,25 @@ function initialize() {
         WHERE ${searchableMessageSql('messages')};
         PRAGMA user_version=13;`);
     });
+    if (one('PRAGMA user_version').user_version === 13) transaction(() => {
+        db.exec(`CREATE TABLE assistant_tool_invocations (
+            invocation_key TEXT PRIMARY KEY CHECK(length(invocation_key)=64 AND invocation_key NOT GLOB '*[^a-f0-9]*'),
+            request_fingerprint TEXT NOT NULL CHECK(length(request_fingerprint)=64 AND request_fingerprint NOT GLOB '*[^a-f0-9]*'),
+            result_fingerprint TEXT CHECK(result_fingerprint IS NULL OR
+                (length(result_fingerprint)=64 AND result_fingerprint NOT GLOB '*[^a-f0-9]*')),
+            actor_id TEXT NOT NULL,
+            conversation_id TEXT NOT NULL REFERENCES conversations(id) ON DELETE CASCADE,
+            tool_name TEXT NOT NULL CHECK(tool_name='conversation.search_messages'),
+            effect TEXT NOT NULL CHECK(effect='read'),
+            status TEXT NOT NULL CHECK(status IN ('completed','failed','denied')),
+            attempt_count INTEGER NOT NULL CHECK(attempt_count>=1),
+            created_at TEXT NOT NULL,
+            updated_at TEXT NOT NULL
+        );
+        CREATE INDEX assistant_tool_invocations_retention ON assistant_tool_invocations(created_at,invocation_key);
+        CREATE INDEX assistant_tool_invocations_conversation ON assistant_tool_invocations(conversation_id,created_at,invocation_key);
+        PRAGMA user_version=14;`);
+    });
     if (one("SELECT id FROM outbound_intents WHERE state='sending' LIMIT 1")) transaction(() => {
         run(`UPDATE outbound_intents SET state='delivery_unknown',error_code='PROCESS_RESTARTED_DURING_SEND',
             updated_at=?,completed_at=? WHERE state='sending'`, new Date().toISOString(), new Date().toISOString());
@@ -389,7 +420,7 @@ function initialize() {
         transaction(() => pending.forEach(row => updateTranscription({ messageId: row.id, expectedStatus: 'pending', status: 'failed' })));
         after = pending[pending.length - 1].id;
     }
-    return { ...snapshot(), schemaVersion: 13, journalMode: one('PRAGMA journal_mode').journal_mode,
+    return { ...snapshot(), schemaVersion: 14, journalMode: one('PRAGMA journal_mode').journal_mode,
         synchronous: one('PRAGMA synchronous').synchronous, threadId: require('node:worker_threads').threadId };
 }
 function registerAccount(input) {
@@ -971,6 +1002,43 @@ function outboundIntents(input = {}) {
     const where = clauses.length ? `WHERE ${clauses.join(' AND ')}` : '';
     return all(`SELECT * FROM outbound_intents ${where} ORDER BY created_at,id LIMIT ?`, ...params, limit).map(outboundIntentFromRow);
 }
+function assistantToolInvocationFromRow(row) {
+    if (!row) return null;
+    return { invocationKey: row.invocation_key, requestFingerprint: row.request_fingerprint,
+        resultFingerprint: row.result_fingerprint, actorId: row.actor_id, conversationId: row.conversation_id,
+        toolName: row.tool_name, effect: row.effect, status: row.status, attemptCount: row.attempt_count,
+        createdAt: row.created_at, updatedAt: row.updated_at };
+}
+function assistantToolInvocation(invocationKey) {
+    if (typeof invocationKey !== 'string' || !/^[a-f0-9]{64}$/.test(invocationKey)) fail('INVALID_TOOL_INVOCATION_KEY');
+    return assistantToolInvocationFromRow(one('SELECT * FROM assistant_tool_invocations WHERE invocation_key=?', invocationKey));
+}
+function assistantToolInvocations(input = {}) {
+    if (input.conversationId != null) assertValid('Id', input.conversationId);
+    const limit = input.limit ?? 100;
+    if (!Number.isInteger(limit) || limit < 1 || limit > 500) fail('INVALID_LIMIT');
+    return all(`SELECT * FROM assistant_tool_invocations ${input.conversationId ? 'WHERE conversation_id=?' : ''}
+        ORDER BY created_at,invocation_key LIMIT ?`, ...(input.conversationId ? [input.conversationId, limit] : [limit]))
+        .map(assistantToolInvocationFromRow);
+}
+function recordAssistantToolInvocation(input) {
+    assertValid('AssistantToolAuditRecord', input);
+    if (input.attemptCount !== 1) fail('INVALID_TOOL_ATTEMPT_COUNT');
+    const prior = one('SELECT * FROM assistant_tool_invocations WHERE invocation_key=?', input.invocationKey);
+    if (prior) {
+        if (prior.request_fingerprint !== input.requestFingerprint || prior.actor_id !== input.actorId
+            || prior.conversation_id !== input.conversationId || prior.tool_name !== input.toolName
+            || prior.effect !== input.effect) fail('TOOL_IDEMPOTENCY_KEY_REUSED');
+        run(`UPDATE assistant_tool_invocations SET result_fingerprint=?,status=?,attempt_count=attempt_count+1,updated_at=?
+            WHERE invocation_key=?`, input.resultFingerprint, input.status, input.updatedAt, input.invocationKey);
+        return { status: 'existing', invocation: assistantToolInvocation(input.invocationKey) };
+    }
+    run(`INSERT INTO assistant_tool_invocations(invocation_key,request_fingerprint,result_fingerprint,actor_id,
+        conversation_id,tool_name,effect,status,attempt_count,created_at,updated_at) VALUES(?,?,?,?,?,?,?,?,?,?,?)`,
+    input.invocationKey, input.requestFingerprint, input.resultFingerprint, input.actorId, input.conversationId,
+    input.toolName, input.effect, input.status, input.attemptCount, input.createdAt, input.updatedAt);
+    return { status: 'created', invocation: assistantToolInvocation(input.invocationKey) };
+}
 function aiContext(input) {
     assertValid('Id', input?.conversationId);
     if (input.expectedContextVersion !== undefined) assertValid('Version', input.expectedContextVersion);
@@ -1536,7 +1604,7 @@ function beginControlImport(input) {
     const report = input.report;
     if (!report || report.schemaVersion !== 1 || report.dryRun !== true || !Array.isArray(report.entries)
         || !Array.isArray(report.blockers) || typeof report.cutoverAllowed !== 'boolean') fail('INVALID_IMPORT_REPORT');
-    if (![6, 7, 8, 9, 10, 11, 12, 13].includes(report.sourceManifest?.archive?.schemaVersion) || typeof report.sourceManifest.archive.dataEpoch !== 'string'
+    if (![6, 7, 8, 9, 10, 11, 12, 13, 14].includes(report.sourceManifest?.archive?.schemaVersion) || typeof report.sourceManifest.archive.dataEpoch !== 'string'
         || !/^(0|[1-9][0-9]*)$/.test(report.sourceManifest.archive.seq || '')) fail('INVALID_IMPORT_SNAPSHOT');
     const currentSnapshot = snapshot();
     if (report.sourceManifest.archive.dataEpoch !== currentSnapshot.dataEpoch || report.sourceManifest.archive.seq !== currentSnapshot.seq) {
@@ -2317,7 +2385,10 @@ function purge(input) {
     const bodies = run('DELETE FROM messages WHERE id IN (SELECT id FROM messages WHERE ingested_at<? LIMIT ?)', cutoff(90), limit).changes;
     const events = run('DELETE FROM events WHERE seq IN (SELECT seq FROM events WHERE created_at<? LIMIT ?)', cutoff(7), limit).changes;
     const fingerprints = run('DELETE FROM fingerprints WHERE rowid IN (SELECT rowid FROM fingerprints WHERE ingested_at<? LIMIT ?)', cutoff(180), limit).changes;
-    return { bodies, events, fingerprints, remaining: bodies === limit || events === limit || fingerprints === limit };
+    const assistantToolInvocations = run(`DELETE FROM assistant_tool_invocations WHERE invocation_key IN
+        (SELECT invocation_key FROM assistant_tool_invocations WHERE created_at<? LIMIT ?)`, cutoff(180), limit).changes;
+    return { bodies, events, fingerprints, assistantToolInvocations,
+        remaining: bodies === limit || events === limit || fingerprints === limit || assistantToolInvocations === limit };
 }
 function eventPage(input) {
     const after = input.after ?? '0';
@@ -2381,6 +2452,9 @@ function dispatch(method, input) {
         case 'finishOutboundIntent': return transaction(() => finishOutboundIntent(input));
         case 'outboundIntent': return outboundIntent(input);
         case 'outboundIntents': return outboundIntents(input ?? {});
+        case 'assistantToolInvocation': return assistantToolInvocation(input);
+        case 'assistantToolInvocations': return assistantToolInvocations(input ?? {});
+        case 'recordAssistantToolInvocation': return transaction(() => recordAssistantToolInvocation(input));
         case 'reconcileOutboundIntent': return transaction(() => reconcileOutboundIntent(input));
         case 'controlPolicy': return controlPolicy();
         case 'writeControlPolicy': return transaction(() => writeControlPolicy(input));

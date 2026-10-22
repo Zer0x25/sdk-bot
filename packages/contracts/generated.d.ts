@@ -285,6 +285,33 @@ export interface components {
             displayName: string;
             id: components["schemas"]["Id"];
         };
+        /** @description Auditoría sin texto de consulta ni contenido de mensajes; retención de 180 días. */
+        AssistantToolAuditRecord: {
+            actorId: components["schemas"]["Id"];
+            attemptCount: number;
+            conversationId: components["schemas"]["Id"];
+            createdAt: components["schemas"]["Timestamp"];
+            /** @constant */
+            effect: "read";
+            invocationKey: string;
+            requestFingerprint: string;
+            resultFingerprint: string | null;
+            /** @enum {string} */
+            status: "completed" | "failed" | "denied";
+            /** @constant */
+            toolName: "conversation.search_messages";
+            updatedAt: components["schemas"]["Timestamp"];
+        };
+        /** @description Solicitud tipada de lectura; el Gateway valida permisos y ejecuta el caso de uso. */
+        AssistantToolRequest: {
+            /** @constant */
+            effect: "read";
+            input: components["schemas"]["ConversationSearchToolInput"];
+            /** @constant */
+            kind: "tool_request";
+            /** @constant */
+            toolName: "conversation.search_messages";
+        };
         /** @enum {string} */
         AutomationMode: "ai" | "human" | "off";
         AutomationProfile: {
@@ -371,6 +398,26 @@ export interface components {
             channelCapabilities: components["schemas"]["ChannelCapabilities"];
             conversation: components["schemas"]["Conversation"];
             snapshot: components["schemas"]["EventCursor"];
+        };
+        ConversationSearchToolHit: {
+            /** @enum {string} */
+            authorKind: "customer" | "ai" | "operator";
+            messageId: components["schemas"]["Id"];
+            occurredAt: components["schemas"]["Timestamp"];
+            /** Format: unicode-text */
+            snippet: string;
+        };
+        ConversationSearchToolInput: {
+            limit: number;
+            /** Format: unicode-text */
+            query: string;
+        };
+        ConversationSearchToolResult: {
+            hits: components["schemas"]["ConversationSearchToolHit"][];
+            invocationKey: string;
+            snapshot: components["schemas"]["EventCursor"];
+            /** @constant */
+            toolName: "conversation.search_messages";
         };
         ConversationsQuery: {
             accountId?: components["schemas"]["Id"];

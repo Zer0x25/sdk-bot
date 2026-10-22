@@ -90,6 +90,7 @@ export interface Archive {
         outboundIntentCount: number; outboundIntentSha256: string; unresolvedOutboundCount: number;
         attachmentCount: number; attachmentSha256: string;
         searchIndexCount: number; searchIndexSha256: string; searchIndexMismatchCount: number;
+        assistantToolInvocationCount: number; assistantToolInvocationSha256: string;
         integrity: string; foreignKeys: number }>;
     registerAccount(input: { id?: string; channel: 'whatsapp' | 'telegram'; providerKey: string }): Promise<{ id: string; channel: string; provider_key: string }>;
     telegramCursor(accountId: string): Promise<string | null>;
@@ -133,6 +134,11 @@ export interface Archive {
     outboundIntent(idempotencyKey: string): Promise<OutboundIntent | null>;
     outboundIntents(input?: { conversationId?: string; state?: OutboundIntent['state'];
         after?: { createdAt: string; id: string }; limit?: number }): Promise<OutboundIntent[]>;
+    assistantToolInvocation(invocationKey: string): Promise<Contract<'AssistantToolAuditRecord'> | null>;
+    assistantToolInvocations(input?: { conversationId?: string; limit?: number }): Promise<Contract<'AssistantToolAuditRecord'>[]>;
+    recordAssistantToolInvocation(input: Contract<'AssistantToolAuditRecord'>): Promise<{
+        status: 'created' | 'existing'; invocation: Contract<'AssistantToolAuditRecord'>;
+    }>;
     reconcileOutboundIntent(input: { idempotencyKey: string; actorId: string; state: 'accepted' | 'rejected';
         note: string; providerMessageId?: string | null }): Promise<{ status: 'reconciled' | 'existing'; intent: OutboundIntent }>;
     controlState(conversationId: string): Promise<Contract<'ConversationControl'> | null>;

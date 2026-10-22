@@ -63,6 +63,7 @@ function safeSummary(checkpoint) {
         attachmentBlobCount: checkpoint.attachmentBlobs.count, attachmentBlobBytes: checkpoint.attachmentBlobs.bytes,
         attachmentBlobsValid: checkpoint.attachmentBlobs.valid,
         searchIndexCount: checkpoint.searchIndexCount, searchIndexMismatchCount: checkpoint.searchIndexMismatchCount,
+        assistantToolInvocationCount: checkpoint.assistantToolInvocationCount,
         unresolvedOutboundCount: checkpoint.unresolvedOutboundCount,
         integrity: checkpoint.integrity, foreignKeys: checkpoint.foreignKeys };
 }
@@ -94,6 +95,10 @@ function compare(source, candidate) {
     }
     if (source.searchIndexCount !== candidate.searchIndexCount || source.searchIndexSha256 !== candidate.searchIndexSha256) {
         blockers.push('SEARCH_INDEX_MISMATCH');
+    }
+    if (source.assistantToolInvocationCount !== candidate.assistantToolInvocationCount
+        || source.assistantToolInvocationSha256 !== candidate.assistantToolInvocationSha256) {
+        blockers.push('ASSISTANT_TOOL_AUDIT_MISMATCH');
     }
     if (source.unresolvedOutboundCount > 0 || candidate.unresolvedOutboundCount > 0) {
         blockers.push('UNRESOLVED_OUTBOUND');

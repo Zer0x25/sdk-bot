@@ -28,6 +28,7 @@ interface Props {
   onMessagesSeen(): void;
   onAtLatestChange(atLatest: boolean): void;
   onLoadOlder(): Promise<unknown>;
+  onFocusAssistanceReference(messageId: string): Promise<void>;
   onRetryDetail(): void;
   onRetryMessages(): void;
   onMessageSearchInputChange(value: string): void;
@@ -250,13 +251,6 @@ export function ConversationThread(props: Props) {
     catch { olderLoadPending.current = false; }
   }
 
-  function focusAssistanceReference(messageId: string) {
-    const target = document.getElementById(`thread-message-${messageId}`);
-    if (!target) return;
-    target.scrollIntoView?.({ behavior: 'smooth', block: 'center' });
-    target.focus({ preventScroll: true });
-  }
-
   return (
     <section className={`thread-column${conversationId ? ' is-open' : ''}`} aria-label="Historial del chat">
       <header className="thread-header">
@@ -365,7 +359,7 @@ export function ConversationThread(props: Props) {
           </div>
           {controlNotice && <div className="thread-inline-status" role="status">{controlNotice}</div>}
           {controlError && <div className="thread-inline-error" role="alert">{controlError.message}</div>}
-          {canAssist && <p className="assistant-disclosure">Al preparar la asistencia, el texto reciente de este chat se enviará al Brain y proveedor configurados. El resumen y el borrador no se guardan ni se envían al canal.</p>}
+          {canAssist && <p className="assistant-disclosure">Al preparar la asistencia, el contexto reciente se enviará al Brain y proveedor configurados. Si hace falta, el Gateway buscará hasta cinco fragmentos anteriores de este mismo hilo. El resumen y el borrador no se guardan ni se envían al canal.</p>}
           {assistanceError && <div className="thread-inline-error" role="alert">{assistanceError.message}</div>}
           {assistance && (
             <section className="conversation-assistance-panel" aria-label="Resumen y borrador de asistencia">
@@ -379,7 +373,7 @@ export function ConversationThread(props: Props) {
                     <div className="assistance-citations" aria-label="Referencias del resumen">
                       {point.references.map(reference => (
                         <button key={reference.messageId} className="assistance-citation" type="button"
-                          onClick={() => focusAssistanceReference(reference.messageId)}
+                          onClick={() => { void props.onFocusAssistanceReference(reference.messageId); }}
                           title={`Mensaje ${reference.messageId}`}>
                           {authorNames[reference.authorKind]} · {formatSearchTime(reference.occurredAt)}
                         </button>
@@ -394,7 +388,7 @@ export function ConversationThread(props: Props) {
                 <div className="assistance-citations" aria-label="Referencias del borrador">
                   {assistance.draftReferences.map(reference => (
                     <button key={reference.messageId} className="assistance-citation" type="button"
-                      onClick={() => focusAssistanceReference(reference.messageId)}
+                      onClick={() => { void props.onFocusAssistanceReference(reference.messageId); }}
                       title={`Mensaje ${reference.messageId}`}>
                       {authorNames[reference.authorKind]} · {formatSearchTime(reference.occurredAt)}
                     </button>

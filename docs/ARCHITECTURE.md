@@ -405,13 +405,16 @@ throughMessageId/contextVersion. Limpiar memoria aumenta versión y evita volver
 a importar al contexto lo limpiado. Con varios globos solo confirmar los enviados;
 los de entrega incierta se señalan expresamente.
 
-Más adelante, cada herramienta IA declara nombre, schemas entrada/salida,
-timeout, permisos, clasificación read/write, auditoría e idempotencia. Consultas de
-chat/contactos pasan por casos de uso del gateway. Brain puede devolver solicitudes
-de herramientas tipadas; gateway las ejecuta, sin conexión brain -> canal/DB ni
-shell genérica. Primera función: borradores, sin publicar mientras un humano tenga
-control. Acciones externas con efectos requieren política expresa y ADR de alcance.
-No cambiar proveedores/SDK actuales solo por tener otra herramienta disponible.
+Las herramientas IA declaran nombre, schemas de entrada/salida, timeout, permisos,
+efecto read/write, auditoría e idempotencia. F10.2 habilita solo
+`conversation.search_messages`: lectura del mismo hilo y snapshot, hasta cinco
+resultados, permiso `conversations:read` y plazo de tres segundos. Brain puede
+solicitar una operación tipada; Gateway verifica y ejecuta el caso de uso. Brain no
+accede a SQLite, canales ni shell. El esquema no admite herramientas de escritura;
+la búsqueda deja auditoría con huellas, sin texto consultado o contenido, y retención
+de 180 días. Acciones externas con efectos requieren política expresa y ADR de
+alcance. No cambiar proveedores/SDK actuales solo por tener otra herramienta
+disponible.
 
 Las herramientas de desarrollo se usan con propósito: contratos para detectar
 incompatibilidades, Playwright para revisar el chat, adapters falsos para fallos y

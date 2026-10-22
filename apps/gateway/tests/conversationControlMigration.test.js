@@ -69,7 +69,7 @@ test('F5.3 migrates an existing v5 archive in place and preserves staged control
     t.after(() => fs.rm(dir, { recursive: true, force: true }));
     const archive = createArchive({ path: databasePath });
     t.after(() => archive.close());
-    assert.equal((await archive.ready).schemaVersion, 13);
+    assert.equal((await archive.ready).schemaVersion, 14);
     assert.deepEqual(await archive.controlState(conversationId), {
         accessPolicy: 'neutral', automationMode: 'human', lifecycle: 'open', ownerId: null,
         controlVersion: '4', contextVersion: '2', status: 'confirmed', takenAt: null, handoffReason: 'operator',
@@ -150,6 +150,7 @@ test('F5.4 v6 to v7 migration preserves the event timeline and permits audited g
         DROP TABLE events_v7;
         CREATE INDEX events_order ON events(length(seq),seq);
         CREATE INDEX events_retention ON events(created_at);
+        DROP TABLE assistant_tool_invocations;
         PRAGMA user_version=6;`);
     db.close();
 
@@ -163,7 +164,7 @@ test('F5.4 v6 to v7 migration preserves the event timeline and permits audited g
 
     const migrated = createArchive({ path: databasePath });
     t.after(() => migrated.close());
-    assert.equal((await migrated.ready).schemaVersion, 13);
+    assert.equal((await migrated.ready).schemaVersion, 14);
     assert.deepEqual(await migrated.events({ after: '0' }), beforeEvents);
     const policy = await migrated.writeControlPolicy({ actorId: randomUUID(), expectedVersion: '1',
         globalMode: 'allowed_all', globalProfileKey: null });
@@ -176,7 +177,7 @@ test('F5.4 v6 to v7 migration preserves the event timeline and permits audited g
 
 test('F5.3 stages idempotently, preserves legacy authority and blocks unsafe deltas', async t => {
     const { archive } = await fixture(t, ['111', '222']);
-    assert.equal((await archive.ready).schemaVersion, 13);
+    assert.equal((await archive.ready).schemaVersion, 14);
     assert.deepEqual(await archive.controlAuthority(), { mode: 'legacy', migrationId: null, serviceReady: false, changedAt: null });
     const contacts = { alice: { phone: '111', estado: 'permitido' } };
     const first = await reportFor(archive, contacts);

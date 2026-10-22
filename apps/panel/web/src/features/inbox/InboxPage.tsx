@@ -160,6 +160,33 @@ export function InboxPage() {
     && !confirmedClientMessageIds.has(message.clientMessageId || ''));
   const visibleMessages = [...messages, ...visibleOptimisticMessages]
     .sort((left, right) => left.occurredAt.localeCompare(right.occurredAt) || left.id.localeCompare(right.id));
+  async function focusAssistanceReference(messageId: string) {
+    const targetConversationId = conversationId;
+    if (!targetConversationId) return;
+
+    let pages = messagesQuery.data?.pages ?? [];
+    let hasNextPage = messagesQuery.hasNextPage;
+    let pagesFetched = 0;
+    const hasMessage = () => pages.some(page => page.items.some(message => message.id === messageId));
+
+    while (!hasMessage() && hasNextPage && pagesFetched < 50
+      && activeConversationId.current === targetConversationId) {
+      const result = await messagesQuery.fetchNextPage();
+      pages = result.data?.pages ?? pages;
+      hasNextPage = result.hasNextPage;
+      pagesFetched += 1;
+      if (result.isFetchNextPageError) break;
+    }
+
+    if (!hasMessage() || activeConversationId.current !== targetConversationId) return;
+    await new Promise<void>(resolve => window.setTimeout(resolve, 0));
+    if (activeConversationId.current !== targetConversationId) return;
+
+    const target = document.getElementById(`thread-message-${messageId}`);
+    if (!target) return;
+    target.scrollIntoView?.({ behavior: 'smooth', block: 'center' });
+    target.focus({ preventScroll: true });
+  }
   const selectedConversation = conversationQuery.data?.conversation;
   const accounts = accountsQuery.data?.items ?? [];
   const selectedAccount = accounts.find(account => account.id === selectedConversation?.accountId);
@@ -547,6 +574,7 @@ export function InboxPage() {
         onMessagesSeen={live.clearNewMessages}
         onAtLatestChange={setIsAtLatest}
         onLoadOlder={() => messagesQuery.fetchNextPage()}
+        onFocusAssistanceReference={focusAssistanceReference}
         onRetryDetail={() => { void conversationQuery.refetch(); }}
         onRetryMessages={() => {
           void messagesQuery.refetch();

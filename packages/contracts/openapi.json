@@ -1152,6 +1152,21 @@
       "ConversationAssistanceResponse": {
         "$ref": "./schema.json#/$defs/ConversationAssistanceResponse"
       },
+      "AssistantToolRequest": {
+        "$ref": "./schema.json#/$defs/AssistantToolRequest"
+      },
+      "ConversationSearchToolInput": {
+        "$ref": "./schema.json#/$defs/ConversationSearchToolInput"
+      },
+      "ConversationSearchToolHit": {
+        "$ref": "./schema.json#/$defs/ConversationSearchToolHit"
+      },
+      "ConversationSearchToolResult": {
+        "$ref": "./schema.json#/$defs/ConversationSearchToolResult"
+      },
+      "AssistantToolAuditRecord": {
+        "$ref": "./schema.json#/$defs/AssistantToolAuditRecord"
+      },
       "SessionResponse": {
         "$ref": "./schema.json#/$defs/SessionResponse"
       },

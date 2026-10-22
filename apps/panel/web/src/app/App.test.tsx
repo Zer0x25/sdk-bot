@@ -89,7 +89,7 @@ function jsonResponse(value: unknown, status = 200) {
   });
 }
 
-function installApiMock(options: { empty?: boolean; listError?: boolean; pagination?: boolean; listPagination?: boolean; cursorExpired?: boolean; media?: boolean; mediaAvailable?: boolean; assistant?: boolean } = {}) {
+function installApiMock(options: { empty?: boolean; listError?: boolean; pagination?: boolean; listPagination?: boolean; cursorExpired?: boolean; media?: boolean; mediaAvailable?: boolean; assistant?: boolean; assistantOlderReference?: boolean } = {}) {
   let markedRead = false;
   const projectedConversation = () => markedRead ? { ...conversation, unreadCount: 0 } : conversation;
   const fetchMock = vi.fn(async (input: RequestInfo | URL, _init?: RequestInit) => {
@@ -139,7 +139,8 @@ function installApiMock(options: { empty?: boolean; listError?: boolean; paginat
       return jsonResponse({ items: [{ message: olderMessage, snippet: '<mark>pedido</mark> confirmado' }], nextCursor: null, snapshot });
     }
     if (url.pathname === `/api/v1/conversations/${conversationId}/assistance`) {
-      const reference = { messageId: latestMessage.id, occurredAt: latestMessage.occurredAt, authorKind: 'customer' };
+      const citedMessage = options.assistantOlderReference ? olderMessage : latestMessage;
+      const reference = { messageId: citedMessage.id, occurredAt: citedMessage.occurredAt, authorKind: 'customer' };
       return jsonResponse({ conversationId, contextVersion: '1', throughMessageId: latestMessage.id, snapshot,
         summaryPoints: [{ text: 'Consulta disponibilidad para el viernes.', references: [reference] }],
         draft: 'Sí, tenemos disponibilidad para el viernes. ¿Qué horario te acomoda?', draftReferences: [reference] });
@@ -296,6 +297,29 @@ describe('inbox shell and real API integration', () => {
     expect(fetchMock.mock.calls.some(([input, init]) =>
       new URL(String(input), 'http://panel.local').pathname === `/api/v1/conversations/${conversationId}/messages`
         && init?.method === 'POST')).toBe(false);
+  });
+
+  it('loads older history when an assistance citation is outside the visible message pages', async () => {
+    const fetchMock = installApiMock({ assistant: true, assistantOlderReference: true, pagination: true });
+    const user = userEvent.setup();
+    renderApp(`/inbox/${conversationId}`);
+
+    expect(await screen.findByText('¿En qué puedo ayudarte?')).toBeInTheDocument();
+    await user.click(await screen.findByRole('button', { name: 'Preparar resumen y borrador' }));
+    const panel = await screen.findByRole('region', { name: 'Resumen y borrador de asistencia' });
+    expect(within(panel).getByText('Consulta disponibilidad para el viernes.')).toBeInTheDocument();
+    expect(screen.queryByText('Hola, tengo una pregunta.')).not.toBeInTheDocument();
+
+    await user.click(within(panel).getAllByRole('button', { name: /Cliente/ })[0]);
+    expect(await screen.findByText('Hola, tengo una pregunta.')).toBeInTheDocument();
+    await waitFor(() => {
+      expect(document.activeElement).toHaveAttribute('id', `thread-message-${olderMessage.id}`);
+    });
+    expect(fetchMock.mock.calls.some(([input]) => {
+      const url = new URL(String(input), 'http://panel.local');
+      return url.pathname === `/api/v1/conversations/${conversationId}/messages`
+        && url.searchParams.get('cursor') === 'opaque-older-page-cursor';
+    })).toBe(true);
   });
 
   it('searches messages in the selected conversation and renders snippets as plain text', async () => {

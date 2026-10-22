@@ -1310,6 +1310,68 @@
       "required": ["conversationId", "contextVersion", "throughMessageId", "snapshot", "summaryPoints", "draft", "draftReferences"],
       "additionalProperties": false
     },
+    "AssistantToolRequest": {
+      "type": "object",
+      "properties": {
+        "kind": { "type": "string", "const": "tool_request" },
+        "toolName": { "type": "string", "const": "conversation.search_messages" },
+        "effect": { "type": "string", "const": "read" },
+        "input": { "$ref": "#/$defs/ConversationSearchToolInput" }
+      },
+      "required": ["kind", "toolName", "effect", "input"],
+      "additionalProperties": false,
+      "description": "Solicitud tipada de lectura; el Gateway valida permisos y ejecuta el caso de uso."
+    },
+    "ConversationSearchToolInput": {
+      "type": "object",
+      "properties": {
+        "query": { "type": "string", "minLength": 1, "maxLength": 256, "format": "unicode-text", "x-maxUtf8Bytes": 1024 },
+        "limit": { "type": "integer", "minimum": 1, "maximum": 5 }
+      },
+      "required": ["query", "limit"],
+      "additionalProperties": false
+    },
+    "ConversationSearchToolHit": {
+      "type": "object",
+      "properties": {
+        "messageId": { "$ref": "#/$defs/Id" },
+        "occurredAt": { "$ref": "#/$defs/Timestamp" },
+        "authorKind": { "type": "string", "enum": ["customer", "ai", "operator"] },
+        "snippet": { "type": "string", "minLength": 1, "maxLength": 512, "format": "unicode-text", "x-maxUtf8Bytes": 2048 }
+      },
+      "required": ["messageId", "occurredAt", "authorKind", "snippet"],
+      "additionalProperties": false
+    },
+    "ConversationSearchToolResult": {
+      "type": "object",
+      "properties": {
+        "toolName": { "type": "string", "const": "conversation.search_messages" },
+        "invocationKey": { "type": "string", "pattern": "^[a-f0-9]{64}$" },
+        "snapshot": { "$ref": "#/$defs/EventCursor" },
+        "hits": { "type": "array", "items": { "$ref": "#/$defs/ConversationSearchToolHit" }, "maxItems": 5 }
+      },
+      "required": ["toolName", "invocationKey", "snapshot", "hits"],
+      "additionalProperties": false
+    },
+    "AssistantToolAuditRecord": {
+      "type": "object",
+      "properties": {
+        "invocationKey": { "type": "string", "pattern": "^[a-f0-9]{64}$" },
+        "requestFingerprint": { "type": "string", "pattern": "^[a-f0-9]{64}$" },
+        "resultFingerprint": { "anyOf": [{ "type": "string", "pattern": "^[a-f0-9]{64}$" }, { "type": "null" }] },
+        "actorId": { "$ref": "#/$defs/Id" },
+        "conversationId": { "$ref": "#/$defs/Id" },
+        "toolName": { "type": "string", "const": "conversation.search_messages" },
+        "effect": { "type": "string", "const": "read" },
+        "status": { "type": "string", "enum": ["completed", "failed", "denied"] },
+        "attemptCount": { "type": "integer", "minimum": 1 },
+        "createdAt": { "$ref": "#/$defs/Timestamp" },
+        "updatedAt": { "$ref": "#/$defs/Timestamp" }
+      },
+      "required": ["invocationKey", "requestFingerprint", "resultFingerprint", "actorId", "conversationId", "toolName", "effect", "status", "attemptCount", "createdAt", "updatedAt"],
+      "additionalProperties": false,
+      "description": "Auditoría sin texto de consulta ni contenido de mensajes; retención de 180 días."
+    },
     "TakeoverRequest": {
       "type": "object",
       "properties": {

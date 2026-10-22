@@ -175,6 +175,33 @@ test('F8.4 migration and restore gate blocks stale snapshots after evented and l
     assert.equal(refreshedGate.result.promotionAllowed, true);
 });
 
+test('restore gate detects assistant tool audit changes without exposing the audit digest', async t => {
+    const dir = await fs.mkdtemp(path.join(os.tmpdir(), 'sdkbot-tool-audit-restore-'));
+    const sourcePath = path.join(dir, 'active.db');
+    const snapshotPath = path.join(dir, 'snapshot.db');
+    const lockPath = path.join(dir, 'gateway.lock');
+    const archive = createArchive({ path: sourcePath });
+    t.after(async () => { await archive.close().catch(() => {}); await fs.rm(dir, { recursive: true, force: true }); });
+
+    await archive.ready;
+    const account = await archive.registerAccount({ channel: 'whatsapp', providerKey: `audit-restore-${randomUUID()}` });
+    const [stored] = await archive.ingestBatch([inbound(account.id, 'audit-restore')]);
+    const sourceSnapshot = await archive.snapshot();
+    await archive.backup(snapshotPath);
+    await archive.recordAssistantToolInvocation({ invocationKey: 'a'.repeat(64), requestFingerprint: 'b'.repeat(64),
+        resultFingerprint: 'c'.repeat(64), actorId: randomUUID(), conversationId: stored.message.conversationId,
+        toolName: 'conversation.search_messages', effect: 'read', status: 'completed', attemptCount: 1,
+        createdAt: '2026-10-22T12:00:00.000Z', updatedAt: '2026-10-22T12:00:00.000Z' });
+    assert.deepEqual(await archive.snapshot(), sourceSnapshot);
+    await archive.close();
+
+    const gate = runGate(sourcePath, snapshotPath, lockPath);
+    assert.equal(gate.exitCode, 2);
+    assert.ok(gate.result.blockers.includes('ASSISTANT_TOOL_AUDIT_MISMATCH'));
+    assert.equal(gate.result.source.assistantToolInvocationCount, 1);
+    assert.equal('assistantToolInvocationSha256' in gate.result.source, false);
+});
+
 test('restore gate detects attachment metadata purges that do not advance the event cursor', async t => {
     const dir = await fs.mkdtemp(path.join(os.tmpdir(), 'sdkbot-f84-attachment-ledger-'));
     const sourceDirectory = path.join(dir, 'source'), snapshotDirectory = path.join(dir, 'snapshot');

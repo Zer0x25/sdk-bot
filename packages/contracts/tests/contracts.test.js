@@ -180,6 +180,23 @@ test('operator assistance binds each summary point and unsent draft to thread me
   reject('ConversationAssistanceResponse', { ...response, draftReferences: [{ ...reference, messageId: 'not-a-message-id' }] });
 });
 
+test('assistant tools expose a bounded read request and content-free idempotency audit', () => {
+  const messageId = id(56);
+  const input = { query: 'precio viernes', limit: 3 };
+  const toolRequest = { kind: 'tool_request', toolName: 'conversation.search_messages', effect: 'read', input };
+  accept('AssistantToolRequest', toolRequest);
+  reject('AssistantToolRequest', { ...toolRequest, effect: 'write' });
+  reject('AssistantToolRequest', { ...toolRequest, input: { ...input, limit: 100 } });
+  const invocationKey = 'a'.repeat(64);
+  accept('ConversationSearchToolResult', { toolName: 'conversation.search_messages', invocationKey, snapshot: cursor,
+    hits: [{ messageId, occurredAt: now, authorKind: 'customer', snippet: 'Precio para el viernes' }] });
+  const audit = { invocationKey, requestFingerprint: 'b'.repeat(64), resultFingerprint: 'c'.repeat(64),
+    actorId: id(1), conversationId: id(2), toolName: 'conversation.search_messages', effect: 'read',
+    status: 'completed', attemptCount: 1, createdAt: now, updatedAt: now };
+  accept('AssistantToolAuditRecord', audit);
+  reject('AssistantToolAuditRecord', { ...audit, query: 'PII no debe persistirse' });
+});
+
 test('automation profile inventory exposes names only and conversation profile updates support global inheritance', () => {
   accept('AutomationProfile', { key: 'default', name: 'Predeterminado' });
   reject('AutomationProfile', { key: 'default', name: 'Predeterminado', description: 'prompt privado' });

@@ -464,10 +464,12 @@ comprensible si el archivo expiró o no está disponible.
 
 - [x] Resúmenes, borradores y propuestas de respuesta con referencias al hilo.
   [Evidencia F10.1](F10.1-ASISTENCIA-OPERADOR.md).
-- [ ] Contratos de herramientas: schemas, permisos, timeout, auditoría, idempotencia
+- [x] Contratos de herramientas: schemas, permisos, timeout, auditoría, idempotencia
   y separación read/write. Gateway ejecuta; brain solicita sin acceder a canales.
+  [Evidencia F10.2](F10.2-HERRAMIENTAS-IA.md).
 - [ ] ADR para efectos externos/equipos si se solicitan; no activar automáticamente
   CRM, calendarios, mensajes externos ni cambiar SDK/proveedores por disponibilidad.
+  Condicional: no hay efectos externos solicitados; nada se habilita en F10.2.
 - [ ] Evaluaciones con conversaciones sintéticas: no enviar en human, no confundir
   notas con mensajes entregados, no usar datos de otra cuenta y reconocer límites.
 

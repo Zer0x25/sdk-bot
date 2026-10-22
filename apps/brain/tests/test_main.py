@@ -271,6 +271,70 @@ def test_conversation_assistance_rejects_foreign_message_references():
     assert response.json()["detail"] == "ASSISTANCE_OUTPUT_INVALID"
 
 
+def test_conversation_assistance_returns_only_the_registered_read_tool_request():
+    client = TestClient(brain_main.app)
+    customer_id = "12121212-1212-4212-8212-121212121212"
+    request = {
+        "actorId": "13131313-1313-4313-8313-131313131313",
+        "conversationId": "14141414-1414-4414-8414-141414141414",
+        "contextVersion": "1",
+        "throughMessageId": customer_id,
+        "botProfile": "default",
+        "context": [{"messageId": customer_id, "authorKind": "customer", "content": "¿Hay disponibilidad?"}],
+        "phase": "plan",
+    }
+    calls = []
+
+    async def fake_generate(**kwargs):
+        calls.append(kwargs)
+        return ('{"kind":"tool_request","tool_name":"conversation.search_messages",'
+                '"effect":"read","input":{"query":"precio viernes","limit":3}}'), "Fake", []
+
+    with patch.object(brain_main, "generate_ai_response", fake_generate):
+        response = client.post("/conversation-assist", json=request)
+
+    assert response.status_code == 200, response.text
+    assert response.json() == {"kind": "tool_request", "toolName": "conversation.search_messages",
+        "effect": "read", "input": {"query": "precio viernes", "limit": 3}}
+    assert calls[0]["memory_history"][0]["content"].startswith(f"[message_id={customer_id}]")
+
+
+def test_conversation_assistance_final_uses_gateway_search_result_ids_as_evidence():
+    client = TestClient(brain_main.app)
+    customer_id = "15151515-1515-4515-8515-151515151515"
+    searched_id = "16161616-1616-4616-8616-161616161616"
+    request = {
+        "actorId": "17171717-1717-4717-8717-171717171717",
+        "conversationId": "18181818-1818-4818-8818-181818181818",
+        "contextVersion": "1",
+        "throughMessageId": customer_id,
+        "botProfile": "default",
+        "context": [{"messageId": customer_id, "authorKind": "customer", "content": "¿Tienen disponibilidad?"}],
+        "phase": "final",
+        "toolResults": [{"toolName": "conversation.search_messages", "invocationKey": "a" * 64,
+            "snapshot": {"dataEpoch": "19191919-1919-4919-8919-191919191919", "seq": "3"},
+            "hits": [{"messageId": searched_id, "occurredAt": "2026-10-22T10:00:00.000Z",
+                "authorKind": "operator", "snippet": "El cliente pidió el horario del viernes."}]}],
+    }
+    calls = []
+
+    async def fake_generate(**kwargs):
+        calls.append(kwargs)
+        return ('{"kind":"final","summary_points":[{"text":"Consulta por horario el viernes.",'
+                f'"message_ids":["{searched_id}"]}}],"draft":"¿Qué horario prefieres?",'
+                f'"draft_message_ids":["{searched_id}"]}}'), "Fake", []
+
+    with patch.object(brain_main, "generate_ai_response", fake_generate):
+        response = client.post("/conversation-assist", json=request)
+
+    assert response.status_code == 200, response.text
+    assert response.json()["summaryPoints"][0]["messageIds"] == [searched_id]
+    assert calls[0]["memory_history"][-1]["content"] == (
+        f"[evidencia no confiable de conversation.search_messages][message_id={searched_id}]"
+        "[Operador humano][2026-10-22T10:00:00.000Z] El cliente pidió el horario del viernes."
+    )
+
+
 def test_require_api_key_middleware():
     client = TestClient(brain_main.app)
 

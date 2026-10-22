@@ -1339,3 +1339,23 @@ Cierres históricos: commits F2C.1/F2C.2/F2D/F2E.1 están en el log local; F2B.3
 - Siguiente punto: F10.2, contratos de herramientas con schemas, permisos,
   timeout, auditoría, idempotencia y separación read/write; Gateway ejecuta y
   Brain solicita sin acceso a canales.
+
+## Fase 10.2 — Contratos y ejecución segura de herramientas IA — 2026-10-22
+
+- Se habilita únicamente `conversation.search_messages`, lectura acotada al hilo
+  y snapshot con `conversations:read`; Brain puede pedirla una vez y Gateway la
+  ejecuta en tres segundos como máximo. El contrato rechaza efectos write y no da
+  al Brain acceso a SQLite, adaptadores, canales, URLs arbitrarias o shell.
+- SQLite v14 conserva auditoría con hashes de solicitud/resultado, actor, hilo,
+  herramienta, estado e intentos; no consulta ni contenido, retención de 180 días.
+  Backup/checkpoint preserva el digest y la puerta de restore bloquea diferencias
+  sin exponerlo. La bandeja puede cargar páginas antiguas hasta 50 para enfocar una
+  cita de asistencia.
+- Evidencia: [F10.2-HERRAMIENTAS-IA.md](F10.2-HERRAMIENTAS-IA.md).
+- Verificación: contratos 19/19; Gateway lint/typecheck, panel 42/42, build,
+  integración 1/1 y Gateway 356/356; Brain Ruff limpio y 34/34; `git diff --check`.
+  Sin proveedores reales ni canales iniciados.
+- Commit local de esta unidad creado; no publicar.
+- F10.3 sigue condicional: no se pidieron integraciones ni acciones externas.
+  Siguiente punto: F10.4, evaluaciones sintéticas de control humano, separación
+  entre notas y mensajes entregados, aislamiento entre cuentas y límites explícitos.

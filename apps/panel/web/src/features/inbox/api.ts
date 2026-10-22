@@ -123,6 +123,8 @@ async function postJson<T>(pathname: string, body: unknown, idempotencyKey?: str
             : code === 'CONTROL_OWNER_CONFLICT' ? 'La conversación pertenece a otro operador.'
               : code === 'CONTROL_VERSION_CONFLICT' ? 'El control cambió. Actualiza el chat e inténtalo de nuevo.'
               : code === 'CURSOR_EXPIRED' ? 'El hilo cambió durante la generación. Actualiza el historial y vuelve a preparar la asistencia.'
+                : code === 'TOOL_TIMEOUT' ? 'La búsqueda de contexto tardó demasiado. Actualiza el chat y vuelve a preparar la asistencia; no se envió ningún mensaje.'
+                  : code === 'TOOL_UNAVAILABLE' ? 'La búsqueda de contexto no está disponible ahora. No se envió ningún mensaje.'
                 : code === 'CHANNEL_NOT_READY' ? 'El canal no está conectado. Conservamos el borrador.'
                   : code === 'ASSISTANCE_UNAVAILABLE' ? 'La asistencia no está disponible ahora. No se creó ningún mensaje.'
                   : 'No se pudo completar la acción. Conservamos el borrador.';

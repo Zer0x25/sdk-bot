@@ -5,6 +5,7 @@ const { assertValid, validate } = require('@sdk-bot/contracts');
 const { BoundaryError } = require('../lib/httpBoundary');
 const { requireCapability } = require('../lib/panelContext');
 const { isHandoffActive } = require('./contactsRepository');
+const { executeAssistantTool } = require('./assistantTools');
 const { normalizeSearchQuery } = require('./conversations/searchQuery');
 
 const PAGE_SCAN = 250;
@@ -803,12 +804,28 @@ function createSessionApi(getPolicy, archive, getContacts = () => ({}), getChann
                     throw new BoundaryError(410, 'CURSOR_EXPIRED', 'El chat cambió; actualiza el historial antes de preparar la asistencia.');
                 }
                 let generated;
+                const brainRequest = { actorId: context.actor.id, conversationId,
+                    contextVersion: archiveContext.contextVersion, throughMessageId: archiveContext.throughMessageId,
+                    botProfile: control.profileKey || policy.globalProfileKey || 'default',
+                    context: boundedContext.map(({ messageId, authorKind, content }) => ({ messageId, authorKind, content })) };
+                const toolResults = [];
                 try {
-                    generated = await assistConversation({ actorId: context.actor.id, conversationId,
-                        contextVersion: archiveContext.contextVersion, throughMessageId: archiveContext.throughMessageId,
-                        botProfile: control.profileKey || policy.globalProfileKey || 'default',
-                        context: boundedContext.map(({ messageId, authorKind, content }) => ({ messageId, authorKind, content })) });
-                } catch {
+                    generated = await assistConversation({ ...brainRequest, phase: 'plan', toolResults });
+                    if (generated?.kind === 'tool_request') {
+                        const result = await executeAssistantTool({ archive, actor: context.actor, conversationId,
+                            expectedSnapshot: contextSnapshot, request: generated });
+                        toolResults.push(result);
+                        generated = await assistConversation({ ...brainRequest, phase: 'final', toolResults });
+                    }
+                } catch (error) {
+                    if (error instanceof BoundaryError) throw error;
+                    const toolFailure = /** @type {{status?:number,code?:string}} */ (error);
+                    if (typeof toolFailure?.status === 'number' && typeof toolFailure?.code === 'string') {
+                        const status = toolFailure.status === 504 ? 503 : toolFailure.status;
+                        throw new BoundaryError(status, toolFailure.code, toolFailure.code === 'TOOL_TIMEOUT'
+                            ? 'La búsqueda de contexto excedió su tiempo límite. No se creó ningún mensaje.'
+                            : 'No se pudo ejecutar la herramienta solicitada. No se creó ningún mensaje.');
+                    }
                     throw new BoundaryError(503, 'ASSISTANCE_UNAVAILABLE', 'No se pudo generar la asistencia. No se creó ningún mensaje.');
                 }
                 const endSnapshot = await archive.snapshot();
@@ -829,7 +846,17 @@ function createSessionApi(getPolicy, archive, getContacts = () => ({}), getChann
                     || endPolicy.policyVersion !== policy.policyVersion) {
                     throw new BoundaryError(410, 'CURSOR_EXPIRED', 'El control o la política cambiaron durante la generación; actualiza el chat y vuelve a intentarlo.');
                 }
-                const byId = new Map(boundedContext.map(message => [message.messageId, message]));
+                const referenceSources = [...boundedContext];
+                for (const result of toolResults) {
+                    if (!matchesExpectedSnapshot(result.snapshot)) {
+                        throw new BoundaryError(410, 'CURSOR_EXPIRED', 'La búsqueda de contexto quedó ligada a otro snapshot.');
+                    }
+                    for (const hit of result.hits) {
+                        referenceSources.push({ messageId: hit.messageId, occurredAt: hit.occurredAt,
+                            authorKind: hit.authorKind, content: hit.snippet });
+                    }
+                }
+                const byId = new Map(referenceSources.map(message => [message.messageId, message]));
                 const references = ids => {
                     if (!Array.isArray(ids) || ids.length < 1 || ids.length > 5 || new Set(ids).size !== ids.length
                         || ids.some(id => typeof id !== 'string' || !byId.has(id))) {
@@ -840,7 +867,8 @@ function createSessionApi(getPolicy, archive, getContacts = () => ({}), getChann
                         return { messageId, occurredAt: source.occurredAt, authorKind: source.authorKind };
                     });
                 };
-                if (!generated || !Array.isArray(generated.summaryPoints) || generated.summaryPoints.length < 1
+                if (!generated || generated.kind && generated.kind !== 'final'
+                    || !Array.isArray(generated.summaryPoints) || generated.summaryPoints.length < 1
                     || generated.summaryPoints.length > 6 || typeof generated.draft !== 'string') {
                     throw new BoundaryError(503, 'ASSISTANCE_RESPONSE_INVALID', 'El servicio de asistencia devolvió una respuesta inválida.');
                 }

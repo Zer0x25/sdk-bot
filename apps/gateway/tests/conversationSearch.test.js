@@ -116,12 +116,12 @@ test('v12 migration backfills the FTS index before serving searches', async t =>
     const conversationId = stored.message.conversationId;
     await archive.close();
     const database = new DatabaseSync(dbPath);
-    database.exec('DROP TRIGGER messages_search_insert; DROP TRIGGER messages_search_update; DROP TRIGGER messages_search_delete; DROP TABLE message_search; PRAGMA user_version=12;');
+    database.exec('DROP TRIGGER messages_search_insert; DROP TRIGGER messages_search_update; DROP TRIGGER messages_search_delete; DROP TABLE message_search; DROP TABLE assistant_tool_invocations; PRAGMA user_version=12;');
     database.close();
 
     const migrated = createArchive({ path: dbPath });
     t.after(() => migrated.close());
-    assert.equal((await migrated.ready).schemaVersion, 13);
+    assert.equal((await migrated.ready).schemaVersion, 14);
     const result = await migrated.searchMessages({ conversationId, query: 'backfill existente' });
     assert.deepEqual(result.items.map(item => item.message.id), [stored.message.id]);
 });
