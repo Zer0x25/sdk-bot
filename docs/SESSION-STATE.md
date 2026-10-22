@@ -1718,3 +1718,20 @@ Cierres históricos: commits F2C.1/F2C.2/F2D/F2E.1 están en el log local; F2B.3
 - Verificación de toda Brain: `venv/bin/ruff check .` limpio y
   `venv/bin/python -m pytest tests/ -q` pasó 41/41; `git diff --check` limpio.
   No se tocó la DB runtime ni se llamaron proveedores.
+
+## F4.4 — Listas independientes y carga incremental — 2026-10-22
+
+- La auditoría encontró que el alto mínimo de la bandeja no contenía el historial
+  y que Contactos mostraba una tabla cuyo alto crecía con cada página. Ambas listas
+  usaban botones manuales, sin cargar al acercarse al final del scroll.
+- La bandeja limita sus columnas al viewport. Conversaciones, contactos e historial
+  tienen scroll propio; conversaciones y contactos solicitan páginas bajo demanda
+  con `IntersectionObserver`, con botón accesible de respaldo. Los filtros llevan
+  cada lista al principio y los cursores vencidos de Contactos vuelven a consultar
+  la primera página.
+- El hilo ya abría en la página de mensajes más recientes y mantenía orden
+  cronológico/ancla al cargar anteriores; se conservó ese comportamiento.
+- Verificación en `apps/panel`: `npm run lint`, `npm run typecheck`, `npm test`
+  (46/46), `npm run build`; `git diff --check` limpio. Se usaron respuestas API
+  simuladas. No se hizo inspección visual con navegador/viewport móvil ni se usaron
+  canales reales. Evidencia: [F4.4](F4.4-LISTAS-INFINITAS.md).

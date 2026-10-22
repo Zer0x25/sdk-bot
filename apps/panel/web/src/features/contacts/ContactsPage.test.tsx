@@ -25,13 +25,37 @@ const conversation: Conversation = {
   requiresReview: false,
   unreadCount: 0
 };
+const secondConversation: Conversation = {
+  ...conversation,
+  id: '55555555-5555-4555-8555-555555555555',
+  contactId: '66666666-6666-4666-8666-666666666666',
+  canonicalIdentityId: '66666666-6666-4666-8666-666666666666',
+  displayName: 'Beatriz Soto'
+};
 const snapshot = { dataEpoch: '44444444-4444-4444-8444-444444444444', seq: '2' };
+
+class MockIntersectionObserver {
+  static instances: MockIntersectionObserver[] = [];
+  readonly observe = vi.fn();
+  readonly disconnect = vi.fn();
+
+  constructor(
+    private readonly callback: IntersectionObserverCallback,
+    readonly options?: IntersectionObserverInit
+  ) {
+    MockIntersectionObserver.instances.push(this);
+  }
+
+  intersect() {
+    this.callback([{ isIntersecting: true } as IntersectionObserverEntry], this as unknown as IntersectionObserver);
+  }
+}
 
 function jsonResponse(value: unknown, status = 200) {
   return new Response(JSON.stringify(value), { status, headers: { 'content-type': 'application/json' } });
 }
 
-function installContactsApi(canWrite: boolean) {
+function installContactsApi(canWrite: boolean, paginate = false) {
   let currentConversation = conversation;
   const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
     const url = new URL(String(input), 'http://panel.local');
@@ -62,7 +86,12 @@ function installContactsApi(canWrite: boolean) {
       };
       return jsonResponse({ conversation: currentConversation });
     }
-    if (url.pathname === '/api/v1/conversations') return jsonResponse({ items: [currentConversation], nextCursor: null, snapshot });
+    if (url.pathname === '/api/v1/conversations') {
+      if (paginate && url.searchParams.get('cursor') === 'contacts-page-2') {
+        return jsonResponse({ items: [secondConversation], nextCursor: null, snapshot });
+      }
+      return jsonResponse({ items: [currentConversation], nextCursor: paginate ? 'contacts-page-2' : null, snapshot });
+    }
     return jsonResponse({ error: { code: 'NOT_FOUND' } }, 404);
   });
   vi.stubGlobal('fetch', fetchMock);
@@ -77,6 +106,7 @@ function renderContacts() {
 afterEach(() => {
   cleanup();
   vi.unstubAllGlobals();
+  MockIntersectionObserver.instances = [];
   window.history.replaceState({}, '', '/inbox/');
 });
 
@@ -115,5 +145,24 @@ describe('contact management', () => {
     expect(screen.getByText('Permitido')).toBeInTheDocument();
     expect(screen.queryByRole('combobox', { name: 'Permiso de Ana Pérez' })).not.toBeInTheDocument();
     expect(screen.queryByRole('combobox', { name: 'Perfil IA de Ana Pérez' })).not.toBeInTheDocument();
+  });
+
+  it('loads more contacts inside the contact list when scrolling to its end', async () => {
+    vi.stubGlobal('IntersectionObserver', MockIntersectionObserver);
+    const fetchMock = installContactsApi(false, true);
+    renderContacts();
+
+    expect(await screen.findByText('Ana Pérez')).toBeInTheDocument();
+    const list = screen.getByRole('region', { name: 'Lista de contactos' });
+    await waitFor(() => expect(MockIntersectionObserver.instances.length).toBeGreaterThan(0));
+    const observer = MockIntersectionObserver.instances.at(-1)!;
+    expect(observer.options?.root).toBe(list);
+
+    observer.intersect();
+    expect(await screen.findByText('Beatriz Soto')).toBeInTheDocument();
+    expect(fetchMock.mock.calls.some(([input]) => {
+      const url = new URL(String(input), 'http://panel.local');
+      return url.pathname === '/api/v1/conversations' && url.searchParams.get('cursor') === 'contacts-page-2';
+    })).toBe(true);
   });
 });
