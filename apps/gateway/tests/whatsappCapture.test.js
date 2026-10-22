@@ -5,7 +5,8 @@ const assert = require('node:assert/strict');
 const fs = require('node:fs/promises');
 const os = require('node:os');
 const path = require('node:path');
-const { EventEmitter } = require('node:events');
+const { EventEmitter, once } = require('node:events');
+const { createServer } = require('node:http');
 const { withTempDbPaths } = require('./helpers/tmpPaths');
 const temporary = withTempDbPaths();
 after(() => temporary.restore());
@@ -13,6 +14,8 @@ const WhatsappAdapter = require('../adapters/whatsappAdapter');
 const { createArchive } = require('../services/conversations');
 const { createWhatsappCapture, normalize, socketIdentity } = require('../services/conversations/whatsappCapture');
 const { startRetention } = require('../services/conversations/retention');
+const { downloadMediaMessage } = require('@whiskeysockets/baileys');
+const { createAbortableMediaDownload } = require('../services/whatsappMediaDownload');
 const { state, registerSentMessage } = require('../config');
 const chatStore = require('../store/chatStore');
 
@@ -79,6 +82,58 @@ test('WA boundary: verified account, exact device normalization, scope, wrappers
     assert.throws(() => normalize(msg('x', undefined, { conversation: '\ud800' }), session, 'live'), { code: 'WA_CONTENT_INVALID' });
     const snapshot = normalize(msg('x'), session, 'live');
     assert.equal(snapshot.alt, null);
+});
+
+test('BUG-037: Baileys media fetch closes its HTTP socket on cancellation and deadline', async t => {
+    const activeSockets = new Set();
+    let requests = 0, closedSockets = 0;
+    const server = createServer(() => { requests += 1; }); // Deliberately never sends headers or a body.
+    server.on('connection', socket => {
+        activeSockets.add(socket);
+        socket.once('close', () => { activeSockets.delete(socket); closedSockets += 1; });
+    });
+    server.listen(0, '127.0.0.1');
+    await once(server, 'listening');
+    t.after(async () => {
+        server.closeAllConnections();
+        await new Promise(resolve => server.close(resolve));
+    });
+
+    const address = server.address();
+    const download = createAbortableMediaDownload(downloadMediaMessage);
+    const message = { key: { id: 'bug037-media' }, message: { audioMessage: {
+        url: `http://127.0.0.1:${address.port}/media`, mediaKey: Buffer.alloc(32, 7).toString('base64'),
+        mimetype: 'audio/ogg'
+    } } };
+    const timeout = (promise, ms) => {
+        let timer;
+        return Promise.race([promise, new Promise((_, reject) => {
+            timer = setTimeout(() => reject(new Error('BUG037_TEST_TIMEOUT')), ms);
+        })]).finally(() => clearTimeout(timer));
+    };
+
+    for (let index = 0; index < 8; index += 1) {
+        const controller = new globalThis.AbortController();
+        const requestStarted = once(server, 'request');
+        const socketClosed = new Promise(resolve => {
+            const onConnection = socket => {
+                server.off('connection', onConnection);
+                socket.once('close', resolve);
+            };
+            server.on('connection', onConnection);
+        });
+        const pending = download(message, 'stream', { options: { signal: controller.signal } }, {
+            logger: { info() {} }, reuploadRequest: async value => value
+        });
+        await timeout(requestStarted, 1000);
+        if (index % 2 === 0) controller.abort(new Error('fixture cancellation'));
+        else setTimeout(() => controller.abort(new Error('fixture deadline')), 15);
+        await assert.rejects(timeout(pending, 1000));
+        await timeout(socketClosed, 1000);
+        assert.equal(activeSockets.size, 0, `download ${index + 1} left no live HTTP socket`);
+    }
+    assert.equal(requests, 8);
+    assert.equal(closedSockets, 8);
 });
 
 test('BUG-001/002: full live batch, marker before STT, ignored/paused/handoff capture and restart without duplicates', async t => {

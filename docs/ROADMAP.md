@@ -149,8 +149,9 @@ F2B.1 completa la puerta BUG-029/031 del reset CLI; evidencia en
 F2D replay durable y F2E.1 salidas aceptadas/ecos; carga completa antes de cerrar F2.
 Captura base WA probada en
 [CAPTURA-WHATSAPP-F2B2](CAPTURA-WHATSAPP-F2B2.md); F2B.3 completa multimedia en
-[MULTIMEDIA-WHATSAPP-F2B3](MULTIMEDIA-WHATSAPP-F2B3.md). BUG-037 descarga sin
-abort físico queda como puerta de aceptación STT real F8, sin prometerlo aquí.
+[MULTIMEDIA-WHATSAPP-F2B3](MULTIMEDIA-WHATSAPP-F2B3.md). BUG-037 ya cancela
+físicamente la descarga HTTP mediante un dispatcher privado; su prueba local no
+se presenta como aceptación live de proveedor/STT.
 
 - [x] Repositorios y migraciones SQLite para cuentas, identidades, mensajes,
   conversaciones y eventos. Worker único; constraints e índices para consultas.

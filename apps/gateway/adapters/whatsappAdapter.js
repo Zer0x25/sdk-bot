@@ -2,6 +2,7 @@
 const ChannelAdapter = require('../core/ChannelAdapter');
 const StandardMessage = require('../core/StandardMessage');
 const { default: makeWASocket, useMultiFileAuthState, DisconnectReason, WAMessageStubType, downloadMediaMessage } = require('@whiskeysockets/baileys');
+const { createAbortableMediaDownload } = require('../services/whatsappMediaDownload');
 const pino = require('pino');
 const fs = require('fs');
 const path = require('path');
@@ -25,10 +26,11 @@ const AUTH_DIR = process.env.SDK_AUTH_DIR || path.join(GATEWAY_STATE_DIR, 'auth_
 const SELF_ECHO_INITIAL_DELAY_MS = 500;
 const SELF_ECHO_RECHECK_MS = 100;
 const SELF_ECHO_MAX_SETTLE_MS = 5000;
+const downloadWhatsappMedia = createAbortableMediaDownload(downloadMediaMessage);
 
 class WhatsappAdapter extends ChannelAdapter {
     constructor({ archive, attachmentStore, makeSocket = makeWASocket, loadAuth = useMultiFileAuthState,
-        download = downloadMediaMessage, transcribe = transcribeAudio } = {}) {
+        download = downloadWhatsappMedia, transcribe = transcribeAudio } = {}) {
         super('whatsapp');
         this.sock = null;
         this.accountId = null;

@@ -1596,3 +1596,23 @@ Cierres históricos: commits F2C.1/F2C.2/F2D/F2E.1 están en el log local; F2B.3
 - Evidencia: [BUG-080](BUG-080-RETENCION-METADATOS.md). Commit local en `main`,
   sin publicar. Siguiente punto ejecutable del backlog: BUG-037, cerrar la
   cancelación física de la descarga Baileys antes de aceptar STT real.
+
+## Cierre BUG-037 — Cancelación física de descarga Baileys — 2026-10-22
+
+- Baileys `7.0.0-rc14` sí acepta un `dispatcher` por la opción de descarga aunque
+  omita `signal` de su `fetch`. Cada llamada del adapter usa su propio
+  `undici.Agent@7.29.1`; cancelación/deadline destruye stream/agente, y
+  final/error/cierre temprano liberan el dispatcher. No se tocó `global.fetch` ni
+  `node_modules`.
+- Prueba con downloader real y HTTP local que no responde: ocho solicitudes,
+  cuatro cancelaciones y cuatro deadlines; 8/8 sockets cerrados, ninguno activo
+  al terminar cada vuelta. Focal: 1/1 en Node 22.22.1 y 1/1 en Node 24.21.0.
+- `npm ci` — 0 vulnerabilidades. `cd apps/gateway && npm run check`: lint y
+  typecheck limpios, Panel 44/44, build/servido 1/1 y Gateway 398/398. La primera
+  suite completa tuvo un fallo intermitente de salida vacía en el test preexistente
+  de privacidad de logs; aislado pasó 2/2 y la suite completa repetida pasó.
+  `git diff --check` limpio. Sin WhatsApp ni STT real.
+- Evidencia: [BUG-037](BUG-037-CANCELACION-BAILEYS.md). Commit local en `main`,
+  sin publicar. Siguiente pendiente que requiere atención antes de migrar un
+  archivo legacy real: BUG-051; la ruta normal de F6.4 permanece cerrada y esta
+  prueba offline no altera ni reabre su aceptación.
