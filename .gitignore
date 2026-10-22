@@ -7,6 +7,8 @@ __pycache__/
 brain/venv/
 stt/venv/
 stt/.model_cache/
+apps/stt/venv/
+apps/stt/.model_cache/
 
 # WhatsApp session, auth & private contact data (SENSITIVE / PRIVACY)
 gateway/auth_info_baileys/

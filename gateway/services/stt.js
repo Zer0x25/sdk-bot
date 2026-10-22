@@ -4,7 +4,7 @@
  * 🎤 CLIENTE STT LOCAL (speech-to-text).
  *
  * El gateway descarga el audio del canal (WhatsApp/Telegram) y lo manda al
- * servicio faster-whisper del repo (stt/server.py), que expone un endpoint
+ * servicio faster-whisper del repo (apps/stt/server.py), que expone un endpoint
  * OpenAI-compatible: POST /v1/audio/transcriptions -> {"text": "..."}.
  *
  * Contrato de resiliencia (ADR-004):

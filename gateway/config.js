@@ -9,7 +9,7 @@ const { num } = require('./tuning');
 const BRAIN_API_BASE = process.env.BRAIN_API_BASE || 'http://127.0.0.1:5100';
 const BRAIN_API_URL = `${BRAIN_API_BASE}/chat`;
 
-// 🎤 STT (speech-to-text) local — servicio faster-whisper del repo (stt/).
+// 🎤 STT (speech-to-text) local — servicio faster-whisper del repo (apps/stt/).
 // En Docker apunta a http://stt:9000 (service en compose.yml); en dev local
 // a http://127.0.0.1:9000. Detrás de red interna, sin exposición a internet.
 const STT_API_URL = process.env.STT_API_URL || (process.env.NODE_ENV === 'production'

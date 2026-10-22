@@ -4,6 +4,11 @@ node_modules
 gateway/node_modules
 gateway/panel/web/dist
 brain/venv
+stt/venv
+apps/stt/venv
+stt/.model_cache
+apps/stt/.model_cache
+apps/stt/__pycache__
 brain/.env
 gateway/panel/.env
 brain/__pycache__

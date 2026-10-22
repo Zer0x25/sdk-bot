@@ -17,8 +17,8 @@
   (docs/TELEGRAM-DUENO-UNICO-F2C1.md); F2C.2 añade captura/cursor durable TG y
   F2D replay outbox hacia el handler legacy (docs/REPLAY-LEGACY-F2D.md). ADR-006
   permite esperar admisión durable antes del handler legacy; no
-  añadir reglas de acceso/control al adapter. `apps/`, React y el resto de API v1
-  siguen como **arquitectura de destino**. Las rutas y
+  añadir reglas de acceso/control al adapter. F8.1a ya movió STT a `apps/stt/`;
+  gateway, panel, brain y el resto de API v1 siguen como **arquitectura de destino**. Las rutas y
   comandos de las secciones siguientes describen la estructura actual.
 - Una unidad revisable por sesión. Actualiza estado y evidencia al cerrar;
   marca solo tareas demostradas. Conserva los límites de ADR-001/002/003.
@@ -33,8 +33,8 @@
 
 ## Limites y arquitectura
 
-- El workspace raíz contiene `packages/*`; `packages/contracts` tiene schemas OpenAPI/JSON Schema, validadores y tipos generados. Gateway sigue independiente, con su propio manifest/lock en `gateway/`; consume contracts como `file:../packages/contracts`, empaquetado por `.npmrc` install-links=true. Tras editar contratos, repetir `cd gateway && npm ci`: no depender de la copia instalada anterior. Docker copia el paquete antes de instalar. Python en `brain/` y `stt/` mantiene requirements. Entradas: `gateway/index.js`, `brain/main.py`, `stt/server.py`. Ver `packages/contracts/README.md`.
-- `gateway/index.js` es dueño de WhatsApp/Baileys, Telegram, el bus interno y el status server. `gateway/panel/index.js` es el proceso de UI/control: sirve `panel/public/` sin build y proxifica `/api/*` al bus. `stt/server.py` expone un endpoint OpenAI-compatible (`POST /v1/audio/transcriptions`) con `faster-whisper` en CPU int8 para normalizar audios a texto sin tocar el cerebro; si STT cae o falla, el gateway descarta el audio con aviso y no tumba el canal.
+- El workspace raíz contiene `packages/*`; `packages/contracts` tiene schemas OpenAPI/JSON Schema, validadores y tipos generados. Gateway sigue independiente, con su propio manifest/lock en `gateway/`; consume contracts como `file:../packages/contracts`, empaquetado por `.npmrc` install-links=true. Tras editar contratos, repetir `cd gateway && npm ci`: no depender de la copia instalada anterior. Docker copia el paquete antes de instalar. Python en `brain/` y `apps/stt/` mantiene requirements. Entradas: `gateway/index.js`, `brain/main.py`, `apps/stt/server.py`. Ver `packages/contracts/README.md`.
+- `gateway/index.js` es dueño de WhatsApp/Baileys, Telegram, el bus interno y el status server. `gateway/panel/index.js` es el proceso de UI/control: sirve `panel/public/` sin build y proxifica `/api/*` al bus. `apps/stt/server.py` expone un endpoint OpenAI-compatible (`POST /v1/audio/transcriptions`) con `faster-whisper` en CPU int8 para normalizar audios a texto sin tocar el cerebro; si STT cae o falla, el gateway descarta el audio con aviso y no tumba el canal.
 - En Docker el panel debe ejecutar `node panel/index.js`, nunca `node index.js`: lo segundo iniciaria un gateway adicional y puede provocar una segunda sesion de WhatsApp.
 - Mapeo de puertos y procesos (dev vs produccion Docker):
   - Brain: `:5100` (dev) / `:3400` (prod interno)

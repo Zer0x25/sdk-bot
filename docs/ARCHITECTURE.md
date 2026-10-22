@@ -1,8 +1,9 @@
 # SDK-Bot: arquitectura de la plataforma de conversaciones
 
 Fecha: 2026-10-22. Estado: **diseño para implementación incremental**.
-El código todavía usa `gateway/`, `brain/`, `stt/` y un panel estático.
-Las carpetas, tablas, servicios y endpoints de destino no existen todavía,
+El código conserva `gateway/`, `brain/` y el panel estático; F8.1 mueve el código
+STT a `apps/stt/` y deja su imagen con el mismo `STT_CACHE` de producción.
+Las demás carpetas, tablas, servicios y endpoints de destino no existen todavía,
 salvo indicación expresa. F1A implementa `packages/contracts` y workspace raíz
 para `packages/*`; gateway conserva instalación/lock independientes. No se migraron
 datos ni UI nueva. F1B implementa sesión v1 y firma panel → gateway, con contratos

@@ -1038,3 +1038,20 @@ Cierres históricos: commits F2C.1/F2C.2/F2D/F2E.1 están en el log local; F2B.3
   documental; no se repitieron pruebas de runtime. Evidencia:
   [F7.6-PARIDAD-PANEL](F7.6-PARIDAD-PANEL.md).
 - No se hizo push ni despliegue. Siguiente fase: F8, estructura final y operación.
+
+## Fase 8.1a — STT dentro de `apps/` — 2026-10-22
+
+- `stt/` se movió a `apps/stt/`. La imagen copia desde la nueva ruta de origen,
+  pero conserva `/app/stt`, `STT_CACHE=/var/lib/sdk-bot-stt/models` y el volumen
+  Compose; no se movieron modelos ni estado runtime.
+- `.gitignore`, `.dockerignore`, `AGENTS.md`, `.env.tuning`, comentarios del gateway,
+  arquitectura y roadmap reflejan el nuevo código. El resto de componentes sigue
+  en sus rutas actuales y F8.1 permanece en progreso.
+- Verificación: `python3 -m py_compile apps/stt/server.py`; `cd gateway && node
+  --test tests/stt.test.js` (7/7); `SDK_PANEL_GATEWAY_SECRET=local-validation-placeholder docker
+  compose -f deploy/docker/compose.yml config --quiet`; build real
+  de `deploy/docker/stt.Dockerfile`; contenedor local sin puertos publicados
+  devolvió `/health` con status `ok`, `ready:false` (el modelo no se descargó ni
+  cargó). El contenedor e imagen temporales se eliminaron. `git diff --check` pasó.
+- No se inició Gateway ni se contactó a un canal. Siguiente subunidad: F8.1b,
+  mover Gateway con sus rutas de estado y credenciales preservadas.
