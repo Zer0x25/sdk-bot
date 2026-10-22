@@ -1002,3 +1002,24 @@ Cierres históricos: commits F2C.1/F2C.2/F2D/F2E.1 están en el log local; F2B.3
   30 pruebas React, build Vite y montaje bajo `/inbox`, más 320 pruebas Gateway.
   No cambiaron contratos y no se ejecutó un proveedor real.
 - No se hizo push ni despliegue. Siguiente unidad: F7.5 Sistema.
+
+## Fase 7.5 — Sistema — 2026-10-22
+
+- `/inbox/system` reemplaza el placeholder e incorpora diagnóstico, logs SSE de
+  Gateway/Brain, consola del manejador administrativo, inicio de Brain, pausa del
+  bot y mantenimiento. Sistema aparece también en la navegación móvil.
+- Solo `admin:write` solicita estado, logs y operaciones legacy. Los comandos no
+  pasan por una shell. Limpiar logs pide confirmación y afecta el archivo activo;
+  los rotados se conservan. La pantalla conserva restart, reset de sesión WA y el
+  reset limpio con confirmación inicial, 10 s de lectura, palabra `BORRAR-TODO`
+  durante 60 s y una sola solicitud. Ante resultado destructivo incierto bloquea
+  otro intento y pide revisar el estado.
+- Prueba enfocada: 8 casos con API y EventSource simulados. Se probaron permisos,
+  estado, Brain, comando único, ciclo SSE/filtros, limpieza de logs, reset WA,
+  temporizadores/palabra exacta del reset limpio y reinicio Gateway. No se ejecutó
+  ningún comando real ni se modificó estado local/runtime.
+- `cd gateway && npm run check` pasó ESLint, typecheck Gateway/React, 38 pruebas
+  React, build Vite, montaje bajo `/inbox` y 320 pruebas Gateway. `git diff --check`
+  pasó. Sin cambios de contratos y sin proveedores externos.
+- Evidencia: [F7.5-SISTEMA](F7.5-SISTEMA.md). No se hizo push ni despliegue.
+  Siguiente unidad: F7.6, inventario de paridad.

@@ -6,7 +6,7 @@ import { SummaryPage } from '../features/summary/SummaryPage';
 import { ContactsPage } from '../features/contacts/ContactsPage';
 import { ChannelsPage } from '../features/channels/ChannelsPage';
 import { AssistantPage } from '../features/assistant/AssistantPage';
-import { SectionPlaceholder } from '../features/navigation/SectionPlaceholder';
+import { SystemPage } from '../features/system/SystemPage';
 
 export function createAppQueryClient() {
   return new QueryClient({
@@ -30,7 +30,7 @@ export default function App({ queryClient = defaultQueryClient }: { queryClient?
             <Route path="/contacts" element={<ContactsPage />} />
             <Route path="/channels" element={<ChannelsPage />} />
             <Route path="/assistant" element={<AssistantPage />} />
-            <Route path="/system" element={<SectionPlaceholder title="Sistema" />} />
+            <Route path="/system" element={<SystemPage />} />
             <Route path="*" element={<Navigate to="/" replace />} />
           </Routes>
         </AppShell>

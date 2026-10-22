@@ -66,6 +66,16 @@ export function AppShell({ children }: { children: ReactNode }) {
               <span className="rail-link-label">{label}</span>
             </NavLink>
           ))}
+          <NavLink
+            className={({ isActive }) => `rail-link mobile-system-link${isActive ? ' is-active' : ''}`}
+            to="/system"
+            aria-label="Sistema"
+            title="Sistema"
+            onClick={guardNavigation}
+          >
+            <Settings2 aria-hidden="true" size={21} strokeWidth={1.9} />
+            <span className="rail-link-label">Sistema</span>
+          </NavLink>
         </nav>
         <div className="rail-footer">
           <NavLink

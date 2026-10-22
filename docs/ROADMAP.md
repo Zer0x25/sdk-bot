@@ -363,8 +363,10 @@ Esta es la v1 útil; publicar/desplegar es una acción separada, no automática.
   edición protegida por `admin:write`, cambios sin guardar con confirmación,
   importación/exportación Markdown, recarga, prompt compilado y borrado confirmado.
   Evidencia: [F7.4](F7.4-ASISTENTE.md).
-- [ ] Sistema: logs, terminal, diagnóstico y mantenimiento; preservar confirmación
-  de factory reset. Campañas tienen su espacio cuando haya flujo completo.
+- [x] **F7.5 — Sistema:** logs Gateway/Brain, terminal administrativa,
+  diagnóstico y mantenimiento; se conserva la doble confirmación del factory reset.
+  La UI evita reintentar una operación cuyo resultado no se confirmó. Evidencia:
+  [F7.5](F7.5-SISTEMA.md).
 - [ ] Inventario de paridad: cada función antigua sustituida, descontinuada de forma
   expresa o aún disponible. Retirar panel viejo después de esa comprobación.
 
