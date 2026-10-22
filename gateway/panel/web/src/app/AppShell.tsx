@@ -1,6 +1,7 @@
 import { NavLink } from 'react-router-dom';
 import {
   Bot,
+  ChartNoAxesColumnIncreasing,
   Inbox,
   MessageCircleMore,
   RadioTower,
@@ -11,6 +12,7 @@ import type { ReactNode } from 'react';
 
 const navigation = [
   { to: '/', label: 'Bandeja', icon: Inbox, end: true },
+  { to: '/summary', label: 'Resumen', icon: ChartNoAxesColumnIncreasing },
   { to: '/contacts', label: 'Contactos', icon: UsersRound },
   { to: '/channels', label: 'Canales', icon: RadioTower }
 ];

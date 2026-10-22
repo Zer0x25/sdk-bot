@@ -119,6 +119,7 @@ function createArchive(options = {}) {
         conversationView: input => call('conversationView', input),
         conversationAddress: input => call('conversationAddress', input),
         accounts: () => call('accounts'),
+        summary: input => call('summary', input),
         messages: input => call('messages', input),
         messagePage: input => call('messagePage', input),
         messageByProviderId: input => call('messageByProviderId', input),

@@ -95,6 +95,20 @@ function installApiMock(options: { empty?: boolean; listError?: boolean; paginat
   const fetchMock = vi.fn(async (input: RequestInfo | URL, _init?: RequestInit) => {
     const url = new URL(String(input), 'http://panel.local');
     if (url.pathname === '/api/v1/accounts') return jsonResponse({ items: [account] });
+    if (url.pathname === '/api/v1/summary') {
+      const from = url.searchParams.get('from') || timestamp;
+      const to = url.searchParams.get('to') || timestamp;
+      return jsonResponse({
+        period: { from, to, interval: '[from,to)' },
+        coverageStartAt: '2026-10-20T10:00:00.000Z',
+        metrics: { inboundMessages: 4, activeConversations: 2, acceptedAiReplies: 1, acceptedHumanReplies: 1 },
+        byChannel: [
+          { channel: 'whatsapp', inboundMessages: 3, activeConversations: 1, acceptedAiReplies: 1, acceptedHumanReplies: 0 },
+          { channel: 'telegram', inboundMessages: 1, activeConversations: 1, acceptedAiReplies: 0, acceptedHumanReplies: 1 }
+        ],
+        snapshot
+      });
+    }
     if (url.pathname === '/api/v1/conversations') {
       if (options.listError) return jsonResponse({ error: { code: 'SERVICE_UNAVAILABLE' } }, 503);
       if (options.cursorExpired && url.searchParams.has('cursor')) {
@@ -535,5 +549,43 @@ describe('inbox shell and real API integration', () => {
 
     await user.tab();
     expect(screen.getByRole('link', { name: 'Saltar al contenido' })).toHaveFocus();
+  });
+
+  it('shows the exact UTC summary period, archived metrics and channel breakdown', async () => {
+    const fetchMock = installApiMock();
+    const user = userEvent.setup();
+    renderApp('/inbox/summary');
+
+    expect(await screen.findByRole('heading', { name: 'Resumen' })).toBeInTheDocument();
+    expect(screen.getByRole('link', { name: 'Resumen' })).toHaveAttribute('aria-current', 'page');
+    expect(screen.getByLabelText('Periodo del resumen')).toHaveValue('7');
+    await screen.findByText('Entradas archivadas');
+    const entriesCard = screen.getByText('Entradas archivadas').closest('article');
+    const conversationsCard = screen.getByText('Conversaciones con entradas').closest('article');
+    const aiCard = screen.getByText('Respuestas IA aceptadas').closest('article');
+    const humanCard = screen.getByText('Respuestas humanas aceptadas').closest('article');
+    expect(within(entriesCard!).getByText('4')).toBeInTheDocument();
+    expect(within(conversationsCard!).getByText('2')).toBeInTheDocument();
+    expect(within(aiCard!).getByText('1')).toBeInTheDocument();
+    expect(within(humanCard!).getByText('1')).toBeInTheDocument();
+    const whatsapp = screen.getByRole('row', { name: /WhatsApp/ });
+    const telegramRow = screen.getByRole('row', { name: /Telegram/ });
+    expect(within(whatsapp).getAllByRole('cell').map(cell => cell.textContent)).toEqual(['3', '1', '1', '0']);
+    expect(within(telegramRow).getAllByRole('cell').map(cell => cell.textContent)).toEqual(['1', '1', '0', '1']);
+    expect(screen.getByText(/entrada archivada más antigua disponible/)).toBeInTheDocument();
+    const summaryRequest = fetchMock.mock.calls.find(([input]) => new URL(String(input), 'http://panel.local').pathname === '/api/v1/summary');
+    const requestUrl = new URL(String(summaryRequest?.[0]), 'http://panel.local');
+    expect(Date.parse(requestUrl.searchParams.get('to') || '') - Date.parse(requestUrl.searchParams.get('from') || '')).toBe(7 * 24 * 60 * 60 * 1000);
+    expect(summaryRequest?.[1]?.credentials).toBe('same-origin');
+
+    await user.selectOptions(screen.getByLabelText('Periodo del resumen'), '30');
+    await waitFor(() => {
+      const thirtyDayRequest = fetchMock.mock.calls.find(([input]) => {
+        const url = new URL(String(input), 'http://panel.local');
+        return url.pathname === '/api/v1/summary'
+          && Date.parse(url.searchParams.get('to') || '') - Date.parse(url.searchParams.get('from') || '') === 30 * 24 * 60 * 60 * 1000;
+      });
+      expect(thirtyDayRequest).toBeDefined();
+    });
   });
 });

@@ -14,7 +14,7 @@ const READ_ONLY_METHODS = new Set(['snapshot','telegramCursor','pendingLegacyDis
     'pendingResumeMessages','shouldProcessArchivedInbound',
     'outboundIntent','outboundIntents',
     'conversation','conversations','conversationRows','conversationView','conversationAddress','accounts','messages','messagePage','messageByProviderId','aiContext',
-    'events','eventsPage','diagnostics','close']);
+    'events','eventsPage','diagnostics','summary','close']);
 function fail(code) { throw Object.assign(new Error(code), { code }); }
 function one(sql, ...params) { return db.prepare(sql).get(...params); }
 function run(sql, ...params) { return db.prepare(sql).run(...params); }
@@ -45,7 +45,7 @@ function initialize() {
         // committed WAL records or touching another process's snapshot.
         db = new DatabaseSync(`${pathToFileURL(file).href}?immutable=1`, { readOnly: true });
         const schemaVersion = one('PRAGMA user_version').user_version;
-        if (![6, 7, 8, 9, 10].includes(schemaVersion)) fail('SCHEMA_VERSION_REQUIRED');
+        if (![6, 7, 8, 9, 10, 11].includes(schemaVersion)) fail('SCHEMA_VERSION_REQUIRED');
         if (one("SELECT migration_id FROM control_import_migrations WHERE status IN ('cutover_applying','rolling_back') LIMIT 1")) {
             fail('CONTROL_CUTOVER_RECOVERY_REQUIRED');
         }
@@ -65,7 +65,7 @@ function initialize() {
     // SQLite owns the OS lock for the full connection lifetime; crash releases it.
     db.exec('BEGIN IMMEDIATE; COMMIT;');
     const version = one('PRAGMA user_version').user_version;
-    if (version > 10) fail('SCHEMA_TOO_NEW');
+    if (version > 11) fail('SCHEMA_TOO_NEW');
     if (version === 0) transaction(() => {
         db.exec(schema);
         run('INSERT INTO archive_meta VALUES(1,?,?)', randomUUID(), '0');
@@ -265,6 +265,11 @@ function initialize() {
         UPDATE conversations SET handled_inbound_seq=inbound_seq,resume_after_inbound_seq=inbound_seq;
         PRAGMA user_version=10;`);
     });
+    if (one('PRAGMA user_version').user_version === 10) transaction(() => {
+        db.exec(`CREATE INDEX messages_summary_period ON messages(occurred_at,inbound_seq,conversation_id);
+        CREATE INDEX outbound_intents_summary_period ON outbound_intents(state,source,completed_at,conversation_id,channel);
+        PRAGMA user_version=11;`);
+    });
     if (one("SELECT id FROM outbound_intents WHERE state='sending' LIMIT 1")) transaction(() => {
         run(`UPDATE outbound_intents SET state='delivery_unknown',error_code='PROCESS_RESTARTED_DURING_SEND',
             updated_at=?,completed_at=? WHERE state='sending'`, new Date().toISOString(), new Date().toISOString());
@@ -286,7 +291,7 @@ function initialize() {
         transaction(() => pending.forEach(row => updateTranscription({ messageId: row.id, expectedStatus: 'pending', status: 'failed' })));
         after = pending[pending.length - 1].id;
     }
-    return { ...snapshot(), schemaVersion: 10, journalMode: one('PRAGMA journal_mode').journal_mode,
+    return { ...snapshot(), schemaVersion: 11, journalMode: one('PRAGMA journal_mode').journal_mode,
         synchronous: one('PRAGMA synchronous').synchronous, threadId: require('node:worker_threads').threadId };
 }
 function registerAccount(input) {
@@ -1335,7 +1340,7 @@ function beginControlImport(input) {
     const report = input.report;
     if (!report || report.schemaVersion !== 1 || report.dryRun !== true || !Array.isArray(report.entries)
         || !Array.isArray(report.blockers) || typeof report.cutoverAllowed !== 'boolean') fail('INVALID_IMPORT_REPORT');
-    if (![6, 7, 8, 9, 10].includes(report.sourceManifest?.archive?.schemaVersion) || typeof report.sourceManifest.archive.dataEpoch !== 'string'
+    if (![6, 7, 8, 9, 10, 11].includes(report.sourceManifest?.archive?.schemaVersion) || typeof report.sourceManifest.archive.dataEpoch !== 'string'
         || !/^(0|[1-9][0-9]*)$/.test(report.sourceManifest.archive.seq || '')) fail('INVALID_IMPORT_SNAPSHOT');
     const currentSnapshot = snapshot();
     if (report.sourceManifest.archive.dataEpoch !== currentSnapshot.dataEpoch || report.sourceManifest.archive.seq !== currentSnapshot.seq) {
@@ -1858,6 +1863,51 @@ function conversationAddress(input) {
 function listAccounts() {
     return all('SELECT id,channel FROM accounts ORDER BY channel,id');
 }
+function summary(input) {
+    assertValid('Timestamp', input?.from);
+    assertValid('Timestamp', input?.to);
+    const from = new Date(input.from).toISOString();
+    const to = new Date(input.to).toISOString();
+    const fromMs = Date.parse(from), toMs = Date.parse(to);
+    if (!Number.isFinite(fromMs) || !Number.isFinite(toMs) || fromMs >= toMs
+        || toMs - fromMs > 90 * 24 * 60 * 60 * 1000) fail('INVALID_SUMMARY_PERIOD');
+
+    const channels = new Map();
+    const channelRow = channel => {
+        if (!channels.has(channel)) channels.set(channel, { channel, inboundMessages: 0, activeConversations: 0,
+            acceptedAiReplies: 0, acceptedHumanReplies: 0 });
+        return channels.get(channel);
+    };
+    for (const row of all('SELECT DISTINCT channel FROM accounts ORDER BY channel')) channelRow(row.channel);
+    for (const row of all(`SELECT a.channel,COUNT(*) AS inbound_messages,
+            COUNT(DISTINCT m.conversation_id) AS active_conversations
+        FROM messages m JOIN conversations c ON c.id=m.conversation_id
+        JOIN accounts a ON a.id=c.account_id
+        WHERE m.inbound_seq IS NOT NULL AND m.occurred_at>=? AND m.occurred_at<?
+        GROUP BY a.channel`, from, to)) {
+        const item = channelRow(row.channel);
+        item.inboundMessages = row.inbound_messages;
+        item.activeConversations = row.active_conversations;
+    }
+    for (const row of all(`SELECT channel,source,COUNT(*) AS replies
+        FROM outbound_intents
+        WHERE state='accepted' AND source IN ('ai','human') AND conversation_id IS NOT NULL
+            AND completed_at>=? AND completed_at<?
+        GROUP BY channel,source`, from, to)) {
+        const item = channelRow(row.channel);
+        if (row.source === 'ai') item.acceptedAiReplies = row.replies;
+        if (row.source === 'human') item.acceptedHumanReplies = row.replies;
+    }
+    const byChannel = [...channels.values()].sort((left, right) => left.channel.localeCompare(right.channel));
+    const metrics = byChannel.reduce((total, channel) => ({
+        inboundMessages: total.inboundMessages + channel.inboundMessages,
+        activeConversations: total.activeConversations + channel.activeConversations,
+        acceptedAiReplies: total.acceptedAiReplies + channel.acceptedAiReplies,
+        acceptedHumanReplies: total.acceptedHumanReplies + channel.acceptedHumanReplies
+    }), { inboundMessages: 0, activeConversations: 0, acceptedAiReplies: 0, acceptedHumanReplies: 0 });
+    const coverageStartAt = one('SELECT MIN(occurred_at) AS timestamp FROM messages WHERE inbound_seq IS NOT NULL').timestamp;
+    return { period: { from, to, interval: '[from,to)' }, coverageStartAt, metrics, byChannel, snapshot: snapshot() };
+}
 function messagePage(input) {
     assertValid('Id', input.conversationId);
     const limit = input.limit ?? 50;
@@ -1988,6 +2038,7 @@ function dispatch(method, input) {
         case 'conversationView': return conversationView(input);
         case 'conversationAddress': return conversationAddress(input);
         case 'accounts': return listAccounts();
+        case 'summary': return summary(input);
         case 'messages': return page(input);
         case 'messagePage': return messagePage(input);
         case 'messageByProviderId': return messageByProviderId(input);

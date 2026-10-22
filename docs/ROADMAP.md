@@ -351,7 +351,7 @@ Esta es la v1 útil; publicar/desplegar es una acción separada, no automática.
 
 **Depende de:** v1 estable.
 
-- [ ] Resumen orientado a decisiones con métricas reales y periodos explícitos.
+- [x] Resumen orientado a decisiones con métricas reales y periodos explícitos (unidad F7.1).
 - [ ] Contactos con permisos/perfiles y ficha compartida con bandeja.
 - [ ] Canales con pairing existente, ventana QR de 140s, código manual y estados
   restaurables. No alterar exclusión QR/código ni crear otro gateway.
@@ -363,6 +363,13 @@ Esta es la v1 útil; publicar/desplegar es una acción separada, no automática.
 
 **Aceptación:** paridad funcional documentada, sin perder OAuth, pairing, comandos,
 perfiles o reset por un cambio visual.
+
+**Unidad F7.1 — Resumen:** el panel React ofrece periodos móviles de 7 y 30 días,
+expresados como intervalos UTC `[from,to)`. Los conteos salen de mensajes entrantes
+archivados y salidas de conversación aceptadas, con desglose WhatsApp/Telegram y
+fecha mínima disponible de entradas. La API limita cada consulta a 90 días y exige
+`conversations:read`; no expone identidades ni texto de mensajes. La Fase 7 sigue
+abierta para las demás secciones y el inventario de paridad.
 
 ## Fase 8 — Estructura final y operación
 

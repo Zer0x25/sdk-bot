@@ -926,6 +926,58 @@
       "required": [],
       "additionalProperties": false
     },
+    "SummaryQuery": {
+      "type": "object",
+      "properties": {
+        "from": { "$ref": "#/$defs/Timestamp" },
+        "to": { "$ref": "#/$defs/Timestamp" }
+      },
+      "required": ["from", "to"],
+      "additionalProperties": false
+    },
+    "SummaryChannelMetrics": {
+      "type": "object",
+      "properties": {
+        "channel": { "$ref": "#/$defs/Channel" },
+        "inboundMessages": { "type": "integer", "minimum": 0 },
+        "activeConversations": { "type": "integer", "minimum": 0, "description": "Conversaciones con al menos una entrada durante el intervalo." },
+        "acceptedAiReplies": { "type": "integer", "minimum": 0 },
+        "acceptedHumanReplies": { "type": "integer", "minimum": 0 }
+      },
+      "required": ["channel", "inboundMessages", "activeConversations", "acceptedAiReplies", "acceptedHumanReplies"],
+      "additionalProperties": false
+    },
+    "SummaryResponse": {
+      "type": "object",
+      "properties": {
+        "period": {
+          "type": "object",
+          "properties": {
+            "from": { "$ref": "#/$defs/Timestamp" },
+            "to": { "$ref": "#/$defs/Timestamp" },
+            "interval": { "const": "[from,to)" }
+          },
+          "required": ["from", "to", "interval"],
+          "additionalProperties": false
+        },
+        "coverageStartAt": { "anyOf": [{ "$ref": "#/$defs/Timestamp" }, { "type": "null" }] },
+        "metrics": {
+          "type": "object",
+          "properties": {
+            "inboundMessages": { "type": "integer", "minimum": 0 },
+            "activeConversations": { "type": "integer", "minimum": 0, "description": "Conversaciones con al menos una entrada durante el intervalo." },
+            "acceptedAiReplies": { "type": "integer", "minimum": 0 },
+            "acceptedHumanReplies": { "type": "integer", "minimum": 0 }
+          },
+          "required": ["inboundMessages", "activeConversations", "acceptedAiReplies", "acceptedHumanReplies"],
+          "additionalProperties": false
+        },
+        "byChannel": { "type": "array", "items": { "$ref": "#/$defs/SummaryChannelMetrics" }, "maxItems": 2 },
+        "snapshot": { "$ref": "#/$defs/EventCursor" }
+      },
+      "required": ["period", "coverageStartAt", "metrics", "byChannel", "snapshot"],
+      "additionalProperties": false
+    },
     "MessagesQuery": {
       "type": "object",
       "properties": {

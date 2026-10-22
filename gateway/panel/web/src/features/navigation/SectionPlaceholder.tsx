@@ -9,7 +9,7 @@ export function SectionPlaceholder({ title }: { title: keyof typeof icons }) {
       <div className="empty-icon-wrap"><Icon aria-hidden="true" size={20} /></div>
       <p className="eyebrow">SDK-BOT</p>
       <h1 id="section-title">{title}</h1>
-      <p>Esta sección se incorporará después de completar la bandeja de conversaciones.</p>
+      <p>Esta sección sigue pendiente dentro de la Fase 7.</p>
     </section>
   );
 }

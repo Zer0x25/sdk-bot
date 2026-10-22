@@ -53,7 +53,7 @@ test('OpenAPI 3.1 references resolve locally and every component uses the canoni
       if (!op) continue;
       for (const param of op.parameters || []) {
         if (param.in !== 'query') continue;
-        const query = path === '/conversations' ? 'ConversationsQuery' : 'MessagesQuery';
+        const query = path === '/conversations' ? 'ConversationsQuery' : path === '/summary' ? 'SummaryQuery' : 'MessagesQuery';
         assert.equal(param.schema.$ref, `./schema.json#/$defs/${query}/properties/${param.name}`);
       }
     }
@@ -147,6 +147,20 @@ test('pages enforce bounded limits and opaque cursors without mutating defaults'
   reject('ConversationsQuery', { unreadOnly: 'true' });
   reject('MessagesQuery', { offset: 1 });
   reject('MessagesResponse', { items: Array(101).fill(message), nextCursor: null, snapshot: cursor });
+});
+
+test('summary contracts require explicit UTC bounds and expose only bounded aggregate metrics', () => {
+  accept('SummaryQuery', { from: '2026-10-01T00:00:00Z', to: '2026-10-08T00:00:00Z' });
+  reject('SummaryQuery', { from: '2026-10-01T00:00:00Z' });
+  reject('SummaryQuery', { from: '2026-10-01T00:00:00Z', to: '2026-10-08T00:00:00Z', channel: 'whatsapp' });
+  const metrics = { inboundMessages: 4, activeConversations: 2, acceptedAiReplies: 1, acceptedHumanReplies: 1 };
+  accept('SummaryResponse', {
+    period: { from: '2026-10-01T00:00:00Z', to: '2026-10-08T00:00:00Z', interval: '[from,to)' },
+    coverageStartAt: now, metrics,
+    byChannel: [{ channel: 'whatsapp', ...metrics }], snapshot: cursor
+  });
+  reject('SummaryResponse', { period: { from: now, to: now, interval: '[from,to)' }, coverageStartAt: null,
+    metrics, byChannel: [{ channel: 'whatsapp', ...metrics, phone: '+56900000000' }], snapshot: cursor });
 });
 
 test('entities and snapshots roundtrip JSON with explicit nullable fields', () => {

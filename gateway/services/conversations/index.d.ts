@@ -184,6 +184,7 @@ export interface Archive {
         accountId: string; channel: 'whatsapp' | 'telegram'; kind: string; exactValue: string;
     } | null>;
     accounts(): Promise<Array<{ id: string; channel: 'whatsapp' | 'telegram' }>>;
+    summary(input: { from: string; to: string }): Promise<Contract<'SummaryResponse'>>;
     messages(input: { conversationId: string; limit?: number; before?: { occurredAt: string; id: string } }): Promise<Contract<'Message'>[]>;
     messagePage(input: { conversationId: string; limit?: number; before?: { occurredAt: string; id: string } }): Promise<{ items: Contract<'Message'>[]; hasMore: boolean }>;
     messageByProviderId(input: { conversationId: string; providerMessageId: string }): Promise<Contract<'Message'> | null>;

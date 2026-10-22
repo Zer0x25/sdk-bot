@@ -164,17 +164,17 @@ test('definite provider rejection is recorded and is not retried with the same k
     assert.equal(adapter.calls, 1);
 });
 
-test('v7 archives migrate to v10 without altering control authority', async t => {
+test('v7 archives migrate to the current schema without altering control authority', async t => {
     const f = await fixture(t);
     await f.archive.close();
     const db = new DatabaseSync(f.dbPath);
-    db.exec(`DROP TABLE outbound_intents; DROP INDEX messages_ai_context; DROP TABLE message_sequence;
+    db.exec(`DROP INDEX messages_summary_period; DROP TABLE outbound_intents; DROP INDEX messages_ai_context; DROP TABLE message_sequence;
         ALTER TABLE messages DROP COLUMN archive_seq; ALTER TABLE conversations DROP COLUMN context_through_seq;
         ALTER TABLE conversations DROP COLUMN handled_inbound_seq; ALTER TABLE conversations DROP COLUMN resume_after_inbound_seq;
         PRAGMA user_version=7;`);
     db.close();
     const archive = await f.reopen();
-    assert.equal((await archive.ready).schemaVersion, 10);
+    assert.equal((await archive.ready).schemaVersion, 11);
     assert.deepEqual(await archive.controlAuthority(), { mode: 'legacy', migrationId: null, serviceReady: false, changedAt: null });
     assert.deepEqual(await archive.outboundIntents(), []);
 });

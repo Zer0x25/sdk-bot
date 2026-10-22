@@ -13,7 +13,7 @@ const CAPABILITIES = {
 };
 
 function capabilityFor(method, pathname) {
-    if (method === 'GET' && /^\/v1\/(session|accounts|conversations(?:\/[^/]+(?:\/(?:messages|pending-resume))?)?|operations\/[^/]+|events)$/.test(pathname)) return 'conversations:read';
+    if (method === 'GET' && /^\/v1\/(session|accounts|summary|conversations(?:\/[^/]+(?:\/(?:messages|pending-resume))?)?|operations\/[^/]+|events)$/.test(pathname)) return 'conversations:read';
     if (method === 'POST' && /^\/v1\/conversations\/[^/]+\/(takeover|release)$/.test(pathname)) return 'control:write';
     if (method === 'POST' && /^\/v1\/conversations\/[^/]+\/messages$/.test(pathname)) return 'messages:send';
     if (method === 'POST' && /^\/v1\/conversations\/[^/]+\/read$/.test(pathname)) return 'conversations:read';
@@ -34,13 +34,17 @@ function parseQuery(req, contract) {
     const url = currentUrl(req);
     const allowed = contract === 'ConversationsQuery'
         ? new Set(['cursor', 'limit', 'channel', 'accountId', 'automationMode', 'lifecycle', 'unreadOnly', 'search'])
-        : new Set(['cursor', 'limit']);
+        : contract === 'SummaryQuery' ? new Set(['from', 'to']) : new Set(['cursor', 'limit']);
     const values = new Map();
     for (const [key, value] of url.searchParams) {
         if (!allowed.has(key) || values.has(key)) throw invalid();
         values.set(key, value);
     }
     const result = {};
+    if (contract === 'SummaryQuery') {
+        if (values.has('from')) result.from = values.get('from');
+        if (values.has('to')) result.to = values.get('to');
+    }
     if (values.has('cursor')) result.cursor = values.get('cursor');
     if (values.has('limit')) {
         const raw = values.get('limit');
@@ -517,7 +521,7 @@ function accountStatus(statusValue) {
 
 function archiveBoundary(error) {
     if (error instanceof BoundaryError) return error;
-    if (['INVALID_LIMIT', 'INVALID_CHANNEL', 'INVALID_READ_CURSOR', 'INVALID_INPUT'].includes(error?.code)) return invalid();
+    if (['INVALID_LIMIT', 'INVALID_CHANNEL', 'INVALID_READ_CURSOR', 'INVALID_INPUT', 'INVALID_SUMMARY_PERIOD'].includes(error?.code)) return invalid();
     const pendingResumeErrors = {
         PENDING_RESUME_NOT_AVAILABLE: 'La conversación no está disponible para reanudar entradas pendientes.',
         PENDING_RESUME_SELECTION_STALE: 'La lista cambió. Actualiza las entradas pendientes y vuelve a seleccionarlas.',
@@ -583,6 +587,11 @@ function createSessionApi(getPolicy, archive, getContacts = () => ({}), getChann
                     displayName: `${row.channel === 'whatsapp' ? 'WhatsApp' : 'Telegram'} · ${row.id.slice(0, 8)}`,
                     status: accountStatus(getChannelStatus(row.channel, row.id)), capabilities: CAPABILITIES[row.channel]
                 })) });
+                return send(res, 200, body, context.requestId);
+            }
+            if (req.method === 'GET' && pathname === '/v1/summary') {
+                const query = parseQuery(req, 'SummaryQuery');
+                const body = assertValid('SummaryResponse', await archive.summary(query));
                 return send(res, 200, body, context.requestId);
             }
             if (req.method === 'GET' && pathname === '/v1/events') {

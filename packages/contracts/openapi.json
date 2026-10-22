@@ -94,6 +94,36 @@
         }
       }
     },
+    "/summary": {
+      "get": {
+        "operationId": "getSummary",
+        "description": "Métricas de entradas y salidas archivadas en el intervalo UTC [from,to); solo se cuentan salidas aceptadas.",
+        "parameters": [
+          {
+            "name": "from",
+            "in": "query",
+            "required": true,
+            "schema": { "$ref": "./schema.json#/$defs/SummaryQuery/properties/from" }
+          },
+          {
+            "name": "to",
+            "in": "query",
+            "required": true,
+            "schema": { "$ref": "./schema.json#/$defs/SummaryQuery/properties/to" }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Conteos verificables del archivo y fecha mínima de una entrada archivada.",
+            "content": { "application/json": { "schema": { "$ref": "#/components/schemas/SummaryResponse" } } }
+          },
+          "401": { "$ref": "#/components/responses/401" },
+          "403": { "$ref": "#/components/responses/403" },
+          "422": { "$ref": "#/components/responses/422" },
+          "503": { "$ref": "#/components/responses/503" }
+        }
+      }
+    },
     "/conversations": {
       "get": {
         "operationId": "listConversations",
@@ -948,6 +978,15 @@
       },
       "ConversationsQuery": {
         "$ref": "./schema.json#/$defs/ConversationsQuery"
+      },
+      "SummaryQuery": {
+        "$ref": "./schema.json#/$defs/SummaryQuery"
+      },
+      "SummaryChannelMetrics": {
+        "$ref": "./schema.json#/$defs/SummaryChannelMetrics"
+      },
+      "SummaryResponse": {
+        "$ref": "./schema.json#/$defs/SummaryResponse"
       },
       "MessagesQuery": {
         "$ref": "./schema.json#/$defs/MessagesQuery"

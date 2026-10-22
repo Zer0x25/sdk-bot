@@ -918,3 +918,25 @@ Cierres históricos: commits F2C.1/F2C.2/F2D/F2E.1 están en el log local; F2B.3
   comprueba el contrato integrado. No se conservó el JSON literal de la petición
   live. F6.4 y Fase 6 quedan completadas con esa limitación registrada.
   [Evidencia](F6.4-SMOKE-CANAL.md).
+
+## Fase 7.1 — Resumen con métricas del archivo — 2026-10-22
+
+- En `main`, se añadió la primera vista real de F7: Resumen con periodos móviles
+  de 7/30 días, inicio incluido y fin excluido en UTC. La API autenticada exige
+  ambos límites, máximo 90 días y permiso `conversations:read`.
+- Los conteos usan mensajes entrantes con secuencia durable y salidas de IA/humano
+  cuyo estado del outbox es `accepted`, agrupados por canal. Se muestra la fecha
+  mínima de entrada aún disponible en el archivo; no se infiere actividad fuera
+  de sus datos retenidos y no se expone texto ni identidad.
+- La migración SQLite v11 añade índices de consulta temporal; se aceptó v11 en
+  lectura inmutable/importación. El proxy valida `SummaryResponse`. La navegación
+  React enlaza `/inbox/summary`, con estados de carga/error, periodo, métricas,
+  tabla de canales y nota de cobertura.
+- Verificación: `npm run check` en la raíz (contratos) y `cd gateway && npm run
+  check` (lint, typecheck, 14 pruebas Vitest, build y pruebas completas del
+  Gateway). La prueba agregada comprueba límites `[from,to)`, conversaciones
+  únicas por canal, salidas aceptadas y rechazo de intervalos inválidos; la prueba
+  de API cubre contrato, query incompleta y permiso.
+- Alcance cerrado: solo la unidad Resumen. Contactos, Canales, Asistente, Sistema
+  e inventario de paridad siguen pendientes dentro de F7. No se hizo push ni
+  despliegue.

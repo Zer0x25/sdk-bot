@@ -67,7 +67,7 @@ test('event retention computes an exact 50,000-event replay window after each co
 test('worker: migration, WAL FULL, transaction, minimal event and durable session watermark after reopen', async t => {
     const { archive, dbPath } = await fixture(t);
     const info = await archive.ready;
-    assert.equal(info.schemaVersion, 10); assert.equal(info.journalMode, 'wal'); assert.equal(info.synchronous, 2);
+    assert.equal(info.schemaVersion, 11); assert.equal(info.journalMode, 'wal'); assert.equal(info.synchronous, 2);
     assert.ok(info.threadId > 0);
     const [created] = await archive.ingestBatch([message()]);
     assertValid('Message', created.message); assertValid('Event', created.event);
@@ -86,6 +86,53 @@ test('worker: migration, WAL FULL, transaction, minimal event and durable sessio
     assert.deepEqual(await reopened.ingestBatch([message()]), [{ status: 'duplicate', messageId: created.message.id, conversationId: created.message.conversationId }]);
     await reopened.close();
     await assert.rejects(reopened.snapshot());
+});
+
+test('summary aggregates a half-open period by channel and counts only accepted conversation replies', async t => {
+    const { archive, dbPath } = await fixture(t);
+    const telegramAccount = await archive.registerAccount({ channel: 'telegram', providerKey: 'summary-tg-account' });
+    const from = '2026-01-01T00:00:00.000Z', to = '2026-01-08T00:00:00.000Z';
+    const captured = await archive.ingestBatch([
+        message(key('500@s.whatsapp.net'), 'summary-wa-first', { occurredAt: from }),
+        message(key('500@s.whatsapp.net'), 'summary-wa-second', { occurredAt: '2026-01-02T12:00:00.000Z' }),
+        message(key('501@s.whatsapp.net'), 'summary-wa-boundary', { occurredAt: to }),
+        message(telegram('700', telegramAccount.id), 'summary-tg-first', { occurredAt: '2026-01-03T12:00:00.000Z' })
+    ]);
+    const whatsappConversation = captured[0].message.conversationId;
+    const telegramConversation = captured[3].message.conversationId;
+
+    await archive.close();
+    const db = new DatabaseSync(dbPath);
+    const insertIntent = db.prepare(`INSERT INTO outbound_intents(
+        id,idempotency_key,request_fingerprint,account_id,conversation_id,channel,destination,actor_id,source,payload,state,created_at,updated_at,completed_at
+    ) VALUES(?,?,?,?,?,?,?,?,?,?,?, ?, ?, ?)`);
+    const addIntent = (channel, accountId, conversationId, source, state, createdAt, completedAt, keyValue) => insertIntent.run(
+        randomUUID(), keyValue, 'a'.repeat(64), accountId, conversationId, channel, 'private-destination', randomUUID(), source,
+        JSON.stringify({ text: 'fixture' }), state, createdAt, createdAt, completedAt
+    );
+    addIntent('whatsapp', account, whatsappConversation, 'ai', 'accepted', '2025-12-31T23:00:00.000Z',
+        '2026-01-04T12:00:00.000Z', 'summary-ai-accepted');
+    addIntent('telegram', telegramAccount.id, telegramConversation, 'human', 'accepted', '2026-01-05T11:00:00.000Z',
+        '2026-01-05T12:00:00.000Z', 'summary-human-accepted');
+    addIntent('whatsapp', account, whatsappConversation, 'ai', 'accepted', '2026-01-06T12:00:00.000Z',
+        to, 'summary-ai-boundary');
+    addIntent('whatsapp', account, whatsappConversation, 'human', 'rejected', '2026-01-06T12:00:00.000Z',
+        '2026-01-06T12:00:00.000Z', 'summary-human-rejected');
+    db.close();
+
+    const reopened = createArchive({ path: dbPath });
+    t.after(() => reopened.close());
+    const result = await reopened.summary({ from, to });
+    assert.deepEqual(result.period, { from, to, interval: '[from,to)' });
+    assert.deepEqual(result.metrics, { inboundMessages: 3, activeConversations: 2,
+        acceptedAiReplies: 1, acceptedHumanReplies: 1 });
+    assert.deepEqual(result.byChannel, [
+        { channel: 'telegram', inboundMessages: 1, activeConversations: 1, acceptedAiReplies: 0, acceptedHumanReplies: 1 },
+        { channel: 'whatsapp', inboundMessages: 2, activeConversations: 1, acceptedAiReplies: 1, acceptedHumanReplies: 0 }
+    ]);
+    assert.equal(result.coverageStartAt, from);
+    await assert.rejects(reopened.summary({ from: to, to: from }), { code: 'INVALID_SUMMARY_PERIOD' });
+    await assert.rejects(reopened.summary({ from: '2025-10-01T00:00:00.000Z', to }), { code: 'INVALID_SUMMARY_PERIOD' });
 });
 
 test('F5.1: control state uses CAS, increments its own version and commits audit event atomically', async t => {
@@ -142,7 +189,8 @@ test('F5.1: v4 migration keeps conversations and stages conservative control def
     db.exec(`CREATE TABLE archive_meta (id INTEGER PRIMARY KEY, epoch TEXT NOT NULL, seq TEXT NOT NULL);
         CREATE TABLE conversations (id TEXT PRIMARY KEY, aggregate_version TEXT NOT NULL DEFAULT '1', inbound_seq TEXT NOT NULL DEFAULT '0');
         CREATE TABLE events (seq TEXT PRIMARY KEY, conversation_id TEXT NOT NULL, message_id TEXT, created_at TEXT NOT NULL, payload TEXT NOT NULL);
-        CREATE TABLE messages (id TEXT PRIMARY KEY, conversation_id TEXT, payload TEXT NOT NULL);
+        CREATE TABLE messages (id TEXT PRIMARY KEY, conversation_id TEXT, occurred_at TEXT NOT NULL DEFAULT '2026-01-01T00:00:00.000Z',
+            inbound_seq TEXT, payload TEXT NOT NULL);
         INSERT INTO archive_meta VALUES(1,'v4-epoch','0');
         PRAGMA user_version=4;`);
     db.prepare('INSERT INTO conversations(id,aggregate_version) VALUES(?,?)').run(conversationId, '7');
@@ -150,7 +198,7 @@ test('F5.1: v4 migration keeps conversations and stages conservative control def
     const archive = createArchive({ path: dbPath });
     t.after(() => archive.close());
     const ready = await archive.ready;
-    assert.equal(ready.schemaVersion, 10);
+    assert.equal(ready.schemaVersion, 11);
     assert.deepEqual(await archive.controlState(conversationId), {
         accessPolicy: 'neutral', automationMode: 'off', lifecycle: 'open', ownerId: null,
         controlVersion: '1', contextVersion: '1', status: 'confirmed', takenAt: null, handoffReason: null,
@@ -456,7 +504,7 @@ test('v1 conversation reads project safe contacts, filter/paginate stably, and k
     }
 });
 
-test('F6.2 migrates v9 watermarks to the current inbound sequence without replaying old messages', async t => {
+test('F6.2 and F7 summary migrations preserve v9 watermarks without replaying old messages', async t => {
     const { archive, dbPath } = await fixture(t);
     const [created] = await archive.ingestBatch([message()]);
     const conversationId = created.message.conversationId;
@@ -464,14 +512,15 @@ test('F6.2 migrates v9 watermarks to the current inbound sequence without replay
     await archive.close();
 
     const db = new DatabaseSync(dbPath);
-    db.exec(`ALTER TABLE conversations DROP COLUMN handled_inbound_seq;
+    db.exec(`DROP INDEX messages_summary_period; DROP INDEX outbound_intents_summary_period;
+        ALTER TABLE conversations DROP COLUMN handled_inbound_seq;
         ALTER TABLE conversations DROP COLUMN resume_after_inbound_seq;
         PRAGMA user_version=9;`);
     db.close();
 
     const migrated = createArchive({ path: dbPath });
     t.after(() => migrated.close());
-    assert.equal((await migrated.ready).schemaVersion, 10);
+    assert.equal((await migrated.ready).schemaVersion, 11);
     const row = await migrated.conversation(conversationId);
     assert.equal(row.handled_inbound_seq, '1');
     assert.equal(row.resume_after_inbound_seq, '1');

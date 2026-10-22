@@ -177,6 +177,23 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/summary": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** @description Métricas de entradas y salidas archivadas en el intervalo UTC [from,to); solo se cuentan salidas aceptadas. */
+        get: operations["getSummary"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
 }
 export type webhooks = Record<string, never>;
 export interface components {
@@ -588,6 +605,36 @@ export interface components {
         };
         /** Format: unicode-text */
         StoredText: string;
+        SummaryChannelMetrics: {
+            acceptedAiReplies: number;
+            acceptedHumanReplies: number;
+            /** @description Conversaciones con al menos una entrada durante el intervalo. */
+            activeConversations: number;
+            channel: components["schemas"]["Channel"];
+            inboundMessages: number;
+        };
+        SummaryQuery: {
+            from: components["schemas"]["Timestamp"];
+            to: components["schemas"]["Timestamp"];
+        };
+        SummaryResponse: {
+            byChannel: components["schemas"]["SummaryChannelMetrics"][];
+            coverageStartAt: components["schemas"]["Timestamp"] | null;
+            metrics: {
+                acceptedAiReplies: number;
+                acceptedHumanReplies: number;
+                /** @description Conversaciones con al menos una entrada durante el intervalo. */
+                activeConversations: number;
+                inboundMessages: number;
+            };
+            period: {
+                from: components["schemas"]["Timestamp"];
+                /** @constant */
+                interval: "[from,to)";
+                to: components["schemas"]["Timestamp"];
+            };
+            snapshot: components["schemas"]["EventCursor"];
+        };
         TakeoverConfirmedResponse: {
             conversation: components["schemas"]["Conversation"];
         };
@@ -1121,6 +1168,33 @@ export interface operations {
             404: components["responses"]["404"];
             409: components["responses"]["409"];
             410: components["responses"]["410"];
+            422: components["responses"]["422"];
+            503: components["responses"]["503"];
+        };
+    };
+    getSummary: {
+        parameters: {
+            query: {
+                from: components["schemas"]["Timestamp"];
+                to: components["schemas"]["Timestamp"];
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Conteos verificables del archivo y fecha mínima de una entrada archivada. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SummaryResponse"];
+                };
+            };
+            401: components["responses"]["401"];
+            403: components["responses"]["403"];
             422: components["responses"]["422"];
             503: components["responses"]["503"];
         };

@@ -19,6 +19,7 @@ export type Operation = Contract<'Operation'>;
 export type SendMessageResponse = Contract<'SendMessageResponse'>;
 export type SendMessageRequest = Contract<'SendMessageRequest'>;
 export type PendingResumeResponse = Contract<'PendingResumeResponse'>;
+export type SummaryResponse = Contract<'SummaryResponse'>;
 
 export type ControlResponse = Contract<'TakeoverConfirmedResponse'> | Contract<'TakeoverPendingResponse'>;
 
@@ -128,6 +129,11 @@ export function getSession(signal?: AbortSignal) {
 
 export function getAccounts(signal?: AbortSignal) {
   return getJson<AccountsResponse>('/accounts', signal);
+}
+
+export function getSummary(input: { from: string; to: string }, signal?: AbortSignal) {
+  const query = new URLSearchParams({ from: input.from, to: input.to });
+  return getJson<SummaryResponse>(`/summary?${query.toString()}`, signal);
 }
 
 export function getConversations(input: {

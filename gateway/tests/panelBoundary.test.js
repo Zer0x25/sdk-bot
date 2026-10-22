@@ -19,7 +19,12 @@ const secret = 'test-only-service-secret-32-bytes-minimum';
 const cookieSecret = 'test-only-cookie-secret-never-production';
 const actor = { id: actorId('google:123'), displayName: 'Operador', capabilities: ['conversations:read'] };
 const empty = Buffer.alloc(0);
-const bootstrap = { snapshot: async () => ({ dataEpoch: '00000000-0000-4000-8000-000000000001', seq: '0' }) };
+const bootstrap = {
+    snapshot: async () => ({ dataEpoch: '00000000-0000-4000-8000-000000000001', seq: '0' }),
+    summary: async ({ from, to }) => ({ period: { from, to, interval: '[from,to)' }, coverageStartAt: null,
+        metrics: { inboundMessages: 0, activeConversations: 0, acceptedAiReplies: 0, acceptedHumanReplies: 0 },
+        byChannel: [], snapshot: { dataEpoch: '00000000-0000-4000-8000-000000000001', seq: '0' } })
+};
 function signed(overrides = {}) {
     return signContext({ secret, actor, requestId: crypto.randomUUID(), method: 'GET', target: '/v1/session', body: empty, ...overrides });
 }
@@ -143,6 +148,15 @@ test('bus real: v1 exige firma/permisos y mantiene rutas legacy cuando secreto e
         assert.deepEqual(value.actor, actor);
         assert.equal(value.snapshot.seq, '0');
         assert.deepEqual(value.policy, getGlobalPolicy());
+        const query = new URLSearchParams({ from: '2026-10-01T00:00:00.000Z', to: '2026-10-08T00:00:00.000Z' });
+        const summaryTarget = `/v1/summary?${query}`;
+        const summaryResponse = await fetch(url + summaryTarget, { headers: signed({ target: summaryTarget }) });
+        assert.equal(summaryResponse.status, 200);
+        const summary = assertValid('SummaryResponse', await summaryResponse.json());
+        assert.deepEqual(summary.period, { from: '2026-10-01T00:00:00.000Z', to: '2026-10-08T00:00:00.000Z', interval: '[from,to)' });
+        const invalidSummaryTarget = '/v1/summary?from=2026-10-01T00%3A00%3A00.000Z';
+        await errorResponse(await fetch(url + invalidSummaryTarget, { headers: signed({ target: invalidSummaryTarget }) }), 422);
+        await errorResponse(await fetch(url + summaryTarget, { headers: signed({ target: summaryTarget, actor: { ...actor, capabilities: [] } }) }), 403);
         const deniedSend = signed({ method: 'POST', target: '/v1/conversations/test/messages', body: Buffer.from('{}') });
         await errorResponse(await fetch(url + '/v1/conversations/test/messages', { method: 'POST', headers: deniedSend, body: '{}' }), 403);
         const legacy = await fetch(url + '/status', { headers: signed({ target: '/status' }) });
@@ -361,6 +375,7 @@ test('proxy reconstruye headers y firma bytes; timeouts, respuesta inválida y m
 
 test('proxy valida cada respuesta v1 con su contrato y no deja pasar rutas sin esquema', () => {
     assert.equal(responseContract('GET', '/v1/accounts', 200), 'AccountsResponse');
+    assert.equal(responseContract('GET', '/v1/summary', 200), 'SummaryResponse');
     assert.equal(responseContract('GET', '/v1/conversations/00000000-0000-4000-8000-000000000001', 200), 'ConversationResponse');
     assert.equal(responseContract('GET', '/v1/conversations/00000000-0000-4000-8000-000000000001/messages', 200), 'MessagesResponse');
     assert.equal(responseContract('GET', '/v1/conversations/00000000-0000-4000-8000-000000000001/pending-resume', 200), 'PendingResumeResponse');
