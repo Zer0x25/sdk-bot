@@ -173,10 +173,12 @@ test('stale audio cannot emit or use replacement token after reconnect', async t
     assert.equal(network.calls[1].token, 'fixture_B');
 });
 
-async function server(t, adapter) {
+async function server(t, adapter, telegramTestSender = null) {
     bus.setTelegramChatIdResolver((token, options) => adapter.discoverChatId(token, options));
+    bus.setTelegramTestSender(telegramTestSender);
     const instance = bus.startInternalBus({ port: 0 }); await new Promise(r => instance.once('listening', r));
-    t.after(async () => { bus.setTelegramChatIdResolver(null); instance.closeAllConnections(); await new Promise(r => instance.close(r)); });
+    t.after(async () => { bus.setTelegramChatIdResolver(null); bus.setTelegramTestSender(null);
+        instance.closeAllConnections(); await new Promise(r => instance.close(r)); });
     return `http://127.0.0.1:${instance.address().port}`;
 }
 function fakeSends(t) {
@@ -198,7 +200,13 @@ function fakeSends(t) {
 
 test('real bus test route observes active adapter; cancelling one panel request leaves the other and polling alive', async t => {
     const { adapter, network, seen } = await fixture(t, { discoveryTimeoutMs: 1000 });
-    const url = await server(t, adapter), sent = fakeSends(t);
+    const activeSends = [];
+    const url = await server(t, adapter, async input => {
+        if (input.token !== adapter.token || !adapter.pollerActive || !adapter.accountId) return { handled: false };
+        activeSends.push(input);
+        return { handled: true, result: { _outbox: { id: 'fixture-intent', state: 'accepted', replayed: false } } };
+    });
+    const sent = fakeSends(t);
     const post = signal => fetch(url + '/telegram/test', { method: 'POST', headers: { 'content-type': 'application/json' }, body: '{"token":"fixture_A"}', signal });
     const controller = new globalThis.AbortController();
     const cancelled = post(controller.signal); const caught = cancelled.catch(() => {});
@@ -207,9 +215,33 @@ test('real bus test route observes active adapter; cancelling one panel request 
     assert.equal(network.calls.length, 1); assert.equal(network.calls[0].aborted, false);
     network.calls[0].finish({ ok: true, result: [update(1, '-777')] });
     const response = await second; assert.equal(response.status, 200);
-    assert.deepEqual(await response.json(), { success: true, chatId: '-777' });
-    assert.equal(sent.length, 1); assert.equal(sent[0].body.chat_id, '-777'); assert.equal(seen.length, 1);
+    const result = await response.json();
+    assert.equal(result.success, true); assert.equal(result.delivery, 'accepted');
+    assert.equal(result.chatId, '-777'); assert.equal(result.replayed, false);
+    assert.match(result.idempotencyKey, /^[a-z0-9-]{36}$/i);
+    assert.equal(activeSends.length, 1); assert.equal(activeSends[0].chatId, '-777');
+    assert.equal(activeSends[0].idempotencyKey, result.idempotencyKey);
+    assert.equal(sent.length, 0, 'a live account uses the adapter outbox, not a direct Bot API send');
+    assert.equal(seen.length, 1);
     assert.equal(getSettingsDB().telegramChatId, '555'); // discovery does not save or grant admin
+});
+
+test('active Telegram test returns its idempotency key and destination when delivery is ambiguous', async t => {
+    const { adapter } = await fixture(t);
+    const sent = [];
+    const url = await server(t, adapter, async input => {
+        sent.push(input);
+        throw Object.assign(new Error('ambiguous fixture'), { code: 'OUTBOUND_DELIVERY_UNKNOWN',
+            outboundState: 'delivery_unknown' });
+    });
+    fakeSends(t);
+    const response = await fetch(url + '/telegram/test', { method: 'POST', headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ token: 'fixture_A', chatId: '555', idempotencyKey: 'tg-test-stable-1' }) });
+    assert.equal(response.status, 200);
+    const result = await response.json();
+    assert.equal(result.success, false); assert.equal(result.delivery, 'unknown');
+    assert.equal(result.idempotencyKey, 'tg-test-stable-1'); assert.equal(result.chatId, '555');
+    assert.equal(sent.length, 1); assert.equal(sent[0].idempotencyKey, result.idempotencyKey);
 });
 
 test('bus rejects unsaved token, malformed JSON and unsafe IDs without getUpdates or test sends', async t => {

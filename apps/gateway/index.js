@@ -243,6 +243,13 @@ async function startGateway() {
     const telegram = new TelegramAdapter({ archive: conversationArchive, attachmentStore });
     adapters.set('telegram', telegram);
     internalBus.setTelegramChatIdResolver((token, options) => telegram.discoverChatId(token, options));
+    internalBus.setTelegramTestSender(async ({ token, chatId, idempotencyKey, message }) => {
+        if (telegram.token !== token || !telegram.pollerActive || !telegram.accountId) return { handled: false };
+        const result = await telegram.sendMessage(`telegram:${chatId}`, message, {
+            source: 'system', idempotencyKey, _outboundAccountId: telegram.accountId
+        });
+        return { handled: true, result };
+    });
 
     legacyDispatchPump = require('./services/conversations/legacyDispatch').createLegacyDispatchPump({
         archive: conversationArchive,

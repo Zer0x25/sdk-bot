@@ -1475,6 +1475,21 @@ Cierres históricos: commits F2C.1/F2C.2/F2D/F2E.1 están en el log local; F2B.3
   atención al cliente y no bloquea las fases. Siguiente punto ejecutable: BUG-073,
   eco propio de WhatsApp recibido antes del ACK del envío.
 
+## BUG-072 — Sonda administrativa Telegram — 2026-10-22
+
+- Con token/cuenta activa, `/telegram/test` usa `TelegramAdapter.sendMessage` y el
+  outbox común con la clave del panel. El token borrador sigue usando una sonda
+  directa para permitir configuración inicial; una falla después de iniciar el
+  envío queda `delivery: unknown`, incluye destino/clave y no se reintenta sola.
+- El panel guarda solo la clave pendiente (nunca el token), mantiene la advertencia
+  si el Chat ID descubierto aún no se guardó y requiere confirmación explícita
+  antes de crear otra sonda. Un resultado resuelto elimina la clave pendiente.
+- Focales: Telegram bus/ownership/setup 27/27. `npm run check`: lint, typecheck,
+  Panel 44/44, build y servido 1/1; Gateway 403/403. `git diff --check` limpio.
+  Todo con transportes simulados, sin tráfico ni credenciales reales.
+- Evidencia: [BUG-072](BUG-072-SONDA-TELEGRAM.md). Telegram se mantiene como canal
+  administrativo, no como canal de atención a clientes.
+
 ## BUG-073 — Correlación del eco WhatsApp — 2026-10-22
 
 - El eco consulta primero la salida aceptada; si hay un intent local `sending`

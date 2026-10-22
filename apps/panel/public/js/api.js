@@ -146,11 +146,11 @@ export async function getTelegramSettings() {
   return r.json();
 }
 
-export async function testTelegramToken(token, chatId = '') {
+export async function testTelegramToken(token, chatId = '', idempotencyKey = '') {
   return fetchJson('/api/telegram/test', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ token, chatId })
+    body: JSON.stringify({ token, chatId, idempotencyKey })
   });
 }
 

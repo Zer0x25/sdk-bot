@@ -1,6 +1,6 @@
 # Backlog de bugs — SDK-Bot
 
-Actualización: 2026-10-20. Fuente inicial:
+Actualización: 2026-10-22. Fuente inicial:
 [baseline F0.1](BASELINE-CONVERSACIONES.md). Esta lista registra defectos concretos;
 las funciones nuevas y sus dependencias siguen en [ROADMAP.md](ROADMAP.md).
 
@@ -84,7 +84,7 @@ salvo indicación contraria. La evidencia detallada y líneas están en la basel
 | BUG-069 | P2 | Abierto: al fusionar release PR #6, Release Please dejó v0.4.0 como borrador sin tag y abrió PR #8 v0.5.0 repitiendo el changelog completo. | Run 39476647006 reporta `Expected 1 releases, only found 0` y busca `v0.4.0`; Releases API muestra v0.4.0 como draft y PR #6/#8 añaden los mismos 153 renglones de CHANGELOG.md. | Publicar automáticamente el release/tag tras aprobar y fusionar su PR (`draft: false`); validar en la siguiente ejecución que Release Please reconoce el tag y no vuelve a incluir el historial previo. Publicar/limpiar el borrador v0.4.0 y PR #8 existentes requiere reconciliación aparte. |
 | BUG-070 | P2 | Cerrado F4.3: el replay de más de 50 mensajes tras una desconexión podía dejar un hueco visible entre mensajes recientes e historial en caché. | La UI solo consultaba la página más reciente de 50 mensajes; el snapshot anterior quedaba más atrás. | F4.3 pagina el replay hasta solapar el snapshot cargado. Pruebas verifican 51 mensajes, ancla estable y un segundo evento durante un fetch activo. CI 39485451344, head del PR a390c71 (código f7c3acc). |
 | BUG-071 | P2 | **Cerrado:** `/ignorar contactos de agenda` podía inflar el total con registros alias o controles ya ignorados. | El camino SQLite cuenta conversationId distintos y solo suma transiciones efectivas a `addedCount`; el total incluye conversaciones únicas que quedan ignoradas. | Archivo SQLite real: alias JID/LID, contacto previamente ignorado y segunda ejecución idempotente. Evidencia: [BUG-071](BUG-071-RESUMEN-IGNORAR-AGENDA.md). |
-| BUG-072 | P2 | Abierto: `/telegram/test` envía una sonda de configuración directamente por Bot API, fuera del outbox. | El endpoint debe poder probar un token borrador antes de que el adaptador dueño de esa cuenta se conecte; un timeout y un segundo click pueden duplicar el mensaje de prueba. | F6 o antes de exponer el test a reintentos automáticos: probar token/cuenta con el adaptador común cuando esté activo, y mantener sonda de token borrador con clave durable o confirmar su entrega incierta. No bloquea salidas de conversaciones ni avisos del gateway. |
+| BUG-072 | P2 | **Cerrado 2026-10-22:** `/telegram/test` podía duplicar una sonda después de una respuesta ambigua. | Con cuenta activa, la prueba usa `TelegramAdapter.sendMessage` y el outbox común. El token borrador conserva la sonda directa; `delivery: unknown` incluye destino/clave y el panel conserva la clave sin token y exige confirmación antes de otro envío. | Pruebas cubren selección del sender activo, respuesta ambigua, sonda directa de borrador y confirmación persistente tras recargar antes de guardar el Chat ID. La idempotencia del puerto común está cubierta en `outboundIntent.test.js`. [Evidencia](BUG-072-SONDA-TELEGRAM.md). Sin proveedor real ni atención a clientes por Telegram. |
 | BUG-073 | P2 | **Cerrado F5.8:** el eco propio de WhatsApp podía marcarse como salida humana si el ACK tardaba más de 500 ms. | La observación queda pendiente mientras exista un envío local `sending` al mismo destino; consulta el ID aceptado o agota la ventana acotada de 5 s. | Pruebas cubren ACK a más de 500 ms, salida externa y timeout de la ventana. Evidencia: [BUG-073](BUG-073-ECO-WHATSAPP-ACK-LENTO.md). |
 | BUG-074 | P2 | **Cerrado 2026-10-22:** respuestas durables de `generations` en Brain ya tienen retención y límite de payload activo. | Brain conserva el borrador 7 días, convierte la expiración en tombstone y lo mantiene 30 días más; el replay expirado devuelve 409 sin llamar al proveedor. | Máximo de 64 KiB por respuesta y 5000 respuestas activas; al llegar al cupo no se llama al proveedor. Barrido al inicio, cada hora y antes de acceder al ledger; `secure_delete`, checkpoint WAL y VACUUM periódico limpian páginas. Ruff y 39 pruebas Brain pasan, incluyendo replay dentro/fuera de ventana y poda. Evidencia: [BUG-074](BUG-074-GENERATION-RETENTION.md). |
 | BUG-075 | P2 | **Cerrado 2026-10-22:** salidas `delivery_unknown` de IA/operador tienen consulta autenticada, decisión auditada y panel de conciliación sin reenvío. | La API expone solo la conversación del actor y no incluye idempotency key ni resultado crudo. `accepted` exige ID remoto, valida texto contra eco archivado cuando existe y materializa autoría antes de mover watermark; `rejected` deja entradas sin atender para nueva selección. Conflicto de owner devuelve 409. | Gateway cubre éxito, rechazo, mismatch, permisos/owner y no envío; UI cubre rechazo con nota y comprueba una sola llamada de envío. `future_only` no cambia; `process_pending` permanece bloqueado hasta resolver. Evidencia: [BUG-075](BUG-075-OUTBOUND-RECONCILIATION.md). Sin canal/proveedor real. |
@@ -113,8 +113,8 @@ salvo indicación contraria. La evidencia detallada y líneas están en la basel
   cierran sus fallos locales de salida/control legacy. Telegram sigue como canal
   administrativo y no se afirma aceptación de atención a clientes por ese canal.
 - BUG-035 ya cierra la carrera async de pairing; la aceptación real de proveedor
-  sigue sin probarse. No agregar reintentos automáticos al test de token mientras
-  BUG-072 siga abierto. BUG-075 entra en F7
+  sigue sin probarse. BUG-072 permite solo un reintento manual tras advertencia y
+  confirmación; no agrega reintentos automáticos. BUG-075 entra en F7
   solo si se expone conciliación de `delivery_unknown`; BUG-076 antes de exigir
   paridad de contexto para replays antiguos.
 - BUG-006/007 ya están cerrados con evidencia F5.5/F5.7/F5.8; se corrigió su estado
@@ -296,12 +296,13 @@ SQLite real en F2A; falta captura de aliases live antes de cerrar F2 completa.
   de bundle/navegador; esa integración sigue en F4. Evidencia:
   [CONTRATOS-V1.md](CONTRATOS-V1.md). Commit F1A: `git log --grep=BUG-018`.
 
-BUG-005/009/012/043/044/045/047/050/052/053/054/055 están cerrados. Los pendientes
-activos se limitan a BUG-051 (revisión de un archivo preexistente real), BUG-066 y
-BUG-069 (reconciliación CI/release con GitHub) y BUG-072 (sonda administrativa
-Telegram, no bloqueante para atención al cliente). La carga F2E.2 pasó con el perfil
-limitado Linux x64 de 2 CPU/4 GiB; no prueba hardware físico equivalente ni
-Windows/Termux. Checks verdes no demuestran escenarios fuera de su alcance.
+BUG-005/009/012/043/044/045/047/050/052/053/054/055/072 están cerrados. Los
+pendientes activos se limitan a BUG-051 (revisión de un archivo preexistente real)
+y BUG-066/BUG-069 (reconciliación CI/release con GitHub). BUG-072 quedó cerrado
+como herramienta administrativa y no prueba atención a clientes. La carga F2E.2
+pasó con el perfil limitado Linux x64 de 2 CPU/4 GiB; no prueba hardware físico
+equivalente ni Windows/Termux. Checks verdes no demuestran escenarios fuera de su
+alcance.
 
 ## Cierre F2E.2 — Repetición bajo 2 CPU/4 GiB — 2026-10-22
 

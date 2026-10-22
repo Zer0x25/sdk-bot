@@ -15,6 +15,48 @@ const tgSaveBtn = /** @type {HTMLButtonElement} */ ($('#tgSaveBtn'));
 const tgResetBtn = /** @type {HTMLButtonElement} */ ($('#tgResetBtn'));
 
 let rawTgToken = '';
+const pendingTelegramTests = new Map();
+const TELEGRAM_TEST_PENDING_PREFIX = 'sdkbot_telegram_test_uncertain:';
+
+function telegramTestPendingKey(chatId) {
+  return TELEGRAM_TEST_PENDING_PREFIX + (chatId ? `chat:${chatId}` : 'discover');
+}
+
+function readPendingTelegramTest(chatId) {
+  const keys = [telegramTestPendingKey(chatId), telegramTestPendingKey('')];
+  try {
+    for (const key of keys) {
+      const stored = globalThis.localStorage?.getItem(key) || pendingTelegramTests.get(key);
+      if (stored) return stored;
+    }
+    return '';
+  } catch {
+    return keys.map(key => pendingTelegramTests.get(key)).find(Boolean) || '';
+  }
+}
+
+function writePendingTelegramTest(chatId, idempotencyKey) {
+  const key = telegramTestPendingKey(chatId);
+  pendingTelegramTests.set(key, idempotencyKey);
+  try { globalThis.localStorage?.setItem(key, idempotencyKey); } catch { /* Keep the in-page confirmation gate. */ }
+}
+
+function clearPendingTelegramTest(chatId, expectedIdempotencyKey = '', relatedChatId = '') {
+  const keys = new Set([telegramTestPendingKey(chatId), telegramTestPendingKey('')]);
+  if (relatedChatId) keys.add(telegramTestPendingKey(relatedChatId));
+  for (const key of keys) {
+    let current = pendingTelegramTests.get(key) || '';
+    try { current = globalThis.localStorage?.getItem(key) || current; } catch { /* Fall back to the in-page value. */ }
+    if (expectedIdempotencyKey && current !== expectedIdempotencyKey) continue;
+    pendingTelegramTests.delete(key);
+    try { globalThis.localStorage?.removeItem(key); } catch { /* Keep setup usable if storage is unavailable. */ }
+  }
+}
+
+function newTelegramTestKey() {
+  return globalThis.crypto?.randomUUID?.()
+    || `tg-test-${Date.now()}-${Math.random().toString(36).slice(2)}`;
+}
 
 function setTgStatus(text, cls) {
   if (!tgStatus) return;
@@ -106,22 +148,39 @@ export function initTelegramTab() {
       tgMsg.textContent = '⚠️ Ingresa el Token primero.';
       return;
     }
+    const requestedChatId = tgChatId.value.trim();
+    const previousKey = readPendingTelegramTest(requestedChatId);
+    if (previousKey && !confirm('La prueba anterior pudo haberse enviado. Revisa el chat. ¿Confirmas enviar otra prueba?')) {
+      tgMsg.style.color = '#fbbf24';
+      tgMsg.textContent = '⚠️ No se envió otra prueba. Revisa el chat antes de reintentar.';
+      return;
+    }
+    if (previousKey) clearPendingTelegramTest(requestedChatId, previousKey);
+    const idempotencyKey = newTelegramTestKey();
+    writePendingTelegramTest(requestedChatId, idempotencyKey);
     tgTestBtn.disabled = true;
     tgMsg.style.color = '#aab3c5';
     tgMsg.textContent = '⏳ Probando conexión...';
     try {
-      const d = await testTelegramToken(token, tgChatId.value.trim());
+      const d = await testTelegramToken(token, requestedChatId, idempotencyKey);
+      const resolvedChatId = d.chatId ? String(d.chatId) : requestedChatId;
       if (d.success) {
+        clearPendingTelegramTest(requestedChatId, idempotencyKey, resolvedChatId);
         tgMsg.style.color = '#4ade80';
         tgMsg.textContent = '✅ Mensaje de prueba enviado. Guarda para aplicar el Chat ID.';
         if (d.chatId) tgChatId.value = d.chatId;
+      } else if (d.delivery === 'unknown') {
+        tgMsg.style.color = '#fbbf24';
+        tgMsg.textContent = '⚠️ Telegram pudo haber recibido la prueba. Revisa el chat; para enviar otra, el panel te pedirá confirmación.';
+        if (d.chatId) tgChatId.value = d.chatId;
       } else {
+        clearPendingTelegramTest(requestedChatId, idempotencyKey, resolvedChatId);
         tgMsg.style.color = '#f87171';
         tgMsg.textContent = '⚠️ Error: ' + (d.message || 'No se pudo verificar');
       }
-    } catch (e) {
-      tgMsg.style.color = '#f87171';
-      tgMsg.textContent = '⚠️ Error: ' + e.message;
+    } catch {
+      tgMsg.style.color = '#fbbf24';
+      tgMsg.textContent = '⚠️ No se confirmó el resultado. Revisa el chat antes de volver a probar; el panel pedirá confirmación.';
     }
     tgTestBtn.disabled = false;
   });

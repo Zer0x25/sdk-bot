@@ -100,15 +100,37 @@ test('POST /telegram/test - funciona con mock de Telegram', async () => {
     const r = await fetch(`${API_BASE}/telegram/test`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ token: 'mockToken', chatId: '112233' })
+        body: JSON.stringify({ token: 'mockToken', chatId: '112233', idempotencyKey: 'tg-test-known-1' })
     });
     const j = await r.json();
     assert.strictEqual(j.success, true);
     assert.strictEqual(j.chatId, '112233');
+    assert.strictEqual(j.delivery, 'accepted');
     
     const parsedBody = JSON.parse(sendMessageBody);
     assert.strictEqual(parsedBody.chat_id, '112233');
     assert.ok(parsedBody.text.includes('Test de notificaciones'));
+});
+
+test('POST /telegram/test reports ambiguous direct delivery with the same key and chat ID', async () => {
+    const { setTelegramTestSender } = require('../services/internalBus');
+    setTelegramTestSender(null);
+    https.get = () => assert.fail('the explicit Chat ID must skip discovery');
+    https.request = () => {
+        const req = new EventEmitter();
+        req.write = () => {};
+        req.end = () => process.nextTick(() => { req.emit('error', new Error('fixture transport loss')); req.emit('close'); });
+        req.destroy = () => process.nextTick(() => req.emit('close'));
+        return req;
+    };
+    const response = await fetch(`${API_BASE}/telegram/test`, {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ token: 'draftToken', chatId: '112233', idempotencyKey: 'tg-test-ambiguous-1' })
+    });
+    assert.equal(response.status, 200);
+    const result = await response.json();
+    assert.equal(result.success, false); assert.equal(result.delivery, 'unknown');
+    assert.equal(result.idempotencyKey, 'tg-test-ambiguous-1'); assert.equal(result.chatId, '112233');
 });
 
 test('TELEGRAM_MENU_COMMANDS es la única fuente del menú del bot', () => {
