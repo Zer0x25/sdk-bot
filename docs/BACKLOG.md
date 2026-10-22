@@ -86,7 +86,7 @@ salvo indicación contraria. La evidencia detallada y líneas están en la basel
 | BUG-071 | P2 | **Cerrado:** `/ignorar contactos de agenda` podía inflar el total con registros alias o controles ya ignorados. | El camino SQLite cuenta conversationId distintos y solo suma transiciones efectivas a `addedCount`; el total incluye conversaciones únicas que quedan ignoradas. | Archivo SQLite real: alias JID/LID, contacto previamente ignorado y segunda ejecución idempotente. Evidencia: [BUG-071](BUG-071-RESUMEN-IGNORAR-AGENDA.md). |
 | BUG-072 | P2 | Abierto: `/telegram/test` envía una sonda de configuración directamente por Bot API, fuera del outbox. | El endpoint debe poder probar un token borrador antes de que el adaptador dueño de esa cuenta se conecte; un timeout y un segundo click pueden duplicar el mensaje de prueba. | F6 o antes de exponer el test a reintentos automáticos: probar token/cuenta con el adaptador común cuando esté activo, y mantener sonda de token borrador con clave durable o confirmar su entrega incierta. No bloquea salidas de conversaciones ni avisos del gateway. |
 | BUG-073 | P2 | **Cerrado F5.8:** el eco propio de WhatsApp podía marcarse como salida humana si el ACK tardaba más de 500 ms. | La observación queda pendiente mientras exista un envío local `sending` al mismo destino; consulta el ID aceptado o agota la ventana acotada de 5 s. | Pruebas cubren ACK a más de 500 ms, salida externa y timeout de la ventana. Evidencia: [BUG-073](BUG-073-ECO-WHATSAPP-ACK-LENTO.md). |
-| BUG-074 | P2 | Abierto F5.8: las respuestas durables de `generations` en Brain no tienen retención. | La tabla conserva generación, respuesta y proveedor para permitir replay idempotente; no se poda junto con la ventana de mensajes y puede crecer sin límite y guardar texto sensible después de limpiar el contexto conversacional. | F8 o antes de uso prolongado con datos reales: definir retención que cubra el periodo de replay, podar respuestas expiradas sin reabrir generación obsoleta y validar límite de disco, limpieza y replay dentro/fuera de ventana. |
+| BUG-074 | P2 | **Cerrado 2026-10-22:** respuestas durables de `generations` en Brain ya tienen retención y límite de payload activo. | Brain conserva el borrador 7 días, convierte la expiración en tombstone y lo mantiene 30 días más; el replay expirado devuelve 409 sin llamar al proveedor. | Máximo de 64 KiB por respuesta y 5000 respuestas activas; al llegar al cupo no se llama al proveedor. Barrido al inicio, cada hora y antes de acceder al ledger; `secure_delete`, checkpoint WAL y VACUUM periódico limpian páginas. Ruff y 39 pruebas Brain pasan, incluyendo replay dentro/fuera de ventana y poda. Evidencia: [BUG-074](BUG-074-GENERATION-RETENTION.md). |
 | BUG-075 | P2 | Abierto: las salidas `delivery_unknown` tienen una operación interna de conciliación, pero no una ruta autenticada o UI para que un operador la complete. | Inspección: `reconcileOutboundIntent()` existe solo en el archivo; `sessionApi` no expone consulta/conciliación. F6.2 deja el reprocesamiento pendiente bloqueado mientras haya una salida incierta, por diseño seguro. No se probó un envío real incierto. | F7 antes de prometer conciliación operativa: exponer intents de la conversación con actor autenticado y registrar decisión/nota; aceptación rechazada exige clave nueva, aceptada requiere correlación archivada y avanza el watermark solo después de materializar autoría/contexto. No bloquea `future_only`; `process_pending` falla cerrado hasta resolverlo. |
 | BUG-076 | P2 | Abierto: al reprocesar una entrada antigua elegida, la reconstrucción de la ruta no recupera `pushName`/`savedName` del dispatch original. | `markLegacyDispatched()` vacía el payload de ruta tras el primer despacho; F6.2 reconstruye canal e identidad desde SQLite, pero esos metadatos no viven en el mensaje archivado. El contexto histórico sigue disponible y el perfil de automatización se conserva. Inspección, sin prueba runtime. | F7 antes de exigir paridad de prompts en replays: decidir una retención mínima/privada de metadatos de ruta o documentar la pérdida; comprobar que el contexto y perfil permanecen correctos sin guardar datos más tiempo del necesario. No bloquea selección, control ni el replay con identidad archivada. |
 | BUG-077 | P1 | Cerrado F6.3: importación/cutover del control rechazaba archivos SQLite v10. | El flujo integrado creó reporte y snapshot con schemaVersion 10, pero `buildControlImportReport` y `beginControlImport` solo permitían hasta v9; la aceptación se detenía antes del cutover. | Ambos validadores aceptan v10. El flujo integrado F6.3 completa el cutover y el resto del recorrido; pruebas enfocadas de importación pasan. Evidencia: [F6.3](F6.3-FLUJO-CONVERSACION.md). |
@@ -116,9 +116,9 @@ salvo indicación contraria. La evidencia detallada y líneas están en la basel
   solo si se expone conciliación de `delivery_unknown`; BUG-076 antes de exigir
   paridad de contexto para replays antiguos.
 - BUG-006/007 ya están cerrados con evidencia F5.5/F5.7/F5.8; se corrigió su estado
-  en esta revisión. BUG-074 y los pendientes de CI/release quedan
-  registrados para sus alcances; BUG-051 sigue siendo puerta antes de migrar un
-  archivo runtime preexistente.
+  en esta revisión. BUG-074 se cerró con retención, límites y replay sin proveedor;
+  los pendientes de CI/release quedan registrados para sus alcances. BUG-051 sigue
+  siendo puerta antes de migrar un archivo runtime preexistente.
 - Actualización 2026-10-22: F6.4 quedó completada con el recorrido live de
   WhatsApp, la revisión de contexto por traza de código y la regresión integrada
   F6.3 (1/1). No se conservó el cuerpo JSON literal de la petición live. Telegram
@@ -151,8 +151,8 @@ el host medido tenía 3 CPU/10,45 GiB. No extrapolar archivo/polling a control, 
 ni carga/aceptación completa F2.
 
 F5.7/F5.8 implementan el contexto explícito y pasan aceptación integrada sintética.
-BUG-073 y BUG-074 son riesgos no bloqueantes; los cierres no se basan en canales ni
-archivos runtime.
+BUG-073 y BUG-074 están cerrados con pruebas locales; los cierres no se basan en
+canales ni archivos runtime.
 
 ## Cerrados
 

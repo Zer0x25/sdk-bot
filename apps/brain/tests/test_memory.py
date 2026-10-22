@@ -8,6 +8,8 @@ import os
 import sys
 import time
 
+import pytest
+
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 import memory as M
@@ -15,8 +17,12 @@ import memory as M
 
 def _nueva_db(tmp_path):
     """Apunta memory a un .db temporal y resetea la conexión global."""
+    if M._conn is not None:
+        M._conn.close()
     M._conn = None
     M._writes_since_global_sweep = 0
+    M._last_generation_compaction_at = 0.0
+    M._generation_checkpoint_pending = False
     os.environ["BRAIN_MEMORY_DB"] = str(tmp_path / "memoria_test.db")
     M.DB_PATH = os.environ["BRAIN_MEMORY_DB"]
 
@@ -73,6 +79,67 @@ def test_generation_ledger_is_idempotent_and_invalidated_generations_cannot_retu
         raise AssertionError("una generación invalidada no puede quedar disponible")
     except ValueError as error:
         assert str(error) == "GENERATION_INVALIDATED"
+
+
+def test_generation_retention_expires_response_then_purges_tombstone(tmp_path, monkeypatch):
+    monkeypatch.setattr(M, "GENERATION_RESPONSE_TTL_SECONDS", 7 * 24 * 60 * 60)
+    monkeypatch.setattr(M, "GENERATION_TOMBSTONE_TTL_SECONDS", 30 * 24 * 60 * 60)
+    monkeypatch.setattr(M, "GENERATION_RETENTION_SWEEP_SECONDS", 0)
+    monkeypatch.setattr(M, "GENERATION_MAX_RESPONSE_BYTES", 64 * 1024)
+    _nueva_db(tmp_path)
+
+    M.save_generation("retained", "fingerprint", "1", "x" * 32768, "fake")
+    conn = M._connect()
+    conn.execute("PRAGMA wal_checkpoint(TRUNCATE)")
+    pages_with_response = conn.execute("PRAGMA page_count").fetchone()[0]
+
+    now = time.time()
+    conn.execute(
+        "UPDATE generations SET created_at=? WHERE generation_id='retained'",
+        (now - 2 * 24 * 60 * 60,),
+    )
+    conn.commit()
+    assert M.get_generation("retained")["response"] == "x" * 32768
+
+    conn.execute(
+        "UPDATE generations SET created_at=? WHERE generation_id='retained'",
+        (time.time() - M.GENERATION_RESPONSE_TTL_SECONDS - 1,),
+    )
+    conn.commit()
+    expired = M.get_generation("retained")
+    assert expired["status"] == "invalidated"
+    assert expired["response"] is None
+    assert expired["provider"] is None
+    assert conn.execute("PRAGMA page_count").fetchone()[0] < pages_with_response
+    with pytest.raises(ValueError, match="GENERATION_INVALIDATED"):
+        M.save_generation("retained", "fingerprint", "1", "respuesta nueva", "fake")
+
+    conn.execute(
+        "UPDATE generations SET created_at=? WHERE generation_id='retained'",
+        (time.time() - M.GENERATION_TOMBSTONE_TTL_SECONDS - 1,),
+    )
+    conn.commit()
+    assert M.sweep_generation_retention()["purged"] == 1
+    assert M.get_generation("retained") is None
+
+
+def test_generation_response_size_and_active_count_are_bounded(tmp_path, monkeypatch):
+    monkeypatch.setattr(M, "GENERATION_MAX_RESPONSE_BYTES", 5)
+    monkeypatch.setattr(M, "GENERATION_MAX_RESPONSES", 1)
+    _nueva_db(tmp_path)
+
+    with pytest.raises(ValueError, match="GENERATION_RESPONSE_TOO_LARGE"):
+        M.save_generation("too-large", "fp", "1", "123456", "fake")
+    M.save_generation("first", "fp", "1", "12345", "fake")
+    with pytest.raises(ValueError, match="GENERATION_STORE_FULL"):
+        M.save_generation("second", "fp", "1", "ok", "fake")
+
+    # La cancelación debe poder dejar tombstone aunque el cupo de respuestas activas esté lleno.
+    M.invalidate_generation("second", "1")
+    with pytest.raises(ValueError, match="GENERATION_INVALIDATED"):
+        M.save_generation("second", "fp", "1", "ok", "fake")
+    M.invalidate_generation("first", "1")
+    assert M.save_generation("third", "fp", "1", "ok", "fake")["status"] == "generated"
 
 
 def test_truncado_por_cantidad(tmp_path, monkeypatch):

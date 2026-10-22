@@ -1487,3 +1487,23 @@ Cierres históricos: commits F2C.1/F2C.2/F2D/F2E.1 están en el log local; F2B.3
 - Commit local de esta unidad; no publicar.
 - Siguiente punto de mayor alcance ejecutable: BUG-074, retención de respuestas
   durables de generación en Brain.
+
+## BUG-074 — Retención de respuestas de generación — 2026-10-22
+
+- Brain conserva las respuestas idempotentes por 7 días, superando las 24 h de
+  replay de la cola Gateway. Al vencer o invalidar, borra cuerpo/proveedor y deja
+  un tombstone por 30 días; reintentos durante ese periodo reciben 409 sin llamar
+  al proveedor.
+- La respuesta admite hasta 64 KiB y el ledger hasta 5000 borradores activos
+  (aprox. 313 MiB de payload). El cupo se verifica antes del proveedor y de nuevo
+  al persistir para mantener el límite ante concurrencia. El tombstone no se
+  rechaza por falta de cupo, para conservar la barrera de cancelación.
+- El barrido corre al inicio, cada hora y antes de leer/escribir el ledger. SQLite
+  activa `secure_delete`, trunca WAL después de limpiar respuestas y compacta con
+  VACUUM cuando hay páginas libres. Si Brain está detenido, el siguiente inicio
+  ejecuta el barrido.
+- Evidencia: [BUG-074](BUG-074-GENERATION-RETENTION.md). Ruff limpio; Brain
+  completo: 39 pruebas. Sin proveedor ni canal real.
+- Commit local de esta unidad; no publicar.
+- Siguiente punto: BUG-075, conciliación autenticada de salidas `delivery_unknown`
+  antes de ofrecer reprocesamiento verificable.

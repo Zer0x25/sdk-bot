@@ -13,6 +13,7 @@ import os
 import shutil
 import sys
 import tempfile
+import time
 from unittest.mock import patch
 
 from fastapi.testclient import TestClient
@@ -29,7 +30,11 @@ _TEST_DB_PATH = os.path.join(_TEST_STATE_DIR, "memory.db")
 
 def setup_module():
     """Usa una base de datos SQLite temporal para la suite."""
+    if M._conn is not None:
+        M._conn.close()
     M._conn = None
+    M._last_generation_compaction_at = 0.0
+    M._generation_checkpoint_pending = False
     M.DB_PATH = _TEST_DB_PATH
     try:
         os.unlink(M.DB_PATH)
@@ -173,6 +178,29 @@ def test_generate_reply_uses_explicit_context_and_resumes_idempotently():
     assert resumed.status_code == 200
     assert resumed.json()["replayed"] is True
     assert len(calls) == 1
+
+    conn = M._connect()
+    conn.execute(
+        "UPDATE generations SET created_at=? WHERE generation_id=?",
+        (time.time() - 2 * 24 * 60 * 60, request["generation_id"]),
+    )
+    conn.commit()
+    after_queue_window = client.post("/generate-reply", json=request)
+    assert after_queue_window.status_code == 200
+    assert after_queue_window.json()["replayed"] is True
+    assert len(calls) == 1
+
+    conn.execute(
+        "UPDATE generations SET created_at=? WHERE generation_id=?",
+        (time.time() - M.GENERATION_RESPONSE_TTL_SECONDS - 1, request["generation_id"]),
+    )
+    conn.commit()
+    expired = client.post("/generate-reply", json=request)
+    assert expired.status_code == 409
+    assert expired.json()["detail"] == "GENERATION_INVALIDATED"
+    assert len(calls) == 1
+    assert M.get_generation(request["generation_id"])["response"] is None
+
     assert calls[0]["memory_history"] == [
         {"role": "user", "content": "[Cliente] consulta anterior"},
         {"role": "assistant", "content": "[Operador humano] respuesta humana"},
@@ -203,6 +231,53 @@ def test_generate_reply_rejects_generation_id_reuse_with_changed_context():
         assert client.post("/generate-reply", json=request).status_code == 200
         changed = {**request, "message": "mensaje distinto"}
         assert client.post("/generate-reply", json=changed).status_code == 409
+
+
+def test_generate_reply_fails_closed_when_storage_limits_are_reached(monkeypatch):
+    client = TestClient(brain_main.app)
+    request = {
+        "generation_id": "gen-test-storage-limit",
+        "conversation_id": "conversation-storage-limit",
+        "context_version": "1",
+        "through_message_id": "message-storage-limit",
+        "user_id": "generate_reply_storage_limit",
+        "message": "actual",
+        "context": [],
+    }
+    calls = []
+
+    async def fake_generate(**_kwargs):
+        calls.append(True)
+        return "respuesta grande", "Fake Provider", []
+
+    monkeypatch.setattr(M, "GENERATION_MAX_RESPONSE_BYTES", 4)
+    with patch.object(brain_main, "generate_ai_response", fake_generate):
+        too_large = client.post("/generate-reply", json=request)
+    assert too_large.status_code == 502
+    assert too_large.json()["detail"] == "GENERATION_RESPONSE_TOO_LARGE"
+    assert M.get_generation(request["generation_id"]) is None
+    assert len(calls) == 1
+
+    monkeypatch.setattr(M, "GENERATION_MAX_RESPONSE_BYTES", 64 * 1024)
+    monkeypatch.setattr(M, "GENERATION_MAX_RESPONSES", 0)
+    with patch.object(brain_main, "generate_ai_response", fake_generate):
+        full = client.post("/generate-reply", json={**request, "generation_id": "gen-test-store-full"})
+    assert full.status_code == 503
+    assert full.json()["detail"] == "GENERATION_STORE_FULL"
+    assert M.get_generation("gen-test-store-full") is None
+    assert len(calls) == 1
+
+
+def test_generation_retention_sweep_runs_at_brain_startup(monkeypatch):
+    calls = []
+
+    def sweep():
+        calls.append("startup")
+
+    monkeypatch.setattr(brain_main, "sweep_generation_retention", sweep)
+    with TestClient(brain_main.app) as client:
+        assert client.get("/").status_code == 200
+    assert calls == ["startup"]
 
 
 def test_conversation_assistance_uses_confirmed_ids_and_does_not_save_chat_memory():

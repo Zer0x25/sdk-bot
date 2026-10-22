@@ -12,6 +12,11 @@ import threading
 import time
 
 from config import (
+    BRAIN_GENERATION_MAX_RESPONSE_BYTES,
+    BRAIN_GENERATION_MAX_RESPONSES,
+    BRAIN_GENERATION_RESPONSE_TTL_SECONDS,
+    BRAIN_GENERATION_RETENTION_SWEEP_SECONDS,
+    BRAIN_GENERATION_TOMBSTONE_TTL_SECONDS,
     BRAIN_MEMORY_GLOBAL_SWEEP_EVERY,
     BRAIN_MEMORY_MAX_MESSAGES,
     BRAIN_MEMORY_MAX_TOKENS,
@@ -34,6 +39,14 @@ _GLOBAL_SWEEP_EVERY = BRAIN_MEMORY_GLOBAL_SWEEP_EVERY
 _conn = None
 _lock = threading.Lock()
 _writes_since_global_sweep = 0
+_last_generation_compaction_at = 0.0
+_generation_checkpoint_pending = False
+
+GENERATION_RESPONSE_TTL_SECONDS = BRAIN_GENERATION_RESPONSE_TTL_SECONDS
+GENERATION_TOMBSTONE_TTL_SECONDS = BRAIN_GENERATION_TOMBSTONE_TTL_SECONDS
+GENERATION_MAX_RESPONSE_BYTES = BRAIN_GENERATION_MAX_RESPONSE_BYTES
+GENERATION_MAX_RESPONSES = BRAIN_GENERATION_MAX_RESPONSES
+GENERATION_RETENTION_SWEEP_SECONDS = BRAIN_GENERATION_RETENTION_SWEEP_SECONDS
 
 
 def _connect():
@@ -44,6 +57,7 @@ def _connect():
             _conn.row_factory = sqlite3.Row
             _conn.execute("PRAGMA journal_mode = WAL")
             _conn.execute("PRAGMA synchronous = NORMAL")
+            _conn.execute("PRAGMA secure_delete = ON")
             _conn.execute(
                 """
                 CREATE TABLE IF NOT EXISTS messages (
@@ -72,8 +86,69 @@ def _connect():
                 )
                 """
             )
+            _conn.execute(
+                "CREATE INDEX IF NOT EXISTS idx_generations_status_created_at "
+                "ON generations(status, created_at)"
+            )
             _conn.commit()
         return _conn
+
+
+def _checkpoint_generation_store(conn):
+    global _generation_checkpoint_pending
+    checkpoint = conn.execute("PRAGMA wal_checkpoint(TRUNCATE)").fetchone()
+    _generation_checkpoint_pending = bool(checkpoint and checkpoint[0] != 0)
+    return not _generation_checkpoint_pending
+
+
+def _compact_generation_store(conn, now):
+    """Reclaim pages periodically after expired response bodies were cleared."""
+    global _last_generation_compaction_at
+    if now - _last_generation_compaction_at < GENERATION_RETENTION_SWEEP_SECONDS:
+        return
+    free_pages = conn.execute("PRAGMA freelist_count").fetchone()[0]
+    if not free_pages:
+        _last_generation_compaction_at = now
+        return
+    if not _checkpoint_generation_store(conn):
+        return
+    conn.execute("VACUUM")
+    _checkpoint_generation_store(conn)
+    _last_generation_compaction_at = now
+
+
+def _sweep_generations(conn, now=None):
+    """Expire response bodies, retain tombstones, then compact SQLite as needed.
+
+    Caller holds _lock. A response expiry becomes a fresh tombstone so a stale
+    replay cannot trigger a second provider call during the tombstone window.
+    """
+    current = time.time() if now is None else now
+    response_cutoff = current - GENERATION_RESPONSE_TTL_SECONDS
+    tombstone_cutoff = current - GENERATION_TOMBSTONE_TTL_SECONDS
+    expired = conn.execute(
+        "UPDATE generations SET status='invalidated', response=NULL, provider=NULL, created_at=? "
+        "WHERE status='generated' AND created_at < ?",
+        (current, response_cutoff),
+    ).rowcount
+    purged = conn.execute(
+        "DELETE FROM generations WHERE status='invalidated' AND created_at < ?",
+        (tombstone_cutoff,),
+    ).rowcount
+    conn.commit()
+    if expired or purged:
+        _checkpoint_generation_store(conn)
+    elif _generation_checkpoint_pending:
+        _checkpoint_generation_store(conn)
+    _compact_generation_store(conn, current)
+    return {"expired": expired, "purged": purged}
+
+
+def sweep_generation_retention(now=None):
+    """Run the durable generation ledger retention sweep."""
+    conn = _connect()
+    with _lock:
+        return _sweep_generations(conn, now)
 
 
 def _sweep_chat(conn, bot_id, user_id):
@@ -161,6 +236,7 @@ def get_generation(generation_id: str):
     """Return a durable generated reply for idempotent resume, if present."""
     conn = _connect()
     with _lock:
+        _sweep_generations(conn)
         row = conn.execute(
             "SELECT generation_id, fingerprint, context_version, status, response, provider "
             "FROM generations WHERE generation_id = ?",
@@ -169,11 +245,24 @@ def get_generation(generation_id: str):
     return dict(row) if row else None
 
 
+def ensure_generation_capacity():
+    """Fail before a provider call when no active response slot is available."""
+    conn = _connect()
+    with _lock:
+        _sweep_generations(conn)
+        response_count = conn.execute(
+            "SELECT count(*) FROM generations WHERE status='generated'"
+        ).fetchone()[0]
+        if response_count >= GENERATION_MAX_RESPONSES:
+            raise ValueError("GENERATION_STORE_FULL")
+
+
 def save_generation(generation_id: str, fingerprint: str, context_version: str,
                     response: str, provider: str):
     """Persist an AI draft without adding it to conversational memory."""
     conn = _connect()
     with _lock:
+        _sweep_generations(conn)
         row = conn.execute(
             "SELECT fingerprint, context_version, status, response, provider "
             "FROM generations WHERE generation_id = ?",
@@ -185,6 +274,13 @@ def save_generation(generation_id: str, fingerprint: str, context_version: str,
             if row["fingerprint"] != fingerprint or row["context_version"] != context_version:
                 raise ValueError("GENERATION_ID_CONFLICT")
             return {"status": "existing", "response": row["response"], "provider": row["provider"]}
+        if len(response.encode("utf-8")) > GENERATION_MAX_RESPONSE_BYTES:
+            raise ValueError("GENERATION_RESPONSE_TOO_LARGE")
+        response_count = conn.execute(
+            "SELECT count(*) FROM generations WHERE status='generated'"
+        ).fetchone()[0]
+        if response_count >= GENERATION_MAX_RESPONSES:
+            raise ValueError("GENERATION_STORE_FULL")
         conn.execute(
             "INSERT INTO generations(generation_id,fingerprint,context_version,status,response,provider,created_at) "
             "VALUES(?,?,?,'generated',?,?,?)",
@@ -198,19 +294,23 @@ def invalidate_generation(generation_id: str, context_version: str):
     """Tombstone a generation, including one whose provider call is still running."""
     conn = _connect()
     with _lock:
+        _sweep_generations(conn)
         conn.execute(
             "INSERT INTO generations(generation_id,fingerprint,context_version,status,response,provider,created_at) "
             "VALUES(?,'',?,'invalidated',NULL,NULL,?) "
-            "ON CONFLICT(generation_id) DO UPDATE SET status='invalidated',response=NULL,provider=NULL",
+            "ON CONFLICT(generation_id) DO UPDATE SET status='invalidated',response=NULL,provider=NULL,created_at=excluded.created_at",
             (generation_id, context_version, time.time()),
         )
         conn.commit()
+        _checkpoint_generation_store(conn)
+        _compact_generation_store(conn, time.time())
 
 
 def get_db_stats():
     """Métricas de la DB para GET /health (F4-P3)."""
     conn = _connect()
     with _lock:
+        _sweep_generations(conn)
         message_count = conn.execute("SELECT count(*) FROM messages").fetchone()[0]
         user_count = conn.execute(
             "SELECT count(*) FROM (SELECT 1 FROM messages GROUP BY bot_id, user_id)"

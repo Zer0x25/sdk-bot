@@ -8,6 +8,7 @@ import signal
 import socket
 import sys
 import time
+from contextlib import asynccontextmanager
 from typing import Literal
 
 from fastapi import FastAPI, HTTPException, Request
@@ -16,6 +17,7 @@ from pydantic import BaseModel, ConfigDict, Field
 
 from config import (
     BRAIN_API_KEY,
+    BRAIN_GENERATION_RETENTION_SWEEP_SECONDS,
     BRAIN_HOST,
     BRAIN_PRIMARY_MODEL,
     BRAIN_RATE_LIMIT_WINDOW,
@@ -30,11 +32,13 @@ from memory import (
     MAX_HISTORY_TOKENS,
     append_exchange,
     clear_history,
+    ensure_generation_capacity,
     get_db_stats,
     get_generation,
     get_history,
     invalidate_generation,
     save_generation,
+    sweep_generation_retention,
 )
 from profiles import (
     build_system_prompt,
@@ -50,7 +54,31 @@ from runtime_paths import BRAIN_STATE_DIR
 
 START_TIME = time.time()
 
-app = FastAPI(title="SDK-Bot Brain API (Modular Multi-Provider Router)")
+
+async def _generation_retention_loop():
+    while True:
+        await asyncio.sleep(BRAIN_GENERATION_RETENTION_SWEEP_SECONDS)
+        try:
+            await asyncio.to_thread(sweep_generation_retention)
+        except Exception as err:
+            safe_log(f"⚠️ Error en retención de generaciones ({type(err).__name__}).")
+
+
+@asynccontextmanager
+async def _lifespan(_app):
+    await asyncio.to_thread(sweep_generation_retention)
+    retention_task = asyncio.create_task(_generation_retention_loop())
+    try:
+        yield
+    finally:
+        retention_task.cancel()
+        try:
+            await retention_task
+        except asyncio.CancelledError:
+            pass
+
+
+app = FastAPI(title="SDK-Bot Brain API (Modular Multi-Provider Router)", lifespan=_lifespan)
 
 # 🔐 S1 — Autenticación opcional por API key (header X-API-Key).
 # Si BRAIN_API_KEY está definida en .env, toda ruta excepto la salud
@@ -332,6 +360,13 @@ async def generate_reply_endpoint(request: GenerateReplyRequest):
                     "generation_id": request.generation_id, "context_version": request.context_version,
                     "through_message_id": request.through_message_id, "replayed": True}
 
+        try:
+            ensure_generation_capacity()
+        except ValueError as err:
+            if str(err) == "GENERATION_STORE_FULL":
+                raise HTTPException(status_code=503, detail="GENERATION_STORE_FULL") from err
+            raise
+
         safe_log("\n📩 [GENERATE REPLY] Solicitud admitida.")
         try:
             response_text, provider_used, _ = await generate_ai_response(
@@ -341,8 +376,13 @@ async def generate_reply_endpoint(request: GenerateReplyRequest):
                 stored = save_generation(request.generation_id, fingerprint, request.context_version,
                                          response_text, provider_used)
             except ValueError as err:
-                if str(err) in {"GENERATION_INVALIDATED", "GENERATION_ID_CONFLICT"}:
-                    raise HTTPException(status_code=409, detail=str(err)) from err
+                error_code = str(err)
+                if error_code in {"GENERATION_INVALIDATED", "GENERATION_ID_CONFLICT"}:
+                    raise HTTPException(status_code=409, detail=error_code) from err
+                if error_code == "GENERATION_RESPONSE_TOO_LARGE":
+                    raise HTTPException(status_code=502, detail=error_code) from err
+                if error_code == "GENERATION_STORE_FULL":
+                    raise HTTPException(status_code=503, detail=error_code) from err
                 raise
             if stored["status"] == "invalidated":
                 raise HTTPException(status_code=409, detail="GENERATION_INVALIDATED")
