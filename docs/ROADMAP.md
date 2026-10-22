@@ -426,7 +426,8 @@ son necesarios para una fase previa y pasan sus mismas comprobaciones.
     el límite de recuperación y validar copias solo en un volumen aislado](F8.3-OPERACION-RECUPERACION.md).
   - [x] F8.3b — [Documentar retención efectiva, purga global disponible y límites
     de exportación/borrado por solicitud](F8.3-OPERACION-RECUPERACION.md).
-  - [ ] F8.3c — Rollback de código/datos y reconciliación del delta posterior al corte.
+  - [x] F8.3c — [Rollback de código sin rollback de datos y recuperación del
+    corte de control antes del cambio de autoridad](F8.3-OPERACION-RECUPERACION.md).
   - [ ] F8.3d — Minimizar datos de cliente en métricas y logs, con pruebas.
 - [ ] Ensayar migración/restauración con fixture representativo y delta posterior
   al corte; no perder envíos nuevos restaurando snapshots antiguos.

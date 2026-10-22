@@ -1187,3 +1187,20 @@ Cierres históricos: commits F2C.1/F2C.2/F2D/F2E.1 están en el log local; F2B.3
   corte de eventos, purga previa a admisión, lotes acotados y fallo inicial.
   `git diff --check`; pruebas con DB y estado temporales, sin proveedores.
 - Siguiente punto: F8.3c, runbook de rollback de código/datos y delta del corte.
+
+## Fase 8.3c — Rollback de código y corte de control — 2026-10-22
+
+- El runbook separa rollback de código con el mismo volumen, reversión por lotes
+  del corte F5.3 mientras la autoridad sigue `legacy`, y recuperación de pérdida
+  física. Explica que `--resume-cutover` exige fuentes iguales; `--rollback` solo
+  revierte controles aún no activados y deja mensajes, envíos, ledger y JSON en su
+  autoridad vigente. Después del cambio a SQLite no se vuelve a JSON ni se repone
+  un snapshot antiguo encima de la DB activa.
+- Los comandos Compose de recuperación corren Gateway one-shot con el volumen de
+  estado y perfiles, sin levantar canales/dependencias. Una fuente cambiada,
+  autoridad ya conmutada o conflicto deja la recuperación bloqueada.
+- Verificación: `SDK_BOT_TEST=1 node --test tests/conversationControlImport.test.js
+  tests/conversationControlMigration.test.js` (14/14: CLI read-only, fuentes,
+  delta, cutover interrumpido, rollback por lotes y versiones monotónicas);
+  `git diff --check`; pruebas solo con SQLite/JSON temporales.
+- Siguiente punto: F8.3d, minimizar datos de cliente en métricas y logs con pruebas.
