@@ -1,23 +1,22 @@
 # Estado de continuidad — SDK-Bot
 
-Actualización: 2026-10-22. El checkout se sincronizó con `origin/main` en
-`df1f111` antes de iniciar F5. F4.2 se fusionó en main en 7526edc (PR #4).
-BUG-064 y BUG-065 están cerrados y sus arreglos pasaron CI. Release PR #2 actualizó
-el manifiesto a 0.3.0 en 9b0d0b5; PR #6 fusionó la versión 0.4.0 en bfe3fa9.
+Actualización: 2026-10-22. `main` está en `a97c655` (PR #14), alineada con
+`origin/main`. Release Please mantiene publicados v0.5.0/v0.6.0 y conserva
+`draft: false`; los drafts antiguos v0.3.0/v0.4.0 se eliminaron después de
+confirmar que no tenían tags. PR #14 corrigió el primer CI de los release PRs:
+Release Please creó la PR #15 v0.6.1 y despachó el run 39848651391 por
+`workflow_dispatch`; los cinco jobs pasaron al primer intento y GitHub asoció los
+check runs a la PR. No hubo reejecución ni run `action_required` para la PR #15.
+BUG-066 y BUG-069 quedan cerrados. La PR #15 sigue abierta para la aprobación
+normal antes de publicar v0.6.1.
 
-Release Please run #36 (39476647006) creó el release v0.4.0 como borrador y luego
-abrió PR #8 v0.5.0 con el mismo changelog que PR #6: ambas añaden 153 líneas.
-El log del run confirma `Expected 1 releases, only found 0` y que buscó el tag
-`v0.4.0`; GitHub no publica el tag mientras el release siga en borrador. BUG-069
-registra la causa. `release-please-config.json` cambia a `draft: false` para que
-las futuras fusiones de PR de release publiquen también el release/tag. El draft
-v0.4.0 existente y la PR duplicada #8 aún requieren reconciliación manual; no
-fusionar la #8 como una versión nueva.
-
-BUG-066 sigue abierto: checks de PRs generadas por Release Please pueden quedar
-`action_required` sin jobs. BUG-067 eliminó el input inválido `draft` de la
-acción. BUG-068 retiró el deploy Homelab y duplicación CI post-merge. F4.3 está
-implementada, verificada y fusionada a main mediante PR #10 (commit `cf1a1cd`).
+Antecedente: al fusionar la PR #6, Release Please dejó v0.4.0 como draft y luego
+abrió la PR #8 v0.5.0 repitiendo las 153 líneas del changelog. El run 39476647006
+reportó `Expected 1 releases, only found 0` al buscar `v0.4.0`; la causa era que
+GitHub no crea el tag mientras el release siga en draft. La corrección `draft: false`
+publicó correctamente v0.5.0 y v0.6.0. BUG-067 quitó el input inválido `draft` de
+la acción y BUG-068 retiró el deploy Homelab y la duplicación CI post-merge. F4.3
+sigue implementada, verificada y fusionada mediante PR #10 (`cf1a1cd`).
 
 ## Objetivo vigente
 
