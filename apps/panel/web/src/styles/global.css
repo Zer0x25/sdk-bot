@@ -199,6 +199,18 @@ button:focus-visible, a:focus-visible, [tabindex]:focus-visible {
 .pending-resume-list code { overflow-wrap: anywhere; color: var(--ink); font-size: 9px; }
 .pending-resume-list small { color: var(--ink-muted); font-size: 9px; }
 .pending-resume-list label > span > span { overflow-wrap: anywhere; color: var(--ink-secondary); }
+.outbound-reconciliation-panel { display: grid; max-height: min(45vh, 380px); gap: 9px; overflow: auto; border: 1px solid var(--line); border-radius: 10px; margin: 0 20px 10px; padding: 12px 14px; color: var(--ink-secondary); background: #fbfdfc; font-size: 11px; line-height: 1.5; }
+.outbound-reconciliation-panel > header { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+.outbound-reconciliation-panel h3 { margin: 0; color: var(--ink); font-size: 13px; }
+.outbound-reconciliation-panel > p { margin: 0; }
+.outbound-reconciliation-list { display: grid; gap: 8px; margin: 0; padding: 0; list-style: none; }
+.outbound-reconciliation-list > li { display: grid; gap: 7px; border: 1px solid var(--line); border-radius: 8px; padding: 9px; background: white; }
+.outbound-reconciliation-list p, .outbound-reconciliation-list blockquote { margin: 0; }
+.outbound-reconciliation-list blockquote { white-space: pre-wrap; overflow-wrap: anywhere; color: var(--ink); }
+.outbound-reconciliation-list label { display: grid; gap: 3px; color: var(--ink-secondary); }
+.outbound-reconciliation-list input, .outbound-reconciliation-list select, .outbound-reconciliation-list textarea { width: 100%; min-width: 0; border: 1px solid var(--line); border-radius: 6px; padding: 6px 8px; color: var(--ink); background: white; font: inherit; }
+.outbound-reconciliation-list textarea { min-height: 55px; resize: vertical; }
+.outbound-reconciliation-list small { overflow-wrap: anywhere; color: var(--ink-muted); }
 .thread-empty { position: relative; display: flex; flex: 1; flex-direction: column; align-items: center; justify-content: center; overflow: hidden; padding: 30px; text-align: center; }
 .thread-empty::before { position: absolute; inset: 0; background-image: radial-gradient(#cbd9d1 0.65px, transparent 0.65px); background-size: 18px 18px; opacity: .33; content: ""; pointer-events: none; }
 .thread-empty > * { z-index: 1; }

@@ -109,6 +109,7 @@ function createArchive(options = {}) {
         assistantToolInvocations: (input = {}) => call('assistantToolInvocations', input),
         recordAssistantToolInvocation: input => call('recordAssistantToolInvocation', input),
         reconcileOutboundIntent: input => call('reconcileOutboundIntent', input),
+        reconcileConversationOutboundIntent: input => call('reconcileConversationOutboundIntent', input),
         controlPolicy: () => call('controlPolicy'),
         writeControlPolicy: input => call('writeControlPolicy', input),
         controlAuthority: () => call('controlAuthority'),

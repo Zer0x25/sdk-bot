@@ -98,6 +98,40 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/conversations/{conversationId}/outbound-intents/{intentId}/reconcile": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** @description Registra una decisión auditada sin volver a enviar. accepted exige ID remoto y materializa la salida antes de avanzar entradas atendidas; rejected requiere nota y habilita una revisión posterior de pendientes. Requiere messages:send. */
+        post: operations["reconcileOutboundIntent"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/conversations/{conversationId}/outbound-reconciliations": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** @description Lista solo salidas inciertas de IA/operador de esta conversación. Requiere conversations:read; no expone payloads del proveedor ni claves de idempotencia. */
+        get: operations["listOutboundReconciliations"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/conversations/{conversationId}/pending-resume": {
         parameters: {
             query?: never;
@@ -444,7 +478,7 @@ export interface components {
         /** @enum {string} */
         DeliveryStatus: "received" | "queued" | "sending" | "sent" | "delivered" | "read" | "failed" | "delivery_unknown" | "cancelled";
         /** @enum {string} */
-        ErrorCode: "UNAUTHENTICATED" | "FORBIDDEN" | "NOT_FOUND" | "VALIDATION_ERROR" | "VERSION_CONFLICT" | "OWNER_CONFLICT" | "IDENTITY_AMBIGUOUS" | "IDENTITY_CONFLICT" | "IDEMPOTENCY_CONFLICT" | "IDEMPOTENCY_RESULT_EXPIRED" | "CONTROL_NOT_CONFIRMED" | "CHANNEL_NOT_READY" | "CONVERSATION_NOT_FOUND" | "CONTROL_AUTHORITY_NOT_ACTIVE" | "CONTROL_HUMAN_SEND_IN_FLIGHT" | "CONTROL_OPERATION_MISSING" | "CONTROL_OWNER_CONFLICT" | "CONTROL_SERVICE_NOT_READY" | "CONTROL_TARGET_NOT_FOUND" | "CONTROL_VERSION_CONFLICT" | "ACCESS_IGNORED" | "CURSOR_EXPIRED" | "DATA_EPOCH_MISMATCH" | "IDEMPOTENCY_KEY_REUSED" | "OUTBOUND_DELIVERY_UNKNOWN" | "OUTBOUND_IN_PROGRESS" | "OUTBOUND_REJECTED" | "PENDING_RESUME_MESSAGE_NOT_ELIGIBLE" | "PENDING_RESUME_NOT_AVAILABLE" | "PENDING_RESUME_SELECTION_STALE" | "SERVICE_UNAVAILABLE" | "TIMEOUT" | "INTERNAL_ERROR";
+        ErrorCode: "UNAUTHENTICATED" | "FORBIDDEN" | "NOT_FOUND" | "VALIDATION_ERROR" | "VERSION_CONFLICT" | "OWNER_CONFLICT" | "IDENTITY_AMBIGUOUS" | "IDENTITY_CONFLICT" | "IDEMPOTENCY_CONFLICT" | "IDEMPOTENCY_RESULT_EXPIRED" | "CONTROL_NOT_CONFIRMED" | "CHANNEL_NOT_READY" | "CONVERSATION_NOT_FOUND" | "CONTROL_AUTHORITY_NOT_ACTIVE" | "CONTROL_HUMAN_SEND_IN_FLIGHT" | "CONTROL_OPERATION_MISSING" | "CONTROL_OWNER_CONFLICT" | "CONTROL_SERVICE_NOT_READY" | "CONTROL_TARGET_NOT_FOUND" | "CONTROL_VERSION_CONFLICT" | "ACCESS_IGNORED" | "CURSOR_EXPIRED" | "DATA_EPOCH_MISMATCH" | "IDEMPOTENCY_KEY_REUSED" | "OUTBOUND_DELIVERY_UNKNOWN" | "OUTBOUND_IN_PROGRESS" | "OUTBOUND_ARCHIVE_RECONCILIATION_FAILED" | "OUTBOUND_MESSAGE_CORRELATION_REQUIRED" | "OUTBOUND_RECONCILIATION_CONFLICT" | "OUTBOUND_REJECTED" | "PENDING_RESUME_MESSAGE_NOT_ELIGIBLE" | "PENDING_RESUME_NOT_AVAILABLE" | "PENDING_RESUME_SELECTION_STALE" | "SERVICE_UNAVAILABLE" | "TIMEOUT" | "INTERNAL_ERROR";
         /** @description Solo mensajes saneados. Sin raw, stack, rutas locales, tokens ni payload arbitrario. */
         ErrorResponse: {
             error: {
@@ -608,6 +642,8 @@ export interface components {
         };
         /** @enum {string} */
         Lifecycle: "open" | "resolved";
+        /** @default 50 */
+        limit: number;
         Message: {
             actorId: components["schemas"]["Id"] | null;
             /** @enum {string} */
@@ -704,6 +740,29 @@ export interface components {
             type: "takeover";
             uncertainMessageIds: components["schemas"]["Id"][];
         };
+        OutboundReconciliationItem: {
+            /** @enum {string} */
+            channel: "whatsapp" | "telegram";
+            clientMessageId: components["schemas"]["Id"] | null;
+            conversationId: components["schemas"]["Id"];
+            createdAt: components["schemas"]["Timestamp"];
+            errorCode: string | null;
+            id: components["schemas"]["Id"];
+            sendingAt: components["schemas"]["Timestamp"] | null;
+            /** @enum {string} */
+            source: "human" | "ai";
+            text: components["schemas"]["OutgoingText"];
+            updatedAt: components["schemas"]["Timestamp"];
+        };
+        OutboundReconciliationQuery: {
+            cursor?: components["schemas"]["PageCursor"];
+            /** @default 50 */
+            limit?: number;
+        };
+        OutboundReconciliationResponse: {
+            items: components["schemas"]["OutboundReconciliationItem"][];
+            nextCursor: components["schemas"]["PageCursor"] | null;
+        };
         /**
          * Format: unicode-text
          * @description Texto literal; puntos de código Unicode, no unidades UTF16. No comandos/Markdown implícitos.
@@ -746,6 +805,22 @@ export interface components {
         };
         ReadResponse: {
             throughInboundSeq: components["schemas"]["Sequence"];
+        };
+        /** @description accepted requires providerMessageId; rejected must omit it. Server also materializes the correlated message before advancing its watermark. */
+        ReconcileOutboundIntentRequest: {
+            /** Format: unicode-text */
+            note: string;
+            providerMessageId?: components["schemas"]["ProviderMessageId"];
+            /** @enum {string} */
+            state: "accepted" | "rejected";
+        };
+        ReconcileOutboundIntentResponse: {
+            intentId: components["schemas"]["Id"];
+            reconciledAt: components["schemas"]["Timestamp"];
+            /** @enum {string} */
+            state: "accepted" | "rejected";
+            /** @enum {string} */
+            status: "reconciled" | "existing";
         };
         /** @description Selección pendiente explícita; servicio comprueba live/no atendida/24h/versión. No reanima jobs antiguos. */
         ReleaseRequest: {
@@ -1192,6 +1267,70 @@ export interface operations {
             404: components["responses"]["404"];
             409: components["responses"]["409"];
             410: components["responses"]["410"];
+            422: components["responses"]["422"];
+            503: components["responses"]["503"];
+        };
+    };
+    reconcileOutboundIntent: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                conversationId: components["schemas"]["Id"];
+                intentId: components["schemas"]["Id"];
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ReconcileOutboundIntentRequest"];
+            };
+        };
+        responses: {
+            /** @description Conciliación durable. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ReconcileOutboundIntentResponse"];
+                };
+            };
+            401: components["responses"]["401"];
+            403: components["responses"]["403"];
+            404: components["responses"]["404"];
+            409: components["responses"]["409"];
+            422: components["responses"]["422"];
+            503: components["responses"]["503"];
+        };
+    };
+    listOutboundReconciliations: {
+        parameters: {
+            query?: {
+                cursor?: components["schemas"]["PageCursor"];
+                limit?: components["schemas"]["limit"];
+            };
+            header?: never;
+            path: {
+                conversationId: components["schemas"]["Id"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Página de salidas que esperan decisión manual. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["OutboundReconciliationResponse"];
+                };
+            };
+            401: components["responses"]["401"];
+            403: components["responses"]["403"];
+            404: components["responses"]["404"];
+            409: components["responses"]["409"];
             422: components["responses"]["422"];
             503: components["responses"]["503"];
         };

@@ -152,7 +152,7 @@ export interface Archive {
         providerMessageId?: string | null; providerResult?: unknown; errorCode?: string | null }): Promise<OutboundIntent>;
     outboundIntent(idempotencyKey: string): Promise<OutboundIntent | null>;
     outboundIntents(input?: { conversationId?: string; state?: OutboundIntent['state'];
-        after?: { createdAt: string; id: string }; limit?: number }): Promise<OutboundIntent[]>;
+        sources?: OutboundIntent['source'][]; after?: { createdAt: string; id: string }; limit?: number }): Promise<OutboundIntent[]>;
     assistantToolInvocation(invocationKey: string): Promise<Contract<'AssistantToolAuditRecord'> | null>;
     assistantToolInvocations(input?: { conversationId?: string; limit?: number }): Promise<Contract<'AssistantToolAuditRecord'>[]>;
     recordAssistantToolInvocation(input: Contract<'AssistantToolAuditRecord'>): Promise<{
@@ -160,6 +160,9 @@ export interface Archive {
     }>;
     reconcileOutboundIntent(input: { idempotencyKey: string; actorId: string; state: 'accepted' | 'rejected';
         note: string; providerMessageId?: string | null }): Promise<{ status: 'reconciled' | 'existing'; intent: OutboundIntent }>;
+    reconcileConversationOutboundIntent(input: { conversationId: string; intentId: string; actorId: string;
+        state: 'accepted' | 'rejected'; note: string; providerMessageId?: string }): Promise<
+        { status: 'reconciled' | 'existing'; intent: OutboundIntent }>;
     controlState(conversationId: string): Promise<Contract<'ConversationControl'> | null>;
     clearAIContext(input: { conversationId: string; actorId: string; expectedContextVersion: Contract<'Version'> }): Promise<
         { status: 'updated'; contextVersion: Contract<'Version'>; throughMessageId: string | null; event: Contract<'Event'> } |

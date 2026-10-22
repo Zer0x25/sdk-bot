@@ -1481,6 +1481,62 @@
       "required": ["conversationId", "controlVersion", "selectionVersion", "candidates", "candidateCount", "truncated", "excludedPendingDispatchCount", "excludedUnprocessableCount", "uncertainOutboundCount", "automationMayBeBlocked"],
       "additionalProperties": false
     },
+    "OutboundReconciliationQuery": {
+      "type": "object",
+      "properties": {
+        "cursor": { "$ref": "#/$defs/PageCursor" },
+        "limit": { "type": "integer", "minimum": 1, "maximum": 100, "default": 50 }
+      },
+      "additionalProperties": false
+    },
+    "OutboundReconciliationItem": {
+      "type": "object",
+      "properties": {
+        "id": { "$ref": "#/$defs/Id" },
+        "conversationId": { "$ref": "#/$defs/Id" },
+        "channel": { "type": "string", "enum": ["whatsapp", "telegram"] },
+        "source": { "type": "string", "enum": ["human", "ai"] },
+        "text": { "$ref": "#/$defs/OutgoingText" },
+        "clientMessageId": { "anyOf": [{ "$ref": "#/$defs/Id" }, { "type": "null" }] },
+        "createdAt": { "$ref": "#/$defs/Timestamp" },
+        "sendingAt": { "anyOf": [{ "$ref": "#/$defs/Timestamp" }, { "type": "null" }] },
+        "updatedAt": { "$ref": "#/$defs/Timestamp" },
+        "errorCode": { "anyOf": [{ "type": "string", "maxLength": 80 }, { "type": "null" }] }
+      },
+      "required": ["id", "conversationId", "channel", "source", "text", "clientMessageId", "createdAt", "sendingAt", "updatedAt", "errorCode"],
+      "additionalProperties": false
+    },
+    "OutboundReconciliationResponse": {
+      "type": "object",
+      "properties": {
+        "items": { "type": "array", "items": { "$ref": "#/$defs/OutboundReconciliationItem" }, "maxItems": 100 },
+        "nextCursor": { "anyOf": [{ "$ref": "#/$defs/PageCursor" }, { "type": "null" }] }
+      },
+      "required": ["items", "nextCursor"],
+      "additionalProperties": false
+    },
+    "ReconcileOutboundIntentRequest": {
+      "type": "object",
+      "properties": {
+        "state": { "type": "string", "enum": ["accepted", "rejected"] },
+        "providerMessageId": { "$ref": "#/$defs/ProviderMessageId" },
+        "note": { "type": "string", "minLength": 1, "maxLength": 500, "format": "unicode-text" }
+      },
+      "required": ["state", "note"],
+      "additionalProperties": false,
+      "description": "accepted requires providerMessageId; rejected must omit it. Server also materializes the correlated message before advancing its watermark."
+    },
+    "ReconcileOutboundIntentResponse": {
+      "type": "object",
+      "properties": {
+        "status": { "type": "string", "enum": ["reconciled", "existing"] },
+        "intentId": { "$ref": "#/$defs/Id" },
+        "state": { "type": "string", "enum": ["accepted", "rejected"] },
+        "reconciledAt": { "$ref": "#/$defs/Timestamp" }
+      },
+      "required": ["status", "intentId", "state", "reconciledAt"],
+      "additionalProperties": false
+    },
     "SendMessageRequest": {
       "type": "object",
       "properties": {
@@ -1692,6 +1748,9 @@
         "IDEMPOTENCY_KEY_REUSED",
         "OUTBOUND_DELIVERY_UNKNOWN",
         "OUTBOUND_IN_PROGRESS",
+        "OUTBOUND_ARCHIVE_RECONCILIATION_FAILED",
+        "OUTBOUND_MESSAGE_CORRELATION_REQUIRED",
+        "OUTBOUND_RECONCILIATION_CONFLICT",
         "OUTBOUND_REJECTED",
         "PENDING_RESUME_MESSAGE_NOT_ELIGIBLE",
         "PENDING_RESUME_NOT_AVAILABLE",

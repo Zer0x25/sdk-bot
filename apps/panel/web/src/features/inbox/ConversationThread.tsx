@@ -2,7 +2,8 @@ import { useEffect, useLayoutEffect, useRef, useState } from 'react';
 import type { KeyboardEvent } from 'react';
 import { Link } from 'react-router-dom';
 import { ArrowLeft, Bell, Bot, MessageSquareText, Search, SendHorizontal, Sparkles, UserRound } from 'lucide-react';
-import type { Account, Actor, Conversation, ConversationAssistanceResponse, Message, MessageSearchHit, PendingResumeResponse } from './api';
+import type { Account, Actor, Conversation, ConversationAssistanceResponse, Message, MessageSearchHit,
+  OutboundReconciliationItem, PendingResumeResponse } from './api';
 import { PanelApiError } from './api';
 
 interface Props {
@@ -63,6 +64,17 @@ interface Props {
   onReleaseFutureOnly(): void;
   onReleaseSelectedPending(): void;
   onCancelReleaseOptions(): void;
+  canReconcile: boolean;
+  reconciliationOpen: boolean;
+  outboundReconciliations: OutboundReconciliationItem[];
+  reconciliationLoading: boolean;
+  reconciliationError: Error | null;
+  reconcilingIntentId: string | null;
+  reconciliationHasMore: boolean;
+  onOpenReconciliations(): void;
+  onCloseReconciliations(): void;
+  onLoadMoreReconciliations(): void;
+  onReconcileOutbound(item: OutboundReconciliationItem, decision: 'accepted' | 'rejected', note: string, providerMessageId?: string): void;
   onResolve(): void;
   onReopen(): void;
   draft: string;
@@ -138,6 +150,7 @@ function ErrorPanel({ error, onRetry, title }: { error: Error; onRetry(): void; 
 
 export function ConversationThread(props: Props) {
   const [searchOpen, setSearchOpen] = useState(false);
+  const [reconciliationDrafts, setReconciliationDrafts] = useState<Record<string, { note: string; providerMessageId: string }>>({});
   const {
     conversationId, conversation, detailLoading, detailError, messages, messagePageCount,
     messagesLoading, messagesError, messageSearchInput, messageSearchTerm, messageSearchHits,
@@ -150,7 +163,9 @@ export function ConversationThread(props: Props) {
     controlNotice, releaseOptionsOpen, pendingResume, pendingResumeLoading, pendingResumeError, selectedPendingIds,
     onTakeover, onRelease, onOpenPendingResume, onTogglePendingResume, onReleaseFutureOnly,
     onReleaseSelectedPending, onCancelReleaseOptions, onResolve, onReopen, draft, onDraftChange, sendBusy, sendError,
-    uncertainSend, onSubmitMessage, onRetryUncertainSend, onRestoreUncertainDraft
+    uncertainSend, onSubmitMessage, onRetryUncertainSend, onRestoreUncertainDraft, canReconcile, reconciliationOpen,
+    outboundReconciliations, reconciliationLoading, reconciliationError, reconcilingIntentId, reconciliationHasMore,
+    onOpenReconciliations, onCloseReconciliations, onLoadMoreReconciliations, onReconcileOutbound
   } = props;
   const historyRef = useRef<HTMLDivElement>(null);
   const activeConversationId = useRef(conversationId);
@@ -242,6 +257,23 @@ export function ConversationThread(props: Props) {
                 ? 'La conversación pertenece a otro operador.'
                   : control?.requiresReview || conversation?.requiresReview ? 'La identidad requiere revisión antes de responder.'
                     : !actor?.capabilities.includes('messages:send') ? 'Tu cuenta no tiene permiso para enviar mensajes.' : null;
+
+  function reconciliationDraft(item: OutboundReconciliationItem) {
+    return reconciliationDrafts[item.id] ?? { note: '', providerMessageId: '' };
+  }
+
+  function updateReconciliationDraft(itemId: string, field: 'note' | 'providerMessageId', value: string) {
+    setReconciliationDrafts(previous => ({ ...previous,
+      [itemId]: { note: previous[itemId]?.note ?? '', providerMessageId: previous[itemId]?.providerMessageId ?? '', [field]: value }
+    }));
+  }
+
+  function matchingArchivedMessages(item: OutboundReconciliationItem) {
+    const sentAfter = item.sendingAt ? Date.parse(item.sendingAt) : Date.parse(item.createdAt);
+    return messages.filter(message => message.direction === 'outbound' && message.authorKind === 'external_self'
+      && message.content.type === 'text' && message.content.text === item.text && Boolean(message.providerMessageId)
+      && Date.parse(message.ingestedAt) >= sentAfter);
+  }
 
   async function loadOlder() {
     const container = historyRef.current;
@@ -418,9 +450,14 @@ export function ConversationThread(props: Props) {
               {pendingResume && (
                 <>
                   {pendingResume.uncertainOutboundCount > 0 && (
-                    <p className="release-policy-warning" role="alert">
-                      Hay {pendingResume.uncertainOutboundCount} salida(s) de IA o del operador sin confirmar. No se habilita el reenvío de entradas pendientes hasta revisar esas entregas.
-                    </p>
+                    <div className="release-policy-warning" role="alert">
+                      <p>Hay {pendingResume.uncertainOutboundCount} salida(s) de IA o del operador sin confirmar. No se habilita el procesamiento de entradas pendientes hasta revisar esas entregas.</p>
+                      {actor?.capabilities.includes('conversations:read') && (
+                        <button className="text-button" type="button" onClick={onOpenReconciliations}>
+                          Revisar entregas inciertas
+                        </button>
+                      )}
+                    </div>
                   )}
                   {pendingResume.automationMayBeBlocked && (
                     <p className="release-policy-warning" role="status">
@@ -467,6 +504,78 @@ export function ConversationThread(props: Props) {
                   <p className="release-policy-summary">Las entradas antiguas no seleccionadas permanecen en el historial y no se reproducen automáticamente.</p>
                 </>
               )}
+            </section>
+          )}
+          {outboundReconciliations.length > 0 && !reconciliationOpen && (
+            <div className="composer-uncertain" role="alert">
+              <span>Hay {outboundReconciliations.length} salida(s) sin confirmar. Revisa el resultado antes de repetir el mismo mensaje.</span>
+              <button className="text-button" type="button" onClick={onOpenReconciliations}>Revisar entregas</button>
+            </div>
+          )}
+          {reconciliationOpen && (
+            <section className="outbound-reconciliation-panel" aria-label="Conciliar entregas inciertas">
+              <header>
+                <h3>Entregas que requieren revisión</h3>
+                <button className="text-button" type="button" onClick={onCloseReconciliations}>Cerrar</button>
+              </header>
+              <p>La decisión queda auditada y no envía mensajes. Para marcar una salida como aceptada, confirma su ID remoto; para rechazarla, deja una nota con la evidencia revisada.</p>
+              {reconciliationLoading && <p role="status">Cargando entregas inciertas…</p>}
+              {reconciliationError && <div className="thread-inline-error" role="alert">{reconciliationError.message}</div>}
+              {!reconciliationLoading && !reconciliationError && outboundReconciliations.length === 0 && (
+                <p role="status">No quedan entregas inciertas en esta conversación.</p>
+              )}
+              <ul className="outbound-reconciliation-list">
+                {outboundReconciliations.map(item => {
+                  const value = reconciliationDraft(item);
+                  const archivedCandidates = matchingArchivedMessages(item);
+                  const busy = reconcilingIntentId === item.id;
+                  const note = value.note.trim();
+                  const providerMessageId = value.providerMessageId.trim();
+                  return (
+                    <li key={item.id}>
+                      <p><strong>{item.source === 'ai' ? 'Salida de IA' : 'Salida del operador'}</strong> · {formatSearchTime(item.sendingAt ?? item.createdAt)}</p>
+                      <blockquote>{item.text}</blockquote>
+                      {item.errorCode && <small>Código registrado: {item.errorCode}</small>}
+                      <label>
+                        ID remoto archivado
+                        <select aria-label={`ID remoto archivado para ${item.id}`} value={providerMessageId}
+                          onChange={event => updateReconciliationDraft(item.id, 'providerMessageId', event.target.value)} disabled={!canReconcile || busy}>
+                          <option value="">Selecciona si el mensaje aparece en el historial</option>
+                          {archivedCandidates.map(message => <option key={message.id} value={message.providerMessageId!}>
+                            {message.providerMessageId} · {formatSearchTime(message.ingestedAt)}
+                          </option>)}
+                        </select>
+                      </label>
+                      <label>
+                        ID remoto (si el eco aún no está cargado)
+                        <input aria-label={`ID remoto manual para ${item.id}`} value={value.providerMessageId}
+                          onChange={event => updateReconciliationDraft(item.id, 'providerMessageId', event.target.value)}
+                          maxLength={256} disabled={!canReconcile || busy} />
+                      </label>
+                      <label>
+                        Nota de revisión
+                        <textarea aria-label={`Nota de revisión para ${item.id}`} value={value.note}
+                          onChange={event => updateReconciliationDraft(item.id, 'note', event.target.value)}
+                          maxLength={500} disabled={!canReconcile || busy} />
+                      </label>
+                      {!canReconcile && <small>Tu sesión puede revisar esta lista, pero no tiene permiso para registrar la decisión.</small>}
+                      <div className="release-policy-actions">
+                        <button className="thread-control-button is-primary" type="button" disabled={!canReconcile || busy || !note || !providerMessageId}
+                          onClick={() => onReconcileOutbound(item, 'accepted', value.note, providerMessageId)}>
+                          {busy ? 'Guardando…' : 'Registrar como aceptada'}
+                        </button>
+                        <button className="thread-control-button" type="button" disabled={!canReconcile || busy || !note}
+                          onClick={() => onReconcileOutbound(item, 'rejected', value.note)}>
+                          Registrar como no enviada
+                        </button>
+                      </div>
+                    </li>
+                  );
+                })}
+              </ul>
+              {reconciliationHasMore && <button className="text-button" type="button" onClick={onLoadMoreReconciliations} disabled={reconciliationLoading}>
+                Cargar más entregas
+              </button>}
             </section>
           )}
           <div className="message-history" ref={historyRef} onScroll={handleHistoryScroll} aria-busy={messagesLoading || loadingOlder}>
@@ -563,11 +672,14 @@ export function ConversationThread(props: Props) {
                 {uncertainSend.state === 'in_progress' && (
                   <button className="text-button" type="button" onClick={onRetryUncertainSend}>Consultar estado</button>
                 )}
-                {uncertainSend.state === 'delivery_unknown' && uncertainSameDraft && (
-                  <button className="text-button" type="button" onClick={onRetryUncertainSend}>Reintentar de todos modos</button>
+                {uncertainSend.state === 'delivery_unknown' && uncertainSameDraft && actor?.capabilities.includes('conversations:read') && (
+                  <button className="text-button" type="button" onClick={onOpenReconciliations}>Conciliar antes de enviar otra vez</button>
                 )}
-                {uncertainSend.state === 'delivery_unknown' && !uncertainSameDraft && (
-                  <button className="text-button" type="button" onClick={onRestoreUncertainDraft}>Restaurar borrador pendiente</button>
+                {uncertainSend.state === 'delivery_unknown' && !uncertainSameDraft && actor?.capabilities.includes('conversations:read') && (
+                  <>
+                    <button className="text-button" type="button" onClick={onOpenReconciliations}>Conciliar antes de enviar otra vez</button>
+                    <button className="text-button" type="button" onClick={onRestoreUncertainDraft}>Restaurar borrador pendiente</button>
+                  </>
                 )}
               </div>
             )}

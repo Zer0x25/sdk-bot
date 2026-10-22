@@ -8,7 +8,7 @@ const { createHash, randomUUID } = require('node:crypto');
 const { createArchive } = require('../services/conversations');
 const { buildControlImportReport } = require('../services/conversations/controlImport');
 const { createControlService, LEGACY_ADMIN_ACTOR } = require('../services/conversations/controlService');
-const { createSessionApi, projectConversation } = require('../services/sessionApi');
+const { createSessionApi, capabilityFor, projectConversation } = require('../services/sessionApi');
 const { setControlService } = require('../services/stateService');
 const { state } = require('../config');
 const chatControlCommands = require('../handlers/commands/chatControl');
@@ -248,6 +248,149 @@ test('F5.4 API uses signed actor identity, expectedVersion and durable operation
         { expectedVersion: resolved.response.conversation.control.controlVersion, profileKey: 'default' });
     assert.equal(profileUpdate.status, 200);
     assert.equal(profileUpdate.response.conversation.control.profileKey, 'default');
+});
+
+test('BUG-075 authenticated reconciliation correlates accepted output before advancing pending inbound', async t => {
+    const previousSecret = process.env.SDK_PANEL_GATEWAY_SECRET;
+    process.env.SDK_PANEL_GATEWAY_SECRET = 'test-outbound-reconciliation-secret-32-bytes';
+    t.after(() => { if (previousSecret === undefined) delete process.env.SDK_PANEL_GATEWAY_SECRET;
+        else process.env.SDK_PANEL_GATEWAY_SECRET = previousSecret; });
+    const { archive, accountId, migrationId } = await fixture(t, ['111']);
+    await cutover(archive, migrationId);
+    const conversationId = (await archive.conversationRows())[0].id;
+    const identity = { accountId, channel: 'whatsapp', kind: 'whatsapp_jid', exactValue: '111@s.whatsapp.net' };
+    const [pendingInbound] = await archive.ingestBatch([{ identity, providerMessageId: 'live-pending-accepted', source: 'live',
+        direction: 'inbound', authorKind: 'customer', occurredAt: '2026-10-22T09:59:00.000Z',
+        content: { type: 'text', text: 'entrada pendiente' }, legacyDispatch: { waitForTranscription: false,
+            message: { channel: 'whatsapp', remoteId: 'whatsapp:111@s.whatsapp.net', rawId: '111@s.whatsapp.net',
+                text: 'entrada pendiente', transcript: '', isAudio: false,
+                metadata: { phoneNumber: '111', isFromMe: false, isAdminChannel: false } } } }]);
+    const inboundSeq = (await archive.conversation(conversationId)).inbound_seq;
+    await archive.markLegacyDispatched({ messageId: pendingInbound.message.id });
+    const actor = { id: randomUUID(), capabilities: ['conversations:read','messages:send'] };
+    let control = await archive.controlState(conversationId);
+    await archive.writeControlState({ conversationId, actorId: randomUUID(), expectedVersion: control.controlVersion,
+        state: { ...control, accessPolicy: 'allowed', automationMode: 'human', ownerId: actor.id } });
+    control = await archive.controlState(conversationId);
+    const policy = await archive.controlPolicy();
+    const intent = { idempotencyKey: 'ai-reconcile-accepted-001', accountId, conversationId,
+        channel: 'whatsapp', destination: '111@s.whatsapp.net', actorId: actor.id, source: 'human',
+        payload: { text: 'respuesta bajo revisión' },
+        controlSnapshot: { conversationId, controlVersion: control.controlVersion,
+            contextVersion: control.contextVersion, policyVersion: policy.policyVersion },
+        policy: { handledThroughInboundSeq: inboundSeq, clientMessageId: randomUUID() } };
+    await archive.beginOutboundIntent(intent);
+    const claim = await archive.claimOutboundIntent({ idempotencyKey: intent.idempotencyKey });
+    assert.equal(claim.status, 'claimed', claim.errorCode);
+    await archive.finishOutboundIntent({ idempotencyKey: intent.idempotencyKey, state: 'delivery_unknown',
+        errorCode: 'PROCESS_RESTARTED_DURING_SEND' });
+    const row = await archive.outboundIntent(intent.idempotencyKey);
+    await archive.ingestBatch([{ identity, providerMessageId: 'provider-echo-wrong', source: 'history',
+        direction: 'outbound', authorKind: 'external_self', occurredAt: '2026-10-22T10:00:00.000Z',
+        content: { type: 'text', text: 'contenido diferente' } }, { identity, providerMessageId: 'provider-echo-correct',
+        source: 'history', direction: 'outbound', authorKind: 'external_self', occurredAt: '2026-10-22T10:01:00.000Z',
+        content: { type: 'text', text: intent.payload.text } }]);
+
+    let providerSendCalls = 0;
+    const route = createSessionApi(() => ({ globalMode: 'allowed_all', globalPaused: false, policyVersion: '1' }),
+        archive, () => ({}), undefined, null, () => { providerSendCalls += 1; throw new Error('reconciliation must not send'); });
+    async function request(method, pathname, body = null, requestActor = actor) {
+        let status, response;
+        const res = { writeHead(value) { status = value; }, end(value) { response = JSON.parse(value); } };
+        const routePath = new URL(pathname, 'http://gateway.test').pathname;
+        try {
+            await route({ method, url: pathname, headers: {} }, res,
+                { actor: requestActor, requestId: randomUUID() }, routePath,
+                body === null ? Buffer.alloc(0) : Buffer.from(JSON.stringify(body)));
+        } catch (error) { return { status: error.status, response: { code: error.code } }; }
+        return { status, response };
+    }
+    const listPath = `/v1/conversations/${conversationId}/outbound-reconciliations?limit=10`;
+    assert.equal(capabilityFor('GET', `/v1/conversations/${conversationId}/outbound-reconciliations`), 'conversations:read');
+    assert.equal(capabilityFor('POST', `/v1/conversations/${conversationId}/outbound-intents/${row.id}/reconcile`), 'messages:send');
+    const list = await request('GET', listPath);
+    assert.equal(list.status, 200);
+    assert.equal(list.response.items.length, 1);
+    assert.equal(list.response.items[0].text, intent.payload.text);
+    assert.equal('idempotencyKey' in list.response.items[0], false);
+    assert.equal('providerResult' in list.response.items[0], false);
+    assert.equal('payload' in list.response.items[0], false);
+
+    const postPath = `/v1/conversations/${conversationId}/outbound-intents/${row.id}/reconcile`;
+    const missingId = await request('POST', postPath, { state: 'accepted', note: 'Revisé el historial.' });
+    assert.equal(missingId.status, 422);
+    const mismatch = await request('POST', postPath, { state: 'accepted', providerMessageId: 'provider-echo-wrong',
+        note: 'El identificador apunta a otro contenido.' });
+    assert.equal(mismatch.status, 409);
+    assert.equal(mismatch.response.code, 'OUTBOUND_ARCHIVE_RECONCILIATION_FAILED');
+    const foreignActor = { id: randomUUID(), capabilities: ['messages:send'] };
+    const ownerConflict = await request('POST', postPath, { state: 'accepted', providerMessageId: 'provider-echo-correct',
+        note: 'ID visible en el historial.' }, foreignActor);
+    assert.equal(ownerConflict.status, 409);
+    assert.equal(ownerConflict.response.code, 'CONTROL_OWNER_CONFLICT');
+    assert.equal((await archive.outboundIntent(intent.idempotencyKey)).state, 'delivery_unknown');
+    assert.equal((await archive.pendingResumeMessages({ conversationId })).uncertainOutboundCount, 1);
+
+    const accepted = await request('POST', postPath, { state: 'accepted', providerMessageId: 'provider-echo-correct',
+        note: 'Verifiqué el eco archivado del canal.' });
+    assert.equal(accepted.status, 200);
+    assert.equal(accepted.response.state, 'accepted');
+    assert.equal(accepted.response.status, 'reconciled');
+    assert.equal((await archive.outboundIntent(intent.idempotencyKey)).reconciledBy, actor.id);
+    const archived = await archive.messageByProviderId({ conversationId: row.conversationId,
+        providerMessageId: 'provider-echo-correct' });
+    assert.equal(archived.authorKind, 'operator');
+    assert.equal(archived.source, 'panel');
+    assert.equal(archived.content.text, intent.payload.text);
+    assert.equal((await archive.pendingResumeMessages({ conversationId })).uncertainOutboundCount, 0);
+    assert.equal((await archive.conversation(conversationId)).handled_inbound_seq, inboundSeq);
+    assert.equal(providerSendCalls, 0);
+});
+
+test('BUG-075 rejected reconciliation clears the delivery block without marking inbound handled', async t => {
+    const { archive, accountId, migrationId } = await fixture(t, ['111']);
+    await cutover(archive, migrationId);
+    const conversationId = (await archive.conversationRows())[0].id;
+    const identity = { accountId, channel: 'whatsapp', kind: 'whatsapp_jid', exactValue: '111@s.whatsapp.net' };
+    const [pendingInbound] = await archive.ingestBatch([{ identity, providerMessageId: 'live-pending-rejected', source: 'live',
+        direction: 'inbound', authorKind: 'customer', occurredAt: '2026-10-22T09:59:00.000Z',
+        content: { type: 'text', text: 'otra entrada pendiente' }, legacyDispatch: { waitForTranscription: false,
+            message: { channel: 'whatsapp', remoteId: 'whatsapp:111@s.whatsapp.net', rawId: '111@s.whatsapp.net',
+                text: 'otra entrada pendiente', transcript: '', isAudio: false,
+                metadata: { phoneNumber: '111', isFromMe: false, isAdminChannel: false } } } }]);
+    const inboundSeq = (await archive.conversation(conversationId)).inbound_seq;
+    await archive.markLegacyDispatched({ messageId: pendingInbound.message.id });
+    const actor = { id: randomUUID(), capabilities: ['conversations:read','messages:send'] };
+    let firstControl = await archive.controlState(conversationId);
+    await archive.writeControlState({ conversationId, actorId: randomUUID(), expectedVersion: firstControl.controlVersion,
+        state: { ...firstControl, accessPolicy: 'allowed', automationMode: 'human', ownerId: actor.id } });
+    firstControl = await archive.controlState(conversationId);
+    const firstPolicy = await archive.controlPolicy();
+    const intent = { idempotencyKey: 'ai-reconcile-rejected-001', accountId, conversationId,
+        channel: 'whatsapp', destination: '111@s.whatsapp.net', actorId: actor.id, source: 'human',
+        payload: { text: 'respuesta que no salió' },
+        controlSnapshot: { conversationId, controlVersion: firstControl.controlVersion,
+            contextVersion: firstControl.contextVersion, policyVersion: firstPolicy.policyVersion },
+        policy: { handledThroughInboundSeq: inboundSeq, clientMessageId: randomUUID() } };
+    await archive.beginOutboundIntent(intent);
+    const claim = await archive.claimOutboundIntent({ idempotencyKey: intent.idempotencyKey });
+    assert.equal(claim.status, 'claimed', claim.errorCode);
+    await archive.finishOutboundIntent({ idempotencyKey: intent.idempotencyKey, state: 'delivery_unknown' });
+    const row = await archive.outboundIntent(intent.idempotencyKey);
+    const route = createSessionApi(() => ({ globalMode: 'allowed_all', globalPaused: false, policyVersion: '1' }), archive);
+    let status, response;
+    const res = { writeHead(value) { status = value; }, end(value) { response = JSON.parse(value); } };
+    await route({ method: 'POST', url: `/v1/conversations/${conversationId}/outbound-intents/${row.id}/reconcile`, headers: {} },
+        res, { actor, requestId: randomUUID() }, `/v1/conversations/${conversationId}/outbound-intents/${row.id}/reconcile`,
+        Buffer.from(JSON.stringify({ state: 'rejected', note: 'El operador verificó que no apareció en el canal.' })));
+    assert.equal(status, 200);
+    assert.equal(response.state, 'rejected');
+    assert.equal((await archive.outboundIntent(intent.idempotencyKey)).reconciliationNote,
+        'El operador verificó que no apareció en el canal.');
+    const pending = await archive.pendingResumeMessages({ conversationId });
+    assert.equal(pending.uncertainOutboundCount, 0);
+    assert.equal(pending.candidateCount, 1);
+    assert.equal((await archive.conversation(conversationId)).handled_inbound_seq, '0');
 });
 
 test('F5.4 policy updates are actor-audited and notification events allow no conversation target', async t => {

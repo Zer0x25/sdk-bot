@@ -394,6 +394,10 @@ Esta es la v1 útil; publicar/desplegar es una acción separada, no automática.
   como migrada, deliberadamente fuera de React o disponible en el panel legacy.
   `/` se mantiene mientras existan detalles y operaciones legacy-only. Evidencia:
   [F7.6](F7.6-PARIDAD-PANEL.md).
+- [x] **Seguimiento BUG-075 — Conciliación de salida:** la bandeja v1 puede
+  revisar salidas inciertas humanas/IA con API autenticada y evidencia archivada,
+  sin reenvío automático; `process_pending` queda bloqueado hasta decidir.
+  Evidencia: [BUG-075](BUG-075-OUTBOUND-RECONCILIATION.md).
 
 **Aceptación:** paridad funcional documentada, sin perder OAuth, pairing, comandos,
 perfiles o reset por un cambio visual.

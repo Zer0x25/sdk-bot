@@ -1103,12 +1103,22 @@ function outboundIntent(idempotencyKey) {
 function outboundIntents(input = {}) {
     if (input.conversationId != null) assertValid('Id', input.conversationId);
     if (input.state != null && !['intent','sending','accepted','rejected','delivery_unknown'].includes(input.state)) fail('INVALID_OUTBOUND_STATE');
+    const sources = input.sources == null ? null : [...new Set(input.sources)];
+    if (sources && (!sources.length || sources.length > 6
+        || sources.some(source => !['human','ai','notice','campaign','command','system'].includes(source)))) {
+        fail('INVALID_OUTBOUND_SOURCE');
+    }
     const limit = input.limit ?? 100;
     if (!Number.isInteger(limit) || limit < 1 || limit > 500) fail('INVALID_LIMIT');
     const clauses = [], params = [];
     if (input.conversationId) { clauses.push('conversation_id=?'); params.push(input.conversationId); }
     if (input.state) { clauses.push('state=?'); params.push(input.state); }
-    if (input.after) { clauses.push('(created_at>? OR (created_at=? AND id>?))'); params.push(input.after.createdAt, input.after.createdAt, input.after.id); }
+    if (sources) { clauses.push(`source IN (${sources.map(() => '?').join(',')})`); params.push(...sources); }
+    if (input.after) {
+        assertValid('Timestamp', input.after.createdAt); assertValid('Id', input.after.id);
+        clauses.push('(created_at>? OR (created_at=? AND id>?))');
+        params.push(input.after.createdAt, input.after.createdAt, input.after.id);
+    }
     const where = clauses.length ? `WHERE ${clauses.join(' AND ')}` : '';
     return all(`SELECT * FROM outbound_intents ${where} ORDER BY created_at,id LIMIT ?`, ...params, limit).map(outboundIntentFromRow);
 }
@@ -1414,20 +1424,40 @@ function materializeConversationOutbound(intent, providerMessageId, now, authorK
 }
 function reconcileOutboundIntent(input) {
     if (!input || typeof input.idempotencyKey !== 'string') fail('INVALID_IDEMPOTENCY_KEY');
+    return reconcileOutboundIntentRow(one('SELECT * FROM outbound_intents WHERE idempotency_key=?', input.idempotencyKey), input);
+}
+function reconcileConversationOutboundIntent(input) {
+    assertValid('Id', input?.conversationId); assertValid('Id', input?.intentId);
+    const row = one('SELECT * FROM outbound_intents WHERE id=? AND conversation_id=?', input.intentId, input.conversationId);
+    if (row && !['human','ai'].includes(row.source)) fail('OUTBOUND_INTENT_NOT_RECONCILABLE');
+    return reconcileOutboundIntentRow(row, { ...input, idempotencyKey: row?.idempotency_key }, true);
+}
+function reconcileOutboundIntentRow(row, input, requireConversation = false) {
     assertValid('Id', input.actorId);
     if (!['accepted','rejected'].includes(input.state)) fail('INVALID_RECONCILIATION_STATE');
     if (typeof input.note !== 'string' || !input.note.trim() || input.note.length > 500) fail('RECONCILIATION_NOTE_REQUIRED');
-    const row = one('SELECT * FROM outbound_intents WHERE idempotency_key=?', input.idempotencyKey);
     if (!row) fail('OUTBOUND_INTENT_MISSING');
     if (row.state !== 'delivery_unknown') {
-        if (row.state === input.state) return { status: 'existing', intent: outboundIntentFromRow(row) };
+        if (row.state === input.state) {
+            if (requireConversation && !row.reconciled_at) fail('OUTBOUND_RECONCILIATION_CONFLICT');
+            if (input.state === 'accepted' && input.providerMessageId != null
+                && row.provider_message_id !== input.providerMessageId) fail('OUTBOUND_RECONCILIATION_CONFLICT');
+            return { status: 'existing', intent: outboundIntentFromRow(row) };
+        }
         fail('OUTBOUND_RECONCILIATION_CONFLICT');
+    }
+    if (requireConversation && (!row.conversation_id || !['human','ai'].includes(row.source))) {
+        fail('OUTBOUND_INTENT_NOT_RECONCILABLE');
+    }
+    if (requireConversation && input.state === 'rejected' && input.providerMessageId != null) {
+        fail('INVALID_RECONCILIATION_PROVIDER_ID');
     }
     const now = new Date().toISOString();
     const original = outboundIntentFromRow(row);
-    const providerMessageId = input.providerMessageId == null ? null : String(input.providerMessageId).slice(0, 256);
+    const providerMessageId = input.providerMessageId ?? null;
     if (input.state === 'accepted' && original.conversationId && ['human','ai'].includes(original.source)) {
         if (!providerMessageId) fail('OUTBOUND_MESSAGE_CORRELATION_REQUIRED');
+        assertValid('ProviderMessageId', providerMessageId);
         if (original.source === 'human') materializeHumanOutbound(original, providerMessageId, now);
         else materializeAutomationOutbound(original, providerMessageId, now);
     }
@@ -2574,6 +2604,7 @@ function dispatch(method, input) {
         case 'assistantToolInvocations': return assistantToolInvocations(input ?? {});
         case 'recordAssistantToolInvocation': return transaction(() => recordAssistantToolInvocation(input));
         case 'reconcileOutboundIntent': return transaction(() => reconcileOutboundIntent(input));
+        case 'reconcileConversationOutboundIntent': return transaction(() => reconcileConversationOutboundIntent(input));
         case 'controlPolicy': return controlPolicy();
         case 'writeControlPolicy': return transaction(() => writeControlPolicy(input));
         case 'controlAuthority': return controlAuthority();

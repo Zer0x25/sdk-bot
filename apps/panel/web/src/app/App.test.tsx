@@ -89,11 +89,23 @@ function jsonResponse(value: unknown, status = 200) {
   });
 }
 
-function installApiMock(options: { empty?: boolean; listError?: boolean; pagination?: boolean; listPagination?: boolean; cursorExpired?: boolean; media?: boolean; mediaAvailable?: boolean; assistant?: boolean; assistantOlderReference?: boolean } = {}) {
+function installApiMock(options: { empty?: boolean; listError?: boolean; pagination?: boolean; listPagination?: boolean; cursorExpired?: boolean; media?: boolean; mediaAvailable?: boolean; assistant?: boolean; assistantOlderReference?: boolean; reconciliation?: boolean; reconciliationExisting?: boolean } = {}) {
   let markedRead = false;
-  const projectedConversation = () => markedRead ? { ...conversation, unreadCount: 0 } : conversation;
-  const fetchMock = vi.fn(async (input: RequestInfo | URL, _init?: RequestInit) => {
+  let sentBody: { text?: string; clientMessageId?: string } | null = options.reconciliationExisting
+    ? { text: 'respuesta que quedó incierta', clientMessageId: '11111111-1111-4111-8111-111111111111' } : null;
+  let reconciled = false;
+  const projectedConversation = () => {
+    const current = options.reconciliation ? { ...conversation, control: { ...conversation.control,
+      automationMode: 'human' as const, ownerId: 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa' } } : conversation;
+    return markedRead ? { ...current, unreadCount: 0 } : current;
+  };
+  const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
     const url = new URL(String(input), 'http://panel.local');
+    if (url.pathname === '/api/v1/session' && options.reconciliation) {
+      return jsonResponse({ actor: { id: 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa', displayName: 'Operador',
+        capabilities: ['conversations:read', 'messages:send'] },
+      policy: { globalMode: 'allowed_all', globalPaused: false, policyVersion: '1' }, snapshot });
+    }
     if (url.pathname === '/api/v1/session' && options.assistant) {
       return jsonResponse({ actor: { id: 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa', displayName: 'Operador',
         capabilities: ['conversations:read', 'admin:write', 'messages:send'] },
@@ -144,6 +156,27 @@ function installApiMock(options: { empty?: boolean; listError?: boolean; paginat
       return jsonResponse({ conversationId, contextVersion: '1', throughMessageId: latestMessage.id, snapshot,
         summaryPoints: [{ text: 'Consulta disponibilidad para el viernes.', references: [reference] }],
         draft: 'Sí, tenemos disponibilidad para el viernes. ¿Qué horario te acomoda?', draftReferences: [reference] });
+    }
+    if (url.pathname === `/api/v1/conversations/${conversationId}/messages` && init?.method === 'POST' && options.reconciliation) {
+      sentBody = typeof init.body === 'string' ? JSON.parse(init.body) as { text?: string; clientMessageId?: string } : null;
+      return jsonResponse({ error: { code: 'OUTBOUND_DELIVERY_UNKNOWN', message: 'Entrega sin confirmar.' } }, 409);
+    }
+    if (url.pathname === `/api/v1/conversations/${conversationId}/pending-resume` && options.reconciliation) {
+      return jsonResponse({ conversationId, controlVersion: '1', selectionVersion: 'b'.repeat(64), candidates: [],
+        candidateCount: 0, truncated: false, excludedPendingDispatchCount: 0, excludedUnprocessableCount: 0,
+        uncertainOutboundCount: reconciled ? 0 : 1, automationMayBeBlocked: false });
+    }
+    if (url.pathname === `/api/v1/conversations/${conversationId}/outbound-reconciliations` && options.reconciliation) {
+      return jsonResponse({ items: reconciled || !sentBody ? [] : [{ id: '99999999-9999-4999-8999-999999999999',
+        conversationId, channel: 'whatsapp', source: 'human', text: sentBody.text || '',
+        clientMessageId: sentBody.clientMessageId || null, createdAt: timestamp, sendingAt: timestamp,
+        updatedAt: timestamp, errorCode: 'PROCESS_RESTARTED_DURING_SEND' }], nextCursor: null });
+    }
+    if (url.pathname === `/api/v1/conversations/${conversationId}/outbound-intents/99999999-9999-4999-8999-999999999999/reconcile`
+      && init?.method === 'POST' && options.reconciliation) {
+      reconciled = true;
+      return jsonResponse({ status: 'reconciled', intentId: '99999999-9999-4999-8999-999999999999',
+        state: (JSON.parse(String(init.body)) as { state: string }).state, reconciledAt: timestamp });
     }
     if (url.pathname === `/api/v1/conversations/${conversationId}/messages`) {
       if (options.pagination && url.searchParams.has('cursor')) {
@@ -247,6 +280,52 @@ afterEach(() => {
 });
 
 describe('inbox shell and real API integration', () => {
+  it('finds an unresolved delivery again after opening the conversation', async () => {
+    const fetchMock = installApiMock({ reconciliation: true, reconciliationExisting: true });
+    const user = userEvent.setup();
+    renderApp(`/inbox/${conversationId}`);
+
+    await waitFor(() => expect(fetchMock.mock.calls.some(([input]) => new URL(String(input), 'http://panel.local').pathname
+      === `/api/v1/conversations/${conversationId}/outbound-reconciliations`)).toBe(true));
+    expect(await screen.findByRole('button', { name: 'Revisar entregas' })).toBeInTheDocument();
+    await user.click(screen.getByRole('button', { name: 'Revisar entregas' }));
+    const panel = await screen.findByRole('region', { name: 'Conciliar entregas inciertas' });
+    expect(within(panel).getByText('respuesta que quedó incierta')).toBeInTheDocument();
+    expect(fetchMock.mock.calls.filter(([input, init]) => new URL(String(input), 'http://panel.local').pathname
+      === `/api/v1/conversations/${conversationId}/messages` && init?.method === 'POST')).toHaveLength(0);
+  });
+
+  it('reconciles an uncertain operator delivery before allowing another send', async () => {
+    const fetchMock = installApiMock({ reconciliation: true });
+    const user = userEvent.setup();
+    renderApp(`/inbox/${conversationId}`);
+
+    await screen.findByText('¿En qué puedo ayudarte?');
+    const composer = screen.getByRole('textbox', { name: 'Escribir mensaje' });
+    await user.type(composer, 'Respuesta de prueba');
+    await user.click(screen.getByRole('button', { name: 'Enviar mensaje' }));
+    await user.click(await screen.findByRole('button', { name: 'Conciliar antes de enviar otra vez' }));
+
+    const panel = await screen.findByRole('region', { name: 'Conciliar entregas inciertas' });
+    expect(await within(panel).findByText('Respuesta de prueba')).toBeInTheDocument();
+    const decision = within(panel).getByRole('button', { name: 'Registrar como no enviada' });
+    expect(decision).toBeDisabled();
+    await user.type(within(panel).getByRole('textbox', { name: 'Nota de revisión para 99999999-9999-4999-8999-999999999999' }),
+      'Revisé el chat y no aparece la salida.');
+    await user.click(decision);
+
+    expect(await within(panel).findByText('No quedan entregas inciertas en esta conversación.')).toBeInTheDocument();
+    const sends = fetchMock.mock.calls.filter(([input, init]) => new URL(String(input), 'http://panel.local').pathname
+      === `/api/v1/conversations/${conversationId}/messages` && init?.method === 'POST');
+    const reconciliations = fetchMock.mock.calls.filter(([input, init]) => new URL(String(input), 'http://panel.local').pathname
+      .endsWith('/outbound-intents/99999999-9999-4999-8999-999999999999/reconcile') && init?.method === 'POST');
+    expect(sends).toHaveLength(1);
+    expect(reconciliations).toHaveLength(1);
+    expect(JSON.parse(String(reconciliations[0][1]?.body))).toMatchObject({ state: 'rejected',
+      note: 'Revisé el chat y no aparece la salida.' });
+    expect(screen.getByRole('button', { name: 'Enviar mensaje' })).toBeEnabled();
+  });
+
   it('loads a real conversation, opens its URL and renders authorized history without provider IDs', async () => {
     const fetchMock = installApiMock();
     const user = userEvent.setup();

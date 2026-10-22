@@ -21,6 +21,10 @@ export type Operation = Contract<'Operation'>;
 export type SendMessageResponse = Contract<'SendMessageResponse'>;
 export type SendMessageRequest = Contract<'SendMessageRequest'>;
 export type PendingResumeResponse = Contract<'PendingResumeResponse'>;
+export type OutboundReconciliationResponse = Contract<'OutboundReconciliationResponse'>;
+export type OutboundReconciliationItem = Contract<'OutboundReconciliationItem'>;
+export type ReconcileOutboundIntentRequest = Contract<'ReconcileOutboundIntentRequest'>;
+export type ReconcileOutboundIntentResponse = Contract<'ReconcileOutboundIntentResponse'>;
 export type SummaryResponse = Contract<'SummaryResponse'>;
 export type ConversationAssistanceRequest = Contract<'ConversationAssistanceRequest'>;
 export type ConversationAssistanceResponse = Contract<'ConversationAssistanceResponse'>;
@@ -120,6 +124,12 @@ async function postJson<T>(pathname: string, body: unknown, idempotencyKey?: str
         : response.status === 403 ? 'Tu cuenta no tiene permiso para realizar esta acción.'
           : code === 'OUTBOUND_DELIVERY_UNKNOWN'
             ? 'El proveedor pudo haber recibido el mensaje. Revisa el chat antes de volver a enviarlo.'
+            : code === 'OUTBOUND_ARCHIVE_RECONCILIATION_FAILED'
+              ? 'Ese ID remoto está archivado con otro contenido. Verifica el identificador antes de conciliar.'
+              : code === 'OUTBOUND_MESSAGE_CORRELATION_REQUIRED'
+                ? 'La salida solo puede marcarse aceptada con un ID remoto válido.'
+                : code === 'OUTBOUND_RECONCILIATION_CONFLICT'
+                  ? 'La salida cambió mientras la revisabas. Actualiza la lista antes de continuar.'
             : code === 'CONTROL_OWNER_CONFLICT' ? 'La conversación pertenece a otro operador.'
               : code === 'CONTROL_VERSION_CONFLICT' ? 'El control cambió. Actualiza el chat e inténtalo de nuevo.'
               : code === 'CURSOR_EXPIRED' ? 'El hilo cambió durante la generación. Actualiza el historial y vuelve a preparar la asistencia.'
@@ -201,6 +211,18 @@ export function releaseConversation(conversationId: string, expectedVersion: Con
 
 export function getPendingResumeMessages(conversationId: string, signal?: AbortSignal) {
   return getJson<PendingResumeResponse>(`/conversations/${encodeURIComponent(conversationId)}/pending-resume`, signal);
+}
+
+export function getOutboundReconciliations(conversationId: string, input: { cursor?: PageCursor }, signal?: AbortSignal) {
+  const query = new URLSearchParams({ limit: '50' });
+  if (input.cursor) query.set('cursor', input.cursor);
+  return getJson<OutboundReconciliationResponse>(
+    `/conversations/${encodeURIComponent(conversationId)}/outbound-reconciliations?${query.toString()}`, signal);
+}
+
+export function reconcileOutboundIntent(conversationId: string, intentId: string, request: ReconcileOutboundIntentRequest) {
+  return postJson<ReconcileOutboundIntentResponse>(
+    `/conversations/${encodeURIComponent(conversationId)}/outbound-intents/${encodeURIComponent(intentId)}/reconcile`, request);
 }
 
 export function updateConversationLifecycle(conversationId: string, expectedVersion: ConversationControl['controlVersion'], lifecycle: Lifecycle) {

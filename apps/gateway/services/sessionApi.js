@@ -16,11 +16,12 @@ const CAPABILITIES = {
 };
 
 function capabilityFor(method, pathname) {
-    if (method === 'GET' && (/^\/v1\/(session|accounts|profiles|summary|conversations(?:\/[^/]+(?:\/(?:messages|pending-resume|search))?)?|operations\/[^/]+|events)$/.test(pathname)
+    if (method === 'GET' && (/^\/v1\/(session|accounts|profiles|summary|conversations(?:\/[^/]+(?:\/(?:messages|pending-resume|outbound-reconciliations|search))?)?|operations\/[^/]+|events)$/.test(pathname)
         || /^\/v1\/attachments\/[0-9a-f-]{36}$/.test(pathname))) return 'conversations:read';
     if (method === 'POST' && /^\/v1\/conversations\/[^/]+\/(takeover|release)$/.test(pathname)) return 'control:write';
     if (method === 'POST' && /^\/v1\/conversations\/[^/]+\/assistance$/.test(pathname)) return 'admin:write';
     if (method === 'POST' && /^\/v1\/conversations\/[^/]+\/messages$/.test(pathname)) return 'messages:send';
+    if (method === 'POST' && /^\/v1\/conversations\/[^/]+\/outbound-intents\/[^/]+\/reconcile$/.test(pathname)) return 'messages:send';
     if (method === 'POST' && /^\/v1\/conversations\/[^/]+\/read$/.test(pathname)) return 'conversations:read';
     if (method === 'PATCH' && /^\/v1\/conversations\/[^/]+$/.test(pathname)) return 'conversations:write';
     return null;
@@ -571,6 +572,12 @@ function archiveBoundary(error) {
         OUTBOUND_ACCOUNT_CHANGED: [409, 'CHANNEL_NOT_READY', 'La cuenta del canal cambió antes del envío.'],
         OUTBOUND_ACCOUNT_UNAVAILABLE: [409, 'CHANNEL_NOT_READY', 'La cuenta del canal no está disponible.'],
         OUTBOUND_IDEMPOTENCY_CONFLICT: [409, 'IDEMPOTENCY_KEY_REUSED', 'El identificador del mensaje ya se usó con otro contenido.'],
+        OUTBOUND_INTENT_MISSING: [404, 'NOT_FOUND', 'No se encontró la salida incierta de esta conversación.'],
+        OUTBOUND_INTENT_NOT_RECONCILABLE: [409, 'OUTBOUND_RECONCILIATION_CONFLICT', 'Esta salida no admite conciliación desde la conversación.'],
+        OUTBOUND_RECONCILIATION_CONFLICT: [409, 'OUTBOUND_RECONCILIATION_CONFLICT', 'La salida ya cambió. Actualiza el hilo antes de conciliarla.'],
+        OUTBOUND_MESSAGE_CORRELATION_REQUIRED: [409, 'OUTBOUND_MESSAGE_CORRELATION_REQUIRED', 'Marca aceptado solo con un ID remoto que pueda archivarse.'],
+        OUTBOUND_IDENTITY_MISMATCH: [409, 'OUTBOUND_ARCHIVE_RECONCILIATION_FAILED', 'La salida no coincide con la identidad archivada de la conversación.'],
+        OUTBOUND_ARCHIVE_RECONCILIATION_FAILED: [409, 'OUTBOUND_ARCHIVE_RECONCILIATION_FAILED', 'El ID remoto no coincide con una salida archivada. Verifica el canal y el mensaje.'],
         OUTBOUND_REJECTED: [409, 'OUTBOUND_REJECTED', 'El canal rechazó el envío. Conservamos el borrador.']
     };
     if (outbound[error?.code]) {
@@ -905,6 +912,80 @@ function createSessionApi(getPolicy, archive, getContacts = () => ({}), getChann
                 const result = await archive.pendingResumeMessages({ conversationId });
                 if (!result) throw new BoundaryError(404, 'NOT_FOUND', 'Conversación no encontrada.');
                 return send(res, 200, assertValid('PendingResumeResponse', result), context.requestId);
+            }
+            const outboundReconciliations = /^\/v1\/conversations\/([^/]+)\/outbound-reconciliations$/.exec(pathname);
+            if (req.method === 'GET' && outboundReconciliations) {
+                if (!archive) throw new BoundaryError(503, 'SERVICE_UNAVAILABLE', 'Archivo de conversaciones no disponible.');
+                const conversationId = conversationPathId(outboundReconciliations[1]);
+                const query = parseQuery(req, 'OutboundReconciliationQuery');
+                const limit = query.limit ?? 50;
+                const authority = await archive.controlAuthority();
+                if (authority.mode !== 'sqlite') throw new BoundaryError(503, 'CONTROL_AUTHORITY_NOT_ACTIVE', 'El control de conversaciones aún no está activo.');
+                if (!authority.serviceReady) throw new BoundaryError(503, 'CONTROL_SERVICE_NOT_READY', 'El servicio de control no está listo.');
+                const scope = stableHash({ actorId: context.actor.id, conversationId,
+                    state: 'delivery_unknown', sources: ['ai','human'], limit, order: 'createdAt,id:asc' });
+                /** @type {{createdAt:string;id:string} | undefined} */
+                let after;
+                if (query.cursor) {
+                    const cursor = decodeCursor(query.cursor, 'outbound-reconciliation');
+                    if (cursor.scope !== scope) throw invalid('El cursor pertenece a otra conversación o sesión.');
+                    if (!cursor.position || !validate('Timestamp', cursor.position.createdAt).valid
+                        || !validate('Id', cursor.position.id).valid) throw invalid('Cursor de conciliación inválido.');
+                    after = cursor.position;
+                }
+                const row = await archive.conversationView({ conversationId, actorId: context.actor.id });
+                if (!row) throw new BoundaryError(404, 'NOT_FOUND', 'Conversación no encontrada.');
+                const page = await archive.outboundIntents({ conversationId, state: 'delivery_unknown',
+                    sources: ['ai','human'], ...(after ? { after } : {}), limit: limit + 1 });
+                const hasMore = page.length > limit;
+                const items = page.slice(0, limit).map(intent => ({
+                    id: intent.id, conversationId: intent.conversationId, channel: intent.channel, source: intent.source,
+                    text: intent.payload?.text, clientMessageId: intent.policy?.clientMessageId ?? null,
+                    createdAt: intent.createdAt, sendingAt: intent.sendingAt, updatedAt: intent.updatedAt,
+                    errorCode: intent.errorCode
+                }));
+                const last = items.at(-1);
+                const nextCursor = hasMore && last ? encodeCursor({ v: 1, kind: 'outbound-reconciliation', scope,
+                    position: { createdAt: last.createdAt, id: last.id } }) : null;
+                return send(res, 200, assertValid('OutboundReconciliationResponse', { items, nextCursor }), context.requestId);
+            }
+            const reconcileOutbound = /^\/v1\/conversations\/([^/]+)\/outbound-intents\/([^/]+)\/reconcile$/.exec(pathname);
+            if (req.method === 'POST' && reconcileOutbound) {
+                rejectQuery(req);
+                if (!archive) throw new BoundaryError(503, 'SERVICE_UNAVAILABLE', 'Archivo de conversaciones no disponible.');
+                const conversationId = conversationPathId(reconcileOutbound[1]);
+                const intentId = conversationPathId(reconcileOutbound[2]);
+                let request;
+                try { request = JSON.parse(requestBody.toString('utf8')); }
+                catch { throw invalid('Cuerpo JSON inválido.'); }
+                if (!validate('ReconcileOutboundIntentRequest', request).valid) throw invalid('Solicitud de conciliación inválida.');
+                if (!request.note.trim()) throw invalid('La nota de conciliación es obligatoria.');
+                if (request.state === 'accepted' && !request.providerMessageId) {
+                    throw invalid('Selecciona o indica el ID remoto de la salida aceptada.');
+                }
+                if (request.state === 'rejected' && request.providerMessageId !== undefined) {
+                    throw invalid('Una salida rechazada no puede incluir un ID remoto.');
+                }
+                const authority = await archive.controlAuthority();
+                if (authority.mode !== 'sqlite') throw new BoundaryError(503, 'CONTROL_AUTHORITY_NOT_ACTIVE', 'El control de conversaciones aún no está activo.');
+                if (!authority.serviceReady) throw new BoundaryError(503, 'CONTROL_SERVICE_NOT_READY', 'El servicio de control no está listo.');
+                const conversation = await archive.conversationView({ conversationId, actorId: context.actor.id });
+                if (!conversation) throw new BoundaryError(404, 'NOT_FOUND', 'Conversación no encontrada.');
+                const control = await archive.controlState(conversationId);
+                if (control?.ownerId && control.ownerId !== context.actor.id
+                    && !context.actor.capabilities.includes('control:override')) {
+                    throw new BoundaryError(409, 'CONTROL_OWNER_CONFLICT', 'La conversación pertenece a otro operador.');
+                }
+                let result;
+                try {
+                    result = await archive.reconcileConversationOutboundIntent({ conversationId, intentId,
+                        actorId: context.actor.id, state: request.state, note: request.note,
+                        ...(request.providerMessageId ? { providerMessageId: request.providerMessageId } : {}) });
+                } catch (error) { throw archiveBoundary(error); }
+                return send(res, 200, assertValid('ReconcileOutboundIntentResponse', {
+                    status: result.status, intentId: result.intent.id, state: result.intent.state,
+                    reconciledAt: result.intent.reconciledAt
+                }), context.requestId);
             }
             const messageSearch = /^\/v1\/conversations\/([^/]+)\/search$/.exec(pathname);
             if (req.method === 'GET' && messageSearch) {

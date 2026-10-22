@@ -1507,3 +1507,18 @@ Cierres históricos: commits F2C.1/F2C.2/F2D/F2E.1 están en el log local; F2B.3
 - Commit local de esta unidad; no publicar.
 - Siguiente punto: BUG-075, conciliación autenticada de salidas `delivery_unknown`
   antes de ofrecer reprocesamiento verificable.
+
+## BUG-075 — Conciliación de salidas inciertas — 2026-10-22
+
+- API autenticada por conversación: lista paginada con proyección sin clave
+  idempotente/resultado del proveedor y decisión auditada con nota, actor y hora.
+  `accepted` valida texto y autoría antes de avanzar el watermark; `rejected`
+  conserva la entrada sin atender y habilita su revisión posterior.
+- El panel consulta pendientes al abrir el hilo, ofrece correlación por eco
+  archivado o ID remoto manual, y exige nota para aceptar/rechazar. No reenvía la
+  salida incierta; el envío posterior usa un `clientMessageId` nuevo.
+- Evidencia: [BUG-075](BUG-075-OUTBOUND-RECONCILIATION.md). `npm run check`
+  raíz: contratos 19/19. Gateway integral: 388/388; Panel: 44/44, build y prueba
+  de servido; `git diff --check` limpio. Sin proveedor/canal real.
+- Commit local de cierre en esta unidad; no publicar. Siguiente punto: BUG-076,
+  preservar o documentar metadatos mínimos de ruta en `process_pending`.

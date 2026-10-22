@@ -10,6 +10,8 @@ import {
   getConversation,
   getConversations,
   getPendingResumeMessages,
+  getOutboundReconciliations,
+  reconcileOutboundIntent,
   getOperation,
   getSession,
   markConversationRead,
@@ -27,7 +29,9 @@ import {
   type Channel,
   type PageCursor,
   type ConversationAssistanceResponse,
-  type ConversationAssistanceRequest
+  type ConversationAssistanceRequest,
+  type OutboundReconciliationItem,
+  type ReconcileOutboundIntentRequest
 } from './api';
 
 function asError(value: unknown) {
@@ -56,6 +60,7 @@ export function InboxPage() {
   const [controlNotice, setControlNotice] = useState<string | null>(null);
   const [releaseOptionsOpen, setReleaseOptionsOpen] = useState(false);
   const [showPendingResume, setShowPendingResume] = useState(false);
+  const [reconciliationOpen, setReconciliationOpen] = useState(false);
   const [selectedPendingIds, setSelectedPendingIds] = useState<string[]>([]);
 
   const sessionQuery = useQuery({
@@ -78,12 +83,47 @@ export function InboxPage() {
     staleTime: 0
   });
 
+  const outboundReconciliationQuery = useInfiniteQuery({
+    queryKey: ['inbox', 'outbound-reconciliations', conversationId],
+    initialPageParam: undefined as PageCursor | undefined,
+    queryFn: ({ pageParam, signal }) => getOutboundReconciliations(conversationId!, { cursor: pageParam }, signal),
+    getNextPageParam: page => page.nextCursor ?? undefined,
+    enabled: Boolean(conversationId && sessionQuery.data?.actor.capabilities.includes('conversations:read')),
+    staleTime: 0
+  });
+
+  const reconcileOutboundMutation = useMutation<unknown, Error,
+    { conversationId: string; item: OutboundReconciliationItem; request: ReconcileOutboundIntentRequest }>({
+    mutationFn: variables => reconcileOutboundIntent(variables.conversationId, variables.item.id, variables.request),
+    onSuccess: (_result, variables) => {
+      const clientMessageId = variables.item.clientMessageId;
+      if (clientMessageId) {
+        setUncertainSends(previous => previous.filter(item => item.conversationId !== variables.conversationId
+          || item.clientMessageId !== clientMessageId));
+        setOptimisticMessages(previous => previous.filter(message => message.conversationId !== variables.conversationId
+          || message.clientMessageId !== clientMessageId));
+      }
+      void Promise.all([
+        queryClient.invalidateQueries({ queryKey: ['inbox', 'outbound-reconciliations', variables.conversationId] }),
+        queryClient.invalidateQueries({ queryKey: ['inbox', 'pending-resume', variables.conversationId] }),
+        queryClient.invalidateQueries({ queryKey: ['inbox', 'conversation', variables.conversationId] }),
+        queryClient.invalidateQueries({ queryKey: ['inbox', 'messages', variables.conversationId] }),
+        queryClient.invalidateQueries({ queryKey: ['inbox', 'live-messages', variables.conversationId] }),
+        queryClient.invalidateQueries({ queryKey: ['inbox', 'conversations'] })
+      ]).catch(() => undefined);
+    },
+    onError: (_error, variables) => {
+      void queryClient.invalidateQueries({ queryKey: ['inbox', 'outbound-reconciliations', variables.conversationId] });
+    }
+  });
+
   useEffect(() => {
     activeConversationId.current = conversationId;
     setIsAtLatest(true);
     readAttempt.current = null;
     setMessageSearchInput('');
     setMessageSearchTerm('');
+    setReconciliationOpen(false);
   }, [conversationId]);
 
   useEffect(() => {
@@ -300,6 +340,7 @@ export function InboxPage() {
       setControlNotice(null);
       setReleaseOptionsOpen(false);
       setShowPendingResume(false);
+      setReconciliationOpen(false);
       setSelectedPendingIds([]);
       if ('operation' in result) {
         setPendingTakeoverId(result.operation.id);
@@ -339,6 +380,7 @@ export function InboxPage() {
     setControlNotice(null);
     setReleaseOptionsOpen(true);
     setShowPendingResume(false);
+    setReconciliationOpen(false);
     setSelectedPendingIds([]);
   }
 
@@ -346,6 +388,26 @@ export function InboxPage() {
     setSelectedPendingIds([]);
     setShowPendingResume(true);
     void queryClient.invalidateQueries({ queryKey: ['inbox', 'pending-resume', conversationId] });
+  }
+
+  function openReconciliationPanel() {
+    if (!conversationId) return;
+    setReconciliationOpen(true);
+    void queryClient.invalidateQueries({ queryKey: ['inbox', 'outbound-reconciliations', conversationId] });
+  }
+
+  function closeReconciliationPanel() {
+    setReconciliationOpen(false);
+  }
+
+  function reconcileOutbound(item: OutboundReconciliationItem, decision: 'accepted' | 'rejected', note: string, providerMessageId?: string) {
+    if (!conversationId || !note.trim()) return;
+    const request: ReconcileOutboundIntentRequest = {
+      state: decision,
+      note: note.trim(),
+      ...(decision === 'accepted' && providerMessageId ? { providerMessageId } : {})
+    };
+    reconcileOutboundMutation.mutate({ conversationId, item, request });
   }
 
   function releaseFutureOnly() {
@@ -419,6 +481,9 @@ export function InboxPage() {
         }]);
         setOptimisticMessages(previous => previous.map(message => message.clientMessageId === variables.clientMessageId
           ? { ...message, deliveryStatus: inProgress ? 'sending' : 'delivery_unknown' } : message));
+        if (deliveryUnknown) {
+          void queryClient.invalidateQueries({ queryKey: ['inbox', 'outbound-reconciliations', variables.conversationId] });
+        }
       } else {
         setUncertainSends(previous => previous.filter(item => item.clientMessageId !== variables.clientMessageId
           || item.conversationId !== variables.conversationId));
@@ -458,14 +523,8 @@ export function InboxPage() {
   function retryUncertainSend() {
     const uncertainSend = uncertainSends.find(item => item.conversationId === conversationId);
     if (!uncertainSend) return;
-    if (uncertainSend.state === 'in_progress') {
-      submitMessage(uncertainSend.text, uncertainSend.clientMessageId, true);
-      return;
-    }
-    if (!window.confirm('El proveedor pudo haber enviado el mensaje. Reintentar puede enviar un duplicado. ¿Quieres crear un nuevo envío?')) return;
-    setUncertainSends(previous => previous.filter(item => item.clientMessageId !== uncertainSend.clientMessageId
-      || item.conversationId !== uncertainSend.conversationId));
-    submitMessage(uncertainSend.text, crypto.randomUUID(), true);
+    if (uncertainSend.state !== 'in_progress') return;
+    submitMessage(uncertainSend.text, uncertainSend.clientMessageId, true);
   }
 
   function prepareAssistance() {
@@ -504,6 +563,8 @@ export function InboxPage() {
   const canSend = Boolean(actor?.capabilities.includes('messages:send') && selectedAccount?.capabilities.reply
     && selectedAccount.status === 'connected' && controlConfirmed && control?.automationMode === 'human'
     && control.lifecycle === 'open' && !selectedConversation?.requiresReview && ownerCanAct);
+  const canReconcile = Boolean(actor?.capabilities.includes('conversations:read')
+    && actor.capabilities.includes('messages:send') && ownerCanAct);
   const effectiveAccessAllowed = control?.accessPolicy === 'allowed'
     || control?.accessPolicy === 'neutral' && sessionQuery.data?.policy.globalMode === 'allowed_all';
   const canAssist = Boolean(actor?.capabilities.includes('admin:write') && actor.capabilities.includes('conversations:read')
@@ -519,6 +580,14 @@ export function InboxPage() {
     && storedAssistance.snapshot.seq === conversationQuery.data?.snapshot.seq
     ? storedAssistance : undefined;
   const currentUncertainSend = uncertainSends.find(item => item.conversationId === conversationId) ?? null;
+  const outboundReconciliations: OutboundReconciliationItem[] = outboundReconciliationQuery.data?.pages.flatMap(page => page.items) ?? [];
+  const currentReconciliationError = outboundReconciliationQuery.isError
+    ? asError(outboundReconciliationQuery.error)
+    : reconcileOutboundMutation.isError && reconcileOutboundMutation.variables?.conversationId === conversationId
+      ? asError(reconcileOutboundMutation.error) : null;
+  const currentReconcilingIntentId = reconcileOutboundMutation.isPending
+    && reconcileOutboundMutation.variables?.conversationId === conversationId
+      ? reconcileOutboundMutation.variables.item.id : null;
   const currentSendPending = sendMutation.isPending && sendMutation.variables?.conversationId === conversationId;
   const sendError = sendMutation.isError && sendMutation.variables?.conversationId === conversationId && !currentUncertainSend
     ? asError(sendMutation.error) : null;
@@ -618,6 +687,17 @@ export function InboxPage() {
         pendingResumeLoading={pendingResumeQuery.isLoading || pendingResumeQuery.isFetching}
         pendingResumeError={pendingResumeError}
         selectedPendingIds={selectedPendingIds}
+        canReconcile={canReconcile}
+        reconciliationOpen={reconciliationOpen}
+        outboundReconciliations={outboundReconciliations}
+        reconciliationLoading={outboundReconciliationQuery.isLoading || outboundReconciliationQuery.isFetchingNextPage}
+        reconciliationError={currentReconciliationError}
+        reconcilingIntentId={currentReconcilingIntentId}
+        reconciliationHasMore={Boolean(outboundReconciliationQuery.hasNextPage)}
+        onOpenReconciliations={openReconciliationPanel}
+        onCloseReconciliations={closeReconciliationPanel}
+        onLoadMoreReconciliations={() => { void outboundReconciliationQuery.fetchNextPage(); }}
+        onReconcileOutbound={reconcileOutbound}
         onTakeover={() => runControlAction('takeover')}
         onRelease={openReleaseOptions}
         onOpenPendingResume={choosePendingResume}
@@ -625,7 +705,7 @@ export function InboxPage() {
           ? previous.filter(id => id !== messageId) : [...previous, messageId])}
         onReleaseFutureOnly={releaseFutureOnly}
         onReleaseSelectedPending={releaseSelectedPending}
-        onCancelReleaseOptions={() => { setReleaseOptionsOpen(false); setShowPendingResume(false); setSelectedPendingIds([]); }}
+        onCancelReleaseOptions={() => { setReleaseOptionsOpen(false); setShowPendingResume(false); setReconciliationOpen(false); setSelectedPendingIds([]); }}
         onResolve={() => runControlAction('resolve')}
         onReopen={() => runControlAction('reopen')}
         draft={draft}

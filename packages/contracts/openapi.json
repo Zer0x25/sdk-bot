@@ -422,6 +422,55 @@
         ]
       }
     },
+    "/conversations/{conversationId}/outbound-reconciliations": {
+      "get": {
+        "operationId": "listOutboundReconciliations",
+        "description": "Lista solo salidas inciertas de IA/operador de esta conversación. Requiere conversations:read; no expone payloads del proveedor ni claves de idempotencia.",
+        "responses": {
+          "200": {
+            "description": "Página de salidas que esperan decisión manual.",
+            "content": { "application/json": { "schema": { "$ref": "#/components/schemas/OutboundReconciliationResponse" } } }
+          },
+          "401": { "$ref": "#/components/responses/401" },
+          "403": { "$ref": "#/components/responses/403" },
+          "404": { "$ref": "#/components/responses/404" },
+          "409": { "$ref": "#/components/responses/409" },
+          "422": { "$ref": "#/components/responses/422" },
+          "503": { "$ref": "#/components/responses/503" }
+        },
+        "parameters": [
+          { "name": "conversationId", "in": "path", "required": true, "schema": { "$ref": "#/components/schemas/Id" } },
+          { "name": "cursor", "in": "query", "required": false, "schema": { "$ref": "./schema.json#/$defs/OutboundReconciliationQuery/properties/cursor" } },
+          { "name": "limit", "in": "query", "required": false, "schema": { "$ref": "./schema.json#/$defs/OutboundReconciliationQuery/properties/limit" } }
+        ]
+      }
+    },
+    "/conversations/{conversationId}/outbound-intents/{intentId}/reconcile": {
+      "post": {
+        "operationId": "reconcileOutboundIntent",
+        "description": "Registra una decisión auditada sin volver a enviar. accepted exige ID remoto y materializa la salida antes de avanzar entradas atendidas; rejected requiere nota y habilita una revisión posterior de pendientes. Requiere messages:send.",
+        "responses": {
+          "200": {
+            "description": "Conciliación durable.",
+            "content": { "application/json": { "schema": { "$ref": "#/components/schemas/ReconcileOutboundIntentResponse" } } }
+          },
+          "401": { "$ref": "#/components/responses/401" },
+          "403": { "$ref": "#/components/responses/403" },
+          "404": { "$ref": "#/components/responses/404" },
+          "409": { "$ref": "#/components/responses/409" },
+          "422": { "$ref": "#/components/responses/422" },
+          "503": { "$ref": "#/components/responses/503" }
+        },
+        "parameters": [
+          { "name": "conversationId", "in": "path", "required": true, "schema": { "$ref": "#/components/schemas/Id" } },
+          { "name": "intentId", "in": "path", "required": true, "schema": { "$ref": "#/components/schemas/Id" } }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": { "application/json": { "schema": { "$ref": "#/components/schemas/ReconcileOutboundIntentRequest" } } }
+        }
+      }
+    },
     "/conversations/{conversationId}/messages": {
       "get": {
         "operationId": "listMessages",
@@ -1196,6 +1245,21 @@
       },
       "PendingResumeResponse": {
         "$ref": "./schema.json#/$defs/PendingResumeResponse"
+      },
+      "OutboundReconciliationQuery": {
+        "$ref": "./schema.json#/$defs/OutboundReconciliationQuery"
+      },
+      "OutboundReconciliationItem": {
+        "$ref": "./schema.json#/$defs/OutboundReconciliationItem"
+      },
+      "OutboundReconciliationResponse": {
+        "$ref": "./schema.json#/$defs/OutboundReconciliationResponse"
+      },
+      "ReconcileOutboundIntentRequest": {
+        "$ref": "./schema.json#/$defs/ReconcileOutboundIntentRequest"
+      },
+      "ReconcileOutboundIntentResponse": {
+        "$ref": "./schema.json#/$defs/ReconcileOutboundIntentResponse"
       },
       "SendMessageRequest": {
         "$ref": "./schema.json#/$defs/SendMessageRequest"
