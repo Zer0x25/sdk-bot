@@ -63,7 +63,7 @@ async function setNumberState(targetId, stateType, context = {}) {
             });
             const accessPolicy = result.control?.accessPolicy || result.target?.control?.accessPolicy || null;
             return { success: true, target: String(targetId), state: stateType,
-                accessPolicy, accessState: accessPolicy, pending: result.status === 'pending',
+                accessPolicy, accessState: accessPolicy, changed: result.status === 'updated', pending: result.status === 'pending',
                 conversationId: result.target?.conversationId };
         } catch (error) {
             return { success: false, code: /** @type {any} */ (error)?.code, message: controlError(error) };
@@ -273,16 +273,26 @@ async function ignoreAllAgendaContacts(context = {}) {
         const db = getContactsDB();
         const contacts = Object.values(db).filter(contact => contact && (contact.isContact || (contact.savedName && contact.savedName.trim())));
         let addedCount = 0;
+        let totalIgnored = 0;
         let ambiguous = 0;
+        const countedConversations = new Set();
         for (const contact of contacts) {
             const target = contact.lid || contact.phone;
             if (!target) continue;
             const result = await setNumberState(target, 'ignored', { channel: context.channel || 'whatsapp',
                 accountId: context.accountId || null });
-            if (result.success && result.state === 'ignored') addedCount += 1;
-            else if (result.code === 'IDENTITY_AMBIGUOUS') ambiguous += 1;
+            if (result.code === 'IDENTITY_AMBIGUOUS' && !countedConversations.has(`ambiguous:${String(target)}`)) {
+                ambiguous += 1;
+                countedConversations.add(`ambiguous:${String(target)}`);
+            }
+            if (!result.success || result.accessPolicy !== 'ignored') continue;
+            const conversationKey = result.conversationId || `target:${String(target)}`;
+            if (countedConversations.has(conversationKey)) continue;
+            countedConversations.add(conversationKey);
+            totalIgnored += 1;
+            if (result.changed) addedCount += 1;
         }
-        return { addedCount, totalIgnored: addedCount, ambiguous };
+        return { addedCount, totalIgnored, ambiguous };
     }
     const db = getContactsDB();
     let addedCount = 0;

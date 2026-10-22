@@ -1457,3 +1457,18 @@ Cierres históricos: commits F2C.1/F2C.2/F2D/F2E.1 están en el log local; F2B.3
 - Commit local de esta unidad; no publicar.
 - Siguiente punto ejecutable: BUG-071, corregir el total inflado del comando
   `/ignorar contactos de agenda`.
+
+## BUG-071 — Resumen de ignorar agenda — 2026-10-22
+
+- `setNumberState` expone el resultado actualizado/unchanged de SQLite. El
+  resumen descuenta solo cambios efectivos y agrupa aliases por conversación.
+- `totalIgnored` refleja las conversaciones únicas de agenda que quedan en
+  estado ignorado; repetir el comando no aumenta `addedCount`.
+- Evidencia: [BUG-071](BUG-071-RESUMEN-IGNORAR-AGENDA.md).
+- Verificación: Gateway `npm run check`, Panel 42/42, build, servido 1/1 y
+  Gateway 385/385; después del ajuste de lint, lint/typecheck y focal 1/1 pasan.
+  `git diff --check` limpio. Sin canales reales.
+- Commit local de esta unidad; no publicar.
+- BUG-072 (sonda `/telegram/test` para token borrador) queda fuera del camino de
+  atención al cliente y no bloquea las fases. Siguiente punto ejecutable: BUG-073,
+  eco propio de WhatsApp recibido antes del ACK del envío.
