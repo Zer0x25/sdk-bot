@@ -130,7 +130,11 @@ No ralentizar la CI de cada cambio con el dataset completo: CI ejecuta casos
 funcionales reducidos; la entrega de almacenamiento/UI conserva un informe de
 carga completo antes de cerrar sus puertas. El runner actual está en
 `apps/gateway/scripts/conversation-load.js`; repetir con 2 CPU/4 GiB antes de certificar
-ese perfil. Takeover se incorpora cuando F5 entregue la operación durable.
+ese perfil. Para contenedores Linux con cgroup v2, el runner calcula CPU/memoria
+efectivas usando cuota, cpuset y límites de todos los ancestros, además de conservar
+los valores del host en el informe. Si no puede leer límites cgroup, informa los
+recursos del host y no declara que un perfil limitado coincida. Takeover se incorpora
+cuando F5 entregue la operación durable.
 
 ## 4. Ensayos de corte y recuperación
 

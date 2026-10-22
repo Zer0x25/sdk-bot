@@ -1636,3 +1636,15 @@ Cierres históricos: commits F2C.1/F2C.2/F2D/F2E.1 están en el log local; F2B.3
   Gateway 399/399; `git diff --check` limpio. Evidencia:
   [BUG-051](BUG-051-RECONCILIACION-LEGACY.md). La revisión de un archivo real
   sigue siendo puerta operativa.
+
+## F2E.2 — Detección del perfil cgroup — 2026-10-22
+
+- El runner informa límites efectivos de cgroup v2 (cuota CPU, cpuset y memoria,
+  incluyendo ancestros) por separado de recursos físicos del host. `profileMatch`
+  usa los límites efectivos; sistemas sin cgroup utilizable conservan el fallback
+  al host y no se confunden con un contenedor limitado.
+- Prueba de límites sintéticos y perfil efectivo: `conversationLoad.test.js` 5/5;
+  ESLint focal limpio. Un scope temporal con `CPUQuota=200%`, `MemoryMax=4G` y
+  `MemorySwapMax=0` informó 2 CPU y 4 GiB bajo cgroup v2.
+- Siguiente unidad: repetir F2E.2 completo con ese scope; conservar informe distinto
+  del benchmark anterior y revisar umbrales antes de certificar Fase 2.

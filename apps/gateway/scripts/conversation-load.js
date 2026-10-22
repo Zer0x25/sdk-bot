@@ -60,6 +60,84 @@ function makeProfile(overrides = {}) {
     return profile;
 }
 
+function parseCpuMax(value) {
+    const match = typeof value === 'string' && /^\s*(max|[1-9][0-9]*)\s+([1-9][0-9]*)\s*$/.exec(value);
+    if (!match) return null;
+    if (match[1] === 'max') return Infinity;
+    const quota = Number(match[1]), period = Number(match[2]);
+    const cpus = quota / period;
+    return Number.isFinite(cpus) && cpus > 0 ? cpus : null;
+}
+
+function parseMemoryMax(value) {
+    if (typeof value !== 'string') return null;
+    const normalized = value.trim();
+    if (normalized === 'max') return Infinity;
+    if (!/^[1-9][0-9]*$/.test(normalized)) return null;
+    const bytes = Number(normalized);
+    return Number.isSafeInteger(bytes) ? bytes : null;
+}
+
+function parseCpuSet(value) {
+    if (typeof value !== 'string' || !value.trim()) return null;
+    const cpus = new Set();
+    for (const range of value.trim().split(',')) {
+        const match = /^(0|[1-9][0-9]*)(?:-(0|[1-9][0-9]*))?$/.exec(range);
+        if (!match) return null;
+        const start = Number(match[1]), end = match[2] === undefined ? start : Number(match[2]);
+        if (!Number.isSafeInteger(start) || !Number.isSafeInteger(end) || end < start || end - start > 4096) return null;
+        for (let cpu = start; cpu <= end; cpu += 1) cpus.add(cpu);
+    }
+    return cpus.size || null;
+}
+
+function effectiveResourceLimits({ cgroupText, cgroupRoot = '/sys/fs/cgroup',
+    readText = filePath => fs.readFileSync(filePath, 'utf8'),
+    hostLogicalCpus = os.cpus().length, hostMemoryBytes = os.totalmem() } = {}) {
+    let sourcePath;
+    try { cgroupText ??= readText('/proc/self/cgroup'); }
+    catch { cgroupText = ''; }
+    const line = String(cgroupText).split('\n').find(entry => entry.startsWith('0::'));
+    const root = path.resolve(cgroupRoot);
+    if (line) {
+        const relative = line.slice(3).replace(/^\/+/, '');
+        const base = path.resolve(root, relative);
+        if (base === root || base.startsWith(`${root}${path.sep}`)) sourcePath = base;
+    }
+
+    let cpuQuota = Infinity, cpusetLimit = Infinity, memoryLimit = Infinity, cgroupObserved = false;
+    if (sourcePath) {
+        for (let directory = sourcePath;; directory = path.dirname(directory)) {
+            try {
+                const parsed = parseCpuMax(readText(path.join(directory, 'cpu.max')));
+                if (parsed !== null) { cpuQuota = Math.min(cpuQuota, parsed); cgroupObserved = true; }
+            } catch { /* cgroup controller may not be mounted at this level */ }
+            try {
+                const parsed = parseMemoryMax(readText(path.join(directory, 'memory.max')));
+                if (parsed !== null) { memoryLimit = Math.min(memoryLimit, parsed); cgroupObserved = true; }
+            } catch { /* cgroup controller may not be mounted at this level */ }
+            let cpuset = null;
+            for (const filename of ['cpuset.cpus.effective', 'cpuset.cpus']) {
+                try {
+                    cpuset = parseCpuSet(readText(path.join(directory, filename)));
+                    if (cpuset !== null) break;
+                } catch { /* cpuset may be inherited from a parent */ }
+            }
+            if (cpuset !== null) { cpusetLimit = Math.min(cpusetLimit, cpuset); cgroupObserved = true; }
+            if (directory === root) break;
+            const parent = path.dirname(directory);
+            if (parent === directory || !parent.startsWith(root)) break;
+        }
+    }
+    return {
+        hostLogicalCpus,
+        hostMemoryBytes,
+        effectiveLogicalCpus: Math.min(hostLogicalCpus, cpuQuota, cpusetLimit),
+        effectiveMemoryBytes: Math.min(hostMemoryBytes, memoryLimit),
+        source: cgroupObserved ? 'cgroup-v2' : 'host'
+    };
+}
+
 function identityFor(contactIndex, profile, accountIds) {
     const accountIndex = contactIndex % 5;
     const whatsapp = accountIndex < profile.accounts.whatsapp;
@@ -433,6 +511,7 @@ async function runIngressPhase({ archive, identityKeys, runIndex, phase, rate, s
 }
 
 function childTelemetry() {
+    const resources = effectiveResourceLimits();
     return {
         node: process.version,
         platform: process.platform,
@@ -440,9 +519,10 @@ function childTelemetry() {
         logicalCpus: os.cpus().length,
         totalMemoryBytes: os.totalmem(),
         freeMemoryBytesAtStart: os.freemem(),
+        effectiveResources: resources,
         sqlite: process.versions.sqlite || null,
         profileTarget: { logicalCpus: 2, memoryBytes: 4 * 1024 ** 3 },
-        profileMatch: os.cpus().length === 2 && os.totalmem() <= 4 * 1024 ** 3,
+        profileMatch: resources.effectiveLogicalCpus === 2 && resources.effectiveMemoryBytes <= 4 * 1024 ** 3,
     };
 }
 
@@ -570,6 +650,7 @@ async function runFull({ reportPath, temporaryRoot } = {}) {
     if (tempFreeBytesAtStart < minimumTempBytes) {
         throw new Error(`F2E.2 necesita al menos 6 GiB temporales libres; ${selectedTempRoot} tiene ${(tempFreeBytesAtStart / 1024 ** 3).toFixed(1)} GiB. Configure SDK_CONVERSATION_LOAD_TMPDIR.`);
     }
+    const environment = childTelemetry();
     const workdir = await fsp.mkdtemp(path.join(selectedTempRoot, 'sdkbot-f2e2-'));
     const datasetDirectory = path.join(workdir, 'dataset');
     const databasePath = path.join(workdir, 'archive.db');
@@ -630,7 +711,7 @@ async function runFull({ reportPath, temporaryRoot } = {}) {
             benchmark: 'sdk-bot-conversations-v1',
             generatedAt: new Date().toISOString(),
             commit: require('node:child_process').execFileSync('git', ['rev-parse', 'HEAD'], { cwd: REPO_ROOT, encoding: 'utf8' }).trim(),
-            environment: childTelemetry(),
+            environment,
             temporaryDisk: { freeBytesAtStart: tempFreeBytesAtStart, minimumFreeBytes: minimumTempBytes },
             database: { ...ready, importedMessages: imported.imported, duplicateDeliveries: imported.duplicateCount,
                 importMessagesPerSecond: imported.messagesPerSecond, importCommitLatency: latencySummary(imported.commitLatencies),
@@ -640,7 +721,7 @@ async function runFull({ reportPath, temporaryRoot } = {}) {
             saturation,
             unsupported: {
                 takeoverCommitMs: 'F5 control API is not implemented in the current roadmap phase.',
-                profileDeviation: childTelemetry().profileMatch ? null : 'Runner host is not the 2-vCPU / 4-GiB reference profile.',
+                profileDeviation: environment.profileMatch ? null : 'Runner effective limits are not the 2-vCPU / 4-GiB reference profile.',
                 authorProjection: 'ArchiveInput currently stores imported outbound authors as unknown; source DTO JSONL preserves the deterministic customer/ai/operator fixture.',
             },
         };
@@ -654,7 +735,8 @@ async function runFull({ reportPath, temporaryRoot } = {}) {
     }
 }
 
-module.exports = { uuidV5, canonicalJson, xorshift32, makeProfile, generateDataset, importDataset, runFull };
+module.exports = { uuidV5, canonicalJson, xorshift32, makeProfile, effectiveResourceLimits, parseCpuMax,
+    parseCpuSet, parseMemoryMax, generateDataset, importDataset, runFull };
 
 if (require.main === module) {
     const args = process.argv.slice(2);

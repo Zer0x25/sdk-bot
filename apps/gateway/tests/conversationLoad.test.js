@@ -6,7 +6,8 @@ const fs = require('node:fs/promises');
 const os = require('node:os');
 const path = require('node:path');
 const { assertValid } = require('@sdk-bot/contracts');
-const { uuidV5, canonicalJson, xorshift32, generateDataset, importDataset } = require('../scripts/conversation-load');
+const { uuidV5, canonicalJson, xorshift32, effectiveResourceLimits, parseCpuMax, parseCpuSet, parseMemoryMax,
+    generateDataset, importDataset } = require('../scripts/conversation-load');
 const { createArchive } = require('../services/conversations');
 
 test('UUIDv5 generator matches the RFC 4122 reference vector', () => {
@@ -46,6 +47,44 @@ test('xorshift32 produces the same bounded stream from the same seed', () => {
     const b = Array.from({ length: 10 }, right);
     assert.deepEqual(a, b);
     assert.ok(a.every(value => value >= 0 && value < 1));
+});
+
+test('F2E.2 profile detection uses effective cgroup v2 quota and memory caps', () => {
+    const files = new Map([
+        ['/proc/self/cgroup', '0::/user.slice/benchmark.scope\n'],
+        ['/fake/cgroup/user.slice/benchmark.scope/cpu.max', '200000 100000'],
+        ['/fake/cgroup/user.slice/benchmark.scope/memory.max', '4294967296'],
+        ['/fake/cgroup/user.slice/benchmark.scope/cpuset.cpus.effective', '0-3'],
+        ['/fake/cgroup/user.slice/cpu.max', '300000 100000'],
+        ['/fake/cgroup/user.slice/memory.max', '8589934592'],
+        ['/fake/cgroup/user.slice/cpuset.cpus.effective', '0-3'],
+        ['/fake/cgroup/cpu.max', 'max 100000'],
+        ['/fake/cgroup/memory.max', 'max'],
+        ['/fake/cgroup/cpuset.cpus.effective', '0-3'],
+    ]);
+    const limits = effectiveResourceLimits({ cgroupRoot: '/fake/cgroup', hostLogicalCpus: 4,
+        hostMemoryBytes: 16 * 1024 ** 3,
+        readText: filePath => {
+            if (!files.has(filePath)) throw Object.assign(new Error('missing fixture'), { code: 'ENOENT' });
+            return files.get(filePath);
+        } });
+    assert.equal(limits.source, 'cgroup-v2');
+    assert.equal(limits.effectiveLogicalCpus, 2);
+    assert.equal(limits.effectiveMemoryBytes, 4 * 1024 ** 3);
+    assert.equal(parseCpuMax('150000 100000'), 1.5);
+    assert.equal(parseCpuMax('max 100000'), Infinity);
+    assert.equal(parseCpuMax('invalid'), null);
+    assert.equal(parseCpuSet('0-1,4'), 3);
+    assert.equal(parseCpuSet('0-2,2'), 3);
+    assert.equal(parseCpuSet('2-1'), null);
+    assert.equal(parseMemoryMax('max'), Infinity);
+    assert.equal(parseMemoryMax('4294967296'), 4 * 1024 ** 3);
+    assert.equal(parseMemoryMax('0'), null);
+    const hostOnly = effectiveResourceLimits({ cgroupText: '2:cpu:/legacy', cgroupRoot: '/fake/cgroup',
+        hostLogicalCpus: 4, hostMemoryBytes: 16 * 1024 ** 3, readText: () => { throw new Error('not used'); } });
+    assert.equal(hostOnly.source, 'host');
+    assert.equal(hostOnly.effectiveLogicalCpus, 4);
+    assert.equal(hostOnly.effectiveMemoryBytes, 16 * 1024 ** 3);
 });
 
 test('reduced fixture imports through the archive and alias redelivery creates no extra messages/events', async t => {
