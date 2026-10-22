@@ -180,6 +180,10 @@ Valores iniciales, fijados también en el fixture de aceptación:
 | Cuerpo de mensajes/adjuntos | 90 días desde ingestedAt durable. Una importación antigua tiene 90 días desde su captura. Archivo por adjunto de hasta 16 MiB; cuota inicial total de 1 GiB. |
 | Eventos para SSE | 7 días; payload mínimo, sin copia del texto. |
 | Idempotencia y huellas de deduplicación | 180 días desde captura/intención; sin contenido de mensaje ni token. |
+| Recibos de takeover | `completed`/`failed`: 180 días desde cierre; `taking_control` se conserva hasta recuperar o completar. |
+| Importación/corte de control y snapshots de rollback | Indefinida; no existe poda segura del ledger ni de snapshots. |
+| Cuarentenas sin resolver | Indefinida hasta revisión/eliminación explícita; no se purgan automáticamente. |
+| Cursores de lectura | Indefinida mientras exista la conversación; estado monotónico mínimo por actor. |
 | Contexto IA | Ventana 7 días / presupuesto 5000 tokens, independiente del archivo; incluye humano. |
 | Salida queued sin iniciar | Máximo 24 h, después failed/expired; ningún envío sorpresa tras largas caídas. |
 | Exportaciones temporales | 1 hora, descarga autenticada y vinculada al actor. |
@@ -192,6 +196,14 @@ una purga no concede acceso ni cambia human/off. Cursores de lectura guardan
 secuencia de entrada por actor, sin FK obligatoria al cuerpo purgable. No leídos
 cuenta solo entradas live retenidas posteriores al cursor; un cursor viejo no
 vuelve a retroceder ni marca leído en el proveedor.
+
+La purga solo elimina recibos terminales de takeover; un `taking_control` queda
+disponible para recuperación tras reinicio. El expediente de importación/corte
+retiene informes, entradas y snapshots antes/después porque habilita auditoría y
+rollback. Las cuarentenas permanecen hasta contar con un flujo explícito de
+resolución y limpieza; las conversaciones marcadas para revisión no se liberan
+por vencer una retención. El checkpoint offline compara estos cuatro ledgers y
+el gate de restore bloquea cualquier divergencia.
 
 Los binarios viven en `SDK_ATTACHMENT_DIR` (por defecto `gateway/data/attachments`
 dentro del volumen de estado), con directorio `0700` y archivos opacos `0600`.

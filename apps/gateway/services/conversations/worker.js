@@ -79,6 +79,10 @@ function recoveryCheckpoint() {
     const assistantToolDigest = createHash('sha256');
     const telegramAdminInboxDigest = createHash('sha256');
     const resumeMetadataDigest = createHash('sha256');
+    const controlOperationDigest = createHash('sha256');
+    const controlImportLedgerDigest = createHash('sha256');
+    const readCursorDigest = createHash('sha256');
+    const quarantineDigest = createHash('sha256');
     const schemaVersion = one('PRAGMA user_version').user_version;
     let outboundIntentCount = 0;
     let unresolvedOutboundCount = 0;
@@ -88,6 +92,10 @@ function recoveryCheckpoint() {
     let assistantToolInvocationCount = 0;
     let telegramAdminInboxCount = 0;
     let resumeMetadataCount = 0;
+    let controlOperationCount = 0;
+    let controlImportLedgerCount = 0;
+    let readCursorCount = 0;
+    let quarantineCount = 0;
     // Schema v6 predates the durable outbox; keep it readable so the gate can
     // report the schema mismatch instead of failing before comparing metadata.
     if (schemaVersion >= 7) {
@@ -145,6 +153,41 @@ function recoveryCheckpoint() {
             resumeMetadataCount += 1;
         }
     }
+    if (schemaVersion >= 4) {
+        for (const row of db.prepare(`SELECT actor_id,conversation_id,through_inbound_seq,updated_at
+            FROM read_cursors ORDER BY actor_id,conversation_id`).iterate()) {
+            readCursorDigest.update(stable(row)).update('\n');
+            readCursorCount += 1;
+        }
+    }
+    if (schemaVersion >= 5) {
+        for (const row of db.prepare(`SELECT id,reason,conversation_id,other_conversation_id,created_at
+            FROM quarantine ORDER BY id`).iterate()) {
+            quarantineDigest.update(stable(row)).update('\n');
+            quarantineCount += 1;
+        }
+    }
+    if (schemaVersion >= 6) {
+        const importLedgerTables = [
+            ['control_import_migrations', 'migration_id'],
+            ['control_import_runs', 'id'],
+            ['control_import_entries', 'run_id,source_key'],
+            ['control_import_snapshots', 'migration_id,conversation_id'],
+            ['control_policy_snapshots', 'migration_id']
+        ];
+        for (const [table, order] of importLedgerTables) {
+            for (const row of db.prepare(`SELECT * FROM ${table} ORDER BY ${order}`).iterate()) {
+                controlImportLedgerDigest.update(table).update('\0').update(stable(row)).update('\n');
+                controlImportLedgerCount += 1;
+            }
+        }
+    }
+    if (schemaVersion >= 7) {
+        for (const row of db.prepare('SELECT * FROM control_operations ORDER BY id').iterate()) {
+            controlOperationDigest.update(stable(row)).update('\n');
+            controlOperationCount += 1;
+        }
+    }
     return { ...snapshot(), schemaVersion,
         controlAuthority: controlAuthority(), outboundIntentCount, outboundIntentSha256: digest.digest('hex'),
         unresolvedOutboundCount, attachmentCount, attachmentSha256: attachmentDigest.digest('hex'),
@@ -152,6 +195,10 @@ function recoveryCheckpoint() {
         assistantToolInvocationCount, assistantToolInvocationSha256: assistantToolDigest.digest('hex'),
         telegramAdminInboxCount, telegramAdminInboxSha256: telegramAdminInboxDigest.digest('hex'),
         resumeMetadataCount, resumeMetadataSha256: resumeMetadataDigest.digest('hex'),
+        controlOperationCount, controlOperationSha256: controlOperationDigest.digest('hex'),
+        controlImportLedgerCount, controlImportLedgerSha256: controlImportLedgerDigest.digest('hex'),
+        readCursorCount, readCursorSha256: readCursorDigest.digest('hex'),
+        quarantineCount, quarantineSha256: quarantineDigest.digest('hex'),
         integrity: one('PRAGMA integrity_check').integrity_check,
         foreignKeys: all('PRAGMA foreign_key_check').length };
 }
@@ -2627,6 +2674,10 @@ function purge(input) {
     const telegramAdminInbox = run(`DELETE FROM telegram_admin_inbox WHERE rowid IN
         (SELECT rowid FROM telegram_admin_inbox WHERE status IN ('completed','uncertain') AND received_at<? LIMIT ?)`,
     cutoff(180), limit).changes;
+    const controlOperations = run(`DELETE FROM control_operations WHERE id IN
+        (SELECT id FROM control_operations WHERE status IN ('completed','failed')
+            AND COALESCE(completed_at,created_at)<? ORDER BY COALESCE(completed_at,created_at),id LIMIT ?)`,
+    cutoff(180), limit).changes;
     const outboundExpired = run(`UPDATE outbound_intents SET state='rejected',error_code='OUTBOUND_INTENT_EXPIRED',
         updated_at=?,completed_at=? WHERE id IN (SELECT id FROM outbound_intents
         WHERE state='intent' AND created_at<? ORDER BY created_at,id LIMIT ?)`,
@@ -2643,8 +2694,9 @@ function purge(input) {
     return { bodies, events, fingerprints, assistantToolInvocations, telegramAdminInbox,
         remaining: bodies === limit || events === limit || fingerprints === limit
             || assistantToolInvocations === limit || telegramAdminInbox === limit
+            || controlOperations === limit
             || outboundExpired === limit || outboundRedacted === limit || outboundDeleted === limit,
-        outboundExpired, outboundRedacted, outboundDeleted };
+        controlOperations, outboundExpired, outboundRedacted, outboundDeleted };
 }
 function eventPage(input) {
     const after = input.after ?? '0';

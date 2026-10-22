@@ -1577,3 +1577,22 @@ Cierres históricos: commits F2C.1/F2C.2/F2D/F2E.1 están en el log local; F2B.3
 - BUG-079 cerrado en [evidencia](BUG-079-RETENCION-OUTBOX.md). Siguiente punto:
   BUG-080, clasificar y fijar retención para recibos/cutover, cursores de lectura
   y cuarentenas, preservando recuperaciones y revisiones pendientes.
+
+## Cierre BUG-080 — Retención de metadatos administrativos — 2026-10-22
+
+- La purga elimina recibos `completed`/`failed` de takeover después de 180 días
+  desde el cierre; si falta `completed_at`, usa `created_at`. `taking_control`
+  permanece hasta la recuperación explícita del servicio.
+- Importaciones, entradas, snapshots de control/política, cursores monotónicos y
+  cuarentenas no resueltas quedan retenidos: hoy no hay un flujo seguro que cierre
+  rollback, determine la resolución o quite `requires_review`.
+- `recoveryCheckpoint()` calcula cuentas y huellas de esos cuatro ledgers. F8.4
+  bloquea un snapshot divergente aunque la secuencia de eventos no avance; los
+  hashes no aparecen en la salida de usuario.
+- Verificación: `node --test tests/conversationRecovery.test.js` 8/8; `cd
+  apps/gateway && npm run check` con lint/typecheck limpios, Panel 44/44, build y
+  servido 1/1, Gateway 397/397; `git diff --check` limpio. Solo datos temporales,
+  sin canales/proveedores.
+- Evidencia: [BUG-080](BUG-080-RETENCION-METADATOS.md). Commit local en `main`,
+  sin publicar. Siguiente punto ejecutable del backlog: BUG-037, cerrar la
+  cancelación física de la descarga Baileys antes de aceptar STT real.

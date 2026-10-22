@@ -103,6 +103,11 @@ export interface Archive {
         searchIndexCount: number; searchIndexSha256: string; searchIndexMismatchCount: number;
         assistantToolInvocationCount: number; assistantToolInvocationSha256: string;
         telegramAdminInboxCount: number; telegramAdminInboxSha256: string;
+        resumeMetadataCount: number; resumeMetadataSha256: string;
+        controlOperationCount: number; controlOperationSha256: string;
+        controlImportLedgerCount: number; controlImportLedgerSha256: string;
+        readCursorCount: number; readCursorSha256: string;
+        quarantineCount: number; quarantineSha256: string;
         integrity: string; foreignKeys: number }>;
     registerAccount(input: { id?: string; channel: 'whatsapp' | 'telegram'; providerKey: string }): Promise<{ id: string; channel: string; provider_key: string }>;
     telegramCursor(accountId: string): Promise<string | null>;
@@ -274,7 +279,8 @@ export interface Archive {
     diagnostics(): Promise<Contract<'EventCursor'> & { messages: number; events: number; quarantine: number; aliases: number; provenance: number;
         legacyDispatchPending: number; legacyDispatchWaiting: number; telegramAdminInbox: TelegramAdminInboxStatus; integrity: string; foreignKeys: number }>;
     purge(input?: { now?: string; limit?: number }): Promise<{ bodies: number; events: number; fingerprints: number; assistantToolInvocations: number;
-        telegramAdminInbox: number; outboundExpired: number; outboundRedacted: number; outboundDeleted: number; remaining: boolean }>;
+        telegramAdminInbox: number; controlOperations: number; outboundExpired: number; outboundRedacted: number;
+        outboundDeleted: number; remaining: boolean }>;
     backup(destination: string): Promise<Contract<'EventCursor'>>;
     close(): Promise<void>;
     queue(): { elements: number; bytes: number };

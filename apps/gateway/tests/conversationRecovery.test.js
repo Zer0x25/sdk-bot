@@ -265,6 +265,113 @@ test('BUG-076: restore gate detects resume-name changes without exposing their d
     assert.equal('resumeMetadataSha256' in gate.result.source, false);
 });
 
+test('BUG-080: restore gate compares control, cutover, cursor, and quarantine ledgers without exposing hashes', async t => {
+    const dir = await fs.mkdtemp(path.join(os.tmpdir(), 'sdkbot-admin-ledger-restore-'));
+    const sourcePath = path.join(dir, 'source.db');
+    const snapshotPath = path.join(dir, 'snapshot.db');
+    const lockPath = path.join(dir, 'gateway.lock');
+    let archive = createArchive({ path: sourcePath });
+    t.after(async () => { await archive?.close().catch(() => {}); await fs.rm(dir, { recursive: true, force: true }); });
+
+    await archive.ready;
+    const account = await archive.registerAccount({ channel: 'whatsapp', providerKey: 'bug080-admin-ledgers' });
+    const [created] = await archive.ingestBatch([inbound(account.id, 'bug080-base', 'live')]);
+    await archive.ingestBatch([{ ...inbound(account.id, 'bug080-base', 'live'),
+        content: { type: 'text', text: 'conflicting content for quarantine' } }]);
+    const conversationId = created.message.conversationId;
+    await migrateControl(archive, conversationId);
+    await archive.markRead({ conversationId, actorId: randomUUID(), throughInboundSeq: '1' });
+    const actorId = randomUUID();
+    const control = await archive.controlState(conversationId);
+    const started = await archive.beginControlTakeover({ conversationId, actorId,
+        expectedVersion: control.controlVersion, overrideOwner: false, idempotencyKey: 'bug080-restore-receipt' });
+    assert.equal(started.status, 'started');
+    await archive.completeControlTakeover({ operationId: started.operation.id });
+    await archive.backup(snapshotPath);
+    await archive.close(); archive = null;
+
+    const changed = new DatabaseSync(sourcePath);
+    changed.prepare("UPDATE control_operations SET completed_at='2026-10-22T12:00:01.000Z'").run();
+    changed.prepare("UPDATE control_import_migrations SET updated_at='2026-10-22T12:00:01.000Z'").run();
+    changed.prepare("UPDATE read_cursors SET updated_at='2026-10-22T12:00:01.000Z'").run();
+    changed.prepare("UPDATE quarantine SET reason='RESTORE_FIXTURE_CHANGED'").run();
+    changed.close();
+
+    const gate = runGate(sourcePath, snapshotPath, lockPath);
+    assert.equal(gate.exitCode, 2);
+    assert.equal(gate.result.promotionAllowed, false);
+    for (const blocker of ['CONTROL_OPERATION_LEDGER_MISMATCH', 'CONTROL_IMPORT_LEDGER_MISMATCH',
+        'READ_CURSOR_LEDGER_MISMATCH', 'QUARANTINE_LEDGER_MISMATCH']) {
+        assert.ok(gate.result.blockers.includes(blocker), blocker);
+    }
+    assert.equal(gate.result.source.controlOperationCount, 1);
+    assert.ok(gate.result.source.controlImportLedgerCount > 0);
+    assert.equal(gate.result.source.readCursorCount, 1);
+    assert.equal(gate.result.source.quarantineCount, 1);
+    for (const name of ['controlOperationSha256', 'controlImportLedgerSha256', 'readCursorSha256', 'quarantineSha256']) {
+        assert.equal(name in gate.result.source, false, `${name} must not be exposed`);
+    }
+});
+
+test('BUG-080: only terminal takeover receipts expire after 180 days; recovery and review metadata remain', async t => {
+    const dir = await fs.mkdtemp(path.join(os.tmpdir(), 'sdkbot-admin-ledger-retention-'));
+    const databasePath = path.join(dir, 'archive.db');
+    let archive = createArchive({ path: databasePath });
+    t.after(async () => { await archive?.close().catch(() => {}); await fs.rm(dir, { recursive: true, force: true }); });
+
+    await archive.ready;
+    const account = await archive.registerAccount({ channel: 'whatsapp', providerKey: 'bug080-retention' });
+    const [created] = await archive.ingestBatch([inbound(account.id, 'bug080-retention-base', 'live')]);
+    await archive.ingestBatch([{ ...inbound(account.id, 'bug080-retention-base', 'live'),
+        content: { type: 'text', text: 'retained quarantine review' } }]);
+    const pendingConversationMessage = { ...inbound(account.id, 'bug080-pending-conversation'),
+        identity: { accountId: account.id, channel: 'whatsapp', kind: 'whatsapp_jid', exactValue: '15550000001@s.whatsapp.net' } };
+    const [pendingConversation] = await archive.ingestBatch([pendingConversationMessage]);
+    const conversationId = created.message.conversationId;
+    await migrateControl(archive, conversationId);
+    await archive.markRead({ conversationId, actorId: randomUUID(), throughInboundSeq: '1' });
+
+    const actorId = randomUUID();
+    const current = await archive.controlState(conversationId);
+    const started = await archive.beginControlTakeover({ conversationId, actorId,
+        expectedVersion: current.controlVersion, overrideOwner: false, idempotencyKey: 'bug080-terminal-receipt' });
+    assert.equal(started.status, 'started');
+    const completed = await archive.completeControlTakeover({ operationId: started.operation.id });
+    assert.equal(completed.status, 'completed');
+    const pendingControl = await archive.controlState(pendingConversation.message.conversationId);
+    const pending = await archive.beginControlTakeover({ conversationId: pendingConversation.message.conversationId,
+        actorId: randomUUID(), expectedVersion: pendingControl.controlVersion, overrideOwner: false,
+        idempotencyKey: 'bug080-pending-receipt' });
+    assert.equal(pending.status, 'started');
+    await archive.close(); archive = null;
+
+    const db = new DatabaseSync(databasePath);
+    const old = '2025-01-01T00:00:00.000Z';
+    db.prepare('UPDATE control_operations SET created_at=?,completed_at=CASE WHEN id=? THEN ? ELSE NULL END').run(
+        old, started.operation.id, old);
+    db.prepare('UPDATE control_import_migrations SET started_at=?,updated_at=?,cutover_at=?').run(old, old, old);
+    db.prepare('UPDATE control_import_runs SET created_at=?,verified_at=?').run(old, old);
+    db.prepare('UPDATE read_cursors SET updated_at=?').run(old);
+    db.prepare('UPDATE quarantine SET created_at=?').run(old);
+    db.close();
+
+    archive = createArchive({ path: databasePath });
+    await archive.ready;
+    const before = await archive.recoveryCheckpoint();
+    const boundary = new Date(Date.parse(old) + 180 * 86400000).toISOString();
+    assert.equal((await archive.purge({ now: boundary, limit: 100 })).controlOperations, 0);
+    assert.equal((await archive.purge({ now: new Date(Date.parse(boundary) + 1).toISOString(), limit: 100 })).controlOperations, 1);
+    assert.equal(await archive.controlOperation(started.operation.id), null);
+    assert.equal((await archive.controlOperation(pending.operation.id)).status, 'taking_control');
+    assert.equal((await archive.pendingControlOperations()).some(operation => operation.id === pending.operation.id), true);
+
+    const after = await archive.recoveryCheckpoint();
+    assert.equal(after.controlOperationCount, before.controlOperationCount - 1);
+    assert.equal(after.controlImportLedgerCount, before.controlImportLedgerCount);
+    assert.equal(after.readCursorCount, before.readCursorCount);
+    assert.equal(after.quarantineCount, before.quarantineCount);
+});
+
 test('restore gate detects attachment metadata purges that do not advance the event cursor', async t => {
     const dir = await fs.mkdtemp(path.join(os.tmpdir(), 'sdkbot-f84-attachment-ledger-'));
     const sourceDirectory = path.join(dir, 'source'), snapshotDirectory = path.join(dir, 'snapshot');

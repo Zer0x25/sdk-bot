@@ -66,6 +66,10 @@ function safeSummary(checkpoint) {
         assistantToolInvocationCount: checkpoint.assistantToolInvocationCount,
         telegramAdminInboxCount: checkpoint.telegramAdminInboxCount,
         resumeMetadataCount: checkpoint.resumeMetadataCount,
+        controlOperationCount: checkpoint.controlOperationCount,
+        controlImportLedgerCount: checkpoint.controlImportLedgerCount,
+        readCursorCount: checkpoint.readCursorCount,
+        quarantineCount: checkpoint.quarantineCount,
         unresolvedOutboundCount: checkpoint.unresolvedOutboundCount,
         integrity: checkpoint.integrity, foreignKeys: checkpoint.foreignKeys };
 }
@@ -109,6 +113,20 @@ function compare(source, candidate) {
     if (source.resumeMetadataCount !== candidate.resumeMetadataCount
         || source.resumeMetadataSha256 !== candidate.resumeMetadataSha256) {
         blockers.push('RESUME_METADATA_MISMATCH');
+    }
+    if (source.controlOperationCount !== candidate.controlOperationCount
+        || source.controlOperationSha256 !== candidate.controlOperationSha256) {
+        blockers.push('CONTROL_OPERATION_LEDGER_MISMATCH');
+    }
+    if (source.controlImportLedgerCount !== candidate.controlImportLedgerCount
+        || source.controlImportLedgerSha256 !== candidate.controlImportLedgerSha256) {
+        blockers.push('CONTROL_IMPORT_LEDGER_MISMATCH');
+    }
+    if (source.readCursorCount !== candidate.readCursorCount || source.readCursorSha256 !== candidate.readCursorSha256) {
+        blockers.push('READ_CURSOR_LEDGER_MISMATCH');
+    }
+    if (source.quarantineCount !== candidate.quarantineCount || source.quarantineSha256 !== candidate.quarantineSha256) {
+        blockers.push('QUARANTINE_LEDGER_MISMATCH');
     }
     if (source.unresolvedOutboundCount > 0 || candidate.unresolvedOutboundCount > 0) {
         blockers.push('UNRESOLVED_OUTBOUND');
