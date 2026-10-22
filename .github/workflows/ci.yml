@@ -3,6 +3,11 @@ name: CI
 on:
   pull_request:
     branches: [main]
+    # Release Please only changes generated release notes/version metadata.
+    # Those PRs are checked through workflow_dispatch from release-please.yml.
+    paths-ignore:
+      - CHANGELOG.md
+      - .release-please-manifest.json
   workflow_dispatch:
 
 concurrency:

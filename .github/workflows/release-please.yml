@@ -7,6 +7,7 @@ on:
   workflow_dispatch:
 
 permissions:
+  actions: write
   contents: write
   pull-requests: write
   issues: write
@@ -17,8 +18,41 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Run release-please
+        id: release
         uses: googleapis/release-please-action@v4
         with:
           token: ${{ secrets.RELEASE_PLEASE_TOKEN || github.token }}
           config-file: release-please-config.json
           manifest-file: .release-please-manifest.json
+      - name: Dispatch CI for the release PR
+        if: steps.release.outputs.prs_created == 'true'
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const { owner, repo } = context.repo;
+            const branch = 'release-please--branches--main--components--sdk-bot';
+            const { data: prs } = await github.rest.pulls.list({
+              owner,
+              repo,
+              state: 'open',
+              base: 'main',
+              head: `${owner}:${branch}`,
+            });
+
+            if (prs.length !== 1) {
+              core.setFailed(
+                `Expected one open Release Please PR on ${branch}; found ${prs.length}.`,
+              );
+              return;
+            }
+
+            const pr = prs[0];
+            await github.rest.actions.createWorkflowDispatch({
+              owner,
+              repo,
+              workflow_id: 'ci.yml',
+              ref: pr.head.ref,
+            });
+            core.notice(
+              `Dispatched CI for Release Please PR #${pr.number} at ${pr.head.sha}.`,
+            );
