@@ -1541,3 +1541,20 @@ Cierres históricos: commits F2C.1/F2C.2/F2D/F2E.1 están en el log local; F2B.3
 - No se usó canal/proveedor real. Commit local en `main`, sin push.
 - Siguiente punto: F8.3, revisar y cerrar el runbook agregado de operación y
   recuperación; actualizarlo con la retención v16 recién añadida.
+
+## Cierre F8.3 — Runbook de operación y recuperación — 2026-10-22
+
+- Se consolidó el runbook después de F9.4 y BUG-076: captura/restauración aislada,
+  retención efectiva del archivo, adjuntos, inbox admin, auditoría, nombres de
+  replay y generaciones Brain; exportación/borrado selectivo aún no existe; incluye
+  rollback de código/corte F5.3 y minimización de métricas/logs.
+- Se corrigieron las referencias de F8.4/F9.4 para reflejar que la puerta actual
+  compara ledger, blobs y FTS. Se registran BUG-079 por intents terminales del
+  outbox sin purga y BUG-080 por operaciones/cutover, cursores y cuarentenas sin
+  política de retención.
+- Verificación documental: `bash -n` en los 5 bloques operativos, 2 destinos
+  Markdown resuelven y `git diff --check` limpio. No se operó Docker/Compose de
+  producción ni se abrieron datos runtime.
+- F8.3 completada en [runbook](F8.3-OPERACION-RECUPERACION.md). Siguiente punto:
+  BUG-079, implementar retención acotada del outbox conservando idempotencia y
+  evitando borrar intents activos o no conciliados.

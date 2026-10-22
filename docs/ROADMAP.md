@@ -450,7 +450,7 @@ son necesarios para una fase previa y pasan sus mismas comprobaciones.
   Termux y artefactos frontend. Mantener volúmenes/rutas de credenciales existentes.
   Linux, Compose y Docker se verificaron en esta sesión. Windows y Termux tienen
   launchers/documentación actualizados; falta la prueba real en esos sistemas.
-- [ ] Runbook de operación y recuperación: backup/restauración,
+- [x] Runbook de operación y recuperación: backup/restauración,
   retención/exportación/purga, rollback de código/datos y minimización de métricas/logs.
   - [x] F8.3a — [Inventario y captura offline del volumen de estado; documentar
     el límite de recuperación y validar copias solo en un volumen aislado](F8.3-OPERACION-RECUPERACION.md).
@@ -459,6 +459,9 @@ son necesarios para una fase previa y pasan sus mismas comprobaciones.
   - [x] F8.3c — [Rollback de código sin rollback de datos y recuperación del
     corte de control antes del cambio de autoridad](F8.3-OPERACION-RECUPERACION.md).
   - [x] F8.3d — [Minimizar datos de cliente en métricas y logs, con pruebas](F8.3-OPERACION-RECUPERACION.md#f83d--minimizacion-de-datos-en-metricas-y-logs).
+  Cierre F8.3: actualizado tras F9.4 y BUG-076. Documenta que no hay job diario
+  ni réplica externa de backups, exportación/borrado selectivo, y registra BUG-079
+  por la retención del outbox y BUG-080 por metadatos administrativos sin retención.
 - [x] F8.4 — Ensayar migración/restauración con fixture representativo y delta
   posterior al corte; bloquear snapshots obsoletos por cursor, autoridad o ledger
   de envíos y metadatos de adjuntos. F9.4 amplía luego la puerta para validar
