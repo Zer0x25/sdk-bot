@@ -1,7 +1,8 @@
 # Estado de continuidad — SDK-Bot
 
-Actualización: 2026-10-22. `main` está en `a97c655` (PR #14), alineada con
-`origin/main`. Release Please mantiene publicados v0.5.0/v0.6.0 y conserva
+Actualización: 2026-10-22. La corrección de CI se fusionó en `main` como
+`a97c655` (PR #14), y el registro de cierre quedó en `5851c40` (PR #16).
+Release Please mantiene publicados v0.5.0/v0.6.0 y conserva
 `draft: false`; los drafts antiguos v0.3.0/v0.4.0 se eliminaron después de
 confirmar que no tenían tags. PR #14 corrigió el primer CI de los release PRs:
 Release Please creó la PR #15 v0.6.1 y despachó el run 39848651391 por
