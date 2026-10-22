@@ -9,8 +9,11 @@ const { createArchive } = require('../services/conversations');
 const { buildControlImportReport } = require('../services/conversations/controlImport');
 const { createControlService, LEGACY_ADMIN_ACTOR } = require('../services/conversations/controlService');
 const { createSessionApi, projectConversation } = require('../services/sessionApi');
+const { setControlService } = require('../services/stateService');
+const { state } = require('../config');
+const chatControlCommands = require('../handlers/commands/chatControl');
 
-async function fixture(t) {
+async function fixture(t, phones = ['111','222']) {
     const dir = await fs.mkdtemp(path.join(os.tmpdir(), 'sdkbot-control-service-'));
     const databasePath = path.join(dir, 'archive.db');
     const archive = createArchive({ path: databasePath });
@@ -18,7 +21,7 @@ async function fixture(t) {
     const ready = await archive.ready;
     const accountId = randomUUID();
     await archive.registerAccount({ id: accountId, channel: 'whatsapp', providerKey: 'wa-control-service' });
-    await archive.ingestBatch(['111','222'].map((phone, index) => ({ identity: {
+    await archive.ingestBatch(phones.map((phone, index) => ({ identity: {
         accountId, channel: 'whatsapp', kind: 'whatsapp_jid', exactValue: `${phone}@s.whatsapp.net`
     }, providerMessageId: `control-${index}`, source: 'history', direction: 'inbound', authorKind: 'customer',
     occurredAt: '2026-10-20T12:00:00.000Z', content: { type: 'text', text: 'control fixture' } })));
@@ -281,4 +284,49 @@ test('F5.5 job snapshots become obsolete after control and global policy version
 
     await service.setAccessForLegacyTarget({ targetId: '111', channel: 'whatsapp', accountId, policy: 'ignored' });
     assert.equal(await service.isSnapshotCurrent(refreshed.controlSnapshot), false);
+});
+
+test('BUG-011 SQLite legacy commands preserve access across /humano and explain ignored_all blocks', async t => {
+    const previousMode = state.GLOBAL_MODE;
+    const previousPaused = state.IS_BOT_PAUSED;
+    t.after(() => {
+        setControlService(null);
+        state.GLOBAL_MODE = previousMode;
+        state.IS_BOT_PAUSED = previousPaused;
+    });
+    state.IS_BOT_PAUSED = false;
+
+    const { archive, accountId, migrationId } = await fixture(t, ['56911111','56922222']);
+    await cutover(archive, migrationId);
+    const service = createControlService(archive, { drainConversation: () => ({ drained: true }) });
+    await service.setAccessForLegacyTarget({ targetId: '56911111', channel: 'whatsapp', accountId, policy: 'allowed' });
+    await service.setGlobalPolicy({ globalMode: 'ignored_all' });
+    state.GLOBAL_MODE = 'ignored_all';
+    setControlService(service);
+
+    const runHumano = chatControlCommands.find(definition => definition.aliases.includes('/humano')).run;
+    const runIa = chatControlCommands.find(definition => definition.aliases.includes('/ia')).run;
+    const targetAdapter = { channelName: 'whatsapp', accountId };
+
+    const humanMessage = await runHumano({ queryParam: '56911111', targetAdapter });
+    assert.match(humanMessage, /Atención Humana activada/);
+    assert.doesNotMatch(humanMessage, /sigue ignorado/);
+    let control = (await service.resolveLegacyTarget({ targetId: '56911111', channel: 'whatsapp', accountId })).control;
+    assert.equal(control.automationMode, 'human');
+    assert.equal(control.accessPolicy, 'allowed');
+
+    const aiMessage = await runIa({ queryParam: '56911111', targetAdapter });
+    assert.match(aiMessage, /volverá a responder/);
+    control = (await service.resolveLegacyTarget({ targetId: '56911111', channel: 'whatsapp', accountId })).control;
+    assert.equal(control.automationMode, 'ai');
+    assert.equal(control.accessPolicy, 'allowed');
+
+    const neutralHumanMessage = await runHumano({ queryParam: '56922222', targetAdapter });
+    assert.match(neutralHumanMessage, /Atención Humana activada/);
+    const neutralAiMessage = await runIa({ queryParam: '56922222', targetAdapter });
+    assert.match(neutralAiMessage, /modo global estricto/);
+    assert.match(neutralAiMessage, /\/permitir 56922222/);
+    control = (await service.resolveLegacyTarget({ targetId: '56922222', channel: 'whatsapp', accountId })).control;
+    assert.equal(control.accessPolicy, 'neutral');
+    assert.equal(control.automationMode, 'ai');
 });

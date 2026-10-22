@@ -9,6 +9,8 @@ after(() => tmp.restore());
 const { getContactsDB, saveContactsDB } = require('../services/db');
 const { upsertContactMetadata } = require('../services/contactsRepository');
 const { setControlService, setNumberState, setContactProfile } = require('../services/stateService');
+const { state } = require('../config');
+const { decideMessageFlow } = require('../services/pipeline');
 const { handleAdminCommand } = require('../handlers/commandHandler');
 const contactCommands = require('../handlers/commands/contacts');
 const chatControlCommands = require('../handlers/commands/chatControl');
@@ -98,4 +100,60 @@ test('BUG-008: /nombre and /limpiar reject partial suffixes before mutating or c
     assert.equal(Object.keys(getContactsDB()).length, 2);
     assert.equal(getContactsDB()['56912345678'].savedName, null);
     assert.equal(getContactsDB()['56812345678'].savedName, null);
+});
+
+test('BUG-011: /humano and /ia preserve an allowed contact under ignored_all', async t => {
+    const previousMode = state.GLOBAL_MODE;
+    const previousPaused = state.IS_BOT_PAUSED;
+    t.after(() => { state.GLOBAL_MODE = previousMode; state.IS_BOT_PAUSED = previousPaused; });
+    state.GLOBAL_MODE = 'ignored_all';
+    state.IS_BOT_PAUSED = false;
+
+    upsertContactMetadata({ phoneNumber: '56912345678', pushName: 'Allowed' });
+    await setNumberState('56912345678', 'allowed', { channel: 'whatsapp' });
+    const runHumano = chatControlCommands.find(definition => definition.aliases.includes('/humano')).run;
+    const runIa = chatControlCommands.find(definition => definition.aliases.includes('/ia')).run;
+    const targetAdapter = { channelName: 'whatsapp' };
+
+    const humanMessage = await runHumano({ queryParam: '56912345678', targetAdapter });
+    assert.match(humanMessage, /Atención Humana activada/);
+    assert.equal(getContactsDB()['56912345678'].estado, 'handoff');
+    assert.equal(getContactsDB()['56912345678'].handoffPreviousState, 'permitido');
+
+    const aiMessage = await runIa({ queryParam: '56912345678', targetAdapter });
+    assert.match(aiMessage, /volverá a responder/);
+    assert.equal(getContactsDB()['56912345678'].estado, 'permitido');
+    assert.equal(getContactsDB()['56912345678'].handoffPreviousState, undefined);
+    assert.equal(decideMessageFlow({ textMessage: 'hola', metadata: {}, contactRecord: getContactsDB()['56912345678'],
+        isSelf: false, isFromMe: false }).type, 'respond');
+});
+
+test('BUG-011: /humano and /ia report access and global policies that still block replies', async t => {
+    const previousMode = state.GLOBAL_MODE;
+    const previousPaused = state.IS_BOT_PAUSED;
+    t.after(() => { state.GLOBAL_MODE = previousMode; state.IS_BOT_PAUSED = previousPaused; });
+    state.GLOBAL_MODE = 'ignored_all';
+    state.IS_BOT_PAUSED = false;
+
+    upsertContactMetadata({ phoneNumber: '56912345678', pushName: 'Ignored' });
+    upsertContactMetadata({ phoneNumber: '56812345678', pushName: 'Neutral' });
+    await setNumberState('56912345678', 'ignored', { channel: 'whatsapp' });
+    const runHumano = chatControlCommands.find(definition => definition.aliases.includes('/humano')).run;
+    const runIa = chatControlCommands.find(definition => definition.aliases.includes('/ia')).run;
+    const targetAdapter = { channelName: 'whatsapp' };
+
+    const ignoredHumanMessage = await runHumano({ queryParam: '56912345678', targetAdapter });
+    assert.match(ignoredHumanMessage, /sigue ignorado/);
+    assert.match(ignoredHumanMessage, /\/permitir 56912345678/);
+    const ignoredAiMessage = await runIa({ queryParam: '56912345678', targetAdapter });
+    assert.match(ignoredAiMessage, /sigue ignorado/);
+    assert.match(ignoredAiMessage, /\/permitir 56912345678/);
+    assert.equal(getContactsDB()['56912345678'].estado, 'ignorado');
+
+    const neutralHumanMessage = await runHumano({ queryParam: '56812345678', targetAdapter });
+    assert.match(neutralHumanMessage, /Atención Humana activada/);
+    const neutralAiMessage = await runIa({ queryParam: '56812345678', targetAdapter });
+    assert.match(neutralAiMessage, /modo global estricto/);
+    assert.match(neutralAiMessage, /\/permitir 56812345678/);
+    assert.equal(getContactsDB()['56812345678'].estado, 'neutro');
 });

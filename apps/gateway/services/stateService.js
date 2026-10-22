@@ -2,7 +2,29 @@
 const { state } = require('../config');
 const { getSettingsDB, saveSettingsDB, getContactsDB, saveContactsDB } = require('./db');
 const { resolveContactKeyByDigits } = require('./contactsRepository');
-const { summarizeListCounts } = require('../handlers/commandHelpers');
+const { getGlobalMode, summarizeListCounts } = require('../handlers/commandHelpers');
+
+/** @param {unknown} accessState @returns {'ignored'|'allowed'|'neutral'|null} */
+function normalizeAccessState(accessState) {
+    if (accessState === 'ignored' || accessState === 'ignorado') return 'ignored';
+    if (accessState === 'allowed' || accessState === 'permitido') return 'allowed';
+    if (accessState === 'neutral' || accessState === 'neutro') return 'neutral';
+    return null;
+}
+
+/** @param {unknown} accessState @param {string|undefined} [globalMode]
+ * @param {any|null} [control] @param {any|null} [policy] @returns {string|null} */
+function automationBlockReason(accessState, globalMode = getGlobalMode(), control = null, policy = null) {
+    if (state.IS_BOT_PAUSED) return 'global_paused';
+    if (policy?.requiresReview || control?.requiresReview) return 'control_review_required';
+    if (control?.lifecycle && control.lifecycle !== 'open') return 'conversation_not_open';
+    if (control?.automationMode && control.automationMode !== 'ai') return 'automation_not_ai';
+    const normalizedState = normalizeAccessState(accessState);
+    if (!normalizedState) return 'control_state_unknown';
+    if (normalizedState === 'ignored') return 'contact_ignored';
+    if (normalizedState === 'neutral' && globalMode === 'ignored_all') return 'global_ignored_all';
+    return null;
+}
 
 /** @type {any} */
 let controlService = null;
@@ -39,8 +61,10 @@ async function setNumberState(targetId, stateType, context = {}) {
                 channel: context.channel || 'whatsapp', accountId: context.accountId || null,
                 reason: context.reason || 'operator'
             });
+            const accessPolicy = result.control?.accessPolicy || result.target?.control?.accessPolicy || null;
             return { success: true, target: String(targetId), state: stateType,
-                pending: result.status === 'pending', conversationId: result.target?.conversationId };
+                accessPolicy, accessState: accessPolicy, pending: result.status === 'pending',
+                conversationId: result.target?.conversationId };
         } catch (error) {
             return { success: false, code: /** @type {any} */ (error)?.code, message: controlError(error) };
         }
@@ -86,10 +110,21 @@ async function setNumberState(targetId, stateType, context = {}) {
             'neutral': 'neutro'
         };
         const nuevoEstado = stateMap[stateType] || 'neutro';
-        db[existingKey].estado = nuevoEstado;
-        db[existingKey].handoffAt = nuevoEstado === 'handoff' ? new Date().toISOString() : null;
+        const record = db[existingKey];
+        if (nuevoEstado === 'handoff') {
+            const previousState = record.handoffPreviousState;
+            if (record.estado !== 'handoff' || (previousState !== 'neutro' && previousState !== 'permitido' && previousState !== 'ignorado')) {
+                record.handoffPreviousState = record.estado === 'permitido' ? 'permitido'
+                    : record.estado === 'ignorado' ? 'ignorado' : 'neutro';
+            }
+        } else {
+            delete record.handoffPreviousState;
+        }
+        record.estado = nuevoEstado;
+        record.handoffAt = nuevoEstado === 'handoff' ? new Date().toISOString() : null;
         saveContactsDB(db);
-        return { success: true, target: db[existingKey].phone || existingKey, state: db[existingKey].estado };
+        const accessState = nuevoEstado === 'handoff' ? record.handoffPreviousState : nuevoEstado;
+        return { success: true, target: record.phone || existingKey, state: record.estado, accessState };
     }
 
     // Si el contacto no existe, creamos uno básico para guardar el estado
@@ -99,13 +134,15 @@ async function setNumberState(targetId, stateType, context = {}) {
         phone: newKey,
         lid: null,
         estado: nuevoEstado,
+        ...(nuevoEstado === 'handoff' ? { handoffPreviousState: 'neutro' } : {}),
         handoffAt: nuevoEstado === 'handoff' ? new Date().toISOString() : null,
         isContact: false,
         firstSeen: new Date().toISOString(),
         lastSeen: new Date().toISOString()
     };
     saveContactsDB(db);
-    return { success: true, target: newKey, state: db[newKey].estado };
+    return { success: true, target: newKey, state: db[newKey].estado,
+        accessState: nuevoEstado === 'handoff' ? 'neutro' : nuevoEstado };
 }
 
 async function releaseControl(targetId, context = {}) {
@@ -114,10 +151,45 @@ async function releaseControl(targetId, context = {}) {
             const result = await controlService.setLegacyControl({ targetId,
                 channel: context.channel || 'whatsapp', accountId: context.accountId || null,
                 action: 'release', actorId: context.actorId || controlService.legacyAdminActor });
-            return { success: true, target: String(targetId), state: 'ai', conversationId: result.target?.conversationId };
+            /** @type {any} */ let policy = null;
+            try { policy = await controlService.getPolicy?.(); } catch { /* No cambiar un release confirmado por fallo de lectura auxiliar. */ }
+            const control = result.control || result.target?.control || null;
+            const accessState = control?.accessPolicy || null;
+            const globalMode = policy?.globalMode || getGlobalMode();
+            return { success: true, target: String(targetId), state: 'ai', accessState, accessPolicy: accessState,
+                globalMode, blockReason: automationBlockReason(accessState, globalMode, control, policy),
+                conversationId: result.target?.conversationId };
         } catch (error) { return { success: false, code: /** @type {any} */ (error)?.code, message: controlError(error) }; }
     }
-    return setNumberState(targetId, 'neutral', context);
+
+    const cleanTarget = String(targetId).replace(/[^0-9]/g, '');
+    if (!cleanTarget || (context.channel || 'whatsapp') !== 'whatsapp') return setNumberState(targetId, 'neutral', context);
+    const db = getContactsDB();
+    const resolution = resolveContactKeyByDigits(cleanTarget);
+    if (resolution.status === 'partial' || resolution.status === 'ambiguous') return setNumberState(targetId, 'neutral', context);
+    const existingKey = resolution.status === 'found' ? resolution.key : null;
+    if (!existingKey) {
+        const created = await setNumberState(targetId, 'neutral', context);
+        if (!created.success) return created;
+        const accessState = 'neutro', globalMode = getGlobalMode();
+        return { ...created, state: 'ai', accessState, globalMode, blockReason: automationBlockReason(accessState, globalMode) };
+    }
+
+    const record = db[existingKey];
+    const previousState = record.handoffPreviousState;
+    const restoredState = record.estado === 'handoff'
+        ? (previousState === 'permitido' || previousState === 'ignorado' ? previousState : 'neutro')
+        : (record.estado === 'permitido' || record.estado === 'ignorado' || record.estado === 'neutro'
+            ? record.estado : 'neutro');
+    if (record.estado === 'handoff') {
+        record.estado = restoredState;
+        record.handoffAt = null;
+        delete record.handoffPreviousState;
+        saveContactsDB(db);
+    }
+    const globalMode = getGlobalMode();
+    return { success: true, target: record.phone || existingKey, state: 'ai', accessState: restoredState,
+        globalMode, blockReason: automationBlockReason(restoredState, globalMode) };
 }
 
 /**

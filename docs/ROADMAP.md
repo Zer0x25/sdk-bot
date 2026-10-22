@@ -32,6 +32,9 @@ dirigiendo el objetivo a WhatsApp. Evidencia: [BUG-008](BUG-008-RESOLUCION-IDENT
 BUG-010 acota envíos, presencia, menú y helpers Telegram; un timeout de envío
 durable queda incierto y bloquea reenvío con la misma clave. Evidencia:
 [BUG-010](BUG-010-TIMEOUTS-SALIDA-TELEGRAM.md).
+BUG-011 conserva los permisos al usar `/humano` y `/ia` y explica las políticas
+que mantienen bloqueadas las respuestas. Evidencia:
+[BUG-011](BUG-011-CONTROL-LEGACY.md).
 F2D completa replay durable hasta el handler tras el commit (BUG-045). F2E.1 ya
 registra salidas aceptadas y deduplica ecos WA; conserva autoría external_self.
 F2E.2 cierra la carga sintética completa y F3.1 implementa la API autenticada de

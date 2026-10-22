@@ -130,6 +130,7 @@ function createControlService(archive, { drainConversation = null, onResumePendi
         async authority() { return archive.controlAuthority(); },
         async isActive() { return (await archive.controlAuthority()).mode === 'sqlite'; },
         async setServiceReady(ready) { return archive.setControlServiceReady({ ready }); },
+        async getPolicy() { await assertAuthority(); return archive.controlPolicy(); },
         resolveLegacyTarget: input => resolveLegacyTarget(input),
         async clearContextForLegacyTarget({ targetId, channel, accountId = null, actorId = LEGACY_ADMIN_ACTOR }) {
             await assertAuthority();

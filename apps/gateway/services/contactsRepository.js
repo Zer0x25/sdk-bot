@@ -17,6 +17,7 @@ const { getContactsDB, saveContactsDB, onContactsCacheUpdate } = require('./db')
  * @property {boolean} [isBusiness]
  * @property {boolean} [isContact]
  * @property {('neutro'|'permitido'|'ignorado'|'handoff')} [estado]
+ * @property {('neutro'|'permitido'|'ignorado')} [handoffPreviousState]
  * @property {string|null} [lastEnrichedAt]
  * @property {string} [firstSeen]
  * @property {string} [lastSeen]
@@ -267,6 +268,7 @@ function cleanContactsDB() {
         if (item.estado === 'handoff' && !isHandoffActive(item)) {
             item.estado = 'neutro';
             item.handoffAt = null;
+            delete item.handoffPreviousState;
             updated = true;
         }
     });

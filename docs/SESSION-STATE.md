@@ -1441,3 +1441,19 @@ Cierres históricos: commits F2C.1/F2C.2/F2D/F2E.1 están en el log local; F2B.3
 - Commit local de esta unidad; no publicar.
 - Siguiente punto ejecutable: BUG-011, preservar la elegibilidad de control al
   usar `/humano` y `/ia` con `ignored_all`.
+
+## BUG-011 — Permisos de control legacy — 2026-10-22
+
+- El fallback JSON conserva el acceso que tenía un contacto antes de entrar a
+  `handoff`; `/ia` lo restaura y un handoff antiguo sin dato válido retorna a
+  neutro. La expiración automática mantiene su comportamiento previo.
+- SQLite deja el acceso intacto durante takeover/release. `/humano` y `/ia`
+  explican cuando la política ignora al contacto o el modo global bloquea sus
+  respuestas.
+- Evidencia: [BUG-011](BUG-011-CONTROL-LEGACY.md).
+- Verificación: Gateway `npm run check`, lint/typecheck, Panel 42/42, build,
+  servido 1/1 y Gateway 384/384; focales 17/17; `git diff --check`. Sin
+  proveedores ni canales reales.
+- Commit local de esta unidad; no publicar.
+- Siguiente punto ejecutable: BUG-071, corregir el total inflado del comando
+  `/ignorar contactos de agenda`.

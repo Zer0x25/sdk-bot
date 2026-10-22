@@ -35,7 +35,7 @@ salvo indicación contraria. La evidencia detallada y líneas están en la basel
 | BUG-008 | P1 | Cerrado: la resolución legacy rechazaba sufijos y podía elegir la última fila de una colisión. | El resolver indexa identidades completas, informa colisiones/parciales y los comandos mutables fallan cerrado; Telegram administrativo conserva el adapter de respuesta y dirige objetivos a WhatsApp. | Legacy JSON limitado a identidad WhatsApp completa; el control SQLite sigue usando canal/cuenta exactos. Pruebas de sufijo, colisión, reemplazo de alias y comandos. Evidencia: [BUG-008](BUG-008-RESOLUCION-IDENTIDAD-LEGACY.md). |
 | BUG-009 | P1 | Cerrado F2C.2: filtro global Telegram descartaba por `message_id` sin chat. | Se retiró el registro/filtro global del adapter; dedup usa cuenta, chat canónico y `message_id`. Regresión repite ID en dos chats y en el registro global heredado. | Evidencia: [TELEGRAM-CAPTURA-F2C2](TELEGRAM-CAPTURA-F2C2.md). |
 | BUG-010 | P2 | Cerrado: envíos, presencia, menú y helper legacy podían esperar sin deadline. | El adapter aplica 10 s al envío y 3 s a presencia; menú/helper usan 8 s. Los sends durables vencidos quedan `delivery_unknown` y la misma clave no vuelve al proveedor. | Pruebas de timeout, cierre HTTP, ausencia de reintento y estado durable. Poll y `/telegram/test` conservan sus límites previos. Evidencia: [BUG-010](BUG-010-TIMEOUTS-SALIDA-TELEGRAM.md). |
-| BUG-011 | P2 | /humano rechaza un permitido en ignored_all; /ia establece neutro y puede dejarlo sin respuesta. | handlers/commands/chatControl.js, runHumano/runIa. | F5: control independiente de permisos; comandos legacy preservan elegibilidad o explican bloqueo. |
+| BUG-011 | P2 | **Cerrado:** `/humano` y `/ia` podían perder la elegibilidad previa o no explicar el bloqueo restante. | El control SQLite conserva acceso; el fallback JSON guarda/restaura el estado previo y usa `neutro` si un handoff antiguo no tiene dato válido. Los comandos explican acceso ignorado y `ignored_all`. | Pruebas de ambos comandos con autoridad JSON y SQLite, permiso permitido, ignorado y neutral. Evidencia: [BUG-011](BUG-011-CONTROL-LEGACY.md). |
 | BUG-012 | P2 | Cerrado F5.6: `/notify` usaba el contrato legacy del socket sin clave durable. | El gateway inyecta un `ChannelAdapter`; la ruta conserva jid/mensaje y ahora pasa por `SendMessage`. | Prueba HTTP: rechaza llamadas sin clave, propaga `Idempotency-Key`, política notice y estado outbox aceptado. |
 | BUG-013 | P1 | Cerrado F1B: /history del brain eximía API key aunque contenía contexto privado. | main.require_api_key ya exige credencial; test_main verifica denegación y lectura autorizada. | 401 sin/con clave incorrecta, 200 con correcta; health público. Ver registro de cierre. |
 | BUG-014 | P2 | Tests brain usan un nombre /tmp fijo y no cierran todas las conexiones al sustituirlas; ejecuciones simultáneas pueden interferir. | test_main.setup_module/teardown_module y test_memory._nueva_db. | Antes de paralelizar suites: tmp_path único y cierre explícito; dos ejecuciones no comparten DB. |
@@ -107,8 +107,9 @@ salvo indicación contraria. La evidencia detallada y líneas están en la basel
 - Antes de implementar contactos con operadores limitados, cerrar BUG-024 o dejar
   explícito que el primer alcance de F7 sigue siendo solo administrador.
 - Antes de declarar paridad de comandos Telegram, resolver BUG-008 (resolución
-  exacta en el camino legacy); BUG-046 ya se cerró en F2C.3. BUG-010 y
-  BUG-011 también requieren aceptación explícita si esos caminos legacy se conservan.
+  exacta en el camino legacy); BUG-046 ya se cerró en F2C.3. BUG-010/011 ya
+  cierran sus fallos locales de salida/control legacy. Telegram sigue como canal
+  administrativo y no se afirma aceptación de atención a clientes por ese canal.
 - BUG-035 ya cierra la carrera async de pairing; la aceptación real de proveedor
   sigue sin probarse. No agregar reintentos automáticos al test de token mientras
   BUG-072 siga abierto. BUG-075 entra en F7
