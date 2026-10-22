@@ -5,6 +5,13 @@ based on [Conventional Commits](https://www.conventionalcommits.org/) and this
 file is maintained automatically by
 [release-please](https://github.com/googleapis/release-please).
 
+## [0.6.2](https://github.com/Zer0x25/sdk-bot/compare/v0.6.1...v0.6.2) (2026-10-22)
+
+
+### Bug Fixes
+
+* **panel:** keep conversation lists within viewport ([#18](https://github.com/Zer0x25/sdk-bot/issues/18)) ([14a14f0](https://github.com/Zer0x25/sdk-bot/commit/14a14f0a3c39d6f586e3f9ee2a00d35f437484e8))
+
 ## [0.6.1](https://github.com/Zer0x25/sdk-bot/compare/v0.6.0...v0.6.1) (2026-10-22)
 
 
