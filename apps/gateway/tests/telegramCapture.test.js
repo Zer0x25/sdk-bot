@@ -211,6 +211,19 @@ test('BUG-043: an accepted send is archived under the account captured at dispat
     assert.equal((await archive.messages({ conversationId: replacementIdentity.conversation_id })).length, 0);
 });
 
+test('BUG-046: admin text commits to its inbox before wake-up and bypasses direct EventEmitter dispatch', async t => {
+    const { archive } = await archiveFixture(t);
+    const { adapter, network, seen } = await runAdapter(t, archive);
+    let wakes = 0;
+    adapter.on('admin_inbox_pending', () => { wakes += 1; });
+    network.calls[0].finish({ ok: true, result: [messageUpdate(UPDATE_BIG, '555', MESSAGE_BIG, '/permitir 700')] });
+    await until(() => wakes === 1 && network.calls.length === 2);
+    assert.equal(seen.length, 0);
+    assert.equal((await archive.telegramCursor(adapter.accountId)), UPDATE_BIG);
+    assert.deepEqual(await archive.telegramAdminInboxStatus(), { pending: 1, processing: 0, completed: 0, uncertain: 0 });
+    assert.equal((await archive.diagnostics()).messages, 0);
+});
+
 test('F2C.2 migrates v1 archives and persists Telegram cursor per verified bot through reopen', async t => {
     const dir = await fs.mkdtemp(path.join(os.tmpdir(), 'sdkbot-telegram-migrate-'));
     t.after(() => fs.rm(dir, { recursive: true, force: true }));
@@ -232,7 +245,7 @@ test('F2C.2 migrates v1 archives and persists Telegram cursor per verified bot t
     legacy.prepare('INSERT INTO archive_meta VALUES(1,?,?)').run(randomUUID(), '0');
     legacy.close();
     const { archive } = await archiveFixture(t, dbPath);
-    assert.equal((await archive.ready).schemaVersion, 14);
+    assert.equal((await archive.ready).schemaVersion, 15);
     const account = await archive.registerAccount({ channel: 'telegram', providerKey: 'telegram_bot:42' });
     assert.equal(await archive.telegramCursor(account.id), null);
     const durableMessage = { identity: { accountId: account.id, channel: 'telegram', kind: 'telegram_chat_id', exactValue: CHAT_BIG },
@@ -318,13 +331,15 @@ test('updates are archived before legacy delivery; message IDs are scoped by exa
     assert.equal(await archive.telegramCursor(accountId), '6');
     const diagnostics = await archive.diagnostics();
     assert.equal(diagnostics.messages, 2); assert.equal(diagnostics.events, 2);
-    assert.equal(seen.length, 3);
+    assert.equal(seen.length, 2);
     assert.equal(seen[0].remoteId, 'telegram:101'); assert.equal(seen[1].remoteId, 'telegram:202');
-    assert.equal(seen[2].metadata.isAdminChannel, true);
+    assert.equal((await archive.pendingTelegramAdminInbox()).length, 1);
+    assert.deepEqual(await archive.telegramAdminInboxStatus(), { pending: 1, processing: 0, completed: 0, uncertain: 0 });
     assert.ok((await Promise.all(observedCursors)).every(cursor => cursor === '6'));
     network.calls[1].finish({ ok: true, result: [messageUpdate(6, '555', 9, '/estado')] });
     await until(() => network.calls.length === 3);
-    assert.equal(seen.length, 3, 'a stale admin update must not run its legacy command twice');
+    assert.equal(seen.length, 2, 'admin commands bypass direct EventEmitter delivery');
+    assert.equal((await archive.pendingTelegramAdminInbox()).length, 1, 'a stale admin update must not create a second inbox entry');
     const keys = await Promise.all(['101','202'].map(async exactValue => {
         const identity = await archive.resolve({ accountId, channel: 'telegram', kind: 'telegram_chat_id', exactValue });
         return (await archive.messages({ conversationId: identity.conversation_id }))[0].providerMessageId;

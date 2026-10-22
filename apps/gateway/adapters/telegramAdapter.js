@@ -295,6 +295,8 @@ class TelegramAdapter extends ChannelAdapter {
                     }
                     if (!this.isCurrent(gen, token)) return;
                     this.lastUpdateId = committed.lastUpdateId;
+                    if (observations.some((observation, index) => observation.adminInbox
+                        && committed.results[index]?.status !== 'stale')) this.emit('admin_inbox_pending');
                     let transcriptionFailure = false;
                     for (let i = 0; i < observations.length; i++) {
                         if (!this.isCurrent(gen, token)) return;
@@ -316,6 +318,9 @@ class TelegramAdapter extends ChannelAdapter {
                         }
                         if (!observation.legacy) continue;
                         const legacy = observation.legacy;
+                        // Text from the configured admin chat is replayed from the
+                        // SQLite inbox after the cursor and payload commit together.
+                        if (observation.adminInbox) continue;
                         if (legacy.isAdminChannel ? captured.status === 'stale' : captured.status !== 'created') continue;
                         if (!legacy.isAdminChannel && (!stored || stored.content.type === 'oversized')) continue;
                         if (legacy.audio && num('AUDIO_STT_ENABLED', 0) === 1) {

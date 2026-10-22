@@ -52,7 +52,7 @@ async function fixture(t, options = {}, network = transport()) {
     return { adapter, network, seen, archive };
 }
 
-test('BUG-004: concurrent discovery observes the sole poll, never steals messages or adds getUpdates/offsets', async t => {
+test('BUG-004: concurrent discovery observes the sole poll and admin text stays off direct delivery', async t => {
     const { adapter, network, seen } = await fixture(t);
     const readers = Array.from({ length: 3 }, () => adapter.discoverChatId('fixture_A'));
     await adapter.poll(); assert.equal(network.calls.length, 1);
@@ -60,7 +60,7 @@ test('BUG-004: concurrent discovery observes the sole poll, never steals message
     assert.deepEqual(await Promise.all(readers), ['555','555','555']);
     await until(() => network.calls.length === 2);
     assert.equal(network.calls[1].offset, '9'); assert.equal(network.peak(), 1);
-    assert.equal(seen.length, 1); assert.equal(seen[0].text, '/start');
+    assert.equal(seen.length, 0, 'admin text is admitted to its separate durable inbox');
     assert.equal(await adapter.discoverChatId('fixture_A'), '-9007199254740993');
     assert.equal(network.calls.length, 2); assert.equal(adapter.chatWaiters.size, 0);
 });

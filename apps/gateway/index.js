@@ -131,6 +131,7 @@ module.exports.getAdapter = getAdapter; // Expose for pipeline
 let conversationArchive;
 let archiveRetention;
 let legacyDispatchPump;
+let telegramAdminInboxPump;
 let conversationControl;
 let attachmentStore;
 async function startGateway() {
@@ -167,6 +168,7 @@ async function startGateway() {
     require('./services/factoryReset').setBeforeReset(async () => {
         for (const adapter of adapters.values()) await adapter.disconnect();
         await legacyDispatchPump?.close();
+        await telegramAdminInboxPump?.close();
         await archiveRetention.close();
         await attachmentStore.close();
         await conversationArchive.close();
@@ -247,18 +249,25 @@ async function startGateway() {
         isReady: channel => channels[channel]?.connection === 'open',
         onError: (error) => logError.error(`Replay durable falló (${safeErrorLabel(error)}); queda pendiente.`)
     });
+    telegramAdminInboxPump = require('./services/conversations/telegramAdminInbox').createTelegramAdminInboxPump({
+        archive: conversationArchive,
+        dispatch: message => handleIncomingMessage(message),
+        isReady: channel => channels[channel]?.connection === 'open',
+        onError: error => logError.error(`Comando Telegram quedó con resultado incierto (${safeErrorLabel(error)}); no se repetirá automáticamente.`),
+        onUncertain: count => logError.error(`Telegram conserva ${count} comando(s) administrativo(s) con resultado incierto; revisar antes de repetirlos.`)
+    });
 
     telegram.on('ready', () => {
         log.info('👑 ADMIN TG DETECTADO.');
     });
 
     telegram.on('message', stdMsg => {
-        // ÚNICO dueño de getUpdates: este adaptador. Todo (comandos del admin
-        // y conversaciones) entra al pipeline; messageHandler trata el chat
-        // del admin de Telegram como self-chat (mismas reglas que WhatsApp).
+        // ÚNICO dueño de getUpdates. Los mensajes de clientes usan el replay
+        // durable; el texto administrativo se procesa desde su inbox SQLite.
         if (stdMsg.archiveMessageId) { void legacyDispatchPump.trigger(); return; }
         void handleIncomingMessage(stdMsg).catch(error => logError.error(`Mensaje Telegram no procesado (${safeErrorLabel(error)}).`));
     });
+    telegram.on('admin_inbox_pending', () => { void telegramAdminInboxPump.trigger(); });
     
     telegram.on('connection', ({ status, detail }) => {
         channels.telegram.connection = status;
@@ -267,6 +276,7 @@ async function startGateway() {
         if (status === 'open') {
             channels.telegram.lastConnectAt = new Date().toISOString();
             void legacyDispatchPump.trigger();
+            void telegramAdminInboxPump.trigger();
         }
     });
 
@@ -377,7 +387,7 @@ async function handleExit(exitCode = 0) {
         await adapter.disconnect().catch(() => {});
     }
     if (!isWiping()) flushToDisk();
-    try { await legacyDispatchPump?.close(); await archiveRetention?.close(); await attachmentStore?.close(); await conversationArchive?.close(); } catch { /* exit after worker terminates */ }
+    try { await legacyDispatchPump?.close(); await telegramAdminInboxPump?.close(); await archiveRetention?.close(); await attachmentStore?.close(); await conversationArchive?.close(); } catch { /* exit after worker terminates */ }
     process.exit(exitCode);
 }
 

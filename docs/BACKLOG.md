@@ -60,7 +60,7 @@ salvo indicación contraria. La evidencia detallada y líneas están en la basel
 | BUG-043 | P1 | Cerrado F5: una respuesta de formato podía reintentar Markdown con el token mutable y enviar al bot reemplazante. | TelegramAdapter captura token, accountId, adminChatId y generación por envío; reintenta solo si esa misma sesión sigue activa. La aceptación tardía se archiva con la cuenta de origen. | Pruebas con transporte controlado rotan A→B antes del 400 y confirman `TG_CONNECTION_CHANGED` sin segundo POST; una aceptación tardía queda archivada en A aunque B cambie también el chat admin. `gateway npm run check`: lint, typecheck, 13 pruebas Vitest, build y 271 pruebas Node. Commit `8a84f8c`; regresiones en `gateway/tests/telegramCapture.test.js`. |
 | BUG-044 | P2 | Cerrado F2C.2: descarga Telegram de audio usaba arrayBuffer completo sin límite propio. | Descarga ahora lee por stream, corta al superar STT_MAX_UPLOAD_BYTES y marca failed el mismo mensaje; audio excesivo no invoca STT. | Regresión de stream sobre el límite, estado durable y cero llamadas STT; [TELEGRAM-CAPTURA-F2C2](TELEGRAM-CAPTURA-F2C2.md). |
 | BUG-045 | P1 | Cerrado F2D: el mensaje podía quedar archivado con cursor avanzado y no llegar al pipeline legacy si el proceso caía entre commit y emisión. | SQLite v3 inserta `legacy_dispatch` en la transacción de captura. El pump reanuda pendientes al abrir el canal; la rama respond mantiene pendiente el ACK hasta completar debounce/IA. | Prueba cierra proceso después del commit y antes del wake, reinicia, entrega una vez, persiste ACK y no redespacha tras otra reapertura. Error de handler queda pendiente con backoff. Evidencia: [REPLAY-LEGACY-F2D](REPLAY-LEGACY-F2D.md). At-least-once ante efectos/ACK ambiguos queda BUG-050. |
-| BUG-046 | P1 | Abierto: un update del chat admin no se archiva y confirma el cursor antes de ejecutar su comando heredado; una caída en esa ventana puede perder el comando. | `captureTelegramBatch` adelanta el cursor para update administrativo y el adapter emite el comando después del commit. A diferencia del mensaje cliente, no queda una fila de conversación para replay. | F5 antes de garantizar control por chat: inbox durable de comandos con identidad de update e idempotencia/resultado; probar reinicio antes y después del efecto, sin repetir mutaciones. |
+| BUG-046 | P1 | Cerrado F2C.3: el cursor del chat admin podía avanzar antes de que el comando llegara al pipeline, perdiéndolo ante una caída. | SQLite v15 guarda texto admin normalizado y cursor en la misma transacción; el pump reclama por cuenta/update antes del pipeline, persiste resultado y marca `processing` como `uncertain` al reiniciar, sin repetir efectos. El historial de clientes sigue separado. | Pruebas de reinicio antes del reclamo y tras efecto/antes del ACK, conflicto de identidad y rollback atómico. No es exactly-once: un claim incierto puede requerir revisión manual. [Evidencia](BUG-046-TELEGRAM-ADMIN-INBOX.md). |
 | BUG-047 | P1 | Cerrado F2C.2: el adapter podía ejecutar dos veces un comando admin si recibía de nuevo un `update_id` ya confirmado. | La rama admin emitía aunque el archivo devolviera `stale`, mientras los mensajes cliente sí se filtraban por resultado. Regresión vuelve a entregar el mismo update tras el commit. | Solo se ejecutan comandos admin para updates no stale; repetición deja un único despacho. Evidencia en [TELEGRAM-CAPTURA-F2C2](TELEGRAM-CAPTURA-F2C2.md). El inbox durable/crash gap sigue en BUG-046. |
 | BUG-050 | P1 | Cerrado F5.6: el replay podía repetir una salida si el proceso caía antes del ACK durable. | `SendMessage` guarda intent y clave en SQLite antes de red. Aceptados no vuelven a llamar al proveedor; `sending` tras reinicio pasa a `delivery_unknown`, que exige conciliación. Campañas viejas sin recibo se pausan. | Transportes falsos cubren timeout, respuesta aceptada, ACK/reinicio, dos claims concurrentes y clave con payload distinto. No es exactly-once del proveedor: su API no admite clave de idempotencia; ambigüedad queda explícita, sin reenvío ciego. [F5.6](F5.6-OUTBOX.md). |
 | BUG-051 | P2 | Abierto: filas de mensajes creadas antes de SQLite v3 no tienen recibo de entrega y no se pueden reencolar con seguridad. | La migración v2→v3 crea outbox vacío; el archivo no registra si el handler legacy ya vio cada mensaje antiguo. Reproducir todo puede duplicar conversaciones/respuestas. | Antes de desplegar sobre un archivo real: reporte de candidatos y reconciliación revisable que determine pendientes sin repetir efectos; fixture pre-v3 probado sin auto-replay ciego. No bloquea este repo mientras no migre archivos reales. |
@@ -107,7 +107,7 @@ salvo indicación contraria. La evidencia detallada y líneas están en la basel
 - Antes de implementar contactos con operadores limitados, cerrar BUG-024 o dejar
   explícito que el primer alcance de F7 sigue siendo solo administrador.
 - Antes de declarar paridad de comandos Telegram, resolver BUG-008 (resolución
-  exacta en el camino legacy) y BUG-046 (inbox durable de comandos). BUG-010 y
+  exacta en el camino legacy); BUG-046 ya se cerró en F2C.3. BUG-010 y
   BUG-011 también requieren aceptación explícita si esos caminos legacy se conservan.
 - La tarea de pairing de canales debe cubrir BUG-035; no agregar reintentos
   automáticos al test de token mientras BUG-072 siga abierto. BUG-075 entra en F7
@@ -130,8 +130,8 @@ F2C.1 cierra BUG-004/038/039/040/041/042. Evidencia en
 BUG-005/009/044/047 y la porción de archivo Telegram de BUG-008; BUG-008 conserva
 la resolución legacy. F2D cierra BUG-045 para captura→handler. F2E.1 cierra
 BUG-052/053/054 para respuestas aceptadas/eco; F2E.2 cierra BUG-055 y acota el log
-reciente; F3 debe detectar cursores expirados; BUG-046/F5 mantiene
-el inbox admin. BUG-043 está cerrado; BUG-050 sigue P1/F5; BUG-051 es puerta antes de migrar
+reciente; F3 debe detectar cursores expirados; BUG-046 ya está cerrado en F2C.3.
+BUG-043 está cerrado; BUG-050 sigue P1/F5; BUG-051 es puerta antes de migrar
 un archivo preexistente. BUG-010 sigue parcial.
 F2B.3 conserva BUG-033/034/036 cerrados y BUG-037 P2/F8 antes de STT real.
 BUG-035 pairing queda F8; F3.1 cierra BUG-056/057. BUG-024 sigue antes de
@@ -164,7 +164,8 @@ archivos runtime.
 
 - **BUG-047 — F2C.2:** una redelivery stale del chat admin ya no reejecuta el
   comando heredado; la regresión vuelve a entregar el mismo update tras el commit y
-  confirma un único despacho. No cierra el inbox durable de BUG-046.
+  confirma un único despacho. BUG-046 cierra después el crash gap con el inbox
+  separado de [F2C.3](BUG-046-TELEGRAM-ADMIN-INBOX.md).
 
 - **BUG-033/034/036 — F2B.3:** actualizaciones durables de STT, captions por tipo
   y trabajos acotados. Reproducción anterior, 218 tests gateway/15 contratos en

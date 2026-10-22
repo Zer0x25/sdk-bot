@@ -185,7 +185,7 @@ test('TelegramAdapter sin token arranca en standby con motivo sin_token y recone
     assert.strictEqual(adapter.pollGeneration, 2);
 });
 
-test('TelegramAdapter es el único dueño de getUpdates y emite el mensaje del admin', async () => {
+test('TelegramAdapter confirma el admin en el inbox y no lo entrega por EventEmitter', async () => {
     // Config con token+chatId; el update llega del chat admin
     saveSettingsDB({ globalMode: 'ignored_all', telegramToken: 'mockTok', telegramChatId: '555' });
     const TelegramAdapter = require('../adapters/telegramAdapter');
@@ -195,6 +195,8 @@ test('TelegramAdapter es el único dueño de getUpdates y emite el mensaje del a
     /** @type {any[]} */
     const seen = [];
     adapter.on('message', m => seen.push(m));
+    let inboxWakeups = 0;
+    adapter.on('admin_inbox_pending', () => { inboxWakeups += 1; });
 
     // Mock: https.get SOLO lo usa getUpdates en el adaptador; la primera
     // llamada entrega un update del admin, las siguientes quedan vacías.
@@ -236,7 +238,7 @@ test('TelegramAdapter es el único dueño de getUpdates y emite el mensaje del a
     try {
         await adapter.connect();
         const deadline = Date.now() + 2000;
-        while (seen.length === 0 && Date.now() < deadline) {
+        while (inboxWakeups === 0 && Date.now() < deadline) {
             await new Promise(r => setTimeout(r, 10));
         }
     } finally {
@@ -245,11 +247,8 @@ test('TelegramAdapter es el único dueño de getUpdates y emite el mensaje del a
         https.request = originalRequest;
     }
 
-    assert.strictEqual(seen.length, 1, 'un solo StandardMessage emitido');
-    assert.strictEqual(seen[0].channel, 'telegram');
-    assert.strictEqual(seen[0].remoteId, 'telegram:555');
-    assert.strictEqual(seen[0].text, '/estado');
-    assert.strictEqual(seen[0].metadata.isAdminChannel, true);
+    assert.strictEqual(seen.length, 0, 'el admin solo se despacha desde el inbox durable');
+    assert.strictEqual(inboxWakeups, 1, 'el adapter despierta al pump después del commit');
 
     // Un único loop: offsets consecutivos sobre la MISMA fuente de updates
     const gu = gets.filter(p => p.includes('getUpdates'));

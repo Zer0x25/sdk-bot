@@ -64,6 +64,7 @@ function safeSummary(checkpoint) {
         attachmentBlobsValid: checkpoint.attachmentBlobs.valid,
         searchIndexCount: checkpoint.searchIndexCount, searchIndexMismatchCount: checkpoint.searchIndexMismatchCount,
         assistantToolInvocationCount: checkpoint.assistantToolInvocationCount,
+        telegramAdminInboxCount: checkpoint.telegramAdminInboxCount,
         unresolvedOutboundCount: checkpoint.unresolvedOutboundCount,
         integrity: checkpoint.integrity, foreignKeys: checkpoint.foreignKeys };
 }
@@ -99,6 +100,10 @@ function compare(source, candidate) {
     if (source.assistantToolInvocationCount !== candidate.assistantToolInvocationCount
         || source.assistantToolInvocationSha256 !== candidate.assistantToolInvocationSha256) {
         blockers.push('ASSISTANT_TOOL_AUDIT_MISMATCH');
+    }
+    if (source.telegramAdminInboxCount !== candidate.telegramAdminInboxCount
+        || source.telegramAdminInboxSha256 !== candidate.telegramAdminInboxSha256) {
+        blockers.push('TELEGRAM_ADMIN_INBOX_MISMATCH');
     }
     if (source.unresolvedOutboundCount > 0 || candidate.unresolvedOutboundCount > 0) {
         blockers.push('UNRESOLVED_OUTBOUND');

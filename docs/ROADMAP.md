@@ -25,6 +25,7 @@ autenticada probados. F2A completada (repositorios del archivo); F2B.1 cierra la
 F2B.2 conecta captura base WA y F2B.3 completa enriquecimiento multimedia durable.
 F2C.1 completa dueño único del polling/descubrimiento Telegram.
 F2C.2 completa la captura base TG con cursor durable y namespace exacto.
+F2C.3 cierra el inbox durable de updates administrativos (BUG-046).
 F2D completa replay durable hasta el handler tras el commit (BUG-045). F2E.1 ya
 registra salidas aceptadas y deduplica ecos WA; conserva autoría external_self.
 F2E.2 cierra la carga sintética completa y F3.1 implementa la API autenticada de
@@ -161,6 +162,13 @@ abort físico queda como puerta de aceptación STT real F8, sin prometerlo aquí
   distintos no colisiona y el STT de audio actualiza el mismo mensaje. Cierra
   BUG-005/009/044/047 y la parte de archivo TG de BUG-008; BUG-008 conserva su alcance
   legacy de resolución por dígitos. [Evidencia](TELEGRAM-CAPTURA-F2C2.md).
+- [x] F2C.3 Inbox administrativo Telegram (BUG-046): el mensaje normalizado y el
+  cursor se guardan juntos en SQLite v15; el pump reclama por cuenta/update antes
+  del pipeline, guarda resultado idempotente y convierte claims interrumpidos en
+  `uncertain` sin replay ciego. Los textos terminales se eliminan y los recibos
+  vencen a 180 días. El restore-check compara el digest del inbox. No se crea
+  historial de clientes ni se promete exactly-once de efectos legacy. Evidencia:
+  [BUG-046](BUG-046-TELEGRAM-ADMIN-INBOX.md).
 - [x] F2D Replay durable de mensajes archivados tras reinicio (BUG-045): outbox
   SQLite v3 en la misma transacción que captura/cursor, reanudación cuando el canal
   está conectado, ACK persistente y espera STT. Prueba cae entre commit y wake,
@@ -169,8 +177,8 @@ abort físico queda como puerta de aceptación STT real F8, sin prometerlo aquí
   pre-v3 (BUG-051). [Evidencia](REPLAY-LEGACY-F2D.md).
 - [x] Persistir entrada live aunque IA esté pausada, ignorando o en handoff/human;
   WA F2B.2 y TG F2C.2 archivan antes del pipeline. Chats administrativos/grupos
-  quedan fuera del archivo de clientes. Cobertura en CAPTURA-WHATSAPP-F2B2 y
-  TELEGRAM-CAPTURA-F2C2.
+  quedan fuera del archivo de clientes; los textos admin usan el inbox separado
+  de F2C.3. Cobertura en CAPTURA-WHATSAPP-F2B2, TELEGRAM-CAPTURA-F2C2 y BUG-046.
 - [x] F2E.1 Registrar salidas WA/TG aceptadas y deduplicar eco WA por ID de
   proveedor; conservar `external_self` mientras no haya origen correlacionado.
   HTTP 200 `{ok:false}` no se considera envío. [Evidencia](SALIDAS-ACEPTADAS-F2E1.md).

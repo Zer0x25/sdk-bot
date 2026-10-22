@@ -53,3 +53,8 @@ conexión, reintento de handler, ACK diferido de debounce/IA, espera/promoción 
 descarte de transcripción y migración v2→v3 sin auto-replay histórico. Las pruebas
 Telegram y WhatsApp también cubren que solo el ingreso live elegible cree filas
 outbox, y que history, duplicates y oversized no habiliten automatización.
+
+El replay F2D cubre ingresos que forman parte del historial de clientes. El chat
+administrativo Telegram usa el inbox separado de F2C.3 y su semántica conservadora
+de reclamo/resultado incierto; no se mezcla con `legacy_dispatch`. Véase
+[BUG-046](BUG-046-TELEGRAM-ADMIN-INBOX.md).

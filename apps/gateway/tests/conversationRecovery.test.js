@@ -10,6 +10,7 @@ const { DatabaseSync } = require('node:sqlite');
 const { createArchive } = require('../services/conversations');
 const { createAttachmentStore } = require('../services/conversations/attachments');
 const { buildControlImportReport } = require('../services/conversations/controlImport');
+const { normalizeUpdates } = require('../services/conversations/telegramCapture');
 
 const destination = '15551234567@s.whatsapp.net';
 const scriptPath = path.join(__dirname, '../scripts/restore-promotion-check.js');
@@ -200,6 +201,32 @@ test('restore gate detects assistant tool audit changes without exposing the aud
     assert.ok(gate.result.blockers.includes('ASSISTANT_TOOL_AUDIT_MISMATCH'));
     assert.equal(gate.result.source.assistantToolInvocationCount, 1);
     assert.equal('assistantToolInvocationSha256' in gate.result.source, false);
+});
+
+test('BUG-046: restore gate detects admin inbox changes without exposing their digest', async t => {
+    const dir = await fs.mkdtemp(path.join(os.tmpdir(), 'sdkbot-tg-admin-restore-'));
+    const sourcePath = path.join(dir, 'active.db');
+    const snapshotPath = path.join(dir, 'snapshot.db');
+    const lockPath = path.join(dir, 'gateway.lock');
+    const archive = createArchive({ path: sourcePath });
+    t.after(async () => { await archive.close().catch(() => {}); await fs.rm(dir, { recursive: true, force: true }); });
+    await archive.ready;
+    const account = await archive.registerAccount({ channel: 'telegram', providerKey: 'telegram_bot:restore-fixture' });
+    const before = await archive.snapshot();
+    await archive.backup(snapshotPath);
+    const update = normalizeUpdates([{ update_id: '901', message: { message_id: '902', date: 1792368000,
+        text: '/permitir 700', chat: { id: '-55', type: 'private' }, from: { first_name: 'Admin' } } }], account.id, '-55')[0];
+    await archive.captureTelegramBatch({ accountId: account.id, updates: [
+        { updateId: update.updateId, message: null, edit: null, adminInbox: update.adminInbox }
+    ] });
+    assert.deepEqual(await archive.snapshot(), before, 'admin inbox receipts do not fabricate conversation events');
+    await archive.close();
+
+    const gate = runGate(sourcePath, snapshotPath, lockPath);
+    assert.equal(gate.exitCode, 2);
+    assert.ok(gate.result.blockers.includes('TELEGRAM_ADMIN_INBOX_MISMATCH'));
+    assert.equal(gate.result.source.telegramAdminInboxCount, 1);
+    assert.equal('telegramAdminInboxSha256' in gate.result.source, false);
 });
 
 test('restore gate detects attachment metadata purges that do not advance the event cursor', async t => {

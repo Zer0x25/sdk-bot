@@ -45,7 +45,7 @@ async function fixture(t, options = {}) {
 
 test('attachment metadata, private file permissions and authorized streamed download', async t => {
     const { dir, archive, store, accountId } = await fixture(t);
-    assert.equal((await archive.ready).schemaVersion, 14);
+    assert.equal((await archive.ready).schemaVersion, 15);
     const [captured] = await archive.ingestBatch([mediaMessage(accountId)]);
     const bytes = Buffer.from('audio fixture payload');
     const saved = await store.store({ messageId: captured.message.id, source: bytes,

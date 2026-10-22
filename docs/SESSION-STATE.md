@@ -1378,3 +1378,20 @@ Cierres históricos: commits F2C.1/F2C.2/F2D/F2E.1 están en el log local; F2B.3
 - F10.3 sigue condicional; no se solicitó habilitar efectos externos. No hay F11 ni
   otro siguiente punto definido en ROADMAP.md; revisar BACKLOG y priorizar con el
   usuario antes de abrir una nueva unidad.
+
+## F2C.3 — Inbox administrativo Telegram (BUG-046) — 2026-10-22
+
+- SQLite v15 guarda el texto admin normalizado y el cursor Telegram en una sola
+  transacción. Un pump reclama por cuenta/update antes del pipeline existente;
+  el texto se elimina al terminar. Al reiniciar, claims `processing` pasan a
+  `uncertain` y no se repiten; una caída entre claim y efecto también requiere
+  revisión manual porque el comando legacy no comparte la transacción SQLite.
+- El historial de clientes sigue separado. Checkpoint/restore compara cantidad y
+  digest del inbox sin revelar el digest; los recibos terminales vencen a 180 días.
+- Evidencia: [BUG-046-TELEGRAM-ADMIN-INBOX](BUG-046-TELEGRAM-ADMIN-INBOX.md).
+- Verificación: contratos raíz 19/19; Gateway lint/typecheck, panel 42/42, build,
+  integración 1/1 y Gateway 366/366; `git diff --check`. Sin Telegram real ni
+  cambios de credenciales/configuración.
+- Commit local de esta unidad; no publicar.
+- Siguiente punto ejecutable del backlog: BUG-035, esperar `connect()` completo y
+  propagar su fallo antes de solicitar código/abrir refresh de pairing.

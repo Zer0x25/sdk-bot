@@ -173,11 +173,12 @@ test('v7 archives migrate to the current schema without altering control authori
         DROP TABLE attachments; DROP INDEX messages_summary_period; DROP TABLE outbound_intents; DROP INDEX messages_ai_context; DROP TABLE message_sequence;
         ALTER TABLE messages DROP COLUMN archive_seq; ALTER TABLE conversations DROP COLUMN context_through_seq;
         ALTER TABLE conversations DROP COLUMN handled_inbound_seq; ALTER TABLE conversations DROP COLUMN resume_after_inbound_seq;
+        DROP TABLE telegram_admin_inbox;
         DROP TABLE assistant_tool_invocations;
         PRAGMA user_version=7;`);
     db.close();
     const archive = await f.reopen();
-    assert.equal((await archive.ready).schemaVersion, 14);
+    assert.equal((await archive.ready).schemaVersion, 15);
     assert.deepEqual(await archive.controlAuthority(), { mode: 'legacy', migrationId: null, serviceReady: false, changedAt: null });
     assert.deepEqual(await archive.outboundIntents(), []);
 });

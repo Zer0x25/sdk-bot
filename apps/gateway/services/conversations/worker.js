@@ -13,6 +13,7 @@ const MAX_ATTACHMENT_BYTES = 16 * 1024 * 1024;
 const ATTACHMENT_RETENTION_MS = 90 * 86400000;
 let db;
 const READ_ONLY_METHODS = new Set(['snapshot','telegramCursor','pendingLegacyDispatches','controlState','controlAuthority','controlImportStatus','controlImportEntries',
+    'pendingTelegramAdminInbox','telegramAdminInboxStatus',
     'controlPolicy','controlOperation','pendingControlOperations','controlTargets','controlByIdentity',
     'pendingResumeMessages','shouldProcessArchivedInbound',
     'outboundIntent','outboundIntents',
@@ -46,6 +47,7 @@ function recoveryCheckpoint() {
     const attachmentDigest = createHash('sha256');
     const searchDigest = createHash('sha256');
     const assistantToolDigest = createHash('sha256');
+    const telegramAdminInboxDigest = createHash('sha256');
     const schemaVersion = one('PRAGMA user_version').user_version;
     let outboundIntentCount = 0;
     let unresolvedOutboundCount = 0;
@@ -53,6 +55,7 @@ function recoveryCheckpoint() {
     let searchIndexCount = 0;
     let searchIndexMismatchCount = 0;
     let assistantToolInvocationCount = 0;
+    let telegramAdminInboxCount = 0;
     // Schema v6 predates the durable outbox; keep it readable so the gate can
     // report the schema mismatch instead of failing before comparing metadata.
     if (schemaVersion >= 7) {
@@ -95,11 +98,20 @@ function recoveryCheckpoint() {
             assistantToolInvocationCount += 1;
         }
     }
+    if (schemaVersion >= 15) {
+        for (const row of db.prepare(`SELECT account_id,update_id,payload,payload_sha256,status,attempt_count,
+            result_code,received_at,updated_at,completed_at FROM telegram_admin_inbox
+            ORDER BY account_id,length(update_id),update_id`).iterate()) {
+            telegramAdminInboxDigest.update(stable(row)).update('\n');
+            telegramAdminInboxCount += 1;
+        }
+    }
     return { ...snapshot(), schemaVersion,
         controlAuthority: controlAuthority(), outboundIntentCount, outboundIntentSha256: digest.digest('hex'),
         unresolvedOutboundCount, attachmentCount, attachmentSha256: attachmentDigest.digest('hex'),
         searchIndexCount, searchIndexSha256: searchDigest.digest('hex'), searchIndexMismatchCount,
         assistantToolInvocationCount, assistantToolInvocationSha256: assistantToolDigest.digest('hex'),
+        telegramAdminInboxCount, telegramAdminInboxSha256: telegramAdminInboxDigest.digest('hex'),
         integrity: one('PRAGMA integrity_check').integrity_check,
         foreignKeys: all('PRAGMA foreign_key_check').length };
 }
@@ -120,7 +132,7 @@ function initialize() {
         // committed WAL records or touching another process's snapshot.
         db = new DatabaseSync(`${pathToFileURL(file).href}?immutable=1`, { readOnly: true });
         const schemaVersion = one('PRAGMA user_version').user_version;
-        if (![6, 7, 8, 9, 10, 11, 12, 13, 14].includes(schemaVersion)) fail('SCHEMA_VERSION_REQUIRED');
+        if (![6, 7, 8, 9, 10, 11, 12, 13, 14, 15].includes(schemaVersion)) fail('SCHEMA_VERSION_REQUIRED');
         if (one("SELECT migration_id FROM control_import_migrations WHERE status IN ('cutover_applying','rolling_back') LIMIT 1")) {
             fail('CONTROL_CUTOVER_RECOVERY_REQUIRED');
         }
@@ -140,7 +152,7 @@ function initialize() {
     // SQLite owns the OS lock for the full connection lifetime; crash releases it.
     db.exec('BEGIN IMMEDIATE; COMMIT;');
     const version = one('PRAGMA user_version').user_version;
-    if (version > 14) fail('SCHEMA_TOO_NEW');
+    if (version > 15) fail('SCHEMA_TOO_NEW');
     if (version === 0) transaction(() => {
         db.exec(schema);
         run('INSERT INTO archive_meta VALUES(1,?,?)', randomUUID(), '0');
@@ -399,6 +411,30 @@ function initialize() {
         CREATE INDEX assistant_tool_invocations_conversation ON assistant_tool_invocations(conversation_id,created_at,invocation_key);
         PRAGMA user_version=14;`);
     });
+    if (one('PRAGMA user_version').user_version === 14) transaction(() => {
+        db.exec(`CREATE TABLE telegram_admin_inbox (
+            account_id TEXT NOT NULL REFERENCES accounts(id) ON DELETE CASCADE,
+            update_id TEXT NOT NULL CHECK(length(update_id) BETWEEN 1 AND 20 AND update_id NOT GLOB '*[^0-9]*'),
+            payload TEXT,
+            payload_sha256 TEXT NOT NULL CHECK(length(payload_sha256)=64 AND payload_sha256 NOT GLOB '*[^a-f0-9]*'),
+            status TEXT NOT NULL CHECK(status IN ('pending','processing','completed','uncertain')),
+            attempt_count INTEGER NOT NULL DEFAULT 0 CHECK(attempt_count>=0),
+            result_code TEXT,
+            received_at TEXT NOT NULL,
+            updated_at TEXT NOT NULL,
+            completed_at TEXT,
+            PRIMARY KEY(account_id,update_id),
+            CHECK((status IN ('pending','processing') AND payload IS NOT NULL) OR
+                (status IN ('completed','uncertain') AND payload IS NULL))
+        );
+        CREATE INDEX telegram_admin_inbox_pending ON telegram_admin_inbox(status,received_at,account_id,update_id);
+        PRAGMA user_version=15;`);
+    });
+    // A process can fail after claiming an admin command and before recording its
+    // result. Never replay that ambiguous effect; preserve only its receipt.
+    run(`UPDATE telegram_admin_inbox SET status='uncertain',payload=NULL,
+        result_code='PROCESS_RESTARTED_DURING_COMMAND',updated_at=?,completed_at=? WHERE status='processing'`,
+    new Date().toISOString(), new Date().toISOString());
     if (one("SELECT id FROM outbound_intents WHERE state='sending' LIMIT 1")) transaction(() => {
         run(`UPDATE outbound_intents SET state='delivery_unknown',error_code='PROCESS_RESTARTED_DURING_SEND',
             updated_at=?,completed_at=? WHERE state='sending'`, new Date().toISOString(), new Date().toISOString());
@@ -420,7 +456,7 @@ function initialize() {
         transaction(() => pending.forEach(row => updateTranscription({ messageId: row.id, expectedStatus: 'pending', status: 'failed' })));
         after = pending[pending.length - 1].id;
     }
-    return { ...snapshot(), schemaVersion: 14, journalMode: one('PRAGMA journal_mode').journal_mode,
+    return { ...snapshot(), schemaVersion: 15, journalMode: one('PRAGMA journal_mode').journal_mode,
         synchronous: one('PRAGMA synchronous').synchronous, threadId: require('node:worker_threads').threadId };
 }
 function registerAccount(input) {
@@ -447,6 +483,35 @@ function canonicalUpdateId(value) {
     if (BigInt(value) > 18446744073709551615n) fail('INVALID_TELEGRAM_UPDATE_ID');
     return value;
 }
+function captureTelegramAdminMessage(accountId, updateId, input) {
+    if (!input || typeof input !== 'object' || Array.isArray(input)) fail('INVALID_TELEGRAM_ADMIN_MESSAGE');
+    const chatId = input.chatId;
+    const messageId = input.providerMessageId;
+    const message = input.message;
+    if (typeof chatId !== 'string' || !/^-?(0|[1-9]\d{0,19})$/.test(chatId) || chatId === '-0'
+        || BigInt(chatId.startsWith('-') ? chatId.slice(1) : chatId) > 18446744073709551615n
+        || typeof messageId !== 'string' || !/^(0|[1-9]\d{0,19})$/.test(messageId)
+        || BigInt(messageId) > 18446744073709551615n
+        || typeof input.occurredAt !== 'string' || !message || typeof message !== 'object' || Array.isArray(message)
+        || message.channel !== 'telegram' || message.remoteId !== `telegram:${chatId}` || message.rawId !== chatId
+        || typeof message.text !== 'string' || !message.text.length || !message.text.isWellFormed()
+        || Buffer.byteLength(message.text) > 65536 || !message.metadata || message.metadata.isAdminChannel !== true) {
+        fail('INVALID_TELEGRAM_ADMIN_MESSAGE');
+    }
+    assertValid('Timestamp', input.occurredAt);
+    const payload = stable(message);
+    const fingerprint = createHash('sha256').update(payload).digest('hex');
+    const existing = one('SELECT payload_sha256,status,result_code FROM telegram_admin_inbox WHERE account_id=? AND update_id=?', accountId, updateId);
+    if (existing) {
+        if (existing.payload_sha256 !== fingerprint) fail('TELEGRAM_ADMIN_IDENTITY_CONFLICT');
+        return { status: 'existing', resultCode: existing.result_code ?? null };
+    }
+    const now = new Date().toISOString();
+    run(`INSERT INTO telegram_admin_inbox(account_id,update_id,payload,payload_sha256,status,attempt_count,
+        result_code,received_at,updated_at,completed_at) VALUES(?,?,?,?,'pending',0,NULL,?,?,NULL)`,
+    accountId, updateId, payload, fingerprint, input.occurredAt, now);
+    return { status: 'queued', resultCode: null };
+}
 function captureTelegramBatch(input) {
     assertValid('Id', input.accountId);
     if (!Array.isArray(input.updates) || input.updates.length > 100) fail('INVALID_TELEGRAM_BATCH');
@@ -471,6 +536,9 @@ function captureTelegramBatch(input) {
                 || edit.identity?.kind !== 'telegram_chat_id' || !edit.providerMessageId) fail('INVALID_TELEGRAM_EDIT');
             const result = editProviderMessage(edit);
             results.push({ updateId, status: result.status === 'missing' ? 'excluded' : result.status, result });
+        } else if (update.adminInbox !== undefined && update.adminInbox !== null) {
+            const result = captureTelegramAdminMessage(input.accountId, updateId, update.adminInbox);
+            results.push({ updateId, status: 'admin_queued', result });
         } else if (update.message !== null) {
             const message = update.message;
             if (message.identity?.accountId !== input.accountId || message.identity?.channel !== 'telegram'
@@ -488,6 +556,48 @@ function captureTelegramBatch(input) {
     }
     pruneRetainedEvents();
     return { lastUpdateId: cursor, results };
+}
+function pendingTelegramAdminInbox(input = {}) {
+    const limit = input.limit ?? 100;
+    if (!Number.isInteger(limit) || limit < 1 || limit > 1000) fail('INVALID_LIMIT');
+    if (one('PRAGMA user_version').user_version < 15) return [];
+    return all(`SELECT account_id,update_id,payload_sha256,attempt_count,received_at
+        FROM telegram_admin_inbox WHERE status='pending' ORDER BY received_at,account_id,length(update_id),update_id LIMIT ?`, limit)
+        .map(row => ({ accountId: row.account_id, updateId: row.update_id,
+            idempotencyKey: `telegram:${row.account_id}:${row.update_id}`, fingerprint: row.payload_sha256,
+            attemptCount: row.attempt_count, receivedAt: row.received_at }));
+}
+function telegramAdminInboxStatus() {
+    if (one('PRAGMA user_version').user_version < 15) return { pending: 0, processing: 0, completed: 0, uncertain: 0 };
+    const counts = Object.fromEntries(all('SELECT status,COUNT(*) count FROM telegram_admin_inbox GROUP BY status')
+        .map(row => [row.status, row.count]));
+    return { pending: counts.pending ?? 0, processing: counts.processing ?? 0,
+        completed: counts.completed ?? 0, uncertain: counts.uncertain ?? 0 };
+}
+function claimTelegramAdminInbox(input) {
+    assertValid('Id', input?.accountId);
+    const updateId = canonicalUpdateId(input?.updateId);
+    const now = new Date().toISOString();
+    const changed = run(`UPDATE telegram_admin_inbox SET status='processing',attempt_count=attempt_count+1,
+        updated_at=?,result_code=NULL WHERE account_id=? AND update_id=? AND status='pending'`,
+    now, input.accountId, updateId).changes;
+    const row = one('SELECT status,payload,attempt_count FROM telegram_admin_inbox WHERE account_id=? AND update_id=?',
+        input.accountId, updateId);
+    if (!row) return { status: 'missing' };
+    if (!changed) return { status: row.status };
+    return { status: 'claimed', message: JSON.parse(row.payload), attemptCount: row.attempt_count };
+}
+function finishTelegramAdminInbox(input) {
+    assertValid('Id', input?.accountId);
+    const updateId = canonicalUpdateId(input?.updateId);
+    const status = input.status === 'completed' ? 'completed' : input.status === 'uncertain' ? 'uncertain' : null;
+    if (!status || typeof input.resultCode !== 'string' || !/^[A-Z0-9_]{1,64}$/.test(input.resultCode)) fail('INVALID_TELEGRAM_ADMIN_RESULT');
+    const now = new Date().toISOString();
+    const changed = run(`UPDATE telegram_admin_inbox SET status=?,payload=NULL,result_code=?,updated_at=?,completed_at=?
+        WHERE account_id=? AND update_id=? AND status='processing'`, status, input.resultCode, now, now,
+    input.accountId, updateId).changes;
+    return { status: changed ? status : one('SELECT status FROM telegram_admin_inbox WHERE account_id=? AND update_id=?',
+        input.accountId, updateId)?.status ?? 'missing' };
 }
 function lookup(key) {
     assertValid('IdentityKey', key);
@@ -1604,7 +1714,7 @@ function beginControlImport(input) {
     const report = input.report;
     if (!report || report.schemaVersion !== 1 || report.dryRun !== true || !Array.isArray(report.entries)
         || !Array.isArray(report.blockers) || typeof report.cutoverAllowed !== 'boolean') fail('INVALID_IMPORT_REPORT');
-    if (![6, 7, 8, 9, 10, 11, 12, 13, 14].includes(report.sourceManifest?.archive?.schemaVersion) || typeof report.sourceManifest.archive.dataEpoch !== 'string'
+    if (![6, 7, 8, 9, 10, 11, 12, 13, 14, 15].includes(report.sourceManifest?.archive?.schemaVersion) || typeof report.sourceManifest.archive.dataEpoch !== 'string'
         || !/^(0|[1-9][0-9]*)$/.test(report.sourceManifest.archive.seq || '')) fail('INVALID_IMPORT_SNAPSHOT');
     const currentSnapshot = snapshot();
     if (report.sourceManifest.archive.dataEpoch !== currentSnapshot.dataEpoch || report.sourceManifest.archive.seq !== currentSnapshot.seq) {
@@ -2387,8 +2497,12 @@ function purge(input) {
     const fingerprints = run('DELETE FROM fingerprints WHERE rowid IN (SELECT rowid FROM fingerprints WHERE ingested_at<? LIMIT ?)', cutoff(180), limit).changes;
     const assistantToolInvocations = run(`DELETE FROM assistant_tool_invocations WHERE invocation_key IN
         (SELECT invocation_key FROM assistant_tool_invocations WHERE created_at<? LIMIT ?)`, cutoff(180), limit).changes;
-    return { bodies, events, fingerprints, assistantToolInvocations,
-        remaining: bodies === limit || events === limit || fingerprints === limit || assistantToolInvocations === limit };
+    const telegramAdminInbox = run(`DELETE FROM telegram_admin_inbox WHERE rowid IN
+        (SELECT rowid FROM telegram_admin_inbox WHERE status IN ('completed','uncertain') AND received_at<? LIMIT ?)`,
+    cutoff(180), limit).changes;
+    return { bodies, events, fingerprints, assistantToolInvocations, telegramAdminInbox,
+        remaining: bodies === limit || events === limit || fingerprints === limit
+            || assistantToolInvocations === limit || telegramAdminInbox === limit };
 }
 function eventPage(input) {
     const after = input.after ?? '0';
@@ -2419,6 +2533,10 @@ function dispatch(method, input) {
             if (!input || !Array.isArray(input.updates) || !input.updates.length) fail('INVALID_TELEGRAM_BATCH');
             return transaction(() => captureTelegramBatch(input));
         }
+        case 'pendingTelegramAdminInbox': return pendingTelegramAdminInbox(input ?? {});
+        case 'telegramAdminInboxStatus': return telegramAdminInboxStatus();
+        case 'claimTelegramAdminInbox': return transaction(() => claimTelegramAdminInbox(input));
+        case 'finishTelegramAdminInbox': return transaction(() => finishTelegramAdminInbox(input));
         case 'resolve': return transaction(() => resolve(input));
         case 'bindAlias': return transaction(() => bindAlias(input));
         case 'ingestBatch': {
@@ -2504,6 +2622,7 @@ function dispatch(method, input) {
             aliases: one('SELECT COUNT(*) n FROM aliases').n, provenance: one('SELECT COUNT(*) n FROM provenance').n,
             legacyDispatchPending: one("SELECT COUNT(*) n FROM legacy_dispatch WHERE status='pending'").n,
             legacyDispatchWaiting: one("SELECT COUNT(*) n FROM legacy_dispatch WHERE status='waiting'").n,
+            telegramAdminInbox: telegramAdminInboxStatus(),
             integrity: one('PRAGMA integrity_check').integrity_check, foreignKeys: all('PRAGMA foreign_key_check').length };
         case 'recoveryCheckpoint': return recoveryCheckpoint();
         case 'backup': {

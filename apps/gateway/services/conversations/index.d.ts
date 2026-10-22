@@ -28,6 +28,16 @@ export interface PendingLegacyDispatch {
     attempts: number;
     lastError: string | null;
 }
+export interface TelegramAdminInboxMessage {
+    channel: 'telegram'; remoteId: string; rawId: string; text: string;
+    metadata: { pushName: string; savedName: null; phoneNumber: null; lid: string;
+        isBusiness: false; country: string; isFromMe: false; isAdminChannel: true };
+}
+export interface PendingTelegramAdminInbox {
+    accountId: string; updateId: string; idempotencyKey: string; fingerprint: string;
+    attemptCount: number; receivedAt: string;
+}
+export interface TelegramAdminInboxStatus { pending: number; processing: number; completed: number; uncertain: number; }
 export interface PendingResumeMessages extends Contract<'PendingResumeResponse'> {}
 export type IngestResult =
     | { status: 'created'; message: Contract<'Message'>; event: Contract<'Event'> }
@@ -91,10 +101,12 @@ export interface Archive {
         attachmentCount: number; attachmentSha256: string;
         searchIndexCount: number; searchIndexSha256: string; searchIndexMismatchCount: number;
         assistantToolInvocationCount: number; assistantToolInvocationSha256: string;
+        telegramAdminInboxCount: number; telegramAdminInboxSha256: string;
         integrity: string; foreignKeys: number }>;
     registerAccount(input: { id?: string; channel: 'whatsapp' | 'telegram'; providerKey: string }): Promise<{ id: string; channel: string; provider_key: string }>;
     telegramCursor(accountId: string): Promise<string | null>;
     captureTelegramBatch(input: { accountId: string; updates: Array<{ updateId: string; message: ArchiveInput | null;
+        adminInbox?: { chatId: string; providerMessageId: string; occurredAt: string; message: TelegramAdminInboxMessage } | null;
         edit?: { identity: Contract<'IdentityKey'>; providerMessageId: string; content: Contract<'MessageContent'>;
             editedAt: string; replyToProviderMessageId?: string | null; replyPreview?: string } | null }> }): Promise<{
         lastUpdateId: string | null;
@@ -102,6 +114,13 @@ export interface Archive {
             message?: Contract<'Message'>; event?: Contract<'Event'>; replacedAttachmentId?: string | null;
             captureAttachment?: boolean } }>;
     }>;
+    pendingTelegramAdminInbox(input?: { limit?: number }): Promise<PendingTelegramAdminInbox[]>;
+    telegramAdminInboxStatus(): Promise<TelegramAdminInboxStatus>;
+    claimTelegramAdminInbox(input: { accountId: string; updateId: string }): Promise<
+        { status: 'claimed'; message: TelegramAdminInboxMessage; attemptCount: number } |
+        { status: 'pending' | 'processing' | 'completed' | 'uncertain' | 'missing' }>;
+    finishTelegramAdminInbox(input: { accountId: string; updateId: string; status: 'completed' | 'uncertain'; resultCode: string }):
+        Promise<{ status: 'completed' | 'uncertain' | 'pending' | 'processing' | 'missing' }>;
     resolve(identity: Contract<'IdentityKey'>): Promise<ArchiveIdentity>;
     bindAlias(input: { canonical: Contract<'IdentityKey'>; alias: Contract<'IdentityKey'>; evidence: { kind: 'adapter' | 'admin'; reference: string } }): Promise<{ status: 'linked' | 'existing'; identity: ArchiveIdentity } | { status: 'quarantined'; quarantineId: string }>;
     ingestBatch(input: ArchiveInput[]): Promise<IngestResult[]>;
@@ -247,8 +266,10 @@ export interface Archive {
         items: Contract<'Event'>[]; snapshot: Contract<'EventCursor'>; oldestSeq: string | null;
     }>;
     onEvent(listener: (event: Contract<'Event'>) => void): () => void;
-    diagnostics(): Promise<Contract<'EventCursor'> & { messages: number; events: number; quarantine: number; aliases: number; provenance: number; legacyDispatchPending: number; legacyDispatchWaiting: number; integrity: string; foreignKeys: number }>;
-    purge(input?: { now?: string; limit?: number }): Promise<{ bodies: number; events: number; fingerprints: number; remaining: boolean }>;
+    diagnostics(): Promise<Contract<'EventCursor'> & { messages: number; events: number; quarantine: number; aliases: number; provenance: number;
+        legacyDispatchPending: number; legacyDispatchWaiting: number; telegramAdminInbox: TelegramAdminInboxStatus; integrity: string; foreignKeys: number }>;
+    purge(input?: { now?: string; limit?: number }): Promise<{ bodies: number; events: number; fingerprints: number; assistantToolInvocations: number;
+        telegramAdminInbox: number; remaining: boolean }>;
     backup(destination: string): Promise<Contract<'EventCursor'>>;
     close(): Promise<void>;
     queue(): { elements: number; bytes: number };

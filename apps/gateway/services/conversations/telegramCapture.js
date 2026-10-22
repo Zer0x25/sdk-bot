@@ -113,8 +113,15 @@ function normalizeUpdate(update, accountId, adminChatId = '', { includeAudio = f
     if (isAdmin) {
         const content = normalizedContent(message);
         const text = content.type === 'text' ? content.text : content.caption || '';
+        const adminInbox = text && !(content.type === 'audio' && includeAudio) ? { chatId, providerMessageId: messageId, occurredAt,
+            message: { channel: 'telegram', remoteId: `telegram:${chatId}`, rawId: chatId, text,
+                metadata: { pushName: message.from?.username
+                    ? `${message.from?.first_name || 'Desconocido'} (@${message.from.username})`
+                    : message.from?.first_name || 'Desconocido',
+                savedName: null, phoneNumber: null, lid: chatId, isBusiness: false,
+                country: 'Desconocido', isFromMe: false, isAdminChannel: true } } } : null;
         return { updateId, message: null, edit: null, legacy: { message, chatId, text, isAdminChannel: true,
-            audio: content.type === 'audio' } };
+            audio: content.type === 'audio' }, ...(adminInbox ? { adminInbox } : {}) };
     }
     if (chat.type !== 'private') return { updateId, message: null, edit: null, legacy: null };
 
@@ -160,7 +167,9 @@ function createTelegramCapture(archive) {
             return { accountId: account.id, lastUpdateId };
         },
         commitBatch(accountId, updates) {
-            return archive.captureTelegramBatch({ accountId, updates: updates.map(({ updateId, message, edit }) => ({ updateId, message, edit })) });
+            return archive.captureTelegramBatch({ accountId, updates: updates.map(({ updateId, message, edit, adminInbox }) => ({
+                updateId, message, edit, ...(adminInbox ? { adminInbox } : {})
+            })) });
         }
     };
 }
