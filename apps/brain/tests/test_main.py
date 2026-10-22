@@ -10,12 +10,11 @@ import asyncio
 import io
 import logging
 import os
-import shutil
 import sys
-import tempfile
 import time
 from unittest.mock import patch
 
+import pytest
 from fastapi.testclient import TestClient
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
@@ -24,29 +23,42 @@ import main as brain_main
 import memory as M
 import providers
 
-_TEST_STATE_DIR = tempfile.mkdtemp(prefix="sdkbot-brain-main-")
-_TEST_DB_PATH = os.path.join(_TEST_STATE_DIR, "memory.db")
 
-
-def setup_module():
-    """Usa una base de datos SQLite temporal para la suite."""
-    if M._conn is not None:
-        M._conn.close()
-    M._conn = None
-    M._last_generation_compaction_at = 0.0
-    M._generation_checkpoint_pending = False
-    M.DB_PATH = _TEST_DB_PATH
-    try:
-        os.unlink(M.DB_PATH)
-    except OSError:
-        pass
-
-
-def teardown_module():
+def _close_memory_connection():
     if M._conn is not None:
         M._conn.close()
         M._conn = None
-    shutil.rmtree(_TEST_STATE_DIR, ignore_errors=True)
+
+
+@pytest.fixture(autouse=True)
+def isolated_memory_database(tmp_path):
+    """Cada test HTTP obtiene su DB y cierra SQLite antes de borrar tmp_path."""
+    previous_db_path = M.DB_PATH
+    had_db_env = "BRAIN_MEMORY_DB" in os.environ
+    previous_db_env = os.environ.get("BRAIN_MEMORY_DB")
+    _close_memory_connection()
+    test_db_path = str(tmp_path / "memory.db")
+    os.environ["BRAIN_MEMORY_DB"] = test_db_path
+    M.DB_PATH = test_db_path
+    M._writes_since_global_sweep = 0
+    M._last_generation_compaction_at = 0.0
+    M._generation_checkpoint_pending = False
+    try:
+        yield
+    finally:
+        _close_memory_connection()
+        M.DB_PATH = previous_db_path
+        if had_db_env:
+            os.environ["BRAIN_MEMORY_DB"] = previous_db_env
+        else:
+            os.environ.pop("BRAIN_MEMORY_DB", None)
+        M._writes_since_global_sweep = 0
+        M._last_generation_compaction_at = 0.0
+        M._generation_checkpoint_pending = False
+
+
+def test_memory_database_is_scoped_to_current_test_tmp_path(tmp_path):
+    assert M.DB_PATH == str(tmp_path / "memory.db")
 
 
 def test_health_check():

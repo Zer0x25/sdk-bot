@@ -1691,3 +1691,15 @@ Cierres históricos: commits F2C.1/F2C.2/F2D/F2E.1 están en el log local; F2B.3
   Panel 44/44, build y servido 1/1, Gateway 400/400; `git diff --check` limpio.
   La Fase 2 queda cerrada para el perfil probado; no se publicó ni se conectó un
   proveedor real.
+
+## Cierre BUG-014 — Aislamiento de tests Brain — 2026-10-22
+
+- `test_main.py` y `test_memory.py` ahora asignan `memory.db` bajo `tmp_path` por
+  test, cierran la conexión al terminar y restauran `M.DB_PATH`, `BRAIN_MEMORY_DB`
+  y los contadores globales antes de borrar el directorio.
+- Aserciones cubren que cada archivo queda dentro del `tmp_path` del test. Dos
+  procesos simultáneos ejecutando ambos módulos con `--basetemp` independiente
+  pasaron 27/27 cada uno; no compartieron rutas. Entorno Python 3.12.14.
+- Verificación de toda Brain: `venv/bin/ruff check .` limpio y
+  `venv/bin/python -m pytest tests/ -q` pasó 41/41; `git diff --check` limpio.
+  No se tocó la DB runtime ni se llamaron proveedores.

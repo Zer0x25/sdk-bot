@@ -38,7 +38,7 @@ salvo indicación contraria. La evidencia detallada y líneas están en la basel
 | BUG-011 | P2 | **Cerrado:** `/humano` y `/ia` podían perder la elegibilidad previa o no explicar el bloqueo restante. | El control SQLite conserva acceso; el fallback JSON guarda/restaura el estado previo y usa `neutro` si un handoff antiguo no tiene dato válido. Los comandos explican acceso ignorado y `ignored_all`. | Pruebas de ambos comandos con autoridad JSON y SQLite, permiso permitido, ignorado y neutral. Evidencia: [BUG-011](BUG-011-CONTROL-LEGACY.md). |
 | BUG-012 | P2 | Cerrado F5.6: `/notify` usaba el contrato legacy del socket sin clave durable. | El gateway inyecta un `ChannelAdapter`; la ruta conserva jid/mensaje y ahora pasa por `SendMessage`. | Prueba HTTP: rechaza llamadas sin clave, propaga `Idempotency-Key`, política notice y estado outbox aceptado. |
 | BUG-013 | P1 | Cerrado F1B: /history del brain eximía API key aunque contenía contexto privado. | main.require_api_key ya exige credencial; test_main verifica denegación y lectura autorizada. | 401 sin/con clave incorrecta, 200 con correcta; health público. Ver registro de cierre. |
-| BUG-014 | P2 | Tests brain usan un nombre /tmp fijo y no cierran todas las conexiones al sustituirlas; ejecuciones simultáneas pueden interferir. | test_main.setup_module/teardown_module y test_memory._nueva_db. | Antes de paralelizar suites: tmp_path único y cierre explícito; dos ejecuciones no comparten DB. |
+| BUG-014 | P2 | **Cerrado 2026-10-22:** tests Brain compartían almacenamiento por suite y podían dejar una conexión/ruta temporal en estado global. | `test_main` y `test_memory` ahora usan DB por caso, cierran SQLite y restauran `DB_PATH`, `BRAIN_MEMORY_DB` y contadores. | Aserciones fijan cada ruta dentro de `tmp_path`; dos procesos simultáneos pasaron 27/27 cada uno con `--basetemp` independiente; suite Brain 41/41 y Ruff limpio. |
 | BUG-024 | P1 | **Cerrado en F7.3:** grants v1 no limitaban el administrador legacy. | OAuth ahora exige `admin:write` explícito para toda `/api/*` legacy y la UI legacy; una sesión solo lectura conserva `/inbox/*`. `panelBoundary.test.js` demuestra que status/QR/logs/command/reset no llegan al bus sin grant y que el grant abre status/UI. | Aceptación cumplida en F7.3; suites de panel/gateway y contrato. No hay subroles legacy: ese grant equivale a administración completa. |
 | BUG-026 | P1 | Cerrado F2A: reset desde self-chat/panel podía borrar la nueva SQLite sin cerrar su worker. | Hook común prepareFactoryReset; test con DB real comprueba cierre antes de unlink y fallo sin borrado. | Reparado antes de activar archivo; detalle abajo. |
 | BUG-027 | P2 | Cerrado F2A: RPC retenía referencias mutables mientras esperaba readiness, permitiendo cambiar payload después de admisión/presupuesto. | Copia JSON al admitir; regresión muta texto antes del dispatch y confirma contenido original. | Reparado en F2A; no usar objetos del caller como cola durable. |
@@ -296,12 +296,12 @@ SQLite real en F2A; falta captura de aliases live antes de cerrar F2 completa.
   de bundle/navegador; esa integración sigue en F4. Evidencia:
   [CONTRATOS-V1.md](CONTRATOS-V1.md). Commit F1A: `git log --grep=BUG-018`.
 
-BUG-005/009/012/043/044/045/047/050/052/053/054/055 están cerrados. BUG-006/007/008/010/011,
-BUG-014/024/035/037/046/051/071/072 siguen abiertos o parciales según sus puertas. La
-carga F2E.2 ya pasó con el perfil limitado Linux x64 de 2 CPU/4 GiB; no prueba
-hardware físico equivalente ni Windows/Termux. BUG-051 se vuelve puerta antes de
-usar un archivo preexistente real. Checks verdes no demuestran escenarios fuera de
-su alcance.
+BUG-005/009/012/043/044/045/047/050/052/053/054/055 están cerrados. Los pendientes
+activos se limitan a BUG-051 (revisión de un archivo preexistente real), BUG-066 y
+BUG-069 (reconciliación CI/release con GitHub) y BUG-072 (sonda administrativa
+Telegram, no bloqueante para atención al cliente). La carga F2E.2 pasó con el perfil
+limitado Linux x64 de 2 CPU/4 GiB; no prueba hardware físico equivalente ni
+Windows/Termux. Checks verdes no demuestran escenarios fuera de su alcance.
 
 ## Cierre F2E.2 — Repetición bajo 2 CPU/4 GiB — 2026-10-22
 

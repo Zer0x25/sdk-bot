@@ -1,8 +1,8 @@
 """Tests de la memoria persistente SQLite (apps/brain/memory.py, F4-P1/P2).
 
 Ejecutar: python -m pytest tests/ (desde apps/brain/).
-Cada test usa un archivo .db temporal vía BRAIN_MEMORY_DB y resetea la
-conexión global del módulo (nunca toca brain/memory.db del runtime).
+Cada test usa un archivo .db bajo tmp_path y cierra/restaura la conexión global
+del módulo (nunca toca brain/memory.db del runtime).
 """
 import os
 import sys
@@ -23,8 +23,37 @@ def _nueva_db(tmp_path):
     M._writes_since_global_sweep = 0
     M._last_generation_compaction_at = 0.0
     M._generation_checkpoint_pending = False
-    os.environ["BRAIN_MEMORY_DB"] = str(tmp_path / "memoria_test.db")
-    M.DB_PATH = os.environ["BRAIN_MEMORY_DB"]
+    M.DB_PATH = str(tmp_path / "memoria_test.db")
+
+
+@pytest.fixture(autouse=True)
+def close_and_restore_memory_database():
+    """No deja conexiones abiertas ni rutas tmp_path en el estado global/env."""
+    original_db_path = M.DB_PATH
+    had_db_env = "BRAIN_MEMORY_DB" in os.environ
+    original_db_env = os.environ.get("BRAIN_MEMORY_DB")
+    if M._conn is not None:
+        M._conn.close()
+        M._conn = None
+    try:
+        yield
+    finally:
+        if M._conn is not None:
+            M._conn.close()
+            M._conn = None
+        M.DB_PATH = original_db_path
+        if had_db_env:
+            os.environ["BRAIN_MEMORY_DB"] = original_db_env
+        else:
+            os.environ.pop("BRAIN_MEMORY_DB", None)
+        M._writes_since_global_sweep = 0
+        M._last_generation_compaction_at = 0.0
+        M._generation_checkpoint_pending = False
+
+
+def test_database_path_is_scoped_to_tmp_path(tmp_path):
+    _nueva_db(tmp_path)
+    assert M.DB_PATH == str(tmp_path / "memoria_test.db")
 
 
 def test_append_y_get_roundtrip(tmp_path):
