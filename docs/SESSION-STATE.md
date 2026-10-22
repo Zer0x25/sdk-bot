@@ -882,3 +882,20 @@ Cierres históricos: commits F2C.1/F2C.2/F2D/F2E.1 están en el log local; F2B.3
   legacy. BUG-051 bloquea migrar un archivo runtime existente; BUG-071/073/074 y
   BUG-066/069 siguen en sus límites anotados. No se ejecutaron pruebas en esta
   revisión documental.
+
+## Reanudación de F6.4 — 2026-10-22
+
+- En `d7af68b` se inició una instancia local de Brain, Gateway y Panel con listeners
+  loopback. Health checks: HTTP 200; WhatsApp/Telegram `open`; Brain `ok`;
+  `globalMode=ignored_all`; cola pendiente 0. El actor de Panel tuvo solo
+  `conversations:read`. La API mostró 48 conversaciones, 0 no leídas y 4 con
+  `requiresReview`; no se modificaron controles ni se enviaron mensajes.
+- `cd gateway && npm run panel:check`: typecheck pasa, 13 pruebas Vitest pasan,
+  build Vite pasa y `panelWebBuild.test.js` pasa 1/1. `/inbox/` respondió HTTP 200;
+  las cuentas WA y TG reportaron estado `connected`.
+- La inspección visual no se pudo ejecutar porque CUA reportó inventario vacío de
+  aplicaciones y navegadores. El contexto de una generación live no se instrumentó
+  y el smoke de Telegram sigue sin ejecutar. F6.4 no se cierra: falta validar hilo,
+  compositor, controles, teclado y móvil en navegador; registrar el contexto live
+  sin guardar texto privado; y completar el alcance de canal pendiente. La instancia
+  queda disponible en loopback para continuar.
