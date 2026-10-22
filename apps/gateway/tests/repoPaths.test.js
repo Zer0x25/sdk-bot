@@ -4,7 +4,7 @@ const path = require('node:path');
 
 const stateEnvKeys = [
     'SDK_AUTH_DIR', 'SDK_CONTACTS_DB_PATH', 'SDK_SETTINGS_DB_PATH', 'SDK_BROADCAST_DB_PATH',
-    'SDK_CONVERSATIONS_DB_PATH', 'SDK_MESSAGE_QUEUE_PATH', 'BRAIN_MEMORY_DB',
+    'SDK_CONVERSATIONS_DB_PATH', 'SDK_ATTACHMENT_DIR', 'SDK_MESSAGE_QUEUE_PATH', 'BRAIN_MEMORY_DB',
     'SDK_ADMIN_WEB_LOG_GATEWAY', 'SDK_ADMIN_WEB_LOG_BRAIN', 'SDK_GATEWAY_LOCK_PATH', 'SDK_BRAIN_LOCK_PATH'
 ];
 const savedEnv = new Map(stateEnvKeys.map(key => [key, process.env[key]]));
@@ -12,7 +12,7 @@ for (const key of stateEnvKeys) delete process.env[key];
 
 const { REPO_ROOT, GATEWAY_STATE_DIR, BRAIN_STATE_DIR } = require('../lib/repoPaths');
 const { CONTACTS_FILE_PATH, SETTINGS_FILE_PATH } = require('../config');
-const { databasePath } = require('../services/conversations/paths');
+const { databasePath, attachmentDirectory } = require('../services/conversations/paths');
 const { getStatePaths, lockFiles } = require('../services/factoryReset');
 
 after(() => {
@@ -29,6 +29,7 @@ test('apps/gateway resolves existing runtime data and credentials at repository-
     assert.equal(CONTACTS_FILE_PATH, path.join(GATEWAY_STATE_DIR, 'contacts_db.json'));
     assert.equal(SETTINGS_FILE_PATH, path.join(GATEWAY_STATE_DIR, 'settings_db.json'));
     assert.equal(databasePath(), path.join(GATEWAY_STATE_DIR, 'data', 'conversations.db'));
+    assert.equal(attachmentDirectory(), path.join(GATEWAY_STATE_DIR, 'data', 'attachments'));
     assert.deepEqual(lockFiles(), {
         gateway: path.join(GATEWAY_STATE_DIR, '.gateway.lock'),
         brain: path.join(BRAIN_STATE_DIR, '.brain.lock')

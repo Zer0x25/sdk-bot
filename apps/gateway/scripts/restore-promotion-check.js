@@ -46,6 +46,7 @@ async function readCheckpoint(filePath) {
 function safeSummary(checkpoint) {
     return { schemaVersion: checkpoint.schemaVersion, seq: checkpoint.seq,
         outboundIntentCount: checkpoint.outboundIntentCount,
+        attachmentCount: checkpoint.attachmentCount, attachmentSha256: checkpoint.attachmentSha256,
         unresolvedOutboundCount: checkpoint.unresolvedOutboundCount,
         integrity: checkpoint.integrity, foreignKeys: checkpoint.foreignKeys };
 }
@@ -62,6 +63,9 @@ function compare(source, candidate) {
     if (source.outboundIntentCount !== candidate.outboundIntentCount
         || source.outboundIntentSha256 !== candidate.outboundIntentSha256) {
         blockers.push('OUTBOUND_LEDGER_MISMATCH');
+    }
+    if (source.attachmentCount !== candidate.attachmentCount || source.attachmentSha256 !== candidate.attachmentSha256) {
+        blockers.push('ATTACHMENT_LEDGER_MISMATCH');
     }
     if (source.unresolvedOutboundCount > 0 || candidate.unresolvedOutboundCount > 0) {
         blockers.push('UNRESOLVED_OUTBOUND');

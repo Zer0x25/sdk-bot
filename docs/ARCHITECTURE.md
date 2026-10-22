@@ -457,8 +457,10 @@ restaurarse snapshot; después hay que reconciliar/exportar delta o mantener ver
 compatible. No perder mensajes humanos enviados restaurando un backup viejo.
 Backups SQLite consistentes, con manejo correcto WAL/SHM; no copiar WAL aislado.
 
-DB nueva, adjuntos futuros y cursores se agregan a factoryReset.js, .gitignore,
-variables y volúmenes antes de persistirlos. Conservar confirmación destructiva.
+DB nueva, adjuntos y cursores se agregan a factoryReset.js, .gitignore, variables
+y volúmenes antes de persistirlos. `SDK_ATTACHMENT_DIR` apunta al volumen de
+estado; los archivos son privados y factory reset elimina el directorio completo.
+Conservar confirmación destructiva.
 Retención inicial fijada por F0.3: historial 90 días desde ingestedAt; eventos hasta
 50.000 secuencias o 7 días, lo que venza antes; huellas/idempotencia 180 días y
 backups diarios 7 días. Es configurable e independiente de IA. Límites de

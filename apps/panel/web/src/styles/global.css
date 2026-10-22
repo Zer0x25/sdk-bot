@@ -256,6 +256,7 @@ button:focus-visible, a:focus-visible, [tabindex]:focus-visible {
 .is-outbound .message-bubble { border-color: #d3e9dc; border-radius: 14px 14px 4px 14px; background: #eaf6ef; }
 .message-author { margin-bottom: 4px; color: #829087; font-size: 9px; font-weight: 700; }
 .message-bubble > p { margin: 0; color: var(--ink); font-size: 12px; line-height: 1.6; white-space: pre-wrap; overflow-wrap: anywhere; }
+.message-attachment-download { display: inline-block; margin-top: 7px; color: #116d47; font-size: 11px; font-weight: 700; text-decoration: underline; text-underline-offset: 2px; }
 .message-metadata { display: flex; justify-content: flex-end; gap: 7px; margin-top: 4px; color: #8c9a92; font-size: 9px; }
 .thread-message-state { display: flex; max-width: 350px; flex: 1; flex-direction: column; align-items: center; justify-content: center; align-self: center; padding: 24px; color: var(--muted); text-align: center; font-size: 12px; }
 .thread-message-state h3 { margin: 0 0 6px; color: var(--ink); font-size: 14px; }

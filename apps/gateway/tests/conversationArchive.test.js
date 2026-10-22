@@ -67,7 +67,7 @@ test('event retention computes an exact 50,000-event replay window after each co
 test('worker: migration, WAL FULL, transaction, minimal event and durable session watermark after reopen', async t => {
     const { archive, dbPath } = await fixture(t);
     const info = await archive.ready;
-    assert.equal(info.schemaVersion, 11); assert.equal(info.journalMode, 'wal'); assert.equal(info.synchronous, 2);
+    assert.equal(info.schemaVersion, 12); assert.equal(info.journalMode, 'wal'); assert.equal(info.synchronous, 2);
     assert.ok(info.threadId > 0);
     const [created] = await archive.ingestBatch([message()]);
     assertValid('Message', created.message); assertValid('Event', created.event);
@@ -198,7 +198,7 @@ test('F5.1: v4 migration keeps conversations and stages conservative control def
     const archive = createArchive({ path: dbPath });
     t.after(() => archive.close());
     const ready = await archive.ready;
-    assert.equal(ready.schemaVersion, 11);
+    assert.equal(ready.schemaVersion, 12);
     assert.deepEqual(await archive.controlState(conversationId), {
         accessPolicy: 'neutral', automationMode: 'off', lifecycle: 'open', ownerId: null,
         controlVersion: '1', contextVersion: '1', status: 'confirmed', takenAt: null, handoffReason: null,
@@ -512,7 +512,7 @@ test('F6.2 and F7 summary migrations preserve v9 watermarks without replaying ol
     await archive.close();
 
     const db = new DatabaseSync(dbPath);
-    db.exec(`DROP INDEX messages_summary_period; DROP INDEX outbound_intents_summary_period;
+    db.exec(`DROP TABLE attachments; DROP INDEX messages_summary_period; DROP INDEX outbound_intents_summary_period;
         ALTER TABLE conversations DROP COLUMN handled_inbound_seq;
         ALTER TABLE conversations DROP COLUMN resume_after_inbound_seq;
         PRAGMA user_version=9;`);
@@ -520,7 +520,7 @@ test('F6.2 and F7 summary migrations preserve v9 watermarks without replaying ol
 
     const migrated = createArchive({ path: dbPath });
     t.after(() => migrated.close());
-    assert.equal((await migrated.ready).schemaVersion, 11);
+    assert.equal((await migrated.ready).schemaVersion, 12);
     const row = await migrated.conversation(conversationId);
     assert.equal(row.handled_inbound_seq, '1');
     assert.equal(row.resume_after_inbound_seq, '1');

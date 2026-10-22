@@ -79,6 +79,7 @@ services:
       SDK_AUTH_DIR: /var/lib/sdk-bot/auth_info_baileys
       SDK_CONTACTS_DB_PATH: /var/lib/sdk-bot/contacts_db.json
       SDK_CONVERSATIONS_DB_PATH: /var/lib/sdk-bot/conversations.db
+      SDK_ATTACHMENT_DIR: /var/lib/sdk-bot/attachments
       SDK_SETTINGS_DB_PATH: /var/lib/sdk-bot/settings_db.json
       SDK_BROADCAST_DB_PATH: /var/lib/sdk-bot/broadcast_db.json
       SDK_MESSAGE_QUEUE_PATH: /var/lib/sdk-bot/queue/pending_messages.jsonl

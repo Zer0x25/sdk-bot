@@ -36,7 +36,7 @@ Module._load=function(request,parent,isMain){const value=load.apply(this,argumen
     const lock = path.join(dir, 'locks/gateway.lock');
     const env = { ...process.env, NODE_ENV: 'development', NODE_OPTIONS: '--require=' + preload,
         FIXTURE_GATEWAY: gateway, SDK_BOT_TEST: '1', SDK_TEST_LOG_PATH: path.join(dir, 'gateway.log'),
-        SDK_GATEWAY_LOCK_PATH: lock, SDK_CONVERSATIONS_DB_PATH: path.join(dir, 'archive.db'),
+        SDK_GATEWAY_LOCK_PATH: lock, SDK_CONVERSATIONS_DB_PATH: path.join(dir, 'archive.db'), SDK_ATTACHMENT_DIR: path.join(dir, 'attachments'),
         SDK_AUTH_DIR: path.join(dir, 'auth'), SDK_CONTACTS_DB_PATH: contacts, SDK_SETTINGS_DB_PATH: settings,
         SDK_BROADCAST_DB_PATH: path.join(dir, 'broadcast.json'), SDK_MESSAGE_QUEUE_PATH: path.join(dir, 'queue.jsonl'),
         BRAIN_API_BASE: 'http://127.0.0.1:1', BRAIN_API_KEY: 'fixture-brain-key-no-network',
@@ -103,6 +103,7 @@ Module._load=function(request,parent,isMain){const value=load.apply(this,argumen
     const env = { ...process.env, NODE_ENV: 'development', NODE_OPTIONS: '--require=' + preload,
         FIXTURE_GATEWAY: gateway, SDK_BOT_TEST: '1', SDK_TEST_LOG_PATH: path.join(dir, 'gateway.log'),
         SDK_GATEWAY_LOCK_PATH: lock, SDK_CONVERSATIONS_DB_PATH: path.join(dir, 'archive.db'),
+        SDK_ATTACHMENT_DIR: path.join(dir, 'attachments'),
         SDK_AUTH_DIR: path.join(dir, 'auth'), SDK_CONTACTS_DB_PATH: contacts, SDK_SETTINGS_DB_PATH: settings,
         SDK_BROADCAST_DB_PATH: path.join(dir, 'broadcast.json'), SDK_MESSAGE_QUEUE_PATH: path.join(dir, 'queue.jsonl'),
         BRAIN_API_BASE: 'http://127.0.0.1:1', BRAIN_API_KEY: 'fixture-no-network',

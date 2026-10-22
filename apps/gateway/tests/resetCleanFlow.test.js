@@ -12,6 +12,7 @@ process.env.SDK_RESET_NO_EXIT = '1'; // el restart del gateway no mata al runner
 
 const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'sdkbot-rcflow-'));
 process.env.SDK_CONVERSATIONS_DB_PATH = path.join(tmp, 'conversations.db');
+process.env.SDK_ATTACHMENT_DIR = path.join(tmp, 'attachments');
 process.env.SDK_AUTH_DIR = path.join(tmp, 'auth_info_baileys');
 process.env.SDK_CONTACTS_DB_PATH = path.join(tmp, 'contacts_db.json');
 process.env.SDK_SETTINGS_DB_PATH = path.join(tmp, 'settings_db.json');
@@ -56,7 +57,7 @@ after(() => {
     fs.rmSync(tmp, { recursive: true, force: true });
     for (const k of [
         'SDK_RESET_CLEAN_READ_MS', 'SDK_RESET_CLEAN_TTL_MS', 'SDK_RESET_NO_EXIT',
-        'SDK_CONVERSATIONS_DB_PATH', 'SDK_AUTH_DIR', 'SDK_CONTACTS_DB_PATH', 'SDK_SETTINGS_DB_PATH',
+        'SDK_CONVERSATIONS_DB_PATH', 'SDK_ATTACHMENT_DIR', 'SDK_AUTH_DIR', 'SDK_CONTACTS_DB_PATH', 'SDK_SETTINGS_DB_PATH',
         'SDK_BROADCAST_DB_PATH', 'SDK_MESSAGE_QUEUE_PATH', 'BRAIN_MEMORY_DB',
         'SDK_ADMIN_WEB_LOG_GATEWAY', 'SDK_ADMIN_WEB_LOG_BRAIN',
         'SDK_GATEWAY_LOCK_PATH', 'SDK_BRAIN_LOCK_PATH'

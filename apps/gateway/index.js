@@ -132,9 +132,12 @@ let conversationArchive;
 let archiveRetention;
 let legacyDispatchPump;
 let conversationControl;
+let attachmentStore;
 async function startGateway() {
     conversationArchive = require('./services/conversations').createArchive();
     await conversationArchive.ready;
+    attachmentStore = require('./services/conversations/attachments').createAttachmentStore({ archive: conversationArchive });
+    await attachmentStore.init();
     conversationControl = require('./services/conversations/controlService').createControlService(conversationArchive, {
         drainConversation,
         onResumePending: () => legacyDispatchPump?.trigger(),
@@ -160,14 +163,15 @@ async function startGateway() {
     await conversationControl.recoverPendingOperations();
     await conversationControl.setServiceReady(true);
     archiveRetention = await require('./services/conversations/retention').startRetention(conversationArchive,
-        () => log.error('Archivo: falló la purga diaria; revisar retención.'));
+        () => log.error('Archivo: falló la purga diaria; revisar retención.'), attachmentStore);
     require('./services/factoryReset').setBeforeReset(async () => {
         for (const adapter of adapters.values()) await adapter.disconnect();
         await legacyDispatchPump?.close();
         await archiveRetention.close();
+        await attachmentStore.close();
         await conversationArchive.close();
     });
-    internalBus.startInternalBus({ archive: conversationArchive, controlService: conversationControl,
+    internalBus.startInternalBus({ archive: conversationArchive, attachmentStore, controlService: conversationControl,
         getAdapter: (channel, accountId) => {
             const adapter = adapters.get(channel);
             return adapter?.accountId === accountId ? adapter : null;
@@ -373,7 +377,7 @@ async function handleExit(exitCode = 0) {
         await adapter.disconnect().catch(() => {});
     }
     if (!isWiping()) flushToDisk();
-    try { await legacyDispatchPump?.close(); await archiveRetention?.close(); await conversationArchive?.close(); } catch { /* exit after worker terminates */ }
+    try { await legacyDispatchPump?.close(); await archiveRetention?.close(); await attachmentStore?.close(); await conversationArchive?.close(); } catch { /* exit after worker terminates */ }
     process.exit(exitCode);
 }
 

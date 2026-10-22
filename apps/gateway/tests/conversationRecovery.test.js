@@ -170,3 +170,33 @@ test('F8.4 migration and restore gate blocks stale snapshots after evented and l
     assert.equal(refreshedGate.exitCode, 0);
     assert.equal(refreshedGate.result.promotionAllowed, true);
 });
+
+test('restore gate detects attachment metadata purges that do not advance the event cursor', async t => {
+    const dir = await fs.mkdtemp(path.join(os.tmpdir(), 'sdkbot-f84-attachment-ledger-'));
+    const sourcePath = path.join(dir, 'active.db'), snapshotPath = path.join(dir, 'snapshot.db');
+    const lockPath = path.join(dir, 'gateway.lock');
+    let archive = createArchive({ path: sourcePath });
+    t.after(async () => { await archive?.close().catch(() => {}); await fs.rm(dir, { recursive: true, force: true }); });
+    await archive.ready;
+    const account = await archive.registerAccount({ channel: 'whatsapp', providerKey: 'f84-attachment-ledger' });
+    const [captured] = await archive.ingestBatch([{ ...inbound(account.id, 'attachment-ledger'),
+        content: { type: 'audio', availability: 'not_stored', transcript: null, transcriptionStatus: 'failed' } }]);
+    const attachmentId = randomUUID();
+    await archive.registerAttachment({ id: attachmentId, messageId: captured.message.id, fileName: 'fixture.ogg',
+        contentType: 'audio/ogg', size: 4, sha256: 'a'.repeat(64), capturedAt: new Date().toISOString() });
+    const attachment = await archive.attachment({ id: attachmentId });
+    await archive.backup(snapshotPath);
+    await archive.close(); archive = null;
+
+    archive = createArchive({ path: sourcePath });
+    await archive.ready;
+    const before = await archive.snapshot();
+    await archive.purge({ now: new Date(Date.parse(attachment.expiresAt) + 1).toISOString(), limit: 500 });
+    assert.deepEqual(await archive.snapshot(), before);
+    await archive.close(); archive = null;
+
+    const gate = runGate(sourcePath, snapshotPath, lockPath);
+    assert.equal(gate.exitCode, 2);
+    assert.equal(gate.result.source.seq, gate.result.snapshot.seq);
+    assert.ok(gate.result.blockers.includes('ATTACHMENT_LEDGER_MISMATCH'));
+});

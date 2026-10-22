@@ -173,11 +173,11 @@ quedan bloqueadas; no se ocultan para conseguir que los recuentos coincidan.
 
 ## 6. Retención y lectura
 
-Valores iniciales configurables, fijados también en el fixture de aceptación:
+Valores iniciales, fijados también en el fixture de aceptación:
 
 | Dato | Retención / comportamiento inicial |
 |---|---|
-| Cuerpo de mensajes/adjuntos | 90 días desde ingestedAt durable. Una importación antigua tiene 90 días desde su captura. |
+| Cuerpo de mensajes/adjuntos | 90 días desde ingestedAt durable. Una importación antigua tiene 90 días desde su captura. Archivo por adjunto de hasta 16 MiB; cuota inicial total de 1 GiB. |
 | Eventos para SSE | 7 días; payload mínimo, sin copia del texto. |
 | Idempotencia y huellas de deduplicación | 180 días desde captura/intención; sin contenido de mensaje ni token. |
 | Contexto IA | Ventana 7 días / presupuesto 5000 tokens, independiente del archivo; incluye humano. |
@@ -192,6 +192,19 @@ una purga no concede acceso ni cambia human/off. Cursores de lectura guardan
 secuencia de entrada por actor, sin FK obligatoria al cuerpo purgable. No leídos
 cuenta solo entradas live retenidas posteriores al cursor; un cursor viejo no
 vuelve a retroceder ni marca leído en el proveedor.
+
+Los binarios viven en `SDK_ATTACHMENT_DIR` (por defecto `gateway/data/attachments`
+dentro del volumen de estado), con directorio `0700` y archivos opacos `0600`.
+SQLite guarda el ID, nombre saneado, tipo MIME, tamaño, SHA-256, captura y
+vencimiento; no guarda rutas del proveedor. `GET
+/api/v1/attachments/{attachmentId}` exige `conversations:read` y verifica que la
+conversación siga archivada antes de transmitir bytes como
+`application/octet-stream`, `no-store` y `nosniff`. El límite individual es 16 MiB
+y el acumulado es 1 GiB, incluyendo escrituras concurrentes. Si falta o cambia un
+archivo, el mensaje queda como marcador `failed`; la purga vence estrictamente
+después de 90 días y borra los bytes en pasos idempotentes antes de retirar los
+metadatos. El gate offline de F8.4 compara también el ledger de metadatos, pero no
+valida por sí solo que los bytes estén completos en el backup.
 
 Las huellas dentro de 180 días evitan recrear un mensaje purgado por redelivery.
 Repetir una intención cuyo resultado ya fue purgado devuelve

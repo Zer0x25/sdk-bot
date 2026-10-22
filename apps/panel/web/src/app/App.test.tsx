@@ -89,7 +89,7 @@ function jsonResponse(value: unknown, status = 200) {
   });
 }
 
-function installApiMock(options: { empty?: boolean; listError?: boolean; pagination?: boolean; listPagination?: boolean; cursorExpired?: boolean; media?: boolean } = {}) {
+function installApiMock(options: { empty?: boolean; listError?: boolean; pagination?: boolean; listPagination?: boolean; cursorExpired?: boolean; media?: boolean; mediaAvailable?: boolean } = {}) {
   let markedRead = false;
   const projectedConversation = () => markedRead ? { ...conversation, unreadCount: 0 } : conversation;
   const fetchMock = vi.fn(async (input: RequestInfo | URL, _init?: RequestInit) => {
@@ -136,7 +136,8 @@ function installApiMock(options: { empty?: boolean; listError?: boolean; paginat
       }
       if (options.media) {
         return jsonResponse({
-          items: [{ ...latestMessage, content: { type: 'audio', availability: 'not_stored', transcriptionStatus: 'pending', transcript: null } }],
+          items: [{ ...latestMessage, content: { type: 'audio', availability: options.mediaAvailable ? 'available' : 'not_stored',
+            transcriptionStatus: 'pending', transcript: null, ...(options.mediaAvailable ? { attachmentId: '00000000-0000-4000-8000-000000000001' } : {}) } }],
           nextCursor: null,
           snapshot
         });
@@ -331,6 +332,14 @@ describe('inbox shell and real API integration', () => {
     renderApp(`/inbox/${conversationId}`);
 
     expect(await screen.findByText('Audio recibido · transcripción pendiente')).toBeInTheDocument();
+  });
+
+  it('renders the authenticated attachment download link when bytes are available', async () => {
+    installApiMock({ media: true, mediaAvailable: true });
+    renderApp(`/inbox/${conversationId}`);
+
+    const download = await screen.findByRole('link', { name: 'Descargar Audio' });
+    expect(download).toHaveAttribute('href', '/api/v1/attachments/00000000-0000-4000-8000-000000000001');
   });
 
   it('shows a genuine empty state when the API has no conversations', async () => {

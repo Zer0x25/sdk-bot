@@ -274,4 +274,11 @@ test('media captions preserve attachment type and accept existing markers withou
     reject('MessageContent', { ...content, caption: '\ud800' });
     reject('MessageContent', { ...content, caption: null });
   }
+  const stored = { type: 'audio', availability: 'available', transcript: null,
+    transcriptionStatus: 'failed', attachmentId: id(8) };
+  accept('MessageContent', stored);
+  reject('MessageContent', { ...stored, attachmentId: undefined });
+  reject('MessageContent', { ...stored, availability: 'not_stored' });
+  reject('MessageContent', { ...stored, type: 'unsupported' });
+  assert.equal(api.paths['/attachments/{attachmentId}'].get.responses['200'].content['application/octet-stream'].schema.format, 'binary');
 });

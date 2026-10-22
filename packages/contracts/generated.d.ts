@@ -16,6 +16,23 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/attachments/{attachmentId}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** @description Descarga de bytes solo tras verificar conversations:read y acceso a la conversación asociada. Los archivos caducan 90 días después de la captura durable. */
+        get: operations["downloadAttachment"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/conversations": {
         parameters: {
             query?: never;
@@ -510,7 +527,9 @@ export interface components {
             text: components["schemas"]["StoredText"];
             /** @constant */
             type: "text";
-        } | {
+        } | ({
+            /** @description ID opaco descargable solo mediante la API autenticada de adjuntos. */
+            attachmentId?: components["schemas"]["Id"];
             /** @enum {string} */
             availability: "not_stored" | "available" | "expired" | "failed";
             /** @description Texto adjunto literal; opcional para compatibilidad con marcadores anteriores. */
@@ -520,7 +539,7 @@ export interface components {
             transcriptionStatus: "not_requested" | "pending" | "completed" | "failed";
             /** @enum {string} */
             type: "audio" | "image" | "video" | "document" | "unsupported";
-        } | {
+        } & (unknown & unknown & unknown)) | {
             originalBytes: number;
             /** @constant */
             reason: "text_limit";
@@ -793,6 +812,36 @@ export interface operations {
             404: components["responses"]["404"];
             409: components["responses"]["409"];
             410: components["responses"]["410"];
+            422: components["responses"]["422"];
+            503: components["responses"]["503"];
+        };
+    };
+    downloadAttachment: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                attachmentId: components["schemas"]["Id"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Archivo opaco; no se sirve como contenido ejecutable del origen. */
+            200: {
+                headers: {
+                    "Content-Disposition"?: string;
+                    "Content-Length"?: number;
+                    "X-Content-Type-Options"?: "nosniff";
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/octet-stream": string;
+                };
+            };
+            401: components["responses"]["401"];
+            403: components["responses"]["403"];
+            404: components["responses"]["404"];
             422: components["responses"]["422"];
             503: components["responses"]["503"];
         };

@@ -9,7 +9,7 @@ const { createResetGuard, inspectProcess } = require('../services/resetProcessGu
 
 const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'sdkbot-reset-guard-'));
 const envPaths = {
-    SDK_CONVERSATIONS_DB_PATH: 'conversations.db', SDK_AUTH_DIR: 'auth',
+    SDK_CONVERSATIONS_DB_PATH: 'conversations.db', SDK_ATTACHMENT_DIR: 'attachments', SDK_AUTH_DIR: 'auth',
     SDK_CONTACTS_DB_PATH: 'contacts.json', SDK_SETTINGS_DB_PATH: 'settings.json',
     SDK_BROADCAST_DB_PATH: 'broadcast.json', SDK_MESSAGE_QUEUE_PATH: 'queue.jsonl',
     BRAIN_MEMORY_DB: 'memory.db', SDK_ADMIN_WEB_LOG_GATEWAY: 'gwlogs',

@@ -1241,3 +1241,20 @@ Cierres históricos: commits F2C.1/F2C.2/F2D/F2E.1 están en el log local; F2B.3
 - Verificación: `cd apps/gateway && node --test tests/conversationRecovery.test.js`
   (1/1); `npm run check` (lint, typecheck, panel 38/38 + build integration 1/1,
   Gateway 331/331); `git diff --check`. No se conectaron canales ni proveedores.
+
+## Fase 9.1 — Archivo autenticado de adjuntos — 2026-10-22
+
+- SQLite v12 registra metadatos de adjuntos ligados a mensajes y la API v1 los
+  entrega por ID solo tras autorizar `conversations:read` y verificar acceso a
+  la conversación. Los binarios viven en un directorio privado, con nombres
+  opacos, tamaño máximo de 16 MiB, cuota agregada de 1 GiB y retención de 90 días.
+  Panel transmite el binario con límites y headers validados; la purga conserva
+  un marcador comprensible si el blob vence o falta. F8.4 compara también la
+  huella del ledger de metadatos; no comprueba los bytes del volumen.
+- Verificación: `npm run contracts:generate && npm run check` en raíz;
+  `cd apps/gateway && npm ci && npm run check` (lint, typecheck, panel 39/39 +
+  integración/build 1/1, Gateway 338/338); pruebas focales de adjuntos 5/5 y
+  regresión de migración/retención/privacidad 70/70; `git diff --check`. Datos
+  temporales; no se iniciaron canales ni proveedores.
+- Siguiente punto: F9.2, conectar captura durable de medios por canal y cubrir
+  citas/ediciones/borrados solo donde cada proveedor expone esa capacidad.

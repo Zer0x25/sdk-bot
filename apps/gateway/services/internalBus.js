@@ -1110,7 +1110,7 @@ function startInternalBus(opts = {}) {
     const verify = createVerifier({ secret });
     const sessionApi = createSessionApi(() => { getSettingsDB(); return getGlobalPolicy(); }, opts.archive,
         getContactsDB, opts.getChannelStatus, opts.controlService, opts.getAdapter,
-        async () => (await getAvailableProfiles()) || []);
+        async () => (await getAvailableProfiles()) || [], opts.attachmentStore);
     const server = http.createServer(async (req, res) => {
         let u;
         try { u = new URL(req.url || '/', 'http://gateway.local'); }

@@ -1,5 +1,6 @@
 // @ts-check
 const crypto = require('node:crypto');
+const { pipeline } = require('node:stream/promises');
 const { assertValid, validate } = require('@sdk-bot/contracts');
 const { BoundaryError } = require('../lib/httpBoundary');
 const { requireCapability } = require('../lib/panelContext');
@@ -13,7 +14,8 @@ const CAPABILITIES = {
 };
 
 function capabilityFor(method, pathname) {
-    if (method === 'GET' && /^\/v1\/(session|accounts|profiles|summary|conversations(?:\/[^/]+(?:\/(?:messages|pending-resume))?)?|operations\/[^/]+|events)$/.test(pathname)) return 'conversations:read';
+    if (method === 'GET' && (/^\/v1\/(session|accounts|profiles|summary|conversations(?:\/[^/]+(?:\/(?:messages|pending-resume))?)?|operations\/[^/]+|events)$/.test(pathname)
+        || /^\/v1\/attachments\/[0-9a-f-]{36}$/.test(pathname))) return 'conversations:read';
     if (method === 'POST' && /^\/v1\/conversations\/[^/]+\/(takeover|release)$/.test(pathname)) return 'control:write';
     if (method === 'POST' && /^\/v1\/conversations\/[^/]+\/messages$/.test(pathname)) return 'messages:send';
     if (method === 'POST' && /^\/v1\/conversations\/[^/]+\/read$/.test(pathname)) return 'conversations:read';
@@ -23,6 +25,12 @@ function capabilityFor(method, pathname) {
 
 function invalid(message = 'Parámetros inválidos.') {
     return new BoundaryError(422, 'VALIDATION_ERROR', message);
+}
+
+function contentDisposition(fileName) {
+    const encoded = encodeURIComponent(fileName).replace(/[!'()*]/g,
+        character => `%${character.charCodeAt(0).toString(16).toUpperCase()}`);
+    return `attachment; filename="attachment"; filename*=UTF-8''${encoded}`;
 }
 
 function currentUrl(req) {
@@ -565,8 +573,8 @@ function archiveBoundary(error) {
     return new BoundaryError(503, 'SERVICE_UNAVAILABLE', 'Archivo de conversaciones no disponible.');
 }
 
-/** @param {() => any} getPolicy @param {any} archive @param {() => any} [getContacts] @param {(channel:string,accountId:string) => any} [getChannelStatus] @param {any} [controlService] @param {(channel:string,accountId:string) => any} [getAdapter] @param {() => Promise<any[]>} [getProfiles] */
-function createSessionApi(getPolicy, archive, getContacts = () => ({}), getChannelStatus = (_channel, _accountId) => 'disconnected', controlService = null, getAdapter = () => null, getProfiles = async () => []) {
+/** @param {() => any} getPolicy @param {any} archive @param {() => any} [getContacts] @param {(channel:string,accountId:string) => any} [getChannelStatus] @param {any} [controlService] @param {(channel:string,accountId:string) => any} [getAdapter] @param {() => Promise<any[]>} [getProfiles] @param {any} [attachmentStore] */
+function createSessionApi(getPolicy, archive, getContacts = () => ({}), getChannelStatus = (_channel, _accountId) => 'disconnected', controlService = null, getAdapter = () => null, getProfiles = async () => [], attachmentStore = null) {
     const readRevisions = new Map();
     return async function route(req, res, context, pathname, requestBody = Buffer.alloc(0)) {
         const capability = capabilityFor(req.method, pathname);
@@ -605,6 +613,32 @@ function createSessionApi(getPolicy, archive, getContacts = () => ({}), getChann
                 const query = parseQuery(req, 'SummaryQuery');
                 const body = assertValid('SummaryResponse', await archive.summary(query));
                 return send(res, 200, body, context.requestId);
+            }
+            const attachmentMatch = /^\/v1\/attachments\/([^/]+)$/.exec(pathname);
+            if (req.method === 'GET' && attachmentMatch) {
+                rejectQuery(req);
+                if (!attachmentStore) throw new BoundaryError(503, 'SERVICE_UNAVAILABLE', 'Almacenamiento de adjuntos no disponible.');
+                const id = attachmentMatch[1];
+                try { assertValid('Id', id); } catch { throw invalid('ID de adjunto inválido.'); }
+                const metadata = await archive.attachment({ id });
+                if (!metadata) throw new BoundaryError(404, 'NOT_FOUND', 'Adjunto no encontrado o expirado.');
+                const conversation = await archive.conversationView({ conversationId: metadata.conversationId, actorId: context.actor.id });
+                if (!conversation) throw new BoundaryError(404, 'NOT_FOUND', 'Adjunto no encontrado o expirado.');
+                const opened = await attachmentStore.open(id);
+                if (!opened) throw new BoundaryError(404, 'NOT_FOUND', 'Adjunto no disponible.');
+                res.writeHead(200, {
+                    'Content-Type': 'application/octet-stream',
+                    'Content-Disposition': contentDisposition(metadata.fileName),
+                    'Content-Length': String(metadata.size),
+                    'Cache-Control': 'no-store',
+                    'X-Content-Type-Options': 'nosniff',
+                    'X-Request-Id': context.requestId
+                });
+                try { await pipeline(opened.stream, res); }
+                catch {
+                    if (!res.destroyed) res.destroy();
+                }
+                return;
             }
             if (req.method === 'GET' && pathname === '/v1/events') {
                 return await streamEvents(req, res, context, archive);

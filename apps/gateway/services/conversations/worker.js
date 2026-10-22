@@ -8,13 +8,15 @@ const { DatabaseSync } = require('node:sqlite');
 const { assertValid } = require('@sdk-bot/contracts');
 const { retentionCutoff } = require('./eventRetention');
 const schema = require('./schema');
+const MAX_ATTACHMENT_BYTES = 16 * 1024 * 1024;
+const ATTACHMENT_RETENTION_MS = 90 * 86400000;
 let db;
 const READ_ONLY_METHODS = new Set(['snapshot','telegramCursor','pendingLegacyDispatches','controlState','controlAuthority','controlImportStatus','controlImportEntries',
     'controlPolicy','controlOperation','pendingControlOperations','controlTargets','controlByIdentity',
     'pendingResumeMessages','shouldProcessArchivedInbound',
     'outboundIntent','outboundIntents',
     'conversation','conversations','conversationRows','conversationView','conversationAddress','accounts','messages','messagePage','messageByProviderId','aiContext',
-    'events','eventsPage','diagnostics','recoveryCheckpoint','summary','close']);
+    'events','eventsPage','diagnostics','recoveryCheckpoint','summary','attachmentTarget','attachment','attachmentRegistry','pendingAttachmentDeletions','close']);
 function fail(code) { throw Object.assign(new Error(code), { code }); }
 function one(sql, ...params) { return db.prepare(sql).get(...params); }
 function run(sql, ...params) { return db.prepare(sql).run(...params); }
@@ -30,9 +32,11 @@ function snapshot() {
 }
 function recoveryCheckpoint() {
     const digest = createHash('sha256');
+    const attachmentDigest = createHash('sha256');
     const schemaVersion = one('PRAGMA user_version').user_version;
     let outboundIntentCount = 0;
     let unresolvedOutboundCount = 0;
+    let attachmentCount = 0;
     // Schema v6 predates the durable outbox; keep it readable so the gate can
     // report the schema mismatch instead of failing before comparing metadata.
     if (schemaVersion >= 7) {
@@ -42,9 +46,16 @@ function recoveryCheckpoint() {
         }
         unresolvedOutboundCount = one("SELECT COUNT(*) n FROM outbound_intents WHERE state IN ('intent','sending','delivery_unknown')").n;
     }
+    if (schemaVersion >= 12) {
+        for (const row of db.prepare('SELECT id,message_id,file_name,content_type,size,sha256,captured_at,expires_at,state FROM attachments ORDER BY id').iterate()) {
+            attachmentDigest.update(stable(row)).update('\n');
+            attachmentCount += 1;
+        }
+    }
     return { ...snapshot(), schemaVersion,
         controlAuthority: controlAuthority(), outboundIntentCount, outboundIntentSha256: digest.digest('hex'),
-        unresolvedOutboundCount, integrity: one('PRAGMA integrity_check').integrity_check,
+        unresolvedOutboundCount, attachmentCount, attachmentSha256: attachmentDigest.digest('hex'),
+        integrity: one('PRAGMA integrity_check').integrity_check,
         foreignKeys: all('PRAGMA foreign_key_check').length };
 }
 function initialize() {
@@ -64,7 +75,7 @@ function initialize() {
         // committed WAL records or touching another process's snapshot.
         db = new DatabaseSync(`${pathToFileURL(file).href}?immutable=1`, { readOnly: true });
         const schemaVersion = one('PRAGMA user_version').user_version;
-        if (![6, 7, 8, 9, 10, 11].includes(schemaVersion)) fail('SCHEMA_VERSION_REQUIRED');
+        if (![6, 7, 8, 9, 10, 11, 12].includes(schemaVersion)) fail('SCHEMA_VERSION_REQUIRED');
         if (one("SELECT migration_id FROM control_import_migrations WHERE status IN ('cutover_applying','rolling_back') LIMIT 1")) {
             fail('CONTROL_CUTOVER_RECOVERY_REQUIRED');
         }
@@ -84,7 +95,7 @@ function initialize() {
     // SQLite owns the OS lock for the full connection lifetime; crash releases it.
     db.exec('BEGIN IMMEDIATE; COMMIT;');
     const version = one('PRAGMA user_version').user_version;
-    if (version > 11) fail('SCHEMA_TOO_NEW');
+    if (version > 12) fail('SCHEMA_TOO_NEW');
     if (version === 0) transaction(() => {
         db.exec(schema);
         run('INSERT INTO archive_meta VALUES(1,?,?)', randomUUID(), '0');
@@ -289,6 +300,21 @@ function initialize() {
         CREATE INDEX outbound_intents_summary_period ON outbound_intents(state,source,completed_at,conversation_id,channel);
         PRAGMA user_version=11;`);
     });
+    if (one('PRAGMA user_version').user_version === 11) transaction(() => {
+        db.exec(`CREATE TABLE attachments (
+            id TEXT PRIMARY KEY,
+            message_id TEXT UNIQUE REFERENCES messages(id) ON DELETE SET NULL,
+            file_name TEXT NOT NULL CHECK(length(file_name) BETWEEN 1 AND 180),
+            content_type TEXT NOT NULL CHECK(length(content_type) BETWEEN 1 AND 127),
+            size INTEGER NOT NULL CHECK(size BETWEEN 1 AND 16777216),
+            sha256 TEXT NOT NULL CHECK(length(sha256)=64),
+            captured_at TEXT NOT NULL,
+            expires_at TEXT NOT NULL,
+            state TEXT NOT NULL CHECK(state IN ('available','delete_pending'))
+        );
+        CREATE INDEX attachments_retention ON attachments(state,expires_at,id);
+        PRAGMA user_version=12;`);
+    });
     if (one("SELECT id FROM outbound_intents WHERE state='sending' LIMIT 1")) transaction(() => {
         run(`UPDATE outbound_intents SET state='delivery_unknown',error_code='PROCESS_RESTARTED_DURING_SEND',
             updated_at=?,completed_at=? WHERE state='sending'`, new Date().toISOString(), new Date().toISOString());
@@ -310,7 +336,7 @@ function initialize() {
         transaction(() => pending.forEach(row => updateTranscription({ messageId: row.id, expectedStatus: 'pending', status: 'failed' })));
         after = pending[pending.length - 1].id;
     }
-    return { ...snapshot(), schemaVersion: 11, journalMode: one('PRAGMA journal_mode').journal_mode,
+    return { ...snapshot(), schemaVersion: 12, journalMode: one('PRAGMA journal_mode').journal_mode,
         synchronous: one('PRAGMA synchronous').synchronous, threadId: require('node:worker_threads').threadId };
 }
 function registerAccount(input) {
@@ -1359,7 +1385,7 @@ function beginControlImport(input) {
     const report = input.report;
     if (!report || report.schemaVersion !== 1 || report.dryRun !== true || !Array.isArray(report.entries)
         || !Array.isArray(report.blockers) || typeof report.cutoverAllowed !== 'boolean') fail('INVALID_IMPORT_REPORT');
-    if (![6, 7, 8, 9, 10, 11].includes(report.sourceManifest?.archive?.schemaVersion) || typeof report.sourceManifest.archive.dataEpoch !== 'string'
+    if (![6, 7, 8, 9, 10, 11, 12].includes(report.sourceManifest?.archive?.schemaVersion) || typeof report.sourceManifest.archive.dataEpoch !== 'string'
         || !/^(0|[1-9][0-9]*)$/.test(report.sourceManifest.archive.seq || '')) fail('INVALID_IMPORT_SNAPSHOT');
     const currentSnapshot = snapshot();
     if (report.sourceManifest.archive.dataEpoch !== currentSnapshot.dataEpoch || report.sourceManifest.archive.seq !== currentSnapshot.seq) {
@@ -1965,12 +1991,127 @@ function markRead(input) {
     }
     return { throughInboundSeq: String(next) };
 }
+function attachmentTarget(input) {
+    assertValid('Id', input?.messageId);
+    const row = one(`SELECT m.payload,m.ingested_at,c.id conversation_id FROM messages m
+        JOIN conversations c ON c.id=m.conversation_id WHERE m.id=?`, input.messageId);
+    if (!row) return null;
+    const message = JSON.parse(row.payload);
+    if (!['audio','image','video','document'].includes(message.content?.type)) fail('ATTACHMENT_NOT_SUPPORTED');
+    if (message.content.availability === 'available' && message.content.attachmentId) fail('ATTACHMENT_EXISTS');
+    const expiresAt = new Date(Date.parse(row.ingested_at) + ATTACHMENT_RETENTION_MS).toISOString();
+    if (expiresAt < new Date().toISOString()) fail('ATTACHMENT_EXPIRED');
+    return { messageId: input.messageId, conversationId: row.conversation_id,
+        contentType: message.content.type, ingestedAt: row.ingested_at, expiresAt };
+}
+function attachmentFromRow(row) {
+    return { id: row.id, messageId: row.message_id, conversationId: row.conversation_id,
+        fileName: row.file_name, contentType: row.content_type, size: row.size, sha256: row.sha256,
+        capturedAt: row.captured_at, expiresAt: row.expires_at };
+}
+function attachment(input) {
+    assertValid('Id', input?.id);
+    const row = one(`SELECT a.id,a.message_id,a.file_name,a.content_type,a.size,a.sha256,a.captured_at,a.expires_at,
+            c.id conversation_id
+        FROM attachments a JOIN messages m ON m.id=a.message_id
+        JOIN conversations c ON c.id=m.conversation_id
+        WHERE a.id=? AND a.state='available'`, input.id);
+    return row ? attachmentFromRow(row) : null;
+}
+function attachmentRegistry() {
+    return all('SELECT id,size,state FROM attachments ORDER BY id');
+}
+function registerAttachment(input) {
+    assertValid('Id', input?.id); assertValid('Id', input?.messageId);
+    if (!Number.isInteger(input.size) || input.size < 1 || input.size > MAX_ATTACHMENT_BYTES) fail('ATTACHMENT_TOO_LARGE');
+    if (typeof input.sha256 !== 'string' || !/^[0-9a-f]{64}$/.test(input.sha256)) fail('INVALID_ATTACHMENT_HASH');
+    if (typeof input.contentType !== 'string' || input.contentType.length > 127
+        || !/^[A-Za-z0-9!#$&^_.+-]+\/[A-Za-z0-9!#$&^_.+-]+$/.test(input.contentType)) fail('INVALID_ATTACHMENT_CONTENT_TYPE');
+    if (typeof input.fileName !== 'string' || !input.fileName.trim() || Buffer.byteLength(input.fileName) > 512
+        || Array.from(input.fileName).some(character => character.codePointAt(0) <= 31 || character.codePointAt(0) === 127 || character === '/' || character === '\\')) {
+        fail('INVALID_ATTACHMENT_FILE_NAME');
+    }
+    if (typeof input.capturedAt !== 'string' || !Number.isFinite(Date.parse(input.capturedAt))) fail('INVALID_ATTACHMENT_TIME');
+    const now = new Date().toISOString();
+    const row = one('SELECT payload,ingested_at,conversation_id FROM messages WHERE id=?', input.messageId);
+    if (!row) fail('ATTACHMENT_MESSAGE_MISSING');
+    const message = JSON.parse(row.payload);
+    if (!['audio','image','video','document'].includes(message.content?.type)) fail('ATTACHMENT_NOT_SUPPORTED');
+    if (message.content.availability === 'available' && message.content.attachmentId) fail('ATTACHMENT_EXISTS');
+    const expiresAt = new Date(Date.parse(row.ingested_at) + ATTACHMENT_RETENTION_MS).toISOString();
+    if (expiresAt < now) fail('ATTACHMENT_EXPIRED');
+    run(`INSERT INTO attachments(id,message_id,file_name,content_type,size,sha256,captured_at,expires_at,state)
+        VALUES(?,?,?,?,?,?,?,?, 'available')`, input.id, input.messageId, input.fileName, input.contentType,
+    input.size, input.sha256, new Date(input.capturedAt).toISOString(), expiresAt);
+    message.content = { ...message.content, availability: 'available', attachmentId: input.id };
+    assertValid('Message', message);
+    run('UPDATE messages SET payload=? WHERE id=?', JSON.stringify(message), input.messageId);
+    const aggregate = String(BigInt(one('SELECT aggregate_version FROM conversations WHERE id=?', row.conversation_id).aggregate_version) + 1n);
+    run('UPDATE conversations SET aggregate_version=? WHERE id=?', aggregate, row.conversation_id);
+    const event = appendMessageEvent(message, aggregate, 'message.updated', now);
+    return { status: 'stored', attachment: attachment({ id: input.id }), message, event };
+}
+function markAttachmentUnavailable(input) {
+    assertValid('Id', input?.id);
+    const row = one('SELECT id,message_id FROM attachments WHERE id=?', input.id);
+    if (!row) return { status: 'missing' };
+    if (row.state === 'delete_pending') return { status: 'pending_delete' };
+    run("UPDATE attachments SET state='delete_pending' WHERE id=? AND state='available'", input.id);
+    if (!row.message_id) return { status: 'pending_delete' };
+    const stored = one('SELECT payload FROM messages WHERE id=?', row.message_id);
+    if (!stored) return { status: 'pending_delete' };
+    const message = JSON.parse(stored.payload);
+    if (message.content?.attachmentId !== input.id) return { status: 'pending_delete' };
+    const content = { ...message.content, availability: 'failed' };
+    delete content.attachmentId;
+    message.content = content;
+    assertValid('Message', message);
+    run('UPDATE messages SET payload=? WHERE id=?', JSON.stringify(message), row.message_id);
+    const aggregate = String(BigInt(one('SELECT aggregate_version FROM conversations WHERE id=?', message.conversationId).aggregate_version) + 1n);
+    run('UPDATE conversations SET aggregate_version=? WHERE id=?', aggregate, message.conversationId);
+    const event = appendMessageEvent(message, aggregate, 'message.updated', new Date().toISOString());
+    return { status: 'pending_delete', message, event };
+}
+function expireAttachment(input) {
+    assertValid('Id', input?.id);
+    const now = input.now ?? new Date().toISOString();
+    assertValid('Timestamp', now);
+    const row = one('SELECT id,message_id,expires_at,state FROM attachments WHERE id=?', input.id);
+    if (!row) return { status: 'missing' };
+    if (row.state !== 'available') return { status: 'pending_delete' };
+    if (row.expires_at >= new Date(now).toISOString()) return { status: 'available' };
+    run("UPDATE attachments SET state='delete_pending' WHERE id=? AND state='available'", input.id);
+    if (!row.message_id) return { status: 'pending_delete' };
+    const stored = one('SELECT payload FROM messages WHERE id=?', row.message_id);
+    if (!stored) return { status: 'pending_delete' };
+    const message = JSON.parse(stored.payload);
+    if (message.content?.attachmentId !== input.id) return { status: 'pending_delete' };
+    const content = { ...message.content, availability: 'expired' };
+    delete content.attachmentId;
+    message.content = content;
+    assertValid('Message', message);
+    run('UPDATE messages SET payload=? WHERE id=?', JSON.stringify(message), row.message_id);
+    const aggregate = String(BigInt(one('SELECT aggregate_version FROM conversations WHERE id=?', message.conversationId).aggregate_version) + 1n);
+    run('UPDATE conversations SET aggregate_version=? WHERE id=?', aggregate, message.conversationId);
+    const event = appendMessageEvent(message, aggregate, 'message.updated', new Date(now).toISOString());
+    return { status: 'pending_delete', message, event };
+}
+function pendingAttachmentDeletions(input = {}) {
+    const limit = input.limit ?? 100;
+    if (!Number.isInteger(limit) || limit < 1 || limit > 1000) fail('INVALID_LIMIT');
+    return all("SELECT id FROM attachments WHERE state='delete_pending' ORDER BY expires_at,id LIMIT ?", limit).map(row => row.id);
+}
+function finishAttachmentDeletion(input) {
+    assertValid('Id', input?.id);
+    return { deleted: run("DELETE FROM attachments WHERE id=? AND state='delete_pending'", input.id).changes === 1 };
+}
 function purge(input) {
     const now = input.now ?? new Date().toISOString();
     assertValid('Timestamp', now);
     const limit = input.limit ?? 1000;
     if (!Number.isInteger(limit) || limit < 1 || limit > 1000) fail('INVALID_LIMIT');
     const cutoff = days => new Date(Date.parse(now) - days * 86400000).toISOString();
+    run("UPDATE attachments SET state='delete_pending' WHERE state='available' AND expires_at<?", new Date(now).toISOString());
     const bodies = run('DELETE FROM messages WHERE id IN (SELECT id FROM messages WHERE ingested_at<? LIMIT ?)', cutoff(90), limit).changes;
     const events = run('DELETE FROM events WHERE seq IN (SELECT seq FROM events WHERE created_at<? LIMIT ?)', cutoff(7), limit).changes;
     const fingerprints = run('DELETE FROM fingerprints WHERE rowid IN (SELECT rowid FROM fingerprints WHERE ingested_at<? LIMIT ?)', cutoff(180), limit).changes;
@@ -2063,6 +2204,14 @@ function dispatch(method, input) {
         case 'messageByProviderId': return messageByProviderId(input);
         case 'aiContext': return aiContext(input);
         case 'markRead': return transaction(() => markRead(input));
+        case 'attachmentTarget': return attachmentTarget(input);
+        case 'attachment': return attachment(input);
+        case 'attachmentRegistry': return attachmentRegistry();
+        case 'registerAttachment': return transaction(() => registerAttachment(input));
+        case 'markAttachmentUnavailable': return transaction(() => markAttachmentUnavailable(input));
+        case 'expireAttachment': return transaction(() => expireAttachment(input));
+        case 'pendingAttachmentDeletions': return pendingAttachmentDeletions(input ?? {});
+        case 'finishAttachmentDeletion': return transaction(() => finishAttachmentDeletion(input));
         case 'events': {
             const after = input.after ?? '0'; assertValid('Sequence', after);
             const limit = input.limit ?? 100;
@@ -2093,6 +2242,7 @@ function committedEvents(method, value) {
         return value.results.map(result => result?.result?.event).filter(Boolean);
     }
     if (method === 'updateTranscription' && value?.event) return [value.event];
+    if (['registerAttachment','markAttachmentUnavailable','expireAttachment'].includes(method) && value?.event) return [value.event];
     if (method === 'writeControlState' && value?.event) return [value.event];
     if (method === 'clearAIContext' && value?.event) return [value.event];
     if (method === 'writeControlPolicy' && value?.event) return [value.event];

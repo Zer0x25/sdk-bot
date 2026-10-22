@@ -382,6 +382,12 @@ export function ConversationThread(props: Props) {
                     <article className="message-bubble">
                       <div className="message-author">{authorNames[message.authorKind]}</div>
                       <p>{messageBody(message.content)}</p>
+                      {message.content.type !== 'text' && message.content.type !== 'oversized' && message.content.attachmentId && (
+                        <a className="message-attachment-download"
+                          href={`/api/v1/attachments/${encodeURIComponent(message.content.attachmentId)}`}>
+                          Descargar {mediaNames[message.content.type]}
+                        </a>
+                      )}
                       <div className="message-metadata">
                         <time dateTime={message.occurredAt}>{formatTime(message.occurredAt)}</time>
                         {deliveryLabel(message) && <span>{deliveryLabel(message)}</span>}

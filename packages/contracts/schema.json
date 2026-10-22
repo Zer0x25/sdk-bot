@@ -711,6 +711,10 @@
                 "failed"
               ]
             },
+            "attachmentId": {
+              "$ref": "#/$defs/Id",
+              "description": "ID opaco descargable solo mediante la API autenticada de adjuntos."
+            },
             "transcript": {
               "anyOf": [
                 {
@@ -741,7 +745,38 @@
             "transcript",
             "transcriptionStatus"
           ],
-          "additionalProperties": false
+          "additionalProperties": false,
+          "allOf": [
+            {
+              "if": {
+                "properties": { "availability": { "const": "available" } },
+                "required": ["availability"]
+              },
+              "then": {
+                "properties": { "attachmentId": { "$ref": "#/$defs/Id" } },
+                "required": ["attachmentId"]
+              }
+            },
+            {
+              "if": {
+                "properties": { "attachmentId": { "$ref": "#/$defs/Id" } },
+                "required": ["attachmentId"]
+              },
+              "then": {
+                "properties": { "availability": { "const": "available" } },
+                "required": ["availability"]
+              }
+            },
+            {
+              "if": { "properties": { "type": { "const": "unsupported" } }, "required": ["type"] },
+              "then": {
+                "not": {
+                  "properties": { "attachmentId": { "$ref": "#/$defs/Id" } },
+                  "required": ["attachmentId"]
+                }
+              }
+            }
+          ]
         },
         {
           "type": "object",

@@ -9,6 +9,7 @@ const { BRAIN_STATE_DIR } = require('../lib/repoPaths');
 // debe tocar exactamente esos archivos y NINGÚN otro (perfiles, otros).
 const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'sdkbot-freset-'));
 process.env.SDK_CONVERSATIONS_DB_PATH = path.join(tmp, 'conversations.db');
+process.env.SDK_ATTACHMENT_DIR = path.join(tmp, 'attachments');
 process.env.SDK_AUTH_DIR = path.join(tmp, 'auth_info_baileys');
 process.env.SDK_CONTACTS_DB_PATH = path.join(tmp, 'contacts_db.json');
 process.env.SDK_SETTINGS_DB_PATH = path.join(tmp, 'settings_db.json');
@@ -35,7 +36,7 @@ const LOG_DIRS = new Set(getStatePaths().filter(e => /Logs/.test(e.label)).map(e
 after(() => {
     fs.rmSync(tmp, { recursive: true, force: true });
     for (const k of [
-        'SDK_CONVERSATIONS_DB_PATH', 'SDK_AUTH_DIR', 'SDK_CONTACTS_DB_PATH', 'SDK_SETTINGS_DB_PATH',
+        'SDK_CONVERSATIONS_DB_PATH', 'SDK_ATTACHMENT_DIR', 'SDK_AUTH_DIR', 'SDK_CONTACTS_DB_PATH', 'SDK_SETTINGS_DB_PATH',
         'SDK_BROADCAST_DB_PATH', 'SDK_MESSAGE_QUEUE_PATH', 'BRAIN_MEMORY_DB',
         'SDK_ADMIN_WEB_LOG_GATEWAY', 'SDK_ADMIN_WEB_LOG_BRAIN',
         'SDK_GATEWAY_LOCK_PATH', 'SDK_BRAIN_LOCK_PATH'
@@ -57,7 +58,7 @@ function populate() {
 
 test('getStatePaths resuelve todas las rutas con las env vars (temporales)', () => {
     const paths = getStatePaths();
-    assert.strictEqual(paths.length, 13);
+    assert.strictEqual(paths.length, 14);
     for (const entry of paths) {
         assert.ok(fs.existsSync(entry.path) || path.dirname(entry.path) === tmp || entry.path.startsWith(tmp),
             `ruta bajo el tmp: ${entry.label}`);
@@ -77,7 +78,7 @@ test('performFactoryReset borra TODO el estado y reporta lo que no existía', ()
     assert.strictEqual(report.missing.length, 0, 'nada faltante: todo existía');
 
     // Los dirs de logs se recrean vacíos por el fix (F7 fix); no deben contar
-    // como "borrados ausentes". El resto (8) sí debe haber desaparecido.
+    // como "borrados ausentes". Las otras 12 rutas sí desaparecen.
     for (const p of created) {
         if (LOG_DIRS.has(p)) {
             assert.ok(fs.existsSync(p), `dir de logs recreado: ${p}`);
@@ -89,10 +90,10 @@ test('performFactoryReset borra TODO el estado y reporta lo que no existía', ()
 
 test('performFactoryReset recrea los dirs de logs y reporta como missing el resto', () => {
     // Tras el wipe anterior, los 2 dirs de logs se recrean vacíos (F7 fix);
-    // el resto del estado no existe → missing (8 = 10 entradas - 2 dirs de logs).
+    // el resto del estado no existe → missing (12 entradas fuera de los 2 dirs de logs).
     const report = performFactoryReset();
     assert.strictEqual(report.deleted.length, 2, `solo los dirs de logs recreados (${report.deleted.length})`);
-    assert.ok(report.missing.length >= 8, `missing del resto (${report.missing.length})`);
+    assert.equal(report.missing.length, 12, `missing del resto (${report.missing.length})`);
     assert.strictEqual(report.errors.length, 0);
 
     const stranger = path.join(tmp, 'no-tocar.txt');

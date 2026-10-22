@@ -72,6 +72,10 @@ export interface OutboundIntent {
     reconciliationNote: string | null; reconciledBy: string | null; reconciledAt: string | null;
     createdAt: string; updatedAt: string; sendingAt: string | null; completedAt: string | null;
 }
+export interface ArchiveAttachment {
+    id: string; messageId: string; conversationId: string; fileName: string; contentType: string;
+    size: number; sha256: string; capturedAt: string; expiresAt: string;
+}
 export interface ControlPolicy {
     globalMode: 'allowed_all' | 'ignored_all'; globalProfileKey: string | null; policyVersion: string;
     requiresReview: boolean; reviewReason: string | null;
@@ -82,6 +86,7 @@ export interface Archive {
     recoveryCheckpoint(): Promise<Contract<'EventCursor'> & { schemaVersion: number;
         controlAuthority: { mode: 'legacy' | 'sqlite'; migrationId: string | null; serviceReady: boolean; changedAt: string | null };
         outboundIntentCount: number; outboundIntentSha256: string; unresolvedOutboundCount: number;
+        attachmentCount: number; attachmentSha256: string;
         integrity: string; foreignKeys: number }>;
     registerAccount(input: { id?: string; channel: 'whatsapp' | 'telegram'; providerKey: string }): Promise<{ id: string; channel: string; provider_key: string }>;
     telegramCursor(accountId: string): Promise<string | null>;
@@ -192,6 +197,19 @@ export interface Archive {
     messages(input: { conversationId: string; limit?: number; before?: { occurredAt: string; id: string } }): Promise<Contract<'Message'>[]>;
     messagePage(input: { conversationId: string; limit?: number; before?: { occurredAt: string; id: string } }): Promise<{ items: Contract<'Message'>[]; hasMore: boolean }>;
     messageByProviderId(input: { conversationId: string; providerMessageId: string }): Promise<Contract<'Message'> | null>;
+    attachmentTarget(input: { messageId: string }): Promise<{ messageId: string; conversationId: string;
+        contentType: 'audio' | 'image' | 'video' | 'document'; ingestedAt: string; expiresAt: string } | null>;
+    attachment(input: { id: string }): Promise<ArchiveAttachment | null>;
+    attachmentRegistry(): Promise<Array<{ id: string; size: number; state: 'available' | 'delete_pending' }>>;
+    registerAttachment(input: { id: string; messageId: string; fileName: string; contentType: string;
+        size: number; sha256: string; capturedAt: string }): Promise<{ status: 'stored'; attachment: ArchiveAttachment;
+        message: Contract<'Message'>; event: Contract<'Event'> }>;
+    markAttachmentUnavailable(input: { id: string }): Promise<{ status: 'missing' | 'pending_delete';
+        message?: Contract<'Message'>; event?: Contract<'Event'> }>;
+    expireAttachment(input: { id: string; now?: string }): Promise<{ status: 'missing' | 'available' | 'pending_delete';
+        message?: Contract<'Message'>; event?: Contract<'Event'> }>;
+    pendingAttachmentDeletions(input?: { limit?: number }): Promise<string[]>;
+    finishAttachmentDeletion(input: { id: string }): Promise<{ deleted: boolean }>;
     aiContext(input: { conversationId: string; expectedContextVersion?: Contract<'Version'>;
         throughMessageId?: string | null; excludeMessageIds?: string[]; excludeGenerationId?: string; limit?: number }): Promise<{
         conversationId: string; contextVersion: Contract<'Version'>; throughMessageId: string | null;

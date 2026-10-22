@@ -142,6 +142,38 @@
         }
       }
     },
+    "/attachments/{attachmentId}": {
+      "get": {
+        "operationId": "downloadAttachment",
+        "description": "Descarga de bytes solo tras verificar conversations:read y acceso a la conversación asociada. Los archivos caducan 90 días después de la captura durable.",
+        "parameters": [
+          {
+            "name": "attachmentId",
+            "in": "path",
+            "required": true,
+            "schema": { "$ref": "#/components/schemas/Id" }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Archivo opaco; no se sirve como contenido ejecutable del origen.",
+            "headers": {
+              "Content-Disposition": { "schema": { "type": "string" } },
+              "Content-Length": { "schema": { "type": "integer", "minimum": 1, "maximum": 16777216 } },
+              "X-Content-Type-Options": { "schema": { "type": "string", "const": "nosniff" } }
+            },
+            "content": {
+              "application/octet-stream": { "schema": { "type": "string", "format": "binary" } }
+            }
+          },
+          "401": { "$ref": "#/components/responses/401" },
+          "403": { "$ref": "#/components/responses/403" },
+          "404": { "$ref": "#/components/responses/404" },
+          "422": { "$ref": "#/components/responses/422" },
+          "503": { "$ref": "#/components/responses/503" }
+        }
+      }
+    },
     "/conversations": {
       "get": {
         "operationId": "listConversations",

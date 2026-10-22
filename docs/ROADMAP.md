@@ -431,7 +431,8 @@ son necesarios para una fase previa y pasan sus mismas comprobaciones.
   - [x] F8.3d — [Minimizar datos de cliente en métricas y logs, con pruebas](F8.3-OPERACION-RECUPERACION.md#f83d--minimizacion-de-datos-en-metricas-y-logs).
 - [x] F8.4 — Ensayar migración/restauración con fixture representativo y delta
   posterior al corte; bloquear snapshots obsoletos por cursor, autoridad o ledger
-  de envíos. [Runbook y límites](F8.3-OPERACION-RECUPERACION.md#f84--ensayo-aislado-y-puerta-de-frescura-de-restore).
+  de envíos y metadatos de adjuntos. La huella de adjuntos no valida los blobs.
+  [Runbook y límites](F8.3-OPERACION-RECUPERACION.md#f84--ensayo-aislado-y-puerta-de-frescura-de-restore).
 
 **Aceptación:** instalación limpia y upgrade simulados; build/checks/smoke en Linux;
 Windows/Termux con evidencia real o pendientes explícitos. Ningún doble transporte.
@@ -440,11 +441,16 @@ Windows/Termux con evidencia real o pendientes explícitos. Ningún doble transp
 
 **Depende de:** v1 y política de almacenamiento definida.
 
-- [ ] Persistir metadatos/archivos con acceso autenticado, límites y retención.
+- [x] Persistir metadatos/archivos con acceso autenticado, límites y retención.
+  F9.1 añade descarga autenticada por conversación, archivo privado de 16 MiB
+  máximo, cuota total de 1 GiB y purga a 90 días; los adapters aún deben conectar
+  cada tipo de medio dentro de F9.2. [Evidencia](F9.1-ADJUNTOS.md).
 - [ ] Audio, imágenes, documentos, citas, ediciones y borrados según capacidades;
   no simular recibos de entrega/lectura que Telegram no entrega al bot.
 - [ ] SQLite FTS para búsqueda del contenido con índices y páginas verificables.
-- [ ] Registrar adjuntos/índices en backup/factory reset y probar acceso/purga.
+- [ ] Integrar ledger, binarios e índices en backup/restauración coherente y
+  ensayar el ciclo completo. F9.1 ya registra el directorio en factory reset;
+  la consistencia de backup queda para F9.4.
 
 **Aceptación:** adjuntos accesibles solo al operador autorizado; mensaje permanece
 comprensible si el archivo expiró o no está disponible.

@@ -24,7 +24,7 @@ const path = require('path');
 const { execFile } = require('child_process');
 const { CONTACTS_FILE_PATH, SETTINGS_FILE_PATH } = require('../config');
 const { cat, safeErrorLabel } = require('./logger');
-const { statePaths: conversationPaths } = require('./conversations/paths');
+const { statePaths: conversationPaths, attachmentDirectory } = require('./conversations/paths');
 const { GATEWAY_STATE_DIR, BRAIN_STATE_DIR } = require('../lib/repoPaths');
 
 const logError = cat('ERROR');
@@ -82,6 +82,7 @@ function getStatePaths() {
         { label: 'Configuración (settings_db.json)', kind: 'file', path: SETTINGS_FILE_PATH },
         { label: 'Broadcasts (broadcast_db.json)', kind: 'file', path: BROADCAST_DB() },
         ...conversationPaths().map(p => ({ label: `Archivo de conversaciones (${path.basename(p)})`, kind: /** @type {'file'} */ ('file'), path: p })),
+        { label: 'Adjuntos del archivo de conversaciones', kind: 'dir', path: attachmentDirectory() },
         { label: 'Cola de mensajes (pending_messages.jsonl)', kind: 'file', path: QUEUE_FILE() },
         { label: 'Memoria del brain (memory.db)', kind: 'file', path: BRAIN_MEMORY_DB() },
         { label: 'Logs del gateway (logs/)', kind: 'dir', path: GATEWAY_LOG_DIR() },

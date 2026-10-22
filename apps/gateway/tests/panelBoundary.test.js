@@ -415,6 +415,38 @@ test('proxy reconstruye headers y firma bytes; timeouts, respuesta inválida y m
     } finally { await close(front); await close(upstream); }
 });
 
+test('proxy streams authenticated attachment bytes with strict headers and a length bound', async () => {
+    const id = '00000000-0000-4000-8000-000000000001';
+    const body = Buffer.from('opaque attachment bytes');
+    let signedRequest;
+    const upstream = http.createServer((req, res) => {
+        signedRequest = req.headers['x-sdkbot-signature'];
+        req.resume();
+        res.writeHead(200, {
+            'Content-Type': 'application/octet-stream', 'Content-Length': String(body.length),
+            'Content-Disposition': "attachment; filename=\"attachment\"; filename*=UTF-8''prueba%20%C3%A1udio.ogg",
+            'X-Content-Type-Options': 'nosniff', 'Set-Cookie': 'private=must-not-pass'
+        });
+        res.write(body.subarray(0, 5));
+        setImmediate(() => res.end(body.subarray(5)));
+    });
+    const upstreamUrl = await listen(upstream);
+    const front = http.createServer((req, res) => proxy(req, res, req.url, {
+        internal: upstreamUrl, secret, actor, requestId: crypto.randomUUID(), v1: true
+    }));
+    const frontUrl = await listen(front);
+    try {
+        const response = await fetch(`${frontUrl}/v1/attachments/${id}`);
+        assert.equal(response.status, 200);
+        assert.deepEqual(Buffer.from(await response.arrayBuffer()), body);
+        assert.equal(response.headers.get('content-type'), 'application/octet-stream');
+        assert.equal(response.headers.get('cache-control'), 'no-store');
+        assert.equal(response.headers.get('x-content-type-options'), 'nosniff');
+        assert.equal(response.headers.get('set-cookie'), null);
+        assert.equal(signedRequest?.length, 43);
+    } finally { await close(front); await close(upstream); }
+});
+
 test('proxy valida cada respuesta v1 con su contrato y no deja pasar rutas sin esquema', () => {
     assert.equal(responseContract('GET', '/v1/accounts', 200), 'AccountsResponse');
     assert.equal(responseContract('GET', '/v1/summary', 200), 'SummaryResponse');

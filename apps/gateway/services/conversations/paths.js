@@ -4,8 +4,11 @@ const { GATEWAY_STATE_DIR } = require('../../lib/repoPaths');
 function databasePath() {
     return path.resolve(process.env.SDK_CONVERSATIONS_DB_PATH || path.join(GATEWAY_STATE_DIR, 'data', 'conversations.db'));
 }
+function attachmentDirectory() {
+    return path.resolve(process.env.SDK_ATTACHMENT_DIR || path.join(GATEWAY_STATE_DIR, 'data', 'attachments'));
+}
 function statePaths() {
     const db = databasePath();
     return [db, `${db}-wal`, `${db}-shm`];
 }
-module.exports = { databasePath, statePaths };
+module.exports = { databasePath, attachmentDirectory, statePaths };

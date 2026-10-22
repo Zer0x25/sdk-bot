@@ -220,7 +220,7 @@ function buildControlImportReport(input) {
     else if (manifest.settings?.present !== true || !/^[0-9a-f]{64}$/.test(manifest.settings?.sha256 || '')) {
         blockers.push({ code: 'settings_checksum_missing' });
     }
-    if (!isRecord(input.archive) || ![6, 7, 8, 9, 10, 11].includes(input.archive.schemaVersion) || typeof input.archive.dataEpoch !== 'string'
+    if (!isRecord(input.archive) || ![6, 7, 8, 9, 10, 11, 12].includes(input.archive.schemaVersion) || typeof input.archive.dataEpoch !== 'string'
         || !/^(0|[1-9][0-9]*)$/.test(input.archive.seq || '')) blockers.push({ code: 'archive_snapshot_invalid' });
     if (!profileInventoryAvailable) blockers.push({ code: 'profile_inventory_unavailable' });
 
