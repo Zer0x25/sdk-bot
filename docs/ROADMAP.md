@@ -411,11 +411,11 @@ son necesarios para una fase previa y pasan sus mismas comprobaciones.
   `apps/gateway/`; F8.1c movió el panel a `apps/panel/` con paquete y lockfile
   propios; F8.1d movió código, tests y requirements de Brain a `apps/brain/`.
   Las rutas `.env`, perfiles y estado permanecen en `brain/`.
-- [ ] Migrar settings/campañas restantes por repositorios con corte verificable;
-  retirar accesos JSON directos. En progreso: F8.2a extrae la persistencia de
-  campañas a un repositorio JSON; settings/contactos siguen centralizados en
-  `apps/gateway/services/db.js`. No se ha hecho corte ni migración de datos.
-  Revisar locks y release-please al mover paquetes.
+- [x] Migrar settings/campañas restantes por repositorios con corte verificable;
+  retirar accesos JSON directos de los servicios. F8.2a y F8.2b separan campañas
+  y settings en repositorios; los formatos/rutas JSON existentes se conservan y
+  el corte se verifica con reinicio simulado y snapshot de control SQLite vigente.
+  No se migraron los archivos runtime. Revisar locks y release-please al mover paquetes.
 - [x] Actualizar Dockerfiles multi-stage, Compose, CI, launchers de Linux/Windows/
   Termux y artefactos frontend. Mantener volúmenes/rutas de credenciales existentes.
   Linux, Compose y Docker se verificaron en esta sesión. Windows y Termux tienen

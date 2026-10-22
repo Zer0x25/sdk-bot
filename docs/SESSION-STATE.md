@@ -1136,6 +1136,21 @@ Cierres históricos: commits F2C.1/F2C.2/F2D/F2E.1 están en el log local; F2B.3
 - Verificación: repositorio y servicio de campañas, 15/15 pruebas; ESLint y
   typecheck de Gateway; `git diff --check`. Los tests usan archivos temporales y
   transporte falso; no se iniciaron canales ni se envió ningún mensaje real.
-- Siguiente punto: formalizar el repositorio de settings y su persistencia con
-  pruebas de defaults, debounce, reinicio y concurrencia con el snapshot de
-  control SQLite, sin cambiar todavía la autoridad de datos.
+
+## Fase 8.2b — Repositorio de settings — 2026-10-22
+
+- `db.js` conserva la caché, defaults, debounce, flush de cierre y barrera de
+  factory reset; el read/write de `settings_db.json` se delega a
+  `services/repositories/jsonSettingsRepository.js`. El schema, archivo y
+  autoridad de settings no cambian. La persistencia de contactos sigue en `db.js`.
+- Prueba de corte SQLite: se importa y activa control en una DB temporal, se cambia
+  la política, se guarda después una configuración Telegram con campos legacy
+  antiguos y el snapshot de control sigue vigente; SQLite continúa como autoridad
+  para la política global.
+- Verificación: repositorio/db/control service, 13/13 pruebas; defaults seguros,
+  BOM, debounce con último valor, recarga tras reinicio, ESLint y typecheck. Todo
+  usa rutas temporales; no se leyeron ni mutaron archivos runtime reales.
+- F8.2 queda cerrada: servicios de campañas y settings usan repositorios para
+  persistencia JSON. Los archivos y rutas runtime se conservan; no hay migración
+  de formato de datos. Siguiente punto: runbook de backup/restauración, retención,
+  exportación/purga y rollback (Fase 8).

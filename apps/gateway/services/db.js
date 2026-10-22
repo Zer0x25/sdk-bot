@@ -5,8 +5,10 @@ const { SETTINGS_FILE_PATH, CONTACTS_FILE_PATH, state } = require('../config');
 const { isWiping } = require('./factoryReset');
 const { cat, errMsg } = require("./logger");
 const { num } = require('../tuning');
+const { createJsonSettingsRepository } = require('./repositories/jsonSettingsRepository');
 const log = cat("STORAGE");
 const logError = cat("ERROR");
+const settingsRepository = createJsonSettingsRepository(SETTINGS_FILE_PATH);
 
 /**
  * 🧾 Forma de settings_db.json (globalMode, perfil global, etc.)
@@ -60,13 +62,13 @@ function loadDataOnStartup() {
     log.info("📂 Cargando bases de datos en memoria...");
     
     try {
-        if (!fs.existsSync(SETTINGS_FILE_PATH)) {
+        if (!settingsRepository.exists()) {
             // 🔒 Default seguro de deploy: nadie habla con el bot hasta que el admin lo permita
             const defaultSettings = { globalMode: 'ignored_all' };
-            fs.writeFileSync(SETTINGS_FILE_PATH, JSON.stringify(defaultSettings, null, 2));
+            settingsRepository.saveSync(defaultSettings);
             cachedSettingsDB = defaultSettings;
         } else {
-            cachedSettingsDB = JSON.parse(stripBOM(fs.readFileSync(SETTINGS_FILE_PATH, 'utf8')));
+            cachedSettingsDB = settingsRepository.load();
         }
     } catch (e) {
         logError.error("Error al leer settings_db.json: " + errMsg(e));
@@ -123,7 +125,7 @@ function saveSettingsDB(settings) {
         // 🧹 Reset limpio en curso: no reescribir las DBs recién borradas
         if (isWiping()) return;
         try {
-            await fsPromises.writeFile(SETTINGS_FILE_PATH, JSON.stringify(cachedSettingsDB, null, 2));
+            await settingsRepository.save(cachedSettingsDB);
         } catch (e) {
             logError.error("Error al guardar settings_db.json de forma asíncrona: " + errMsg(e));
         }
@@ -171,7 +173,7 @@ function flushToDisk() {
     }
     log.info("💾 Guardando bases de datos a disco antes de cerrar...");
     try {
-        if (cachedSettingsDB) fs.writeFileSync(SETTINGS_FILE_PATH, JSON.stringify(cachedSettingsDB, null, 2));
+        if (cachedSettingsDB) settingsRepository.saveSync(cachedSettingsDB);
         if (cachedContactsDB) fs.writeFileSync(CONTACTS_FILE_PATH, JSON.stringify(cachedContactsDB, null, 2));
         log.info("✅ Datos guardados correctamente.");
     } catch (e) {
