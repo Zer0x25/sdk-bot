@@ -158,6 +158,7 @@ test('F5.4 v6 to v7 migration preserves the event timeline and permits audited g
     assert.equal((await readonly.ready).schemaVersion, 6);
     assert.equal((await readonly.recoveryCheckpoint()).schemaVersion, 6);
     assert.equal((await readonly.recoveryCheckpoint()).outboundIntentCount, 0);
+    assert.deepEqual(await readonly.attachmentRegistry(), []);
     await readonly.close();
 
     const migrated = createArchive({ path: databasePath });

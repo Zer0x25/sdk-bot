@@ -431,7 +431,8 @@ son necesarios para una fase previa y pasan sus mismas comprobaciones.
   - [x] F8.3d — [Minimizar datos de cliente en métricas y logs, con pruebas](F8.3-OPERACION-RECUPERACION.md#f83d--minimizacion-de-datos-en-metricas-y-logs).
 - [x] F8.4 — Ensayar migración/restauración con fixture representativo y delta
   posterior al corte; bloquear snapshots obsoletos por cursor, autoridad o ledger
-  de envíos y metadatos de adjuntos. La huella de adjuntos no valida los blobs.
+  de envíos y metadatos de adjuntos. F9.4 amplía luego la puerta para validar
+  los blobs físicos y el índice FTS.
   [Runbook y límites](F8.3-OPERACION-RECUPERACION.md#f84--ensayo-aislado-y-puerta-de-frescura-de-restore).
 
 **Aceptación:** instalación limpia y upgrade simulados; build/checks/smoke en Linux;
@@ -450,9 +451,9 @@ Windows/Termux con evidencia real o pendientes explícitos. Ningún doble transp
   y borra el adjunto. Telegram no aporta borrado general ni recibos para mensajes
   normales de bots; no se simulan. [Evidencia](F9.2-MULTIMEDIA-CANALES.md).
 - [x] SQLite FTS5 para búsqueda de texto, captions y transcripciones con páginas ligadas a un snapshot verificable. [Evidencia F9.3](F9.3-BUSQUEDA-FTS.md).
-- [ ] Integrar ledger, binarios e índices en backup/restauración coherente y
-  ensayar el ciclo completo. F9.1 ya registra el directorio en factory reset;
-  la consistencia de backup queda para F9.4.
+- [x] F9.4 — Integrar ledger, blobs e índice FTS en la puerta de
+  backup/restauración y ensayar el ciclo completo en destino aislado.
+  [Evidencia](F9.4-BACKUP-RESTORE.md).
 
 **Aceptación:** adjuntos accesibles solo al operador autorizado; mensaje permanece
 comprensible si el archivo expiró o no está disponible.

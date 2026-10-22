@@ -28,6 +28,73 @@ function sourceStream(source) {
     fail('INVALID_ATTACHMENT_SOURCE');
 }
 
+async function inspectAttachmentFiles({ directory = attachmentDirectory(), registry = [] } = {}) {
+    const root = path.resolve(directory);
+    const expected = new Map(registry.map(row => [row.id, row]));
+    const problems = new Set();
+    const digest = createHash('sha256');
+    let count = 0;
+    let bytes = 0;
+    let entries;
+    let rootStat;
+    try {
+        rootStat = await fsp.lstat(root);
+        if (!rootStat.isDirectory() || rootStat.isSymbolicLink()) problems.add('ATTACHMENT_DIRECTORY_INVALID');
+        else if ((rootStat.mode & 0o777) !== 0o700) problems.add('ATTACHMENT_PERMISSIONS_INVALID');
+        if (problems.size) return { valid: false, problems: [...problems], count, bytes, sha256: digest.digest('hex') };
+        entries = await fsp.readdir(root, { withFileTypes: true });
+    } catch (error) {
+        if (error.code !== 'ENOENT') problems.add('ATTACHMENT_DIRECTORY_UNREADABLE');
+        if (error.code === 'ENOENT' && registry.some(row => row.state === 'available')) problems.add('ATTACHMENT_BLOB_MISSING');
+        return { valid: problems.size === 0, problems: [...problems], count, bytes, sha256: digest.digest('hex') };
+    }
+
+    const seen = new Set();
+    for (const entry of entries) {
+        if (!entry.isFile() || entry.isSymbolicLink()) {
+            problems.add('ATTACHMENT_LAYOUT_INVALID');
+            continue;
+        }
+        const match = /^([0-9a-f-]{36})\.blob$/.exec(entry.name);
+        if (!match || !ID_PATTERN.test(match[1])) {
+            problems.add('ATTACHMENT_LAYOUT_INVALID');
+            continue;
+        }
+        const id = match[1];
+        const row = expected.get(id);
+        if (!row || !['available', 'delete_pending'].includes(row.state) || seen.has(id)) {
+            problems.add('ATTACHMENT_LEDGER_MISMATCH');
+            continue;
+        }
+        seen.add(id);
+        let handle;
+        try {
+            const noFollow = fs.constants.O_NOFOLLOW || 0;
+            handle = await fsp.open(path.join(root, entry.name), fs.constants.O_RDONLY | noFollow);
+            const stat = await handle.stat();
+            if (!stat.isFile() || (stat.mode & 0o777) !== 0o600 || stat.size !== row.size
+                || stat.size < 1 || stat.size > MAX_FILE_BYTES) {
+                problems.add('ATTACHMENT_BLOB_INVALID');
+                continue;
+            }
+            const content = await handle.readFile();
+            const sha256 = createHash('sha256').update(content).digest('hex');
+            if (sha256 !== row.sha256) problems.add('ATTACHMENT_BLOB_INVALID');
+            digest.update(`${id}\0${stat.size}\0${sha256}\n`);
+            count += 1;
+            bytes += stat.size;
+        } catch (error) {
+            problems.add(error.code === 'ENOENT' ? 'ATTACHMENT_BLOB_MISSING' : 'ATTACHMENT_BLOB_UNREADABLE');
+        } finally {
+            await handle?.close().catch(() => {});
+        }
+    }
+    for (const row of registry) {
+        if (row.state === 'available' && !seen.has(row.id)) problems.add('ATTACHMENT_BLOB_MISSING');
+    }
+    return { valid: problems.size === 0, problems: [...problems].sort(), count, bytes, sha256: digest.digest('hex') };
+}
+
 function createAttachmentStore({ archive, directory = attachmentDirectory(), maxFileBytes = MAX_FILE_BYTES,
     maxTotalBytes = MAX_TOTAL_BYTES } = {}) {
     if (!archive || typeof archive.attachmentTarget !== 'function') fail('ARCHIVE_REQUIRED');
@@ -227,4 +294,4 @@ function createAttachmentStore({ archive, directory = attachmentDirectory(), max
     };
 }
 
-module.exports = { createAttachmentStore, MAX_FILE_BYTES, MAX_TOTAL_BYTES, normalizeFileName, normalizeContentType };
+module.exports = { createAttachmentStore, inspectAttachmentFiles, MAX_FILE_BYTES, MAX_TOTAL_BYTES, normalizeFileName, normalizeContentType };

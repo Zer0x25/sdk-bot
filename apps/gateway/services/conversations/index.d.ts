@@ -89,6 +89,7 @@ export interface Archive {
         controlAuthority: { mode: 'legacy' | 'sqlite'; migrationId: string | null; serviceReady: boolean; changedAt: string | null };
         outboundIntentCount: number; outboundIntentSha256: string; unresolvedOutboundCount: number;
         attachmentCount: number; attachmentSha256: string;
+        searchIndexCount: number; searchIndexSha256: string; searchIndexMismatchCount: number;
         integrity: string; foreignKeys: number }>;
     registerAccount(input: { id?: string; channel: 'whatsapp' | 'telegram'; providerKey: string }): Promise<{ id: string; channel: string; provider_key: string }>;
     telegramCursor(accountId: string): Promise<string | null>;
@@ -220,7 +221,7 @@ export interface Archive {
     attachmentTarget(input: { messageId: string }): Promise<{ messageId: string; conversationId: string;
         contentType: 'audio' | 'image' | 'video' | 'document'; ingestedAt: string; expiresAt: string } | null>;
     attachment(input: { id: string }): Promise<ArchiveAttachment | null>;
-    attachmentRegistry(): Promise<Array<{ id: string; size: number; state: 'available' | 'delete_pending' }>>;
+    attachmentRegistry(): Promise<Array<{ id: string; size: number; sha256: string; state: 'available' | 'delete_pending' }>>;
     registerAttachment(input: { id: string; messageId: string; fileName: string; contentType: string;
         size: number; sha256: string; capturedAt: string }): Promise<{ status: 'stored'; attachment: ArchiveAttachment;
         message: Contract<'Message'>; event: Contract<'Event'> }>;

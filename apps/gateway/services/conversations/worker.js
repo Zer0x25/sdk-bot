@@ -31,13 +31,25 @@ function snapshot() {
     const row = one('SELECT epoch,seq FROM archive_meta WHERE id=1');
     return { dataEpoch: row.epoch, seq: row.seq };
 }
+function searchBodySql(alias) {
+    return `substr(trim(COALESCE(json_extract(${alias}.payload,'$.content.text'),'') || ' ' ||
+        COALESCE(json_extract(${alias}.payload,'$.content.caption'),'') || ' ' ||
+        COALESCE(json_extract(${alias}.payload,'$.content.transcript'),'')),1,16384)`;
+}
+function searchableMessageSql(alias) {
+    return `json_extract(${alias}.payload,'$.deletedAt') IS NULL AND
+        json_extract(${alias}.payload,'$.content.type')!='oversized' AND length(${searchBodySql(alias)})>0`;
+}
 function recoveryCheckpoint() {
     const digest = createHash('sha256');
     const attachmentDigest = createHash('sha256');
+    const searchDigest = createHash('sha256');
     const schemaVersion = one('PRAGMA user_version').user_version;
     let outboundIntentCount = 0;
     let unresolvedOutboundCount = 0;
     let attachmentCount = 0;
+    let searchIndexCount = 0;
+    let searchIndexMismatchCount = 0;
     // Schema v6 predates the durable outbox; keep it readable so the gate can
     // report the schema mismatch instead of failing before comparing metadata.
     if (schemaVersion >= 7) {
@@ -53,9 +65,29 @@ function recoveryCheckpoint() {
             attachmentCount += 1;
         }
     }
+    if (schemaVersion >= 13) {
+        if (!one("SELECT name FROM sqlite_master WHERE type='table' AND name='message_search'")) fail('SEARCH_INDEX_MISSING');
+        for (const row of db.prepare('SELECT rowid,message_id,conversation_id,body FROM message_search ORDER BY rowid').iterate()) {
+            searchDigest.update(stable(row)).update('\n');
+            searchIndexCount += 1;
+        }
+        const body = searchBodySql('m');
+        const eligible = searchableMessageSql('m');
+        searchIndexMismatchCount = one(`WITH expected AS (
+                SELECT m.rowid,m.id AS message_id,m.conversation_id,${body} AS body
+                FROM messages m WHERE ${eligible}
+            ), mismatches AS (
+                SELECT e.rowid FROM expected e LEFT JOIN message_search s ON s.rowid=e.rowid
+                WHERE s.rowid IS NULL OR s.message_id IS NOT e.message_id
+                    OR s.conversation_id IS NOT e.conversation_id OR s.body IS NOT e.body
+                UNION ALL
+                SELECT s.rowid FROM message_search s LEFT JOIN expected e ON e.rowid=s.rowid WHERE e.rowid IS NULL
+            ) SELECT COUNT(*) n FROM mismatches`).n;
+    }
     return { ...snapshot(), schemaVersion,
         controlAuthority: controlAuthority(), outboundIntentCount, outboundIntentSha256: digest.digest('hex'),
         unresolvedOutboundCount, attachmentCount, attachmentSha256: attachmentDigest.digest('hex'),
+        searchIndexCount, searchIndexSha256: searchDigest.digest('hex'), searchIndexMismatchCount,
         integrity: one('PRAGMA integrity_check').integrity_check,
         foreignKeys: all('PRAGMA foreign_key_check').length };
 }
@@ -317,28 +349,23 @@ function initialize() {
         PRAGMA user_version=12;`);
     });
     if (one('PRAGMA user_version').user_version === 12) transaction(() => {
-        const body = alias => `substr(trim(COALESCE(json_extract(${alias}.payload,'$.content.text'),'') || ' ' ||
-            COALESCE(json_extract(${alias}.payload,'$.content.caption'),'') || ' ' ||
-            COALESCE(json_extract(${alias}.payload,'$.content.transcript'),'')),1,16384)`;
-        const eligible = alias => `json_extract(${alias}.payload,'$.deletedAt') IS NULL AND
-            json_extract(${alias}.payload,'$.content.type')!='oversized' AND length(${body(alias)})>0`;
         db.exec(`CREATE VIRTUAL TABLE message_search USING fts5(message_id UNINDEXED,conversation_id UNINDEXED,body,
             tokenize='unicode61 remove_diacritics 2');
-        CREATE TRIGGER messages_search_insert AFTER INSERT ON messages WHEN ${eligible('NEW')} BEGIN
+        CREATE TRIGGER messages_search_insert AFTER INSERT ON messages WHEN ${searchableMessageSql('NEW')} BEGIN
             INSERT INTO message_search(rowid,message_id,conversation_id,body)
-            VALUES(NEW.rowid,NEW.id,NEW.conversation_id,${body('NEW')});
+            VALUES(NEW.rowid,NEW.id,NEW.conversation_id,${searchBodySql('NEW')});
         END;
         CREATE TRIGGER messages_search_update AFTER UPDATE OF payload,conversation_id ON messages BEGIN
             DELETE FROM message_search WHERE rowid=OLD.rowid;
             INSERT INTO message_search(rowid,message_id,conversation_id,body)
-            SELECT NEW.rowid,NEW.id,NEW.conversation_id,${body('NEW')} WHERE ${eligible('NEW')};
+            SELECT NEW.rowid,NEW.id,NEW.conversation_id,${searchBodySql('NEW')} WHERE ${searchableMessageSql('NEW')};
         END;
         CREATE TRIGGER messages_search_delete AFTER DELETE ON messages BEGIN
             DELETE FROM message_search WHERE rowid=OLD.rowid;
         END;
         INSERT INTO message_search(rowid,message_id,conversation_id,body)
-        SELECT rowid,id,conversation_id,${body('messages')} FROM messages
-        WHERE ${eligible('messages')};
+        SELECT rowid,id,conversation_id,${searchBodySql('messages')} FROM messages
+        WHERE ${searchableMessageSql('messages')};
         PRAGMA user_version=13;`);
     });
     if (one("SELECT id FROM outbound_intents WHERE state='sending' LIMIT 1")) transaction(() => {
@@ -2178,7 +2205,8 @@ function attachment(input) {
     return row ? attachmentFromRow(row) : null;
 }
 function attachmentRegistry() {
-    return all('SELECT id,size,state FROM attachments ORDER BY id');
+    if (one('PRAGMA user_version').user_version < 12) return [];
+    return all('SELECT id,size,sha256,state FROM attachments ORDER BY id');
 }
 function registerAttachment(input) {
     assertValid('Id', input?.id); assertValid('Id', input?.messageId);

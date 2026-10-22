@@ -1298,3 +1298,22 @@ Cierres históricos: commits F2C.1/F2C.2/F2D/F2E.1 están en el log local; F2B.3
 - Commit local de la unidad creado. No publicar.
 - Siguiente punto: F9.4, integrar ledger, binarios e índices en backup/restauración
   coherente y ensayar el ciclo completo.
+
+## Fase 9.4 — Backup/restauración de ledger, blobs e índice FTS — 2026-10-22
+
+- La puerta offline de restore comprueba consistencia FTS v13 y blobs físicos:
+  compara filas indexadas con mensajes elegibles; valida archivos `.blob` privados,
+  presencia, tamaño, SHA-256 y ausencia de extras contra el ledger. Un candidato
+  que reutiliza el mismo directorio físico de blobs queda bloqueado.
+- Ensayo integral: crea caption y blob, genera DB snapshot con `VACUUM INTO`, copia
+  blobs, pasa la puerta, restaura a un directorio aislado, consulta FTS y compara
+  los bytes descargados. Índice y blob alterados por separado son rechazados.
+  Runbook: [F9.4-BACKUP-RESTORE.md](F9.4-BACKUP-RESTORE.md); límites operativos
+  actualizados en [F8.3](F8.3-OPERACION-RECUPERACION.md).
+- Verificación: pruebas focales F9.4/adjuntos/búsqueda 12/12; `npm run check` raíz
+  con 17/17 contratos; `cd apps/gateway && npm run check` con lint, typecheck,
+  Panel 40/40, build Vite, integración 1/1 y Gateway 347/347; `git diff --check`.
+  Solo DB/archivos temporales; no se iniciaron canales ni proveedores.
+- Commit local de esta unidad creado; no publicar.
+- Siguiente punto: Fase 10, primera entrega vertical de resúmenes/borradores y
+  propuestas de respuesta con referencias verificables al hilo.

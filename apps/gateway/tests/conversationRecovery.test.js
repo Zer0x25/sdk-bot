@@ -6,7 +6,9 @@ const os = require('node:os');
 const path = require('node:path');
 const { spawnSync } = require('node:child_process');
 const { createHash, randomUUID } = require('node:crypto');
+const { DatabaseSync } = require('node:sqlite');
 const { createArchive } = require('../services/conversations');
+const { createAttachmentStore } = require('../services/conversations/attachments');
 const { buildControlImportReport } = require('../services/conversations/controlImport');
 
 const destination = '15551234567@s.whatsapp.net';
@@ -64,10 +66,12 @@ async function acceptedHuman(archive, accountId, conversationId, actorId, idempo
     assert.ok(await archive.messageByProviderId({ conversationId, providerMessageId }));
 }
 
-function runGate(sourcePath, snapshotPath, lockPath) {
-    const result = spawnSync(process.execPath, [scriptPath, '--snapshot', snapshotPath], { cwd: path.resolve(__dirname, '../../..'),
+function runGate(sourcePath, snapshotPath, lockPath, { sourceAttachments = path.join(path.dirname(sourcePath), 'attachments'),
+    snapshotAttachments = path.join(path.dirname(snapshotPath), 'attachments') } = {}) {
+    const result = spawnSync(process.execPath, [scriptPath, '--snapshot', snapshotPath,
+        '--snapshot-attachments', snapshotAttachments], { cwd: path.resolve(__dirname, '../../..'),
         encoding: 'utf8', env: { ...process.env, SDK_BOT_TEST: '1', SDK_CONVERSATIONS_DB_PATH: sourcePath,
-            SDK_GATEWAY_LOCK_PATH: lockPath } });
+            SDK_ATTACHMENT_DIR: sourceAttachments, SDK_GATEWAY_LOCK_PATH: lockPath } });
     assert.ifError(result.error);
     assert.equal(result.signal, null, result.stderr);
     assert.ok(result.stdout, result.stderr || 'restore check produced no output');
@@ -173,30 +177,133 @@ test('F8.4 migration and restore gate blocks stale snapshots after evented and l
 
 test('restore gate detects attachment metadata purges that do not advance the event cursor', async t => {
     const dir = await fs.mkdtemp(path.join(os.tmpdir(), 'sdkbot-f84-attachment-ledger-'));
-    const sourcePath = path.join(dir, 'active.db'), snapshotPath = path.join(dir, 'snapshot.db');
+    const sourceDirectory = path.join(dir, 'source'), snapshotDirectory = path.join(dir, 'snapshot');
+    const sourcePath = path.join(sourceDirectory, 'conversations.db');
+    const snapshotPath = path.join(snapshotDirectory, 'conversations.db');
+    const sourceAttachments = path.join(sourceDirectory, 'attachments');
+    const snapshotAttachments = path.join(snapshotDirectory, 'attachments');
     const lockPath = path.join(dir, 'gateway.lock');
+    await fs.mkdir(snapshotDirectory, { recursive: true });
     let archive = createArchive({ path: sourcePath });
-    t.after(async () => { await archive?.close().catch(() => {}); await fs.rm(dir, { recursive: true, force: true }); });
+    let store;
+    t.after(async () => { await store?.close(); await archive?.close().catch(() => {}); await fs.rm(dir, { recursive: true, force: true }); });
     await archive.ready;
     const account = await archive.registerAccount({ channel: 'whatsapp', providerKey: 'f84-attachment-ledger' });
     const [captured] = await archive.ingestBatch([{ ...inbound(account.id, 'attachment-ledger'),
         content: { type: 'audio', availability: 'not_stored', transcript: null, transcriptionStatus: 'failed' } }]);
-    const attachmentId = randomUUID();
-    await archive.registerAttachment({ id: attachmentId, messageId: captured.message.id, fileName: 'fixture.ogg',
-        contentType: 'audio/ogg', size: 4, sha256: 'a'.repeat(64), capturedAt: new Date().toISOString() });
-    const attachment = await archive.attachment({ id: attachmentId });
+    store = createAttachmentStore({ archive, directory: sourceAttachments });
+    await store.init();
+    const saved = await store.store({ messageId: captured.message.id, source: Buffer.from('bytes'),
+        fileName: 'fixture.ogg', contentType: 'audio/ogg' });
+    const attachment = await archive.attachment({ id: saved.attachment.id });
     await archive.backup(snapshotPath);
+    await store.close(); store = null;
+    await fs.cp(sourceAttachments, snapshotAttachments, { recursive: true });
     await archive.close(); archive = null;
 
     archive = createArchive({ path: sourcePath });
     await archive.ready;
+    store = createAttachmentStore({ archive, directory: sourceAttachments });
+    await store.init();
     const before = await archive.snapshot();
     await archive.purge({ now: new Date(Date.parse(attachment.expiresAt) + 1).toISOString(), limit: 500 });
+    await store.sweepExpired();
     assert.deepEqual(await archive.snapshot(), before);
+    await store.close(); store = null;
     await archive.close(); archive = null;
 
-    const gate = runGate(sourcePath, snapshotPath, lockPath);
+    const gate = runGate(sourcePath, snapshotPath, lockPath, { sourceAttachments, snapshotAttachments });
     assert.equal(gate.exitCode, 2);
     assert.equal(gate.result.source.seq, gate.result.snapshot.seq);
     assert.ok(gate.result.blockers.includes('ATTACHMENT_LEDGER_MISMATCH'));
+});
+
+test('F9.4 backs up, verifies, and restores the FTS index with its attachment blobs', async t => {
+    const dir = await fs.mkdtemp(path.join(os.tmpdir(), 'sdkbot-f94-bundle-'));
+    const sourceDirectory = path.join(dir, 'source'), snapshotDirectory = path.join(dir, 'snapshot');
+    const restoreDirectory = path.join(dir, 'isolated-restore');
+    const sourcePath = path.join(sourceDirectory, 'conversations.db');
+    const snapshotPath = path.join(snapshotDirectory, 'conversations.db');
+    const sourceAttachments = path.join(sourceDirectory, 'attachments');
+    const snapshotAttachments = path.join(snapshotDirectory, 'attachments');
+    const restorePath = path.join(restoreDirectory, 'conversations.db');
+    const restoreAttachments = path.join(restoreDirectory, 'attachments');
+    const lockPath = path.join(dir, 'gateway.lock');
+    await Promise.all([fs.mkdir(snapshotDirectory, { recursive: true }), fs.mkdir(restoreDirectory, { recursive: true })]);
+    let archive = createArchive({ path: sourcePath });
+    let sourceStore;
+    let restoredArchive;
+    let restoredStore;
+    t.after(async () => {
+        await restoredStore?.close(); await restoredArchive?.close().catch(() => {});
+        await sourceStore?.close(); await archive?.close().catch(() => {});
+        await fs.rm(dir, { recursive: true, force: true });
+    });
+    await archive.ready;
+    const account = await archive.registerAccount({ channel: 'whatsapp', providerKey: 'f94-bundle-fixture' });
+    const media = { ...inbound(account.id, 'f94-search-media'), content: {
+        type: 'image', availability: 'not_stored', transcript: null,
+        transcriptionStatus: 'not_requested', caption: 'CAFÉ informe de respaldo'
+    } };
+    const [captured] = await archive.ingestBatch([media]);
+    sourceStore = createAttachmentStore({ archive, directory: sourceAttachments });
+    await sourceStore.init();
+    const payload = Buffer.from('fixture image bytes for backup');
+    const saved = await sourceStore.store({ messageId: captured.message.id, source: payload,
+        fileName: 'captura.png', contentType: 'image/png' });
+    const base = await archive.backup(snapshotPath);
+    await sourceStore.close(); sourceStore = null;
+    await fs.cp(sourceAttachments, snapshotAttachments, { recursive: true });
+    await archive.close(); archive = null;
+
+    const validGate = runGate(sourcePath, snapshotPath, lockPath, { sourceAttachments, snapshotAttachments });
+    assert.equal(validGate.exitCode, 0, JSON.stringify(validGate.result));
+    assert.equal(validGate.result.promotionAllowed, true);
+    assert.equal(validGate.result.source.searchIndexCount, 1);
+    assert.equal(validGate.result.source.searchIndexMismatchCount, 0);
+    assert.equal(validGate.result.source.attachmentBlobCount, 1);
+    assert.equal(validGate.result.source.attachmentBlobBytes, payload.length);
+
+    const sharedAttachmentGate = runGate(sourcePath, snapshotPath, lockPath, {
+        sourceAttachments, snapshotAttachments: sourceAttachments
+    });
+    assert.equal(sharedAttachmentGate.exitCode, 2);
+    assert.ok(sharedAttachmentGate.result.blockers.includes('ATTACHMENT_SNAPSHOT_NOT_SEPARATE'));
+
+    await fs.copyFile(snapshotPath, restorePath);
+    await fs.cp(snapshotAttachments, restoreAttachments, { recursive: true });
+    restoredArchive = createArchive({ path: restorePath, restore: true });
+    await restoredArchive.ready;
+    restoredStore = createAttachmentStore({ archive: restoredArchive, directory: restoreAttachments });
+    await restoredStore.init();
+    const search = await restoredArchive.searchMessages({ conversationId: captured.message.conversationId, query: 'cafe respaldo' });
+    assert.deepEqual(search.items.map(item => item.message.id), [captured.message.id]);
+    assert.match(search.items[0].snippet, /CAFÉ/i);
+    const opened = await restoredStore.open(saved.attachment.id);
+    assert.ok(opened);
+    const parts = [];
+    for await (const chunk of opened.stream) parts.push(chunk);
+    assert.deepEqual(Buffer.concat(parts), payload);
+    assert.notEqual((await restoredArchive.snapshot()).dataEpoch, base.dataEpoch);
+
+    await restoredStore.close(); restoredStore = null;
+    await restoredArchive.close(); restoredArchive = null;
+
+    const brokenIndexPath = path.join(dir, 'broken-index.db');
+    const brokenIndexAttachments = path.join(dir, 'broken-index-attachments');
+    await fs.copyFile(snapshotPath, brokenIndexPath);
+    await fs.cp(snapshotAttachments, brokenIndexAttachments, { recursive: true });
+    const damaged = new DatabaseSync(brokenIndexPath);
+    damaged.prepare('DELETE FROM message_search WHERE rowid=(SELECT rowid FROM messages WHERE id=?)').run(captured.message.id);
+    damaged.close();
+    const brokenIndexGate = runGate(sourcePath, brokenIndexPath, lockPath, {
+        sourceAttachments, snapshotAttachments: brokenIndexAttachments
+    });
+    assert.equal(brokenIndexGate.exitCode, 2);
+    assert.ok(brokenIndexGate.result.blockers.includes('SEARCH_INDEX_INVALID'));
+
+    await fs.writeFile(path.join(snapshotAttachments, `${saved.attachment.id}.blob`), Buffer.from('tampered bytes'));
+    const brokenBlobGate = runGate(sourcePath, snapshotPath, lockPath, { sourceAttachments, snapshotAttachments });
+    assert.equal(brokenBlobGate.exitCode, 2);
+    assert.ok(brokenBlobGate.result.blockers.includes('ATTACHMENT_BLOB_INVALID'));
 });
