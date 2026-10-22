@@ -1075,3 +1075,29 @@ Cierres históricos: commits F2C.1/F2C.2/F2D/F2E.1 están en el log local; F2B.3
   progreso; el panel sigue anidado en `apps/gateway/panel/` y el brain en `brain/`.
 - Siguiente subunidad: F8.1c, mover el proceso y frontend del panel a `apps/panel/`
   manteniendo sus dependencias y rutas de estado.
+
+## Fase 8.1c — Panel dentro de `apps/` — 2026-10-22
+
+- Los 46 archivos versionados del panel se movieron a `apps/panel/`. El proceso,
+  UI legacy y app React/Vite quedan fuera del paquete Gateway; el panel conserva
+  solo imports de infraestructura HTTP sin estado desde `apps/gateway/lib/`.
+- Panel tiene manifest/lock y dependencias propios, igual que Gateway. Ambos
+  consumen `packages/contracts` desde el checkout. El launcher, CI, Docker,
+  Compose, Windows, README, AGENTS y guías de arquitectura/OAuth usan las rutas
+  nuevas; `.env`, sesión, logs y DB siguen bajo `gateway/` y `brain/`.
+- `npm ci` limpio en `apps/gateway/` y `apps/panel/`; `cd apps/gateway && npm run
+  check`: lint/typecheck, 38 pruebas Vitest, build Vite, prueba HTTP del artefacto
+  y 321 pruebas Gateway pasan. La primera corrida encontró un `require.resolve`
+  de test con la ruta vieja; corregido y confirmado con `node --test
+  tests/panelBoundary.test.js` (21/21) y la suite completa posterior (321/321).
+- `bash -n` de launcher/smoke Linux y scripts Termux; Compose `config --quiet`;
+  `git diff --check`. Smoke del launcher en puertos 21510/21520/21530/21540, con
+  WhatsApp sustituido por transporte offline y estado, PID, logs y DB temporales;
+  Gateway, panel y `/inbox` respondieron y el cleanup liberó los puertos.
+- Build de `deploy/docker/gateway.Dockerfile` pasó. Un contenedor temporal con el
+  entrypoint real del panel sirvió `/` y `/inbox/` con HTTP 200; imagen y
+  contenedor temporales eliminados. No se iniciaron canales ni se contactó IA o
+  proveedores; el stack activo de los puertos por defecto permaneció arriba.
+- No se hizo push ni despliegue. F8.1 sigue en progreso; brain y sus perfiles/
+  estado permanecen en `brain/`. Siguiente subunidad: F8.1d, mover el código del
+  brain sin trasladar secretos, memoria ni perfiles.

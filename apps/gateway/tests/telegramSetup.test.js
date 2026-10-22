@@ -15,7 +15,7 @@ test('panel setup can save token without chat ID, reload partial setup, discover
         saveTelegramSettings: async (token, chatId) => { stored = { token, chatId }; saves.push(stored); return { success: true }; },
         setTimeout: () => 0, confirm: () => true, console
     });
-    const source = fs.readFileSync(path.join(__dirname, '../panel/public/js/tabs/telegram.js'), 'utf8').replace(/^import .*;\n/gm, '').replace(/^export /gm, '');
+    const source = fs.readFileSync(path.join(__dirname, '../../panel/public/js/tabs/telegram.js'), 'utf8').replace(/^import .*;\n/gm, '').replace(/^export /gm, '');
     vm.runInContext(source, context); context.initTelegramTab();
     await context.loadTgSettings();
     elements.tgToken.value = 'fixture_A'; await elements.tgSaveBtn.events.click();
@@ -39,7 +39,7 @@ test('panel reports a stopped Telegram capture instead of a generic disconnected
         getStatus: async () => ({ channels: { telegram: { connection: 'standby', lastDisconnectReason: 'error_captura' } } }),
         getTelegramSettings: async () => ({}), testTelegramToken: async () => ({}), saveTelegramSettings: async () => ({}), console
     });
-    const source = fs.readFileSync(path.join(__dirname, '../panel/public/js/tabs/telegram.js'), 'utf8').replace(/^import .*;\n/gm, '').replace(/^export /gm, '');
+    const source = fs.readFileSync(path.join(__dirname, '../../panel/public/js/tabs/telegram.js'), 'utf8').replace(/^import .*;\n/gm, '').replace(/^export /gm, '');
     vm.runInContext(source, context);
     await context.refreshTgStatus();
     assert.match(elements.tgStatus.textContent, /captura se detuvo/i);

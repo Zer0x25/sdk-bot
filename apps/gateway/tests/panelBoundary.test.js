@@ -8,8 +8,8 @@ const { assertValid } = require('@sdk-bot/contracts');
 const { withTempDbPaths } = require('./helpers/tmpPaths');
 const temporary = withTempDbPaths();
 const { signContext, createVerifier, actorId, requireCapability } = require('../lib/panelContext');
-const { resolveActor } = require('../panel/identity');
-const { proxy, responseContract } = require('../panel/proxy');
+const { resolveActor } = require('../../panel/identity');
+const { proxy, responseContract } = require('../../panel/proxy');
 const { readBytes, sendError } = require('../lib/httpBoundary');
 const { startInternalBus } = require('../services/internalBus');
 const { state, getGlobalPolicy } = require('../config');
@@ -118,8 +118,8 @@ async function panelFixture(options = {}) {
         PANEL_CONVERSATIONS_UI_ENABLED: undefined,
         STATUS_TOKEN: 'fake-status-token', ...options
     });
-    delete require.cache[require.resolve('../panel/index')];
-    const panel = require('../panel/index');
+    delete require.cache[require.resolve('../../panel/index')];
+    const panel = require('../../panel/index');
     const url = await listen(panel.server);
     return { ...panel, url, close: async () => { await close(panel.server); restore(); } };
 }

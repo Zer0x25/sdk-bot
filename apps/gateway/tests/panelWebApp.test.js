@@ -5,7 +5,7 @@ const fs = require('node:fs/promises');
 const os = require('node:os');
 const path = require('node:path');
 const http = require('node:http');
-const { serveConversationsApp } = require('../panel/webApp');
+const { serveConversationsApp } = require('../../panel/webApp');
 
 async function listen(server) {
     await new Promise(resolve => server.listen(0, '127.0.0.1', resolve));

@@ -4,7 +4,7 @@ const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const path = require('node:path');
 
-const buildDir = path.join(__dirname, '../panel/web/dist');
+const buildDir = path.join(__dirname, '../../panel/web/dist');
 
 async function close(server) {
     server.closeAllConnections();
@@ -22,11 +22,11 @@ test('panel sirve el build Vite bajo /inbox cuando se habilita el feature flag',
     process.env.PANEL_GOOGLE_CLIENT_ID = '';
     process.env.PANEL_GOOGLE_CLIENT_SECRET = '';
     process.env.PANEL_CONVERSATIONS_UI_ENABLED = 'true';
-    delete require.cache[require.resolve('../panel/index')];
-    const { server } = require('../panel/index');
+    delete require.cache[require.resolve('../../panel/index')];
+    const { server } = require('../../panel/index');
     t.after(async () => {
         await close(server);
-        delete require.cache[require.resolve('../panel/index')];
+        delete require.cache[require.resolve('../../panel/index')];
         for (const name of names) {
             if (previous[name] === undefined) delete process.env[name];
             else process.env[name] = previous[name];

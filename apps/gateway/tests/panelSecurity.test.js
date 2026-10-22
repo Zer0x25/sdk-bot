@@ -1,7 +1,7 @@
 process.env.SDK_BOT_TEST = '1';
 const { test } = require('node:test');
 const assert = require('node:assert');
-const { isWriteAuthorized } = require('../panel/index');
+const { isWriteAuthorized } = require('../../panel/index');
 
 test('isWriteAuthorized rechaza peticiones con sec-fetch-site cross-site', () => {
     const req = /** @type {any} */ ({

@@ -1,7 +1,7 @@
 // @ts-check
 const { assertValid } = require('@sdk-bot/contracts');
-const { actorId } = require('../lib/panelContext');
-const { BoundaryError } = require('../lib/httpBoundary');
+const { actorId } = require('../gateway/lib/panelContext');
+const { BoundaryError } = require('../gateway/lib/httpBoundary');
 
 function resolveActor(session, { oauthEnabled, nodeEnv, devActor, authRequired = false, grants = '{}' }) {
     let subject;

@@ -23,9 +23,9 @@ docker compose -f deploy/docker/compose.yml logs -f gateway
 
 Compose sirve el panel en `:3005` interno a través de la red externa `proxy_net`
 para Caddy; no publica puertos del panel, brain, bus ni status en el host.
-El panel ejecuta `node panel/index.js`, sin abrir otra sesión de WhatsApp.
-Contratos se empaquetan como dependencia local del gateway, sin workspace raíz
-instalado en la imagen. Configuración y límites:
+El panel ejecuta `node /app/apps/panel/index.js`, sin abrir otra sesión de
+WhatsApp. Gateway y panel instalan contracts desde `packages/contracts` como
+dependencia local, sin instalar el workspace raíz en la imagen. Configuración y límites:
 [frontera F1B](../../docs/FRONTERA-AUTENTICADA-V1.md).
 
 La nueva base React/Vite se construye en una etapa Docker separada y el mismo

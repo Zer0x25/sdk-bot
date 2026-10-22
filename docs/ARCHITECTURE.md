@@ -1,13 +1,15 @@
 # SDK-Bot: arquitectura de la plataforma de conversaciones
 
 Fecha: 2026-10-22. Estado: **diseño para implementación incremental**.
-El código conserva `gateway/`, `brain/` y el panel estático; F8.1 mueve el código
-STT a `apps/stt/` y deja su imagen con el mismo `STT_CACHE` de producción.
+F8.1a mueve STT a `apps/stt/`, F8.1b Gateway a `apps/gateway/` y F8.1c separa
+el proceso y frontend del panel en `apps/panel/`. `gateway/` conserva estado,
+credenciales, logs y locks; `brain/` conserva código y sus perfiles/estado hasta
+su unidad F8.1d. La imagen STT mantiene el mismo `STT_CACHE` de producción.
 Las demás carpetas, tablas, servicios y endpoints de destino no existen todavía,
 salvo indicación expresa. F1A implementa `packages/contracts` y workspace raíz
-para `packages/*`; gateway conserva instalación/lock independientes. No se migraron
-datos ni UI nueva. F1B implementa sesión v1 y firma panel → gateway, con contratos
-instalados como dependencia local del gateway. F2A añade repositorios SQLite con
+para `packages/*`; Gateway y panel conservan instalaciones y locks independientes.
+No se migraron datos ni UI nueva. F1B implementa sesión v1 y firma panel → gateway,
+con contratos instalados como dependencia local de ambos paquetes. F2A añade repositorios SQLite con
 worker y snapshot durable de sesión; F2B.1 protege el reset CLI antes de captura.
 F2B.2 conecta captura base WA y F2B.3 añade enriquecimiento multimedia durable
 ([evidencia y límites](MULTIMEDIA-WHATSAPP-F2B3.md)). F2C.1 elimina el lector paralelo de descubrimiento TG
@@ -44,7 +46,7 @@ un marcador visible aunque todavía no pueda abrirse o descargarse.
 | Envío IA | `services/brainService.js`: petición, esperas, typing y varios globos | Falta barrera común de validación antes de cada envío. |
 | Memoria prematura | `brain/main.py`: /chat llama append_exchange antes de entregar al gateway | Una generación cancelada puede quedar en contexto como si se hubiera enviado. |
 | Envíos directos | `internalBus.js`: /notify usa activeSock.sendMessage; otros servicios llaman al adapter | Converger en un caso de uso con auditoría e idempotencia. |
-| UI | `apps/gateway/panel/public/`: ES Modules y CSS sin build | Sin bandeja ni cliente tipado para conversaciones. |
+| UI | `apps/panel/public/`: ES Modules y CSS sin build | Sin bandeja ni cliente tipado para conversaciones. |
 | Documentación | ROADMAP declaraba pendientes índices ya presentes en contactsRepository.js; ARCHITECTURE tenía OAuth desactualizado | Confirmar con código/pruebas; no marcar validaciones reales como realizadas. |
 
 En esa baseline, upsertMessage del store RAM no tenía llamadas y las guardas
@@ -168,12 +170,13 @@ Vite funciona en desarrollo/build. En producción el proceso del panel sirve el
 build: no se agrega un servicio de frontend. CI puede distribuir artefactos a
 Termux. No se requiere SSR para esta consola privada.
 
-La adopción de `apps/` está en curso. El código Gateway vive en `apps/gateway/`;
-`gateway/` conserva su estado runtime y credenciales. `repoPaths.js` resuelve
-ambos directorios para que mover código no cambie las rutas de datos. El panel
-sigue bajo `apps/gateway/panel/` hasta su subunidad F8.1c.
+La adopción de `apps/` está en curso. Gateway y panel viven en `apps/gateway/` y
+`apps/panel/`; brain y sus perfiles permanecen en `brain/`. `gateway/` conserva
+el estado runtime y credenciales. `repoPaths.js` resuelve las rutas existentes
+para que mover código no cambie las rutas de datos. El panel importa únicamente
+la infraestructura HTTP sin estado de `apps/gateway/lib/`.
 
-La transición comienza en `apps/gateway/panel/web`: el bundle se sirve en `/inbox` por
+La app React vive en `apps/panel/web`: el bundle se sirve en `/inbox` por
 el mismo proceso OAuth del panel y requiere `PANEL_CONVERSATIONS_UI_ENABLED=true`.
 El valor por defecto es apagado; `/` conserva el panel anterior. Con OAuth activo,
 la nueva ruta exige sesión, mientras `/api/*` legacy y su UI requieren el grant

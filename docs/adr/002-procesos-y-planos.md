@@ -8,15 +8,15 @@ El sistema son **tres procesos** con responsabilidades exclusivas y dependencia 
 
 | Proceso | Puerto | Responsabilidad única |
 |---|---|---|
-| **gateway** (`gateway/index.js`) | bus 5400 · status 5300 | Dueño de TODOS los canales (adapters), del pipeline de mensajes, del estado persistente (contacts/settings DB) y de los comandos admin. Es el ÚNICO proceso que habla con redes de mensajería |
+| **gateway** (`apps/gateway/index.js`) | bus 5400 · status 5300 | Dueño de TODOS los canales (adapters), del pipeline de mensajes, del estado persistente (contacts/settings DB) y de los comandos admin. Es el ÚNICO proceso que habla con redes de mensajería |
 | **brain** (`brain/main.py`) | 5100 | Inteligencia pura: proveedores IA (Gemini primary → Groq → OpenRouter, orden tunable), memoria conversacional (memory.db), perfiles SOUL. No sabe qué es WhatsApp ni Telegram |
-| **panel** (`gateway/panel/index.js`) | 5201 | Plano de control: sirve UI estática y proxifica `/api/*` al bus interno del gateway. No tiene acceso directo a ningún canal |
+| **panel** (`apps/panel/index.js`) | 5201 | Plano de control: sirve UI estática y proxifica `/api/*` al bus interno del gateway. No tiene acceso directo a ningún canal |
 
 Reglas de dependencia (nunca se invierten):
 ```
 panel → bus(5400) → gateway → brain(5100)
 ```
-- El panel JAMÁS importa código del gateway ni toca Baileys/Telegram: todo pasa por HTTP loopback del bus.
+- El panel no importa servicios ni canales del gateway ni toca Baileys/Telegram: solo comparte la infraestructura HTTP sin estado de `apps/gateway/lib/`; el tráfico operativo pasa por el bus.
 - El gateway JAMÁS conoce proveedores ni API keys de modelos: delega en el brain vía REST.
 - El brain no inicia conexiones salientes hacia canales.
 

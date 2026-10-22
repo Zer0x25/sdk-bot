@@ -25,9 +25,9 @@ const { URL } = require('url');
 const { proxy: proxyRequest } = require('./proxy');
 const { resolveActor } = require('./identity');
 const { serveConversationsApp } = require('./webApp');
-const { actorId, requireCapability } = require('../lib/panelContext');
-const { BoundaryError, sendError } = require('../lib/httpBoundary');
-const { GATEWAY_STATE_DIR } = require('../lib/repoPaths');
+const { actorId, requireCapability } = require('../gateway/lib/panelContext');
+const { BoundaryError, sendError } = require('../gateway/lib/httpBoundary');
+const { GATEWAY_STATE_DIR } = require('../gateway/lib/repoPaths');
 
 // Carga gateway/panel/.env (no versionado) si existe. No sobreescribe env ya definidas.
 const DOTENV = path.join(GATEWAY_STATE_DIR, 'panel', '.env');

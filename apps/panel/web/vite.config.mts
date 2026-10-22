@@ -2,7 +2,7 @@ import react from '@vitejs/plugin-react';
 import { defineConfig } from 'vitest/config';
 
 export default defineConfig({
-  root: 'panel/web',
+  root: 'web',
   base: '/inbox/',
   plugins: [react()],
   build: {

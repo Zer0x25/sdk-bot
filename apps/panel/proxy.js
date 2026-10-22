@@ -1,8 +1,8 @@
 // @ts-check
 const http = require('node:http');
 const { validate } = require('@sdk-bot/contracts');
-const { signContext } = require('../lib/panelContext');
-const { readBytes, BoundaryError, sendError } = require('../lib/httpBoundary');
+const { signContext } = require('../gateway/lib/panelContext');
+const { readBytes, BoundaryError, sendError } = require('../gateway/lib/httpBoundary');
 
 function responseContract(method, pathname, status) {
     if (status >= 400) return 'ErrorResponse';

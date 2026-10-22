@@ -24,10 +24,14 @@ bash deploy/linux/dev.sh up gateway panel >/dev/null 2>&1
 
 # Espera a que arranquen (hasta 30s)
 for i in $(seq 1 30); do
-    gw_ok=0; panel_ok=0
+    gw_ok=0; panel_ok=0; inbox_ok=1
     curl -s -m 2 -o /dev/null "http://127.0.0.1:$STATUS_PORT/health" 2>/dev/null && gw_ok=1
     curl -s -m 2 -o /dev/null "http://127.0.0.1:$ADMIN_WEB_PORT/" 2>/dev/null && panel_ok=1
-    [ "$gw_ok" = 1 ] && [ "$panel_ok" = 1 ] && break
+    if [ "${SDK_BOT_DEV_SMOKE_INBOX:-0}" = 1 ]; then
+        inbox_ok=0
+        curl -s -m 2 -o /dev/null "http://127.0.0.1:$ADMIN_WEB_PORT/inbox/" 2>/dev/null && inbox_ok=1
+    fi
+    [ "$gw_ok" = 1 ] && [ "$panel_ok" = 1 ] && [ "$inbox_ok" = 1 ] && break
     sleep 1
 done
 
@@ -37,5 +41,10 @@ fi
 if [ "$panel_ok" != 1 ]; then
     echo "dev smoke: FAIL (panel :$ADMIN_WEB_PORT no responde)"; exit 1
 fi
+if [ "$inbox_ok" != 1 ]; then
+    echo "dev smoke: FAIL (panel /inbox no responde)"; exit 1
+fi
 
-echo "dev smoke: OK (gateway + panel up, down limpio)"
+smoke_scope="gateway + panel"
+[ "${SDK_BOT_DEV_SMOKE_INBOX:-0}" = 1 ] && smoke_scope="$smoke_scope + inbox"
+echo "dev smoke: OK ($smoke_scope up, down limpio)"

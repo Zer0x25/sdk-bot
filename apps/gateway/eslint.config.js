@@ -17,7 +17,6 @@ module.exports = [
     js.configs.recommended,
     {
         files: ['**/*.js'],
-        ignores: ['panel/public/**/*.js'],
         languageOptions: {
             ecmaVersion: 2022,
             sourceType: 'commonjs',
@@ -42,36 +41,6 @@ module.exports = [
                 URL: 'readonly',
                 TextEncoder: 'readonly',
                 TextDecoder: 'readonly'
-            }
-        },
-        rules: {
-            'no-unused-vars': ['warn', { argsIgnorePattern: '^_', caughtErrors: 'none' }],
-            'no-empty': ['error', { allowEmptyCatch: true }]
-        }
-    },
-    {
-        files: ['panel/public/**/*.js'],
-        languageOptions: {
-            ecmaVersion: 2022,
-            sourceType: 'module',
-            globals: {
-                document: 'readonly',
-                window: 'readonly',
-                history: 'readonly',
-                location: 'readonly',
-                EventSource: 'readonly',
-                IntersectionObserver: 'readonly',
-                alert: 'readonly',
-                confirm: 'readonly',
-                Blob: 'readonly',
-                URL: 'readonly',
-                navigator: 'readonly',
-                console: 'readonly',
-                setInterval: 'readonly',
-                setTimeout: 'readonly',
-                clearInterval: 'readonly',
-                clearTimeout: 'readonly',
-                fetch: 'readonly'
             }
         },
         rules: {

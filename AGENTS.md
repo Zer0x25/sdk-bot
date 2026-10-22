@@ -33,17 +33,17 @@
 
 ## Limites y arquitectura
 
-- El workspace raíz contiene `packages/*`; `packages/contracts` tiene schemas OpenAPI/JSON Schema, validadores y tipos generados. El Gateway mantiene su manifest/lock independiente en `apps/gateway/`; consume contracts como `file:../../packages/contracts`, empaquetado por `.npmrc` install-links=true. Tras editar contratos, repetir `cd apps/gateway && npm ci`: no depender de la copia instalada anterior. Docker copia el paquete antes de instalar. Python en `brain/` y `apps/stt/` mantiene requirements. Entradas actuales: `apps/gateway/index.js`, `brain/main.py`, `apps/stt/server.py`. Ver `packages/contracts/README.md`.
-- `apps/gateway/index.js` es dueño de WhatsApp/Baileys, Telegram, el bus interno y el status server. `apps/gateway/panel/index.js` es el proceso de UI/control: sirve `public/` sin build y proxifica `/api/*` al bus. `apps/stt/server.py` expone un endpoint OpenAI-compatible (`POST /v1/audio/transcriptions`) con `faster-whisper` en CPU int8 para normalizar audios a texto sin tocar el cerebro; si STT cae o falla, el gateway descarta el audio con aviso y no tumba el canal.
+- El workspace raíz contiene `packages/*`; `packages/contracts` tiene schemas OpenAPI/JSON Schema, validadores y tipos generados. Gateway y panel mantienen manifests/locks independientes en `apps/gateway/` y `apps/panel/`; ambos consumen contracts como `file:../../packages/contracts`, empaquetado por `.npmrc` install-links=true. Tras editar contratos, repetir `npm ci` en ambos paquetes: no depender de la copia instalada anterior. Docker copia el paquete antes de instalar. Python en `brain/` y `apps/stt/` mantiene requirements. Entradas actuales: `apps/gateway/index.js`, `apps/panel/index.js`, `brain/main.py`, `apps/stt/server.py`. Ver `packages/contracts/README.md`.
+- `apps/gateway/index.js` es dueño de WhatsApp/Baileys, Telegram, el bus interno y el status server. `apps/panel/index.js` es el proceso de UI/control: sirve `public/` sin build y proxifica `/api/*` al bus. `apps/stt/server.py` expone un endpoint OpenAI-compatible (`POST /v1/audio/transcriptions`) con `faster-whisper` en CPU int8 para normalizar audios a texto sin tocar el cerebro; si STT cae o falla, el gateway descarta el audio con aviso y no tumba el canal.
 - `apps/gateway/lib/repoPaths.js` conserva las rutas de runtime en `gateway/` y `brain/`; credenciales, sesiones, JSON, SQLite, perfiles, logs y locks no se mueven junto con el código.
-- En Docker el panel debe ejecutar `node panel/index.js`, nunca `node index.js`: lo segundo iniciaria un gateway adicional y puede provocar una segunda sesion de WhatsApp.
+- En Docker el panel debe ejecutar `node /app/apps/panel/index.js`, nunca el entrypoint del gateway: eso iniciaría una segunda sesión de WhatsApp. `NODE_PATH` incluye las dependencias del Gateway porque el panel comparte solo su infraestructura HTTP sin estado.
 - Mapeo de puertos y procesos (dev vs produccion Docker):
   - Brain: `:5100` (dev) / `:3400` (prod interno)
   - Bus interno: `:5400` (dev) / `:3240` (prod interno)
   - Status server: `:5300` (dev) / `:3640` (prod interno)
   - Panel web: `:5201` (dev) / `:3005` (prod, expuesto tras reverse proxy o tunel seguro)
   - STT: `:9000` (dev y prod interno)
-- El launcher local canonico es `bash deploy/linux/dev.sh up all` (o por componente `up brain`, `up gateway panel`, etc.); es idempotente y arranca brain antes de gateway/panel. `down` mata todo y libera locks; `status` hace health de los puertos.
+- El launcher local canonico es `bash deploy/linux/dev.sh up all` (o por componente `up brain`, `up gateway panel`, etc.); es idempotente y arranca brain antes de gateway/panel. `down` mata todo y libera locks; `status` hace health de los puertos. Los logs van a `/tmp/sdk-bot-*.log` o al directorio `SDK_BOT_DEV_LOG_DIR` configurado.
 - Cada canal normaliza a `StandardMessage` y las IDs remotas llevan prefijo (`whatsapp:<id>` o `telegram:<chat_id>`); la logica comun no debe depender de JIDs nativos.
 - Las decisiones puras estan en `apps/gateway/services/pipeline.js`; buffers y efectos secundarios estan en `apps/gateway/handlers/messageHandler.js`. Los comandos se agregan como modulos en `apps/gateway/handlers/commands/` y se registran en `commandHandler.js`.
 - Las decisiones de arquitectura viven en `docs/adr/`: 001 hub multi-canal, 002 procesos y planos (datos/control), 003 dueno unico del transporte por canal, 004 resiliencia de la interaccion. Leelas antes de refactors grandes; cualquier cambio que rompa esos contratos exige una ADR nueva.
@@ -62,13 +62,15 @@ uv venv venv && uv pip install -r requirements-dev.txt --python venv/bin/python 
 # Gateway:
 cd ../apps/gateway
 npm ci
+cd ../panel
+npm ci
 ```
 
 - En distros Linux con PEP 668 se recomienda `uv` para crear el venv del brain (`uv venv venv && uv pip install ...`).
 - Para cambiar DTOs: editar schema.json/OpenAPI, `npm run contracts:generate` y
   `npm run check` desde raíz. No editar generated.d.ts manualmente. No confundir
   validación de forma con autorización o servicio implementado.
-- `cd apps/gateway && npm run check` es el check completo: lint, typecheck, panel (tipos, pruebas y build) y suite del gateway.
+- `cd apps/gateway && npm run check` es el check completo: lint, typecheck, panel (tipos, pruebas y build) y suite del gateway. CI instala antes `apps/panel` desde su propio lockfile.
 - `cd apps/gateway && npm run spike:sqlite` verifica F0.2 con fixtures temporales y worker,
   sin iniciar canales. Requiere Node >=22.13.0 sin flags; Linux probado, Windows y
   Termux pendientes. No es la DB operativa. Ver `docs/SQLITE-SPIKE.md`.
