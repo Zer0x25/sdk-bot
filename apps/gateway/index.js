@@ -184,7 +184,7 @@ async function startGateway() {
     log.info('Iniciando Hub de Canales del Gateway...');
 
     // 1. Iniciar WhatsApp
-    const whatsapp = new WhatsappAdapter({ archive: conversationArchive });
+    const whatsapp = new WhatsappAdapter({ archive: conversationArchive, attachmentStore });
     adapters.set('whatsapp', whatsapp);
 
     // Conectar eventos del adaptador de WhatsApp
@@ -237,7 +237,7 @@ async function startGateway() {
     });
 
     // 2. Iniciar Telegram
-    const telegram = new TelegramAdapter({ archive: conversationArchive });
+    const telegram = new TelegramAdapter({ archive: conversationArchive, attachmentStore });
     adapters.set('telegram', telegram);
     internalBus.setTelegramChatIdResolver((token, options) => telegram.discoverChatId(token, options));
 

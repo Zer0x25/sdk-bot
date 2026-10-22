@@ -511,14 +511,20 @@ export interface components {
             conversationId: components["schemas"]["Id"];
             /** @enum {string} */
             deduplicationQuality: "provider_id" | "unknown";
+            /** @description Revocación observada del proveedor; el contenido local queda redactado. */
+            deletedAt?: components["schemas"]["Timestamp"];
             deliveryStatus: components["schemas"]["DeliveryStatus"];
             /** @enum {string} */
             direction: "inbound" | "outbound";
+            /** @description Última edición observada del proveedor; omitido si el canal no la reporta. */
+            editedAt?: components["schemas"]["Timestamp"];
             id: components["schemas"]["Id"];
             inboundSeq: components["schemas"]["Sequence"] | null;
             ingestedAt: components["schemas"]["Timestamp"];
             occurredAt: components["schemas"]["Timestamp"];
             providerMessageId: components["schemas"]["ProviderMessageId"] | null;
+            /** @description Recorte del mensaje citado cuando su referencia interna no existe o ya se purgó. */
+            replyPreview?: components["schemas"]["StoredText"];
             replyToId: components["schemas"]["Id"] | null;
             /** @enum {string} */
             source: "live" | "history" | "panel" | "automation" | "command" | "import";

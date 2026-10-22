@@ -1258,3 +1258,23 @@ Cierres históricos: commits F2C.1/F2C.2/F2D/F2E.1 están en el log local; F2B.3
   temporales; no se iniciaron canales ni proveedores.
 - Siguiente punto: F9.2, conectar captura durable de medios por canal y cubrir
   citas/ediciones/borrados solo donde cada proveedor expone esa capacidad.
+
+## Fase 9.2 — Multimedia y mutaciones por canal — 2026-10-22
+
+- WhatsApp y Telegram guardan binarios recibidos live en el archivo F9.1, con
+  concurrencia acotada y marca durable `failed` si la descarga falla. Las citas
+  resuelven el ID interno cuando el original sigue presente; si falta, conservan
+  una vista previa acotada. Ediciones observadas generan `message.updated` e
+  invalidan `contextVersion`. Revocaciones WhatsApp redactan el contenido y
+  programan el borrado del blob. La bandeja representa citas, edición y borrado.
+- Límites verificados: el self-chat WhatsApp sigue excluido y no se descargan
+  medios del historial. Telegram queda como canal administrativo; no hubo prueba
+  real de atención al cliente. El Bot API normal no aporta borrado genérico ni
+  recibos de entrega/lectura; no se inventan esos estados. F9.2 no prueba
+  recepción con proveedores reales.
+- Verificación: `npm run contracts:generate` y `npm run check` en raíz (17/17
+  contratos); `cd apps/gateway && npm run check` (lint, typecheck, panel 39/39,
+  integración/build 1/1, Gateway 342/342); `node --test
+  tests/conversationMultimedia.test.js` (4/4); `git diff --check`.
+- Commit local de la unidad creado. No publicar.
+- Siguiente punto: F9.3, búsqueda de contenido con FTS5 y paginación verificable.

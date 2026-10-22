@@ -381,7 +381,13 @@ function captureTelegramBatch(input) {
             results.push({ updateId, status: 'stale' });
             continue;
         }
-        if (update.message !== null) {
+        if (update.edit !== undefined && update.edit !== null) {
+            const edit = update.edit;
+            if (edit.identity?.accountId !== input.accountId || edit.identity?.channel !== 'telegram'
+                || edit.identity?.kind !== 'telegram_chat_id' || !edit.providerMessageId) fail('INVALID_TELEGRAM_EDIT');
+            const result = editProviderMessage(edit);
+            results.push({ updateId, status: result.status === 'missing' ? 'excluded' : result.status, result });
+        } else if (update.message !== null) {
             const message = update.message;
             if (message.identity?.accountId !== input.accountId || message.identity?.channel !== 'telegram'
                 || message.identity?.kind !== 'telegram_chat_id' || message.source !== 'live'
@@ -439,6 +445,13 @@ function stable(value) {
     if (Array.isArray(value)) return '[' + value.map(stable).join(',') + ']';
     return '{' + Object.keys(value).sort().map(k => JSON.stringify(k) + ':' + stable(value[k])).join(',') + '}';
 }
+function replyTarget(identity, providerMessageId) {
+    if (providerMessageId == null) return null;
+    assertValid('ProviderMessageId', providerMessageId);
+    return one(`SELECT m.id FROM fingerprints f JOIN messages m ON m.id=f.message_id
+        WHERE f.account_id=? AND f.canonical_id=? AND f.provider_id=? AND m.conversation_id=?`,
+    identity.account_id, identity.canonical_id, providerMessageId, identity.conversation_id)?.id ?? null;
+}
 const LEGACY_METADATA = new Set(['pushName','savedName','phoneNumber','lid','isBusiness','country','isFromMe','isAdminChannel']);
 function legacyDispatch(input, message) {
     const value = input.legacyDispatch;
@@ -493,6 +506,8 @@ function ingest(input) {
     if (typeof storedText === 'string' && Buffer.byteLength(storedText) > 65536) {
         content = { type: 'oversized', originalBytes: Buffer.byteLength(storedText), reason: 'text_limit' };
     }
+    if (input.replyPreview != null) assertValid('StoredText', input.replyPreview);
+    const replyToId = replyTarget(identity, input.replyToProviderMessageId);
     const draft = {
         id: randomUUID(), conversationId: c.id, providerMessageId: providerId, clientMessageId: input.clientMessageId ?? null,
         inboundSeq: input.direction === 'inbound' && input.source === 'live' ? String(BigInt(c.inbound_seq) + 1n) : null,
@@ -500,7 +515,8 @@ function ingest(input) {
             : input.direction === 'outbound' && input.source !== 'live' ? 'unknown' : input.authorKind,
         actorId: input.actorId ?? null, content,
         occurredAt: input.occurredAt, ingestedAt: now, deliveryStatus: input.direction === 'inbound' ? 'received' : 'sent',
-        replyToId: null, source: input.source, deduplicationQuality: providerId === null ? 'unknown' : 'provider_id'
+        replyToId, ...(!replyToId && input.replyPreview ? { replyPreview: input.replyPreview } : {}), source: input.source,
+        deduplicationQuality: providerId === null ? 'unknown' : 'provider_id'
     };
     assertValid('Message', draft);
     draft.occurredAt = new Date(draft.occurredAt).toISOString();
@@ -541,6 +557,88 @@ function appendMessageEvent(message, aggregate, type, now) {
         cursor.seq, message.conversationId, message.id, now, message.actorId ?? null, JSON.stringify(event));
     run('UPDATE archive_meta SET seq=? WHERE id=1', cursor.seq);
     return event;
+}
+function providerMessageTarget(input) {
+    assertValid('IdentityKey', input?.identity);
+    assertValid('ProviderMessageId', input?.providerMessageId);
+    const identity = lookup(input.identity);
+    if (!identity) return null;
+    const row = one(`SELECT m.id,m.payload FROM fingerprints f JOIN messages m ON m.id=f.message_id
+        WHERE f.account_id=? AND f.canonical_id=? AND f.provider_id=? AND m.conversation_id=?`,
+    identity.account_id, identity.canonical_id, input.providerMessageId, identity.conversation_id);
+    return row ? { row, identity } : null;
+}
+function bumpMessageContentVersion(message, now) {
+    const conversation = one('SELECT aggregate_version,context_version FROM conversations WHERE id=?', message.conversationId);
+    const aggregateVersion = String(BigInt(conversation.aggregate_version) + 1n);
+    const contextVersion = String(BigInt(conversation.context_version) + 1n);
+    run('UPDATE messages SET payload=? WHERE id=?', JSON.stringify(message), message.id);
+    run('UPDATE conversations SET aggregate_version=?,context_version=? WHERE id=?',
+        aggregateVersion, contextVersion, message.conversationId);
+    return appendMessageEvent(message, aggregateVersion, 'message.updated', now);
+}
+function editProviderMessage(input) {
+    assertValid('MessageContent', input?.content);
+    assertValid('Timestamp', input?.editedAt);
+    const target = providerMessageTarget(input);
+    if (!target) return { status: 'missing' };
+    const message = JSON.parse(target.row.payload);
+    if (message.deletedAt) return { status: 'deleted', message };
+    const editedAt = new Date(input.editedAt).toISOString();
+    if (message.editedAt && Date.parse(message.editedAt) > Date.parse(editedAt)) return { status: 'unchanged', message };
+    const previous = message.content;
+    let content = input.content;
+    let replacedAttachmentId = null;
+    let captureAttachment = ['audio','image','video','document'].includes(content.type) && !previous.attachmentId;
+    if (previous.attachmentId) {
+        if (content.type === previous.type) {
+            captureAttachment = false;
+            content = { ...content, availability: 'available', attachmentId: previous.attachmentId,
+                transcript: previous.transcript ?? content.transcript,
+                transcriptionStatus: previous.transcriptionStatus ?? content.transcriptionStatus };
+        } else {
+            replacedAttachmentId = previous.attachmentId;
+            run("UPDATE attachments SET state='delete_pending' WHERE id=? AND state='available'", replacedAttachmentId);
+            captureAttachment = ['audio','image','video','document'].includes(content.type);
+        }
+    }
+    const previousReply = message.replyToId;
+    const replyToId = input.replyToProviderMessageId === undefined
+        ? previousReply : replyTarget(target.identity, input.replyToProviderMessageId);
+    const replyPreview = input.replyToProviderMessageId === undefined ? message.replyPreview
+        : replyToId ? undefined : input.replyPreview;
+    if (input.replyPreview != null) assertValid('StoredText', input.replyPreview);
+    if (stable(previous) === stable(content) && previousReply === replyToId
+        && message.replyPreview === replyPreview && message.editedAt === editedAt) return { status: 'unchanged', message };
+    if (stable(previous) === stable(content) && previousReply === replyToId && message.replyPreview === replyPreview) {
+        // Keep provider edit time even if its only changed field was metadata.
+        message.editedAt = editedAt;
+        assertValid('Message', message);
+        const event = bumpMessageContentVersion(message, editedAt);
+        return { status: 'updated', message, event, replacedAttachmentId, captureAttachment };
+    }
+    message.content = content;
+    message.replyToId = replyToId;
+    if (replyPreview === undefined) delete message.replyPreview; else message.replyPreview = replyPreview;
+    message.editedAt = editedAt;
+    assertValid('Message', message);
+    const event = bumpMessageContentVersion(message, editedAt);
+    return { status: 'updated', message, event, replacedAttachmentId, captureAttachment };
+}
+function deleteProviderMessage(input) {
+    const target = providerMessageTarget(input);
+    if (!target) return { status: 'missing' };
+    const message = JSON.parse(target.row.payload);
+    if (message.deletedAt) return { status: 'unchanged', message };
+    const deletedAt = input.deletedAt ? new Date(input.deletedAt).toISOString() : new Date().toISOString();
+    if (input.deletedAt) assertValid('Timestamp', input.deletedAt);
+    const attachmentId = message.content?.attachmentId;
+    if (attachmentId) run("UPDATE attachments SET state='delete_pending' WHERE id=? AND state='available'", attachmentId);
+    message.content = { type: 'unsupported', availability: 'not_stored', transcript: null, transcriptionStatus: 'not_requested' };
+    message.deletedAt = deletedAt;
+    assertValid('Message', message);
+    const event = bumpMessageContentVersion(message, deletedAt);
+    return { status: 'deleted', message, event, attachmentId: attachmentId ?? null };
 }
 function controlStateFromRow(row) {
     return { accessPolicy: row.access_policy, automationMode: row.automation_mode,
@@ -2051,6 +2149,21 @@ function registerAttachment(input) {
     const event = appendMessageEvent(message, aggregate, 'message.updated', now);
     return { status: 'stored', attachment: attachment({ id: input.id }), message, event };
 }
+function markAttachmentCaptureFailed(input) {
+    assertValid('Id', input?.messageId);
+    const row = one('SELECT payload FROM messages WHERE id=?', input.messageId);
+    if (!row) return { status: 'missing' };
+    const message = JSON.parse(row.payload);
+    if (message.deletedAt || !['audio','image','video','document'].includes(message.content?.type)
+        || message.content?.availability === 'available' || message.content?.availability === 'failed') return { status: 'unchanged' };
+    message.content = { ...message.content, availability: 'failed' };
+    assertValid('Message', message);
+    const aggregate = String(BigInt(one('SELECT aggregate_version FROM conversations WHERE id=?', message.conversationId).aggregate_version) + 1n);
+    run('UPDATE messages SET payload=? WHERE id=?', JSON.stringify(message), message.id);
+    run('UPDATE conversations SET aggregate_version=? WHERE id=?', aggregate, message.conversationId);
+    const event = appendMessageEvent(message, aggregate, 'message.updated', new Date().toISOString());
+    return { status: 'updated', message, event };
+}
 function markAttachmentUnavailable(input) {
     assertValid('Id', input?.id);
     const row = one('SELECT id,message_id FROM attachments WHERE id=?', input.id);
@@ -2157,6 +2270,8 @@ function dispatch(method, input) {
             });
         }
         case 'updateTranscription': return transaction(() => updateTranscription(input));
+        case 'editProviderMessage': return transaction(() => editProviderMessage(input));
+        case 'deleteProviderMessage': return transaction(() => deleteProviderMessage(input));
         case 'pendingLegacyDispatches': return pendingLegacyDispatches(input);
         case 'pendingResumeMessages': return pendingResumeMessages(input);
         case 'shouldProcessArchivedInbound': return shouldProcessArchivedInbound(input);
@@ -2208,6 +2323,7 @@ function dispatch(method, input) {
         case 'attachment': return attachment(input);
         case 'attachmentRegistry': return attachmentRegistry();
         case 'registerAttachment': return transaction(() => registerAttachment(input));
+        case 'markAttachmentCaptureFailed': return transaction(() => markAttachmentCaptureFailed(input));
         case 'markAttachmentUnavailable': return transaction(() => markAttachmentUnavailable(input));
         case 'expireAttachment': return transaction(() => expireAttachment(input));
         case 'pendingAttachmentDeletions': return pendingAttachmentDeletions(input ?? {});
@@ -2241,8 +2357,8 @@ function committedEvents(method, value) {
     if (method === 'captureTelegramBatch' && Array.isArray(value?.results)) {
         return value.results.map(result => result?.result?.event).filter(Boolean);
     }
-    if (method === 'updateTranscription' && value?.event) return [value.event];
-    if (['registerAttachment','markAttachmentUnavailable','expireAttachment'].includes(method) && value?.event) return [value.event];
+    if (['updateTranscription','editProviderMessage','deleteProviderMessage'].includes(method) && value?.event) return [value.event];
+    if (['registerAttachment','markAttachmentCaptureFailed','markAttachmentUnavailable','expireAttachment'].includes(method) && value?.event) return [value.event];
     if (method === 'writeControlState' && value?.event) return [value.event];
     if (method === 'clearAIContext' && value?.event) return [value.event];
     if (method === 'writeControlPolicy' && value?.event) return [value.event];

@@ -1,6 +1,7 @@
+/* global AbortController */
 const ChannelAdapter = require('../core/ChannelAdapter');
 const StandardMessage = require('../core/StandardMessage');
-const { default: makeWASocket, useMultiFileAuthState, DisconnectReason, downloadMediaMessage } = require('@whiskeysockets/baileys');
+const { default: makeWASocket, useMultiFileAuthState, DisconnectReason, WAMessageStubType, downloadMediaMessage } = require('@whiskeysockets/baileys');
 const pino = require('pino');
 const fs = require('fs');
 const path = require('path');
@@ -8,7 +9,8 @@ const { cat, safeErrorLabel } = require('../services/logger');
 const { isJunkJid } = require('../services/contactsRepository');
 const { extractUserMetadata } = require('../services/metadataService');
 const { extractTextMessage, decideReconnect } = require('../services/pipeline');
-const { createWhatsappCapture, socketIdentity, individualJid, unwrap, acceptedOutbound } = require('../services/conversations/whatsappCapture');
+const { createWhatsappCapture, socketIdentity, individualJid, unwrap, acceptedOutbound,
+    normalizeProviderEdit, normalizeProviderDelete } = require('../services/conversations/whatsappCapture');
 const { createWhatsappTranscription } = require('../services/conversations/whatsappTranscription');
 const internalBus = require('../services/internalBus');
 const { getSettingsDB, saveSettingsDB } = require('../services/db');
@@ -22,7 +24,8 @@ const logError = cat('ERROR');
 const AUTH_DIR = process.env.SDK_AUTH_DIR || path.join(GATEWAY_STATE_DIR, 'auth_info_baileys');
 
 class WhatsappAdapter extends ChannelAdapter {
-    constructor({ archive, makeSocket = makeWASocket, loadAuth = useMultiFileAuthState, download = downloadMediaMessage, transcribe = transcribeAudio } = {}) {
+    constructor({ archive, attachmentStore, makeSocket = makeWASocket, loadAuth = useMultiFileAuthState,
+        download = downloadMediaMessage, transcribe = transcribeAudio } = {}) {
         super('whatsapp');
         this.sock = null;
         this.accountId = null;
@@ -30,6 +33,10 @@ class WhatsappAdapter extends ChannelAdapter {
         this.loadAuth = loadAuth;
         this.download = download;
         this.transcribe = transcribe;
+        this.attachmentStore = attachmentStore || null;
+        this.attachmentTasks = new Set();
+        this.mediaTasks = new Set();
+        this.attachmentControllers = new Set();
         this.capture = archive ? createWhatsappCapture(archive, {
             buildLegacyDispatch: (msg, observation) => this.buildLegacyDispatch(msg, observation)
         }) : null;
@@ -128,7 +135,9 @@ class WhatsappAdapter extends ChannelAdapter {
             const old = this.sock;
             this.sock = null;
             this.transcriptions?.cancel();
+            this.cancelAttachmentTasks();
             try { old.end(new Error('Reconnect por nueva conexión')); } catch (e) { /* ya cerrado */ }
+            if (this.attachmentTasks.size) await Promise.allSettled([...this.attachmentTasks]);
         }
 
         const { state: authState, saveCreds } = await this.loadAuth(AUTH_DIR);
@@ -285,6 +294,39 @@ class WhatsappAdapter extends ChannelAdapter {
             this.captureBatch(sock, m.messages, m.type === 'notify' ? 'live' : 'history');
         });
 
+        sock.ev.on('messages.update', updates => {
+            if (this.sock !== sock || !Array.isArray(updates)) return;
+            let session;
+            try { session = socketIdentity(sock.user); } catch (error) { this.captureFailure(error.code); return; }
+            for (const item of updates) {
+                if (item?.update?.message?.editedMessage) {
+                    let edit;
+                    try { edit = normalizeProviderEdit(item.key, item.update, session); }
+                    catch (error) { this.captureFailure(error.code || 'WA_EDIT_INVALID'); continue; }
+                    if (edit) this.applyProviderEdit(sock, item, edit, session);
+                } else if (item?.update?.messageStubType === WAMessageStubType.REVOKE) {
+                    let removal;
+                    try { removal = normalizeProviderDelete(item.key, session); }
+                    catch (error) { this.captureFailure(error.code || 'WA_DELETE_INVALID'); continue; }
+                    if (removal) this.applyProviderDelete(sock, removal, session);
+                }
+                // Receipt/status updates are deliberately not inferred as edits or delivery evidence.
+            }
+        });
+
+        sock.ev.on('messages.delete', deletion => {
+            if (this.sock !== sock || !Array.isArray(deletion?.keys)) return;
+            let session;
+            try { session = socketIdentity(sock.user); } catch (error) { this.captureFailure(error.code); return; }
+            for (const key of deletion.keys) {
+                let removal;
+                try { removal = normalizeProviderDelete(key, session); }
+                catch (error) { this.captureFailure(error.code || 'WA_DELETE_INVALID'); continue; }
+                if (removal) this.applyProviderDelete(sock, removal, session);
+            }
+            // Baileys' chat-wide { jid, all: true } clear has no per-message provenance; ignore it.
+        });
+
         const handleContactSync = (contacts, source) => {
             if (this.sock !== sock) return;
             if (!Array.isArray(contacts) || contacts.length === 0) return;
@@ -361,6 +403,10 @@ class WhatsappAdapter extends ChannelAdapter {
                 }
                 if (observation.scope !== 'individual') return;
                 if (observation.result.status !== 'quarantined') this.emit('archived_message', { raw: msg, source, observation });
+                if (source === 'live' && observation.result.status === 'created'
+                    && ['audio','image','video','document'].includes(observation.result.message.content.type)) {
+                    this.queueMediaCapture(sock, msg, observation.result.message.id);
+                }
                 if (source === 'live' && msg.key?.fromMe && observation.result.status === 'created') {
                     this.deferUnknownSelfHandoff(observation);
                 }
@@ -374,6 +420,82 @@ class WhatsappAdapter extends ChannelAdapter {
                 if (!reported.has(code)) { reported.add(code); this.captureFailure(code); }
             });
         }
+    }
+
+    queueMediaCapture(sock, message, messageId) {
+        if (!this.attachmentStore || !this.archive) return;
+        if (this.mediaTasks.size >= 4) {
+            this.trackAttachmentTask(this.archive.markAttachmentCaptureFailed({ messageId }).catch(() => {}));
+            this.captureFailure('WA_MEDIA_CAPTURE_SATURATED');
+            return;
+        }
+        const controller = new AbortController();
+        this.attachmentControllers.add(controller);
+        const timeout = setTimeout(() => controller.abort(new Error('WA media deadline')), 30000);
+        timeout.unref?.();
+        const task = Promise.resolve().then(async () => {
+            if (this.sock !== sock) throw Object.assign(new Error('Socket WhatsApp reemplazado.'), { code: 'WA_SOCKET_REPLACED' });
+            const body = unwrap(message?.message);
+            const type = ['audio','image','video','document'].find(name => body[`${name}Message`]);
+            const media = type && body[`${type}Message`];
+            if (!media) throw Object.assign(new Error('Media unavailable.'), { code: 'WA_MEDIA_UNAVAILABLE' });
+            const downloaded = await this.download(message, 'stream', { options: { signal: controller.signal } }, {
+                logger: log, reuploadRequest: async m => m
+            });
+            controller.signal.throwIfAborted();
+            if (downloaded && !Buffer.isBuffer(downloaded) && typeof downloaded.destroy === 'function') {
+                const abort = () => downloaded.destroy(controller.signal.reason);
+                controller.signal.addEventListener('abort', abort, { once: true });
+                try {
+                    const extension = path.extname(media.fileName || '') || `.${({ audio: 'ogg', image: 'jpg', video: 'mp4', document: 'bin' })[type]}`;
+                    await this.attachmentStore.store({ messageId, source: downloaded,
+                        fileName: media.fileName || `${type}-${messageId}${extension}`,
+                        contentType: typeof media.mimetype === 'string' ? media.mimetype.split(';')[0].trim() : 'application/octet-stream' });
+                } finally { controller.signal.removeEventListener('abort', abort); downloaded.destroy?.(); }
+            } else {
+                const extension = path.extname(media.fileName || '') || `.${({ audio: 'ogg', image: 'jpg', video: 'mp4', document: 'bin' })[type]}`;
+                await this.attachmentStore.store({ messageId, source: downloaded,
+                    fileName: media.fileName || `${type}-${messageId}${extension}`,
+                    contentType: typeof media.mimetype === 'string' ? media.mimetype.split(';')[0].trim() : 'application/octet-stream' });
+            }
+        }).catch(async error => {
+            await this.archive.markAttachmentCaptureFailed({ messageId }).catch(() => {});
+            this.captureFailure(error.code || 'WA_MEDIA_CAPTURE_FAILED');
+        }).finally(() => {
+            clearTimeout(timeout); this.attachmentControllers.delete(controller); this.attachmentTasks.delete(task);
+            this.mediaTasks.delete(task);
+        });
+        this.attachmentTasks.add(task);
+        this.mediaTasks.add(task);
+    }
+
+    applyProviderEdit(sock, item, edit, session) {
+        const task = Promise.resolve(this.capture?.edit(edit, session)).then(async result => {
+            if (this.sock !== sock || result?.status !== 'updated') return;
+            if (result.replacedAttachmentId) await this.attachmentStore?.sweepExpired();
+            if (result.captureAttachment) {
+                const edited = { ...item, message: item.update.message.editedMessage.message };
+                this.queueMediaCapture(sock, edited, result.message.id);
+            }
+        }).catch(error => this.captureFailure(error?.code || 'WA_EDIT_ARCHIVE_FAILED'));
+        this.trackAttachmentTask(task);
+    }
+
+    applyProviderDelete(sock, removal, session) {
+        const task = Promise.resolve(this.capture?.remove(removal, session)).then(async result => {
+            if (this.sock === sock && result?.attachmentId) await this.attachmentStore?.sweepExpired();
+        }).catch(error => this.captureFailure(error?.code || 'WA_DELETE_ARCHIVE_FAILED'));
+        this.trackAttachmentTask(task);
+    }
+
+    trackAttachmentTask(task) {
+        this.attachmentTasks.add(task);
+        void task.finally(() => this.attachmentTasks.delete(task));
+        return task;
+    }
+
+    cancelAttachmentTasks() {
+        for (const controller of this.attachmentControllers) controller.abort(new Error('Socket WhatsApp reemplazado'));
     }
 
     buildLegacyDispatch(msg, observation) {
@@ -436,10 +558,12 @@ class WhatsappAdapter extends ChannelAdapter {
         this.sock = null;
         this.accountId = null;
         this.transcriptions?.cancel();
+        this.cancelAttachmentTasks();
         try { if (sock) sock.end(new Error('Manual disconnect')); }
         finally {
             await this.capture?.close();
             await this.transcriptions?.close();
+            await Promise.allSettled([...this.attachmentTasks]);
             this.setStatus('disconnected');
         }
     }

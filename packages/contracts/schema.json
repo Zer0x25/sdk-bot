@@ -897,6 +897,14 @@
         "deliveryStatus": {
           "$ref": "#/$defs/DeliveryStatus"
         },
+        "editedAt": {
+          "$ref": "#/$defs/Timestamp",
+          "description": "Última edición observada del proveedor; omitido si el canal no la reporta."
+        },
+        "deletedAt": {
+          "$ref": "#/$defs/Timestamp",
+          "description": "Revocación observada del proveedor; el contenido local queda redactado."
+        },
         "replyToId": {
           "anyOf": [
             {
@@ -906,6 +914,10 @@
               "type": "null"
             }
           ]
+        },
+        "replyPreview": {
+          "$ref": "#/$defs/StoredText",
+          "description": "Recorte del mensaje citado cuando su referencia interna no existe o ya se purgó."
         },
         "source": {
           "type": "string",

@@ -443,10 +443,12 @@ Windows/Termux con evidencia real o pendientes explícitos. Ningún doble transp
 
 - [x] Persistir metadatos/archivos con acceso autenticado, límites y retención.
   F9.1 añade descarga autenticada por conversación, archivo privado de 16 MiB
-  máximo, cuota total de 1 GiB y purga a 90 días; los adapters aún deben conectar
-  cada tipo de medio dentro de F9.2. [Evidencia](F9.1-ADJUNTOS.md).
-- [ ] Audio, imágenes, documentos, citas, ediciones y borrados según capacidades;
-  no simular recibos de entrega/lectura que Telegram no entrega al bot.
+  máximo, cuota total de 1 GiB y purga a 90 días. F9.2 conecta las descargas live
+  que cada canal permite. [Evidencia F9.1](F9.1-ADJUNTOS.md).
+- [x] Captura live de audio, imágenes, documentos y video por WhatsApp/Telegram;
+  citas y ediciones de mensajes disponibles; revocación WhatsApp redacta contenido
+  y borra el adjunto. Telegram no aporta borrado general ni recibos para mensajes
+  normales de bots; no se simulan. [Evidencia](F9.2-MULTIMEDIA-CANALES.md).
 - [ ] SQLite FTS para búsqueda del contenido con índices y páginas verificables.
 - [ ] Integrar ledger, binarios e índices en backup/restauración coherente y
   ensayar el ciclo completo. F9.1 ya registra el directorio en factory reset;

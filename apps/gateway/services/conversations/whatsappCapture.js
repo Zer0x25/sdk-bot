@@ -27,36 +27,95 @@ function unwrap(message) {
     return message || {};
 }
 
+function normalizedContent(body) {
+    const type = ['audio', 'image', 'video', 'document'].find(name => body?.[`${name}Message`]);
+    const media = type && body[`${type}Message`];
+    const caption = media?.caption;
+    const text = type ? caption : body?.conversation ?? body?.extendedTextMessage?.text;
+    if (typeof text === 'string' && !text.isWellFormed()) throw failure('WA_CONTENT_INVALID');
+    return !type && typeof text === 'string' && text.length
+        ? { type: 'text', text }
+        : { type: type || 'unsupported', availability: 'not_stored', transcript: null, transcriptionStatus: 'not_requested',
+            ...(typeof caption === 'string' && caption.length ? { caption } : {}) };
+}
+
+function replyToProviderMessageId(body) {
+    const context = Object.values(body || {}).find(value => value && typeof value === 'object' && value.contextInfo)?.contextInfo;
+    const id = context?.stanzaId;
+    if (id == null) return null;
+    if (typeof id !== 'string' || !id.length || Array.from(id).length > 512) throw failure('WA_REPLY_ID_INVALID');
+    return id;
+}
+
+function replyPreview(body) {
+    const context = Object.values(body || {}).find(value => value && typeof value === 'object' && value.contextInfo)?.contextInfo;
+    if (!context?.quotedMessage) return null;
+    const content = normalizedContent(unwrap(context.quotedMessage));
+    const text = content.type === 'text' ? content.text : content.caption;
+    return typeof text === 'string' && text.trim() ? Array.from(text).slice(0, 512).join('') : null;
+}
+
+function providerTimestamp(value) {
+    const seconds = String(value ?? '');
+    if (!/^\d+$/.test(seconds) || BigInt(seconds) > 253402300799n) return null;
+    return new Date(Number(BigInt(seconds) * 1000n)).toISOString();
+}
+
 function normalize(message, session, source) {
     const remote = individualJid(message?.key?.remoteJid);
     if (!message?.message) return { scope: 'empty' };
     if (!remote) return { scope: 'non_individual' };
     if (session.self.includes(remote)) return { scope: 'administration' };
     const body = unwrap(message.message);
-    const type = ['audio', 'image', 'video', 'document'].find(name => body[`${name}Message`]);
-    const caption = type && body[`${type}Message`]?.caption;
-    const text = type ? caption : body.conversation ?? body.extendedTextMessage?.text;
-    if (typeof text === 'string' && !text.isWellFormed()) throw failure('WA_CONTENT_INVALID');
+    const content = normalizedContent(body);
     const providerMessageId = message.key.id ?? null;
     if (providerMessageId !== null && (typeof providerMessageId !== 'string'
         || !providerMessageId.length || Array.from(providerMessageId).length > 512)) throw failure('WA_MESSAGE_ID_INVALID');
-    const content = !type && typeof text === 'string' && text.length
-        ? { type: 'text', text }
-        : { type: type || 'unsupported', availability: 'not_stored', transcript: null, transcriptionStatus: 'not_requested',
-            ...(typeof caption === 'string' && caption.length ? { caption } : {}) };
     // Long from protobuf has a decimal toString; never coerce a 64-bit ID.
     const seconds = String(message.messageTimestamp ?? '');
     if (!/^\d+$/.test(seconds) || BigInt(seconds) > 253402300799n) throw failure('WA_TIMESTAMP_INVALID');
     const occurredAt = new Date(Number(BigInt(seconds) * 1000n)).toISOString();
     const alt = individualJid(message.key.remoteJidAlt);
     if (alt && session.self.includes(alt)) throw failure('WA_IDENTITY_CONFLICT');
+    const replyId = replyToProviderMessageId(body), preview = replyPreview(body);
     return { scope: 'individual', remote, content, occurredAt,
+        replyToProviderMessageId: replyId, ...(preview ? { replyPreview: preview } : {}),
         // Only the provider's paired remoteJid/remoteJidAlt is alias evidence.
         // Participants, names and matching digits are never evidence.
         alt: alt && alt.endsWith('@lid') !== remote.endsWith('@lid') ? alt : null,
         providerMessageId,
         source, direction: message.key.fromMe ? 'outbound' : 'inbound',
         authorKind: message.key.fromMe ? (source === 'live' ? 'external_self' : 'unknown') : 'customer' };
+}
+
+function normalizeProviderEdit(keyValue, update, session) {
+    const remote = individualJid(keyValue?.remoteJid);
+    const providerMessageId = keyValue?.id;
+    if (!remote || session.self.includes(remote) || typeof providerMessageId !== 'string'
+        || !providerMessageId.length || Array.from(providerMessageId).length > 512) return null;
+    const editedBody = update?.message?.editedMessage?.message;
+    if (!editedBody || typeof editedBody !== 'object') return null;
+    const content = normalizedContent(unwrap(editedBody));
+    if (content.type === 'unsupported') return null;
+    const editedAt = providerTimestamp(update.messageTimestamp);
+    if (!editedAt) return null;
+    const alt = individualJid(keyValue.remoteJidAlt);
+    if (alt && session.self.includes(alt)) throw failure('WA_IDENTITY_CONFLICT');
+    const editedContent = unwrap(editedBody);
+    const replyId = replyToProviderMessageId(editedContent), preview = replyPreview(editedContent);
+    return { remote, alt: alt && alt.endsWith('@lid') !== remote.endsWith('@lid') ? alt : null,
+        providerMessageId, content, editedAt,
+        ...(replyId ? { replyToProviderMessageId: replyId } : {}), ...(preview ? { replyPreview: preview } : {}) };
+}
+
+function normalizeProviderDelete(keyValue, session) {
+    const remote = individualJid(keyValue?.remoteJid);
+    const providerMessageId = keyValue?.id;
+    if (!remote || session.self.includes(remote) || typeof providerMessageId !== 'string'
+        || !providerMessageId.length || Array.from(providerMessageId).length > 512) return null;
+    const alt = individualJid(keyValue.remoteJidAlt);
+    if (alt && session.self.includes(alt)) throw failure('WA_IDENTITY_CONFLICT');
+    return { remote, alt: alt && alt.endsWith('@lid') !== remote.endsWith('@lid') ? alt : null, providerMessageId };
 }
 
 function key(accountId, jid) {
@@ -122,6 +181,8 @@ function createWhatsappCapture(archive, { buildLegacyDispatch } = {}) {
             const [result] = await archive.ingestBatch([{ identity,
                 providerMessageId: observation.providerMessageId, source, direction: observation.direction,
                 authorKind: observation.authorKind, occurredAt: observation.occurredAt, content: observation.content,
+                ...(observation.replyToProviderMessageId ? { replyToProviderMessageId: observation.replyToProviderMessageId } : {}),
+                ...(observation.replyPreview ? { replyPreview: observation.replyPreview } : {}),
                 ...(legacyDispatch ? { legacyDispatch } : {}) }]);
             const resolved = await archive.resolve(identity);
             const conversation = await archive.conversation(resolved.conversation_id);
@@ -135,8 +196,33 @@ function createWhatsappCapture(archive, { buildLegacyDispatch } = {}) {
         tail = operation.catch(() => {});
         return operation;
     }
+    function mutate(method, observation, session) {
+        if (!['editProviderMessage', 'deleteProviderMessage'].includes(method)) return Promise.reject(failure('WA_MUTATION_UNSUPPORTED'));
+        if (closed || failed) return Promise.reject(failure(failed || 'WA_CAPTURE_CLOSED'));
+        const operation = tail.then(async () => {
+            if (failed) throw failure(failed);
+            const account = await archive.registerAccount({ channel: 'whatsapp', providerKey: session.providerKey });
+            const identity = key(account.id, observation.remote);
+            let aliasConflict = false;
+            if (observation.alt) {
+                const aliasResult = await archive.bindAlias({ canonical: identity, alias: key(account.id, observation.alt),
+                    evidence: { kind: 'adapter', reference: 'baileys:key.remoteJidAlt' } });
+                aliasConflict = aliasResult.status === 'quarantined';
+            }
+            if (aliasConflict) return { status: 'quarantined' };
+            return await archive[method]({ ...observation, identity });
+        }).catch(error => {
+            failed = error.code || 'WA_CAPTURE_FAILED';
+            throw error;
+        });
+        tail = operation.catch(() => {});
+        return operation;
+    }
     return { enqueue, idle: () => tail, queue: () => ({ elements, bytes, failed }),
+        edit: (observation, session) => mutate('editProviderMessage', observation, session),
+        remove: (observation, session) => mutate('deleteProviderMessage', observation, session),
         async close() { closed = true; await tail; } };
 }
 
-module.exports = { individualJid, socketIdentity, normalize, unwrap, outboundContent, acceptedOutbound, createWhatsappCapture };
+module.exports = { individualJid, socketIdentity, normalize, normalizeProviderEdit, normalizeProviderDelete,
+    normalizedContent, unwrap, outboundContent, acceptedOutbound, createWhatsappCapture };

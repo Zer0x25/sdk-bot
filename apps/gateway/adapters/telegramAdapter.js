@@ -14,10 +14,29 @@ const { setTimeout: delay, setImmediate: yieldLoop } = require('node:timers/prom
 
 const log = cat('TELEGRAM');
 const logError = cat('ERROR');
+const MAX_ATTACHMENT_DOWNLOAD_BYTES = 16 * 1024 * 1024;
+
+function telegramMediaDescriptor(message) {
+    let media, type;
+    if (Array.isArray(message?.photo) && message.photo.length) {
+        media = message.photo[message.photo.length - 1]; type = 'image';
+    } else if (message?.voice) { media = message.voice; type = 'audio'; }
+    else if (message?.audio) { media = message.audio; type = 'audio'; }
+    else if (message?.video || message?.video_note || message?.animation) {
+        media = message.video || message.video_note || message.animation; type = 'video';
+    } else if (message?.document) { media = message.document; type = 'document'; }
+    if (!media || typeof media.file_id !== 'string' || !media.file_id.length || media.file_id.length > 2048) return null;
+    const extension = type === 'image' ? 'jpg' : type === 'audio' ? 'ogg' : type === 'video' ? 'mp4' : 'bin';
+    const fileName = typeof media.file_name === 'string' && media.file_name.trim()
+        ? media.file_name : `${type}-${message.message_id || 'message'}.${extension}`;
+    const contentType = typeof media.mime_type === 'string' ? media.mime_type.split(';')[0].trim()
+        : type === 'image' ? 'image/jpeg' : type === 'audio' ? 'audio/ogg' : 'application/octet-stream';
+    return { type, media, fileId: media.file_id, fileName, contentType };
+}
 
 class TelegramAdapter extends ChannelAdapter {
-    /** @param {{archive?:any, getMe?:(input:any)=>Promise<any>, getUpdates?:(input:any)=>Promise<any>, updateMenu?:(token:string)=>Promise<any>, transcribe?:(buffer:Buffer,name:string,options:any)=>Promise<any>, sendHttpRequest?:(options:any,callback:(response:any)=>void)=>any, pollTimeoutMs?:number, retryMs?:number, discoveryTimeoutMs?:number}} [options] */
-    constructor({ archive, getMe = requestBotIdentity, getUpdates = requestUpdates, updateMenu = updateTelegramMenu, transcribe = transcribeAudio,
+    /** @param {{archive?:any, attachmentStore?:any, getMe?:(input:any)=>Promise<any>, getUpdates?:(input:any)=>Promise<any>, updateMenu?:(token:string)=>Promise<any>, transcribe?:(buffer:Buffer,name:string,options:any)=>Promise<any>, sendHttpRequest?:(options:any,callback:(response:any)=>void)=>any, pollTimeoutMs?:number, retryMs?:number, discoveryTimeoutMs?:number}} [options] */
+    constructor({ archive, attachmentStore, getMe = requestBotIdentity, getUpdates = requestUpdates, updateMenu = updateTelegramMenu, transcribe = transcribeAudio,
         sendHttpRequest = (...args) => https.request(...args), pollTimeoutMs = 35000, retryMs = 5000, discoveryTimeoutMs = 1500 } = {}) {
         super('telegram');
         this.pollerActive = false;
@@ -30,6 +49,8 @@ class TelegramAdapter extends ChannelAdapter {
         // termina solo, sin dejar dos loops compitiendo por getUpdates.
         this.pollGeneration = 0;
         this.archive = archive || null;
+        this.attachmentStore = attachmentStore || null;
+        this.attachmentTasks = new Set();
         this.capture = archive ? createTelegramCapture(archive) : null;
         this.getMe = getMe;
         this.getUpdates = getUpdates;
@@ -176,6 +197,47 @@ class TelegramAdapter extends ChannelAdapter {
         return tracked.finally(() => this.archiveOperations.delete(tracked));
     }
 
+    queueMediaCapture(message, messageId, session) {
+        if (!this.attachmentStore || !this.archive) return null;
+        const descriptor = telegramMediaDescriptor(message);
+        if (!descriptor) {
+            void this.trackArchive(this.archive.markAttachmentCaptureFailed({ messageId })).catch(() => {});
+            return null;
+        }
+        if (this.attachmentTasks.size >= 4) {
+            void this.trackArchive(this.archive.markAttachmentCaptureFailed({ messageId })).catch(() => {});
+            log.error('Se alcanzó el límite de descargas de medios Telegram.');
+            return null;
+        }
+        const task = Promise.resolve().then(async () => {
+            if (!this.isCurrent(session.gen, session.token)) throw Object.assign(new Error('Telegram connection changed.'), { code: 'TG_CONNECTION_CHANGED' });
+            const info = /** @type {any} */ (await fetchJson(`https://api.telegram.org/bot${session.token}/getFile?file_id=${encodeURIComponent(descriptor.fileId)}`, session.signal));
+            const filePath = info?.ok === true ? info.result?.file_path : null;
+            if (typeof filePath !== 'string' || filePath.length > 1024
+                || filePath.split('/').some(part => !part || part === '.' || part === '..' || !/^[A-Za-z0-9_.-]+$/.test(part))) {
+                throw Object.assign(new Error('Telegram file metadata unavailable.'), { code: 'TG_MEDIA_FILE_UNAVAILABLE' });
+            }
+            const downloadPath = filePath.split('/').map(encodeURIComponent).join('/');
+            const buffer = await downloadBytes(`https://api.telegram.org/file/bot${session.token}/${downloadPath}`,
+                session.signal, MAX_ATTACHMENT_DOWNLOAD_BYTES);
+            if (!buffer?.length) throw Object.assign(new Error('Telegram media unavailable or too large.'), { code: 'TG_MEDIA_UNAVAILABLE' });
+            if (!this.isCurrent(session.gen, session.token)) throw Object.assign(new Error('Telegram connection changed.'), { code: 'TG_CONNECTION_CHANGED' });
+            await this.attachmentStore.store({ messageId, source: buffer, fileName: descriptor.fileName,
+                contentType: descriptor.contentType });
+            return buffer;
+        }).catch(async error => {
+            await this.trackArchive(this.archive.markAttachmentCaptureFailed({ messageId })).catch(() => {});
+            log.error(`No se pudo archivar un medio Telegram (${safeErrorLabel(error)}).`);
+            return null;
+        });
+        this.attachmentTasks.add(task);
+        this.archiveOperations.add(task);
+        void task.finally(() => { this.attachmentTasks.delete(task); this.archiveOperations.delete(task); });
+        return task;
+    }
+
+    async idleAttachments() { await Promise.allSettled([...this.attachmentTasks]); }
+
     async poll(gen = this.pollGeneration, token = this.token, signal = this.pollAbort?.signal) {
         if (!token || !signal || !this.isCurrent(gen, token) || this.runningGeneration === gen) return;
         this.runningGeneration = gen;
@@ -237,10 +299,24 @@ class TelegramAdapter extends ChannelAdapter {
                     for (let i = 0; i < observations.length; i++) {
                         if (!this.isCurrent(gen, token)) return;
                         const observation = observations[i], captured = committed.results[i];
+                        if (observation.edit) {
+                            if (captured.result?.replacedAttachmentId) {
+                                await this.attachmentStore?.sweepExpired();
+                            }
+                            if (captured.result?.captureAttachment && captured.result.message) {
+                                this.queueMediaCapture(updates.result[i].edited_message, captured.result.message.id,
+                                    { token, gen, signal });
+                            }
+                            continue;
+                        }
+                        const stored = captured.result?.message;
+                        if (observation.message && captured.status === 'created' && stored
+                            && ['audio','image','video','document'].includes(stored.content.type)) {
+                            this.queueMediaCapture(updates.result[i].message, stored.id, { token, gen, signal });
+                        }
                         if (!observation.legacy) continue;
                         const legacy = observation.legacy;
                         if (legacy.isAdminChannel ? captured.status === 'stale' : captured.status !== 'created') continue;
-                        const stored = captured.result?.message;
                         if (!legacy.isAdminChannel && (!stored || stored.content.type === 'oversized')) continue;
                         if (legacy.audio && num('AUDIO_STT_ENABLED', 0) === 1) {
                             if (transcriptionFailure) continue;
@@ -523,10 +599,9 @@ async function abortable(operation, signal) {
 }
 
 /** Descarga bytes con timeout explícito (ADR-004). */
-async function downloadBytes(url, signal) {
+async function downloadBytes(url, signal, limit = num('STT_MAX_UPLOAD_BYTES', 5 * 1024 * 1024)) {
     const res = await fetch(url, { signal: AbortSignal.any([signal, AbortSignal.timeout(30000)]) });
     if (!res.ok) return null;
-    const limit = num('STT_MAX_UPLOAD_BYTES', 5 * 1024 * 1024);
     const declared = Number(res.headers?.get?.('content-length'));
     if (Number.isFinite(declared) && declared > limit) { await res.body?.cancel?.().catch(() => {}); return null; }
     if (!res.body?.getReader) {
@@ -549,7 +624,8 @@ async function downloadBytes(url, signal) {
 
 /** The only getUpdates path in the application. No discovery offset/reader. */
 function requestUpdates({ token, offset, signal, timeoutMs }) {
-    return requestJson({ path: `/bot${token}/getUpdates?offset=${encodeURIComponent(offset)}&limit=100&timeout=30`, signal, timeoutMs });
+    const allowedUpdates = encodeURIComponent(JSON.stringify(['message', 'edited_message']));
+    return requestJson({ path: `/bot${token}/getUpdates?offset=${encodeURIComponent(offset)}&limit=100&timeout=30&allowed_updates=${allowedUpdates}`, signal, timeoutMs });
 }
 
 /** Verify the bot identity before connecting a token to its durable namespace. */

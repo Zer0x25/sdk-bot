@@ -62,13 +62,42 @@ function normalizedContent(message) {
         transcriptionStatus: 'not_requested', ...(caption ? { caption } : {}) };
 }
 
+function replyToProviderMessageId(message) {
+    const id = message?.reply_to_message?.message_id;
+    return id == null ? null : decimalId(id);
+}
+
+function replyPreview(message) {
+    const source = message?.reply_to_message;
+    const text = typeof source?.text === 'string' ? source.text : source?.caption;
+    if (typeof text !== 'string' || !text.isWellFormed() || !text.trim()) return null;
+    return Array.from(text).slice(0, 512).join('');
+}
+
+function normalizeEdit(message, accountId, adminChatId = '') {
+    const chatId = decimalId(message?.chat?.id, { signed: true, max: MESSAGE_MAX });
+    const providerMessageId = decimalId(message?.message_id, { max: MESSAGE_MAX });
+    const editedAt = timestamp(message?.edit_date);
+    if (!chatId || chatId === adminChatId || message?.chat?.type !== 'private'
+        || !providerMessageId || !editedAt) return null;
+    const replyId = replyToProviderMessageId(message);
+    return { identity: telegramIdentity(accountId, chatId), providerMessageId,
+        content: normalizedContent(message), editedAt,
+        ...(replyId ? { replyToProviderMessageId: replyId } : {}),
+        ...(replyPreview(message) ? { replyPreview: replyPreview(message) } : {}) };
+}
+
 /** Build one durable message or mark the update as an intentionally excluded
  * Telegram event. Admin delivery remains a legacy pipeline action after commit. */
 function normalizeUpdate(update, accountId, adminChatId = '', { includeAudio = false } = {}) {
     if (!update || typeof update !== 'object' || Array.isArray(update)) throw failure('TG_UPDATE_INVALID');
     const updateId = decimalId(update.update_id, { allowZero: true, max: UPDATE_MAX });
     if (updateId === null) throw failure('TG_UPDATE_ID_INVALID');
-    if (update.message === undefined || update.message === null) return { updateId, message: null, legacy: null };
+    if (update.edited_message !== undefined && update.edited_message !== null) {
+        const edit = normalizeEdit(update.edited_message, accountId, adminChatId);
+        return { updateId, message: null, edit, legacy: null };
+    }
+    if (update.message === undefined || update.message === null) return { updateId, message: null, edit: null, legacy: null };
     const message = update.message;
     if (typeof message !== 'object' || Array.isArray(message)) throw failure('TG_MESSAGE_INVALID');
     const chat = message.chat;
@@ -84,16 +113,18 @@ function normalizeUpdate(update, accountId, adminChatId = '', { includeAudio = f
     if (isAdmin) {
         const content = normalizedContent(message);
         const text = content.type === 'text' ? content.text : content.caption || '';
-        return { updateId, message: null, legacy: { message, chatId, text, isAdminChannel: true,
+        return { updateId, message: null, edit: null, legacy: { message, chatId, text, isAdminChannel: true,
             audio: content.type === 'audio' } };
     }
-    if (chat.type !== 'private') return { updateId, message: null, legacy: null };
+    if (chat.type !== 'private') return { updateId, message: null, edit: null, legacy: null };
 
     const content = normalizedContent(message);
     const text = content.type === 'text' ? content.text : content.caption || '';
     const waitForTranscription = content.type === 'audio' && includeAudio;
     const archiveInput = { identity: telegramIdentity(accountId, chatId), providerMessageId: messageId,
-        source: 'live', direction: 'inbound', authorKind: 'customer', occurredAt, content };
+        source: 'live', direction: 'inbound', authorKind: 'customer', occurredAt, content,
+        ...(replyToProviderMessageId(message) ? { replyToProviderMessageId: replyToProviderMessageId(message) } : {}),
+        ...(replyPreview(message) ? { replyPreview: replyPreview(message) } : {}) };
     if ((text && Buffer.byteLength(text) <= 65536 && !waitForTranscription) || waitForTranscription) {
         const firstName = message.from?.first_name || 'Desconocido';
         const username = message.from?.username;
@@ -105,7 +136,7 @@ function normalizeUpdate(update, accountId, adminChatId = '', { includeAudio = f
                 country: 'Desconocido', isFromMe: false, isAdminChannel: false }
         } };
     }
-    return { updateId, message: archiveInput, legacy: { message, chatId, text, isAdminChannel: false,
+    return { updateId, message: archiveInput, edit: null, legacy: { message, chatId, text, isAdminChannel: false,
         audio: content.type === 'audio' } };
 }
 
@@ -129,9 +160,10 @@ function createTelegramCapture(archive) {
             return { accountId: account.id, lastUpdateId };
         },
         commitBatch(accountId, updates) {
-            return archive.captureTelegramBatch({ accountId, updates: updates.map(({ updateId, message }) => ({ updateId, message })) });
+            return archive.captureTelegramBatch({ accountId, updates: updates.map(({ updateId, message, edit }) => ({ updateId, message, edit })) });
         }
     };
 }
 
-module.exports = { decimalId, verifiedBotId, telegramIdentity, normalizeSentMessage, normalizeUpdate, normalizeUpdates, createTelegramCapture };
+module.exports = { decimalId, verifiedBotId, telegramIdentity, normalizeSentMessage, normalizeUpdate,
+    normalizeEdit, normalizeUpdates, createTelegramCapture };

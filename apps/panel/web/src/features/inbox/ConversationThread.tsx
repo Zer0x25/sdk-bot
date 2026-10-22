@@ -131,6 +131,7 @@ export function ConversationThread(props: Props) {
   const olderLoadPending = useRef(false);
   const atLatestRef = useRef(true);
   const previousScroll = useRef({ height: 0, top: 0 });
+  const messageById = new Map(messages.map(message => [message.id, message]));
 
   function updatePosition() {
     const container = historyRef.current;
@@ -377,12 +378,21 @@ export function ConversationThread(props: Props) {
             )}
             {messages.length > 0 && (
               <ol className="message-list" role="log" aria-label="Mensajes del chat" aria-live="polite" aria-relevant="additions text">
-                {messages.map(message => (
+                {messages.map(message => {
+                  const quoted = message.replyToId ? messageById.get(message.replyToId) : undefined;
+                  return (
                   <li key={message.id} className={`message-row ${message.direction === 'outbound' ? 'is-outbound' : 'is-inbound'}`}>
                     <article className="message-bubble">
                       <div className="message-author">{authorNames[message.authorKind]}</div>
-                      <p>{messageBody(message.content)}</p>
-                      {message.content.type !== 'text' && message.content.type !== 'oversized' && message.content.attachmentId && (
+                      {(message.replyToId || message.replyPreview) && (
+                        <blockquote className="message-quote" aria-label="Mensaje citado">
+                          {quoted
+                            ? quoted.deletedAt ? 'Mensaje eliminado' : messageBody(quoted.content)
+                            : message.replyPreview || 'Mensaje citado no disponible'}
+                        </blockquote>
+                      )}
+                      <p>{message.deletedAt ? 'Mensaje eliminado en el canal' : messageBody(message.content)}</p>
+                      {!message.deletedAt && message.content.type !== 'text' && message.content.type !== 'oversized' && message.content.attachmentId && (
                         <a className="message-attachment-download"
                           href={`/api/v1/attachments/${encodeURIComponent(message.content.attachmentId)}`}>
                           Descargar {mediaNames[message.content.type]}
@@ -390,11 +400,13 @@ export function ConversationThread(props: Props) {
                       )}
                       <div className="message-metadata">
                         <time dateTime={message.occurredAt}>{formatTime(message.occurredAt)}</time>
+                        {message.editedAt && <span>Editado</span>}
                         {deliveryLabel(message) && <span>{deliveryLabel(message)}</span>}
                       </div>
                     </article>
                   </li>
-                ))}
+                  );
+                })}
               </ol>
             )}
           </div>

@@ -9,6 +9,8 @@ export interface ArchiveInput {
     clientMessageId?: string | null;
     occurredAt: string;
     content: Contract<'MessageContent'>;
+    replyToProviderMessageId?: string | null;
+    replyPreview?: string;
     legacyDispatch?: {
         waitForTranscription: boolean;
         message: {
@@ -90,9 +92,13 @@ export interface Archive {
         integrity: string; foreignKeys: number }>;
     registerAccount(input: { id?: string; channel: 'whatsapp' | 'telegram'; providerKey: string }): Promise<{ id: string; channel: string; provider_key: string }>;
     telegramCursor(accountId: string): Promise<string | null>;
-    captureTelegramBatch(input: { accountId: string; updates: Array<{ updateId: string; message: ArchiveInput | null }> }): Promise<{
+    captureTelegramBatch(input: { accountId: string; updates: Array<{ updateId: string; message: ArchiveInput | null;
+        edit?: { identity: Contract<'IdentityKey'>; providerMessageId: string; content: Contract<'MessageContent'>;
+            editedAt: string; replyToProviderMessageId?: string | null; replyPreview?: string } | null }> }): Promise<{
         lastUpdateId: string | null;
-        results: Array<{ updateId: string; status: 'stale' | 'excluded' | IngestResult['status']; result?: IngestResult }>;
+        results: Array<{ updateId: string; status: string; result?: IngestResult | { status: string;
+            message?: Contract<'Message'>; event?: Contract<'Event'>; replacedAttachmentId?: string | null;
+            captureAttachment?: boolean } }>;
     }>;
     resolve(identity: Contract<'IdentityKey'>): Promise<ArchiveIdentity>;
     bindAlias(input: { canonical: Contract<'IdentityKey'>; alias: Contract<'IdentityKey'>; evidence: { kind: 'adapter' | 'admin'; reference: string } }): Promise<{ status: 'linked' | 'existing'; identity: ArchiveIdentity } | { status: 'quarantined'; quarantineId: string }>;
@@ -100,6 +106,15 @@ export interface Archive {
     updateTranscription(input: { messageId: string; expectedStatus: 'not_requested' | 'pending'; status: 'pending' | 'completed' | 'failed'; transcript?: string | null }): Promise<
         { status: 'updated'; message: Contract<'Message'>; event: Contract<'Event'> } |
         { status: 'missing' | 'unchanged' }>;
+    editProviderMessage(input: { identity: Contract<'IdentityKey'>; providerMessageId: string;
+        content: Contract<'MessageContent'>; editedAt: string; replyToProviderMessageId?: string | null; replyPreview?: string }): Promise<{
+        status: 'updated' | 'missing' | 'unchanged' | 'deleted'; message?: Contract<'Message'>;
+        event?: Contract<'Event'>; replacedAttachmentId?: string | null; captureAttachment?: boolean }>;
+    deleteProviderMessage(input: { identity: Contract<'IdentityKey'>; providerMessageId: string; deletedAt?: string }): Promise<{
+        status: 'deleted' | 'missing' | 'unchanged'; message?: Contract<'Message'>;
+        event?: Contract<'Event'>; attachmentId?: string | null }>;
+    markAttachmentCaptureFailed(input: { messageId: string }): Promise<{ status: 'updated' | 'missing' | 'unchanged';
+        message?: Contract<'Message'>; event?: Contract<'Event'> }>;
     pendingLegacyDispatches(input?: { limit?: number }): Promise<PendingLegacyDispatch[]>;
     pendingResumeMessages(input: { conversationId: string }): Promise<PendingResumeMessages | null>;
     shouldProcessArchivedInbound(input: { messageId: string }): Promise<boolean>;
