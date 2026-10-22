@@ -64,7 +64,8 @@ vuelves a pegar nada ni a escanear el QR.
 │   ├── sshd                                                │
 │   └── ssh-agent                                           │
 │                                                           │
-│  brain/  (FastAPI "cerebro" IA)  ← escucha 127.0.0.1:5100  │
+│  apps/brain/ (FastAPI "cerebro" IA) ← escucha :5100         │
+│  brain/  (estado, perfiles y configuración editable)        │
 │  gateway/ (Baileys WhatsApp)      ← llama a BRAIN_API_URL  │
 └─────────────────────────────────────────────────────────┘
 ```
@@ -106,8 +107,9 @@ sv restart sdk-gateway # reiniciar
 ```sh
 #!/bin/sh
 exec 2>&1
-cd /data/data/com.termux/files/home/SDK-Bot/brain
-export PYTHONPATH=/data/data/com.termux/files/home/SDK-Bot/brain:$PYTHONPATH
+cd /data/data/com.termux/files/home/SDK-Bot/apps/brain
+export SDK_BRAIN_STATE_DIR=/data/data/com.termux/files/home/SDK-Bot/brain
+export PYTHONPATH=/data/data/com.termux/files/home/SDK-Bot/apps/brain:$PYTHONPATH
 # Usar el python del sistema (tiene fastapi/uvicorn/openai). El venv local está vacío.
 exec /data/data/com.termux/files/usr/bin/python main.py
 ```
@@ -133,8 +135,8 @@ El log del gateway queda en: `~/logs/sdk-gateway.log`
 
 ### Brain (Python)
 ```bash
-cd ~/SDK-Bot/brain
-pip install -r requirements.txt
+cd ~/SDK-Bot/apps/brain
+pip install -r requirements-termux.txt
 # Paquetes clave: fastapi, uvicorn, openai, python-dotenv, pydantic
 ```
 > `google-genai` (Gemini) **NO está instalado** en Termux: no compila en
@@ -212,7 +214,7 @@ Desde la unificación (todo vive en `main`), lo único exclusivo de Android es:
 |---|---|
 | `deploy/termux/startBrain.sh` / `startGateway.sh` | scripts de arranque manual con rutas de Termux |
 | `deploy/termux/setup-termux.sh` | bootstrap idempotente (dependencias + runit + boot) |
-| `brain/requirements-termux.txt` | sin `google-genai` (no compila en bionic) |
+| `apps/brain/requirements-termux.txt` | sin `google-genai` (no compila en bionic) |
 | `brain/.env` (local, NO versionado) | keys de API sin Gemini obligatorio |
 
 Todo lo demás (instancia única, backoff de reconexión, logs rotados, pool de
@@ -245,9 +247,9 @@ bash deploy/termux/setup-termux.sh   # hace los pasos 9.3-9.7 automáticamente
 ### 9.3 Dependencias del brain (Python)
 El `requirements.txt` original incluye `google-genai`, que **NO compila
 en Termux** (bionic, sin wheel precompilado). Por eso existe
-`brain/requirements-termux.txt` SIN ese paquete. Úsalo:
+`apps/brain/requirements-termux.txt` SIN ese paquete. Úsalo:
 ```bash
-cd ~/SDK-Bot/brain
+cd ~/SDK-Bot/apps/brain
 pip install -r requirements-termux.txt
 # fastapi, uvicorn, openai, python-dotenv, pydantic — todos instalan bien
 # google-genai se OMITE a propósito:
@@ -288,8 +290,9 @@ mkdir -p $SVDIR/sdk-brain $SVDIR/sdk-gateway
 cat > $SVDIR/sdk-brain/run <<'EOF'
 #!/bin/sh
 exec 2>&1
-cd /data/data/com.termux/files/home/SDK-Bot/brain
-export PYTHONPATH=/data/data/com.termux/files/home/SDK-Bot/brain:$PYTHONPATH
+cd /data/data/com.termux/files/home/SDK-Bot/apps/brain
+export SDK_BRAIN_STATE_DIR=/data/data/com.termux/files/home/SDK-Bot/brain
+export PYTHONPATH=/data/data/com.termux/files/home/SDK-Bot/apps/brain:$PYTHONPATH
 exec /data/data/com.termux/files/usr/bin/python main.py
 EOF
 

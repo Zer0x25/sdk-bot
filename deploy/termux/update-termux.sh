@@ -20,14 +20,14 @@ gateway_dependency_hash() {
         packages/contracts/schema.json packages/contracts/openapi.json | sha256sum | cut -d' ' -f1
 }
 pkg_before=$(gateway_dependency_hash)
-req_before=$(sha256sum brain/requirements-termux.txt 2>/dev/null | cut -d' ' -f1)
+req_before=$(sha256sum apps/brain/requirements-termux.txt 2>/dev/null | cut -d' ' -f1)
 
 echo "📥 Pull de main..."
 git fetch origin
 git pull --ff-only origin main
 
 pkg_after=$(gateway_dependency_hash)
-req_after=$(sha256sum brain/requirements-termux.txt 2>/dev/null | cut -d' ' -f1)
+req_after=$(sha256sum apps/brain/requirements-termux.txt 2>/dev/null | cut -d' ' -f1)
 
 echo "🔄 Reinstalando dependencias si cambiaron..."
 if [ "$pkg_before" = "$pkg_after" ]; then
@@ -40,7 +40,7 @@ if [ "$req_before" = "$req_after" ]; then
     echo "    brain: requirements sin cambios — pip omitido."
 else
     echo "    brain: requirements cambiaron — pip install..."
-    (cd brain && pip install -r requirements-termux.txt)
+    (cd apps/brain && pip install -r requirements-termux.txt)
 fi
 
 echo "🔄 Reiniciando servicios..."

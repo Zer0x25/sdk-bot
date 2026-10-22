@@ -1101,3 +1101,24 @@ Cierres históricos: commits F2C.1/F2C.2/F2D/F2E.1 están en el log local; F2B.3
 - No se hizo push ni despliegue. F8.1 sigue en progreso; brain y sus perfiles/
   estado permanecen en `brain/`. Siguiente subunidad: F8.1d, mover el código del
   brain sin trasladar secretos, memoria ni perfiles.
+
+## Fase 8.1d — Brain dentro de `apps/` — 2026-10-22
+
+- El código Python, tests, requirements y configuración Ruff del Brain viven en
+  `apps/brain/`. `brain/` conserva `.env`, perfiles editables, memoria, logs y el
+  venv. `runtime_paths.py` resuelve el estado configurable con
+  `SDK_BRAIN_STATE_DIR` (por defecto `brain/`); `.env.tuning` continúa en la raíz.
+- Linux, Docker, Compose, CI, Windows y Termux usan el entrypoint nuevo. Los
+  perfiles, DB, logs, lock y credenciales conservan sus rutas; no se migraron
+  datos. Windows/Termux no se ejecutaron en esos sistemas y queda pendiente la
+  validación real allí.
+- Verificación: Ruff limpio; pytest Brain 29/29; `py_compile`; `bash -n` de los
+  launchers; Compose `config --quiet`; `apps/gateway npm run check` (lint,
+  typecheck, Panel 38/38, build y Gateway 321/321); `git diff --check`.
+  El launcher Brain en puerto temporal :21610 y un contenedor de la imagen
+  `brain.Dockerfile` en :21611 devolvieron `/health` con `ok`. Se eliminaron
+  ambos puertos, estado temporal, contenedor e imagen; Brain, Gateway y Panel
+  habituales permanecieron sanos en :5100, :5300 y :5201.
+- No se iniciaron canales ni se contactó a proveedores IA. No se hizo push ni
+  despliegue. F8.1 queda cerrada; siguiente punto: revisar/migrar settings y
+  campañas mediante repositorios con corte verificable (Fase 8).

@@ -33,9 +33,10 @@
 
 ## Limites y arquitectura
 
-- El workspace raíz contiene `packages/*`; `packages/contracts` tiene schemas OpenAPI/JSON Schema, validadores y tipos generados. Gateway y panel mantienen manifests/locks independientes en `apps/gateway/` y `apps/panel/`; ambos consumen contracts como `file:../../packages/contracts`, empaquetado por `.npmrc` install-links=true. Tras editar contratos, repetir `npm ci` en ambos paquetes: no depender de la copia instalada anterior. Docker copia el paquete antes de instalar. Python en `brain/` y `apps/stt/` mantiene requirements. Entradas actuales: `apps/gateway/index.js`, `apps/panel/index.js`, `brain/main.py`, `apps/stt/server.py`. Ver `packages/contracts/README.md`.
+- El workspace raíz contiene `packages/*`; `packages/contracts` tiene schemas OpenAPI/JSON Schema, validadores y tipos generados. Gateway y panel mantienen manifests/locks independientes en `apps/gateway/` y `apps/panel/`; ambos consumen contracts como `file:../../packages/contracts`, empaquetado por `.npmrc` install-links=true. Tras editar contratos, repetir `npm ci` en ambos paquetes: no depender de la copia instalada anterior. Docker copia el paquete antes de instalar. Python en `apps/brain/` y `apps/stt/` mantiene requirements. Entradas actuales: `apps/gateway/index.js`, `apps/panel/index.js`, `apps/brain/main.py`, `apps/stt/server.py`. Ver `packages/contracts/README.md`.
 - `apps/gateway/index.js` es dueño de WhatsApp/Baileys, Telegram, el bus interno y el status server. `apps/panel/index.js` es el proceso de UI/control: sirve `public/` sin build y proxifica `/api/*` al bus. `apps/stt/server.py` expone un endpoint OpenAI-compatible (`POST /v1/audio/transcriptions`) con `faster-whisper` en CPU int8 para normalizar audios a texto sin tocar el cerebro; si STT cae o falla, el gateway descarta el audio con aviso y no tumba el canal.
 - `apps/gateway/lib/repoPaths.js` conserva las rutas de runtime en `gateway/` y `brain/`; credenciales, sesiones, JSON, SQLite, perfiles, logs y locks no se mueven junto con el código.
+- El código Python del Brain vive en `apps/brain/`; `SDK_BRAIN_STATE_DIR` selecciona su raíz de estado (por defecto `brain/`) y `SDK_BRAIN_PROFILES_DIR` permite separar perfiles cuando haga falta. `.env.tuning` sigue en la raíz del repo.
 - En Docker el panel debe ejecutar `node /app/apps/panel/index.js`, nunca el entrypoint del gateway: eso iniciaría una segunda sesión de WhatsApp. `NODE_PATH` incluye las dependencias del Gateway porque el panel comparte solo su infraestructura HTTP sin estado.
 - Mapeo de puertos y procesos (dev vs produccion Docker):
   - Brain: `:5100` (dev) / `:3400` (prod interno)
@@ -49,7 +50,7 @@
 - Las decisiones de arquitectura viven en `docs/adr/`: 001 hub multi-canal, 002 procesos y planos (datos/control), 003 dueno unico del transporte por canal, 004 resiliencia de la interaccion. Leelas antes de refactors grandes; cualquier cambio que rompa esos contratos exige una ADR nueva.
 - Todo `fetch` saliente lleva `AbortSignal.timeout(ms)` explicito y clasificacion 4xx (no reintentar) vs transitorio (1 reintento); ver ADR-004.
 - Usa `syntaxError()`/`COMMAND_USAGE` para errores de comandos y `sanitizeMarkdown()` para texto de usuario interpolado en respuestas Markdown.
-- El orden del router del brain lo define `BRAIN_PRIMARY_MODEL` (`brain/providers.py`); `.env.tuning` selecciona Gemini -> Groq -> OpenRouter. Los perfiles son Markdown en `brain/profiles/`, se recargan en caliente y `default` es el fallback.
+- El orden del router del brain lo define `BRAIN_PRIMARY_MODEL` (`apps/brain/providers.py`); `.env.tuning` selecciona Gemini -> Groq -> OpenRouter. Los perfiles editables son Markdown en `brain/profiles/`, se recargan en caliente y `default` es el fallback.
 
 ## Setup y verificacion
 
@@ -58,7 +59,7 @@
 npm ci && npm run check
 # Brain:
 cd brain
-uv venv venv && uv pip install -r requirements-dev.txt --python venv/bin/python || (python3 -m venv venv && venv/bin/pip install -r requirements-dev.txt)
+uv venv venv && uv pip install -r ../apps/brain/requirements-dev.txt --python venv/bin/python || (python3 -m venv venv && venv/bin/pip install -r ../apps/brain/requirements-dev.txt)
 # Gateway:
 cd ../apps/gateway
 npm ci
@@ -74,9 +75,9 @@ npm ci
 - `cd apps/gateway && npm run spike:sqlite` verifica F0.2 con fixtures temporales y worker,
   sin iniciar canales. Requiere Node >=22.13.0 sin flags; Linux probado, Windows y
   Termux pendientes. No es la DB operativa. Ver `docs/SQLITE-SPIKE.md`.
-- `cd brain && venv/bin/ruff check . && venv/bin/python -m pytest tests/ -q` es el check completo del brain. CI usa Node 22 y Python 3.12.
+- `cd apps/brain && ../../brain/venv/bin/ruff check . && ../../brain/venv/bin/python -m pytest tests/ -q` es el check completo del brain. CI usa Node 22 y Python 3.12.
 - CI tambien ejecuta `cd apps/gateway && bash ../../deploy/linux/tests/dev-smoke.sh` despues de las pruebas.
-- Tests enfocados: `cd apps/gateway && node --test tests/pipeline.test.js`; `cd apps/gateway && node --test tests/telegram.test.js`; `cd apps/gateway && node --test tests/adminPairing.test.js`; `cd apps/gateway && node --test tests/stt.test.js`; brain: `cd brain && venv/bin/python -m pytest tests/test_memory.py -q`.
+- Tests enfocados: `cd apps/gateway && node --test tests/pipeline.test.js`; `cd apps/gateway && node --test tests/telegram.test.js`; `cd apps/gateway && node --test tests/adminPairing.test.js`; `cd apps/gateway && node --test tests/stt.test.js`; brain: `cd apps/brain && ../../brain/venv/bin/python -m pytest tests/test_memory.py -q`.
 - `npm test` define `SDK_BOT_TEST=1` y escribe los logs tecnicos en `/tmp/sdk-bot-test-<pid>.log`, no en `gateway/logs/` ni en stdout operativo.
 - Los tests que cargan rutas desde env deben definirlas antes de hacer `require`: usa temporales para `SDK_CONTACTS_DB_PATH`, `SDK_SETTINGS_DB_PATH`, `SDK_BROADCAST_DB_PATH`, `SDK_MESSAGE_QUEUE_PATH`, `SDK_AUTH_DIR`, `BRAIN_MEMORY_DB`, logs y locks. Nunca apuntes a estado de produccion.
 - Cierra recursos persistentes en tests: `await telegramAdapter.disconnect()` para el poller y `reader.cancel()`/cierre del servidor para SSE `/qr` y `/logs`; de lo contrario queda vivo el event loop.

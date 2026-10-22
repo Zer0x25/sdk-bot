@@ -7,7 +7,9 @@ Prueba:
 - Autenticación por X-API-Key
 """
 import os
+import shutil
 import sys
+import tempfile
 from unittest.mock import patch
 
 from fastapi.testclient import TestClient
@@ -17,11 +19,14 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 import main as brain_main
 import memory as M
 
+_TEST_STATE_DIR = tempfile.mkdtemp(prefix="sdkbot-brain-main-")
+_TEST_DB_PATH = os.path.join(_TEST_STATE_DIR, "memory.db")
+
 
 def setup_module():
     """Usa una base de datos SQLite temporal para la suite."""
     M._conn = None
-    M.DB_PATH = "/tmp/sdk_bot_test_brain_main.db"
+    M.DB_PATH = _TEST_DB_PATH
     try:
         os.unlink(M.DB_PATH)
     except OSError:
@@ -29,10 +34,10 @@ def setup_module():
 
 
 def teardown_module():
-    try:
-        os.unlink("/tmp/sdk_bot_test_brain_main.db")
-    except OSError:
-        pass
+    if M._conn is not None:
+        M._conn.close()
+        M._conn = None
+    shutil.rmtree(_TEST_STATE_DIR, ignore_errors=True)
 
 
 def test_health_check():

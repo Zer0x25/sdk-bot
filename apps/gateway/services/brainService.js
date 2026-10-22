@@ -3,7 +3,7 @@
  * 🧠 CLIENTE DEL BRAIN (HTTP) + ORQUESTACIÓN DE RESPUESTA IA.
  *
  * Responsabilidades (una sola dirección de dependencia: gateway → brain):
- *   1. Cliente REST hacia brain/main.py con timeouts y clasificación de
+ *   1. Cliente REST hacia apps/brain/main.py con timeouts y clasificación de
  *      errores 4xx (bug, no reintentar) vs 5xx/red (transitorio).
  *   2. Política de resiliencia: reintento 1x, cola en disco ante caída,
  *      alerta al admin con throttle.
@@ -85,7 +85,7 @@ async function notifyAdminError(adapter, metadata, textMessage, errorDetails) {
                        `🔧 *Detalle técnico:* ${errorDetails}`;
     } else if (errStr.includes('fetch failed') || errStr.includes('econnrefused')) {
         errorSummary = `🚨 **CEREBRO APAGADO / DESCONECTADO (Brain Offline)**\n` +
-                       `📌 *Causa:* El servidor Python (\`brain/main.py\`) no está corriendo en ${BRAIN_API_BASE}/chat.\n` +
+                       `📌 *Causa:* El servidor Python (\`apps/brain/main.py\`) no está corriendo en ${BRAIN_API_BASE}/chat.\n` +
                        `🔧 *Detalle técnico:* ${errorDetails}`;
     }
 

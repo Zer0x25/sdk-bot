@@ -2,17 +2,17 @@ import os
 
 from dotenv import load_dotenv
 
+from runtime_paths import BRAIN_ENV_PATH, REPO_ROOT
+
 # Carga brain/.env (secretos: API keys). load_dotenv no sobreescribe vars ya
 # definidas en el entorno, así que respeta lo que el sistema ya tenga seteado.
-load_dotenv()
+load_dotenv(dotenv_path=BRAIN_ENV_PATH, override=False)
 
 # 🎛️ TUNING: carga .env.tuning (raíz del repo) SIN pisar brain/.env ni el entorno.
 # Usamos override=False para que una var explícita en el sistema gane siempre.
 # Así todas las constantes tunables viven en un solo archivo versionable, y las
 # keys secretas siguen en brain/.env (gitignored).
-_TUNING_PATH = os.path.join(
-    os.path.dirname(os.path.abspath(__file__)), "..", ".env.tuning"
-)
+_TUNING_PATH = REPO_ROOT / ".env.tuning"
 if os.path.exists(_TUNING_PATH):
     load_dotenv(dotenv_path=_TUNING_PATH, override=False)
 

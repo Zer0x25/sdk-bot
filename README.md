@@ -136,15 +136,19 @@ SDK-Bot/
 │   ├── public/                   # Frontend legacy modular (dashboard, pairing, Telegram, contactos)
 │   └── web/                      # Bandeja React/TypeScript/Vite
 ├── gateway/                      # Estado runtime (sesión, DB, credenciales, logs y locks)
-├── brain/                        # Código y estado de la Capa de Inteligencia (Python + FastAPI)
-│   ├── main.py                   # Aplicación FastAPI modularizada (/chat, /reset-memory, /profiles, :5100)
-│   ├── config.py                 # API Keys y modelos (Groq, OpenRouter, Gemini)
-│   ├── memory.py                 # Gestor de memoria persistente SQLite (brain/memory.db)
-│   ├── providers.py              # Router multi-proveedor (Groq 25s → OpenRouter 25s → Gemini 40s)
+├── apps/brain/                   # Código FastAPI, tests y requisitos Python
+│   ├── main.py                   # API modular (/chat, /reset-memory, /profiles, :5100)
+│   ├── config.py                 # Lectura de modelo y API keys desde estado
+│   ├── memory.py                 # Acceso a memoria SQLite del directorio brain/
+│   ├── providers.py              # Router multi-proveedor (Groq → OpenRouter → Gemini)
 │   ├── profiles.py               # Motor de perfiles SOUL en caliente
-│   ├── profiles/                 # Perfiles SOUL editables en Markdown (default, lucia, mateo, cobranzas, recepcion)
+│   └── requirements*.txt         # Requisitos Linux/Termux/dev
+├── brain/                        # Estado y configuración editable del Brain
+│   ├── profiles/                 # Perfiles SOUL Markdown conservados al actualizar código
 │   ├── .env                      # API Keys (gitignored)
-│   └── requirements.txt          # Dependencias Python
+│   ├── memory.db                 # Memoria SQLite (gitignored)
+│   ├── logs/                     # Logs rotados (gitignored)
+│   └── venv/                     # Entorno Python local (gitignored)
 ├── deploy/                       # Scripts y configuraciones de despliegue por plataforma
 │   ├── docker/                   # Producción Linux: Docker Compose (brain, gateway, panel)
 │   ├── linux/                    # Lanzamiento manual dev y alternativa systemd legacy
@@ -169,20 +173,22 @@ SDK-Bot/
 ```bash
 cd brain
 # Linux / macOS
-python3 -m venv venv && venv/bin/pip install -r requirements.txt
+python3 -m venv venv && venv/bin/pip install -r ../apps/brain/requirements.txt
 # Windows
-python -m venv venv && venv\Scripts\pip install -r requirements.txt
+python -m venv venv && venv\Scripts\pip install -r ..\apps\brain\requirements.txt
 ```
 
 ### 1. Iniciar Cerebro IA (Python FastAPI):
 ```bash
-cd brain
+cd apps/brain
 # Linux / macOS (desarrollo manual: puerto 5100, bind 0.0.0.0)
 export NODE_ENV=development BRAIN_PORT=5100 BRAIN_HOST=0.0.0.0
-venv/bin/python main.py
+export SDK_BRAIN_STATE_DIR="$(cd ../../brain && pwd)"
+../../brain/venv/bin/python main.py
 # Windows
-venv\Scripts\python.exe main.py
-# Si ya está corriendo (puerto ocupado): `venv/bin/python main.py --restart` lo reinicia
+set SDK_BRAIN_STATE_DIR=..\..\brain
+..\..\brain\venv\Scripts\python.exe main.py
+# Si ya está corriendo (puerto ocupado): `../../brain/venv/bin/python main.py --restart` lo reinicia
 ```
 
 ### 2. Iniciar Gateway WhatsApp (Node.js):

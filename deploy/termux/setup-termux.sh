@@ -38,7 +38,7 @@ else
 fi
 
 echo "🐍 3/6 Dependencias del brain (sin google-generativeai: no compila en bionic)..."
-cd "$REPO/brain"
+cd "$REPO/apps/brain"
 pip install -r requirements-termux.txt
 
 echo "🌐 4/6 Dependencias del gateway (Node)..."
@@ -65,8 +65,9 @@ mkdir -p "$SVDIR/sdk-brain" "$SVDIR/sdk-gateway"
 cat > "$SVDIR/sdk-brain/run" <<EOF
 #!/bin/sh
 exec 2>&1
-cd "$REPO/brain"
-export PYTHONPATH="$REPO/brain:\$PYTHONPATH"
+cd "$REPO/apps/brain"
+export SDK_BRAIN_STATE_DIR="$REPO/brain"
+export PYTHONPATH="$REPO/apps/brain:\$PYTHONPATH"
 export BRAIN_PORT=${BRAIN_PORT:-5100}
 export BRAIN_HOST=${BRAIN_HOST:-0.0.0.0}
 exec /data/data/com.termux/files/usr/bin/python main.py

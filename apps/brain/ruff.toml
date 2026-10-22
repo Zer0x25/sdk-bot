@@ -1,4 +1,5 @@
-# Config de ruff (lint del brain). Correr: venv/bin/ruff check brain/
+# Config de ruff (lint del brain). Correr desde apps/brain con el venv de brain:
+# ../../brain/venv/bin/ruff check .
 # Estilo pragmático para código legacy:
 # - BLE001: except Exception ciego es DEFENSIVO a propósito (cascada de proveedores,
 #   fallback de perfiles, safe_log). No se fuerza a crear excepciones propias.

@@ -1,6 +1,6 @@
-"""Tests unitarios del parser de perfiles SOUL (brain/profiles.py).
+"""Tests unitarios del parser de perfiles SOUL (apps/brain/profiles.py).
 
-Correr: venv/bin/python -m pytest tests/ (desde brain/).
+Ejecutar: python -m pytest tests/ (desde apps/brain/).
 Los tests usan fixtures en /tmp y restablecen el estado global del módulo.
 """
 import os

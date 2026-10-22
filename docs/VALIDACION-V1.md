@@ -75,7 +75,7 @@ Fuente de parámetros: loadProfile del fixture. El generador de F2 deberá:
 Los archivos generados viven en temporales, sin tokens/sesiones y con limpieza.
 El JSON versionado describe el dataset, no contiene un millón de mensajes en git.
 El generador y los resultados F2E.2 están implementados en
-[gateway/scripts/conversation-load.js](../gateway/scripts/conversation-load.js) y
+[apps/gateway/scripts/conversation-load.js](../apps/gateway/scripts/conversation-load.js) y
 [F2E2-CARGA-COMPLETA](F2E2-CARGA-COMPLETA.md); el runner exige un volumen temporal
 con al menos 6 GiB libres para evitar agotar el espacio durante el snapshot.
 
@@ -129,7 +129,7 @@ Una muestra única de 5.000 escrituras del spike F0.2 no cumple este protocolo.
 No ralentizar la CI de cada cambio con el dataset completo: CI ejecuta casos
 funcionales reducidos; la entrega de almacenamiento/UI conserva un informe de
 carga completo antes de cerrar sus puertas. El runner actual está en
-`gateway/scripts/conversation-load.js`; repetir con 2 CPU/4 GiB antes de certificar
+`apps/gateway/scripts/conversation-load.js`; repetir con 2 CPU/4 GiB antes de certificar
 ese perfil. Takeover se incorpora cuando F5 entregue la operación durable.
 
 ## 4. Ensayos de corte y recuperación

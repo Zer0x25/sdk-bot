@@ -15,6 +15,9 @@
 set -uo pipefail
 
 REPO="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
+BRAIN_APP="$REPO/apps/brain"
+BRAIN_STATE="$REPO/brain"
+BRAIN_RUNTIME="${SDK_BRAIN_STATE_DIR:-$BRAIN_STATE}"
 GATEWAY_APP="$REPO/apps/gateway"
 PANEL_APP="$REPO/apps/panel"
 GATEWAY_STATE="$REPO/gateway"
@@ -64,9 +67,9 @@ usage() {
 }
 
 ensure_brain_deps() {
-    if [ ! -d "$REPO/brain/venv" ]; then
+    if [ ! -d "$BRAIN_STATE/venv" ]; then
         log "🧠 Creando venv del brain (uv)..."
-        (cd "$REPO/brain" && uv venv venv && uv pip install -q -r requirements-dev.txt --python venv/bin/python)
+        (cd "$BRAIN_STATE" && uv venv venv && uv pip install -q -r "$BRAIN_APP/requirements-dev.txt" --python venv/bin/python)
     fi
 }
 
@@ -93,12 +96,12 @@ ensure_panel_deps() {
 launch_brain() {
     ensure_brain_deps
     wait_port_free "$BRAIN_PORT"
-    cd "$REPO/brain"
+    cd "$BRAIN_APP"
     # nohup + & deja el listener como job del script; cmd_up hace `disown`
     # para que al terminar dev.sh no reciban SIGHUP. El PID escrito es el
     # listener real (nohup no hace doble fork), así cmd_down lo mata bien.
-    NODE_ENV=development BRAIN_PORT="$BRAIN_PORT" BRAIN_HOST="$BRAIN_HOST" \
-        nohup "$REPO/brain/venv/bin/python" main.py > "$LOG_DIR/sdk-bot-brain.log" 2>&1 &
+    SDK_BRAIN_STATE_DIR="$BRAIN_RUNTIME" NODE_ENV=development BRAIN_PORT="$BRAIN_PORT" BRAIN_HOST="$BRAIN_HOST" \
+        nohup "$BRAIN_STATE/venv/bin/python" main.py > "$LOG_DIR/sdk-bot-brain.log" 2>&1 &
     echo $! > "$PID_DIR/brain.pid"
     log "🧠 brain -> pid $(cat "$PID_DIR/brain.pid") (log: $LOG_DIR/sdk-bot-brain.log)"
 }
@@ -213,7 +216,7 @@ cmd_down() {
     wait_port_free "$INTERNAL_BUS_PORT"
     wait_port_free "$BRAIN_PORT"
     # Libera locks de instancia única que queden colgados (el brain se autoprotege)
-    rm -f "${SDK_GATEWAY_LOCK_PATH:-$GATEWAY_STATE/.gateway.lock}" "${SDK_BRAIN_LOCK_PATH:-$REPO/brain/.brain.lock}"
+    rm -f "${SDK_GATEWAY_LOCK_PATH:-$GATEWAY_STATE/.gateway.lock}" "${SDK_BRAIN_LOCK_PATH:-$BRAIN_RUNTIME/.brain.lock}"
     log "✅ detenido (locks liberados)."
 }
 
@@ -239,8 +242,8 @@ cmd_manual() {
     local TARGET="${2:-todos}"
     case "$TARGET" in
         brain)
-            cd "$REPO/brain"
-            exec env NODE_ENV=development BRAIN_PORT="$BRAIN_PORT" BRAIN_HOST="$BRAIN_HOST" venv/bin/python main.py
+            cd "$BRAIN_APP"
+            exec env SDK_BRAIN_STATE_DIR="$BRAIN_RUNTIME" NODE_ENV=development BRAIN_PORT="$BRAIN_PORT" BRAIN_HOST="$BRAIN_HOST" "$BRAIN_STATE/venv/bin/python" main.py
             ;;
         gateway)
             cd "$GATEWAY_APP"

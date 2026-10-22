@@ -12,7 +12,7 @@ el **Programador de tareas** de Windows (arrancar al inicio, reiniciar en fallo)
 ```powershell
 cd C:\ruta\a\SDK-Bot\brain
 python -m venv venv
-venv\Scripts\pip install -r requirements.txt
+venv\Scripts\pip install -r ..\apps\brain\requirements.txt
 cd ..\apps\gateway
 npm install
 cd ..\panel

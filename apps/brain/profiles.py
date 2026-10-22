@@ -1,9 +1,11 @@
 """
 Perfiles SOUL (Personalidades del Bot)
 
-Cada perfil vive como un archivo Markdown individual en la carpeta ./profiles/
-(p.ej. lucia.md, mateo.md). Se parsea a estructura y se compila a un system
-prompt completo mediante build_system_prompt().
+Cada perfil vive como un archivo Markdown individual en `brain/profiles/` por
+defecto (p.ej. lucia.md, mateo.md). `SDK_BRAIN_STATE_DIR` cambia la raíz de
+estado y `SDK_BRAIN_PROFILES_DIR` permite elegir una carpeta independiente. Se
+parsea a estructura y se compila a un system prompt mediante
+build_system_prompt().
 
 Formato esperado de cada .md:
 
@@ -34,10 +36,13 @@ import re
 
 from config import BRAIN_STYLE_GLOBAL
 from logging_setup import make_logger
+from runtime_paths import BRAIN_STATE_DIR
 
 log = make_logger("brain.perfiles")
 
-PROFILES_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "profiles")
+PROFILES_DIR = os.environ.get("SDK_BRAIN_PROFILES_DIR") or os.path.join(
+    str(BRAIN_STATE_DIR), "profiles"
+)
 
 # Cache: key -> (mtime, profile_dict)
 _profiles_cache: dict = {}

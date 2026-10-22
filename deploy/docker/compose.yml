@@ -9,7 +9,9 @@ services:
       NODE_ENV: production
       BRAIN_HOST: 0.0.0.0
       BRAIN_PORT: 3400
+      SDK_BRAIN_STATE_DIR: /app/brain
       BRAIN_MEMORY_DB: /var/lib/sdk-bot/memory.db
+      SDK_ADMIN_WEB_LOG_BRAIN: /app/brain/logs
     volumes:
       - sdk_bot_state:/var/lib/sdk-bot
       - sdk_bot_brain_logs:/app/brain/logs

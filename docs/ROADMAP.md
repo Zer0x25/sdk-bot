@@ -405,16 +405,18 @@ secciones requeridas y el perfil `default` no se puede eliminar. Véase [F7.4](F
 **Depende de:** límites estables y v1; movimientos pequeños pueden adelantarse si
 son necesarios para una fase previa y pasan sus mismas comprobaciones.
 
-- [ ] Mover gateway, panel, brain y STT a apps/ uno a uno; imports/entrypoints y
+- [x] Mover gateway, panel, brain y STT a apps/ uno a uno; imports/entrypoints y
   perfiles siguen funcionando. Compartir solo contratos/testkit, no estados runtime.
-  En progreso: F8.1a movió STT a `apps/stt/`; F8.1b movió Gateway a
+  F8.1a movió STT a `apps/stt/`; F8.1b movió Gateway a
   `apps/gateway/`; F8.1c movió el panel a `apps/panel/` con paquete y lockfile
-  propios. Suite, smoke de launcher y runtime Docker pasan; las rutas de datos
-  siguen en `gateway/` y `brain/`. Brain queda para F8.1d.
+  propios; F8.1d movió código, tests y requirements de Brain a `apps/brain/`.
+  Las rutas `.env`, perfiles y estado permanecen en `brain/`.
 - [ ] Migrar settings/campañas restantes por repositorios con corte verificable;
   retirar accesos JSON directos. Revisar locks y release-please al mover paquetes.
-- [ ] Actualizar Dockerfiles multi-stage, Compose, CI, launchers de Linux/Windows/
+- [x] Actualizar Dockerfiles multi-stage, Compose, CI, launchers de Linux/Windows/
   Termux y artefactos frontend. Mantener volúmenes/rutas de credenciales existentes.
+  Linux, Compose y Docker se verificaron en esta sesión. Windows y Termux tienen
+  launchers/documentación actualizados; falta la prueba real en esos sistemas.
 - [ ] Runbook backup/restauración, retención/exportación/purga, rollback de código y
   datos, métricas y logs con datos de cliente minimizados.
 - [ ] Ensayar migración/restauración con fixture representativo y delta posterior

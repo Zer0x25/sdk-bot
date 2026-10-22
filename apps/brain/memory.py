@@ -17,12 +17,13 @@ from config import (
     BRAIN_MEMORY_MAX_TOKENS,
     BRAIN_MEMORY_WINDOW_SECONDS,
 )
+from runtime_paths import BRAIN_STATE_DIR
 
 DB_PATH = os.environ.get("BRAIN_MEMORY_DB") or os.path.join(
-    os.path.dirname(os.path.abspath(__file__)), "memory.db"
+    str(BRAIN_STATE_DIR), "memory.db"
 )
 
-# Constantes de memoria ahora TUNEABLES vía .env.tuning (ver brain/config.py).
+# Constantes de memoria ahora TUNEABLES vía .env.tuning (ver apps/brain/config.py).
 # Valores activos por defecto: ventana 24h, 15 mensajes, 2000 tokens, sweep 50.
 MAX_HISTORY_MESSAGES = BRAIN_MEMORY_MAX_MESSAGES
 MAX_HISTORY_TOKENS = BRAIN_MEMORY_MAX_TOKENS

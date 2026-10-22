@@ -52,17 +52,17 @@ un requisito para futuras sesiones; los resultados resumidos quedan en este arch
 
 | Tramo | Referencia | Comportamiento observado y límite |
 |---|---|---|
-| Bootstrap | [gateway/index.js:128](../gateway/index.js#L128) | Crea ambos adapters, registra listeners y conecta. Importar index tiene efectos: llama ensureSingleInstance/startGateway y abre servidores. |
-| WhatsApp live | [whatsappAdapter.js:235](../gateway/adapters/whatsappAdapter.js#L235) | Procesa solo m.messages[0]; descarta IDs propios conocidos; emite StandardMessage cuando hay texto o STT exitoso. No archiva el lote íntegro. |
-| Mensaje normalizado | [StandardMessage.js:27](../gateway/core/StandardMessage.js#L27) | Canal, remoteId, rawId, texto, audio, metadata y raw. No incluye como campos canónicos ID de proveedor, fecha, tipo completo, autoría ni entrega. |
-| Telegram live | [telegramAdapter.js:58](../gateway/adapters/telegramAdapter.js#L58) | Un loop por generación; lastUpdateId comienza en 0 y se adelanta antes de terminar trabajo. EventEmitter no espera los listeners async del gateway; no hay ack durable. |
-| Historial inicial WA | [gateway/index.js:172](../gateway/index.js#L172), [messageSyncQueue.js:19](../gateway/services/messageSyncQueue.js#L19) | history_sync pasa por lotes de 100 y siembra chatStore. No persiste el hilo ni alimenta una API de conversaciones. |
-| Store de mensajes | [chatStore.js:16](../gateway/store/chatStore.js#L16), [chatStore.js:82](../gateway/store/chatStore.js#L82) | RAM, tope 200/chat, TTL 30 min; upsertMessage se exporta pero no tiene llamadas en el repo. Solo se encontró seedMessages conectado. |
-| Consumidor común | [messageHandler.js:204](../gateway/handlers/messageHandler.js#L204) | Retorna si no hay texto; busca adapter importando index dentro del handler. Actualiza metadatos/contacto y decide comando, IA, handoff o ignore. |
-| Decisión de respuesta | [pipeline.js:158](../gateway/services/pipeline.js#L158) | fromMe en chat de cliente se ignora; pausa global/ignorado/modo estricto filtran; handoff activo no responde. Ningún paso guarda un archivo de mensajes. |
-| Contactos | [contactsRepository.js:253](../gateway/services/contactsRepository.js#L253) | Índices phone/lid/dígitos ya existen; usa remoteId como clave, pero puede fusionar registros por identidad sin namespace de cuenta/canal en los índices. |
-| Identidades de comandos | [contactsRepository.js:118](../gateway/services/contactsRepository.js#L118), [stateService.js:28](../gateway/services/stateService.js#L28) | Elimina caracteres no numéricos y tiene fallback por includes. No conserva signo de TG ni garantiza resolución exacta entre canales. |
-| Persistencia JSON | [db.js:119](../gateway/services/db.js#L119) | Caché mutable y guardado diferido; contactos usan tmp+rename, settings writeFile directo. Responder éxito no demuestra fsync/commit durable del control. |
+| Bootstrap | [gateway/index.js:128](../apps/gateway/index.js#L128) | Crea ambos adapters, registra listeners y conecta. Importar index tiene efectos: llama ensureSingleInstance/startGateway y abre servidores. |
+| WhatsApp live | [whatsappAdapter.js:235](../apps/gateway/adapters/whatsappAdapter.js#L235) | Procesa solo m.messages[0]; descarta IDs propios conocidos; emite StandardMessage cuando hay texto o STT exitoso. No archiva el lote íntegro. |
+| Mensaje normalizado | [StandardMessage.js:27](../apps/gateway/core/StandardMessage.js#L27) | Canal, remoteId, rawId, texto, audio, metadata y raw. No incluye como campos canónicos ID de proveedor, fecha, tipo completo, autoría ni entrega. |
+| Telegram live | [telegramAdapter.js:58](../apps/gateway/adapters/telegramAdapter.js#L58) | Un loop por generación; lastUpdateId comienza en 0 y se adelanta antes de terminar trabajo. EventEmitter no espera los listeners async del gateway; no hay ack durable. |
+| Historial inicial WA | [gateway/index.js:172](../apps/gateway/index.js#L172), [messageSyncQueue.js:19](../apps/gateway/services/messageSyncQueue.js#L19) | history_sync pasa por lotes de 100 y siembra chatStore. No persiste el hilo ni alimenta una API de conversaciones. |
+| Store de mensajes | [chatStore.js:16](../apps/gateway/store/chatStore.js#L16), [chatStore.js:82](../apps/gateway/store/chatStore.js#L82) | RAM, tope 200/chat, TTL 30 min; upsertMessage se exporta pero no tiene llamadas en el repo. Solo se encontró seedMessages conectado. |
+| Consumidor común | [messageHandler.js:204](../apps/gateway/handlers/messageHandler.js#L204) | Retorna si no hay texto; busca adapter importando index dentro del handler. Actualiza metadatos/contacto y decide comando, IA, handoff o ignore. |
+| Decisión de respuesta | [pipeline.js:158](../apps/gateway/services/pipeline.js#L158) | fromMe en chat de cliente se ignora; pausa global/ignorado/modo estricto filtran; handoff activo no responde. Ningún paso guarda un archivo de mensajes. |
+| Contactos | [contactsRepository.js:253](../apps/gateway/services/contactsRepository.js#L253) | Índices phone/lid/dígitos ya existen; usa remoteId como clave, pero puede fusionar registros por identidad sin namespace de cuenta/canal en los índices. |
+| Identidades de comandos | [contactsRepository.js:118](../apps/gateway/services/contactsRepository.js#L118), [stateService.js:28](../apps/gateway/services/stateService.js#L28) | Elimina caracteres no numéricos y tiene fallback por includes. No conserva signo de TG ni garantiza resolución exacta entre canales. |
+| Persistencia JSON | [db.js:119](../apps/gateway/services/db.js#L119) | Caché mutable y guardado diferido; contactos usan tmp+rename, settings writeFile directo. Responder éxito no demuestra fsync/commit durable del control. |
 
 La precarga está habilitada por .env.tuning, fuente baileys y 25 mensajes. El
 handler la guarda como señal en RAM; processAIChat no inyecta ese hilo al brain.
@@ -72,30 +72,30 @@ Por tanto no aporta, por sí sola, el contexto de mensajes humanos al responder.
 
 | Tramo | Referencia | Comportamiento observado y límite |
 |---|---|---|
-| Handoff por cliente | [messageHandler.js:281](../gateway/handlers/messageHandler.js#L281) | Cambia estado, notifica admin y cliente. No cancela timers/jobs ni coordina envíos ya iniciados. |
-| Handoff manual | [chatControl.js:19](../gateway/handlers/commands/chatControl.js#L19) | /humano rechaza todo ignored_all, incluso un contacto permitido. /ia establece neutro; con modo estricto eso no garantiza reactivar respuestas. |
-| Caducidad | [contactsRepository.js:37](../gateway/services/contactsRepository.js#L37) | Handoff TTL 24 h por defecto; fecha ausente/inválida se trata activa. Permisos y control comparten estado. |
-| Debounce y pool | [messageHandler.js:389](../gateway/handlers/messageHandler.js#L389), [aiQueue.js:19](../gateway/services/aiQueue.js#L19) | Serialización RAM por chat y concurrencia global. Al vencer timer se revisa typing, sin nueva evaluación de control/permisos; el pool no tiene cancelación por job. |
-| Petición IA | [brainService.js:115](../gateway/services/brainService.js#L115) | POST /chat con timeout 90 s y un retry transitorio. No generationId idempotente. El retry puede duplicar trabajo/contexto si la respuesta se perdió. |
-| Entrega IA | [brainService.js:190](../gateway/services/brainService.js#L190) | Lectura, typing, globos y pausas; no valida control/pause antes de cada globo y no guarda intención/resultado en outbox. |
-| Memoria brain | [brain/main.py:168](../brain/main.py#L168), [memory.py:114](../brain/memory.py#L114) | Guarda intercambio al generar, antes de saber si llegó al canal. SQLite/WAL de contexto; ventana configurada 7 días, sin tope de cantidad y ~5000 tokens de lectura. |
-| Cola de caída IA | [messageQueue.js:21](../gateway/services/messageQueue.js#L21), [messageHandler.js:477](../gateway/handlers/messageHandler.js#L477) | JSONL atómico, máximo 50, TTL 24 h al cargar, hasta 5 intentos en flush. No es archivo ni outbox. Flush invoca IA sin reevaluar handoff/pausa/permisos. |
-| Anti-bucle | [config.js:57](../gateway/config.js#L57) | Set global de IDs con TTL 60 s; sin cuenta/chat/canal. Un message_id de Telegram puede colisionar con otro chat. |
-| Comandos | [commandHandler.js:71](../gateway/handlers/commandHandler.js#L71), [adminCommandRunner.js:46](../gateway/services/adminCommandRunner.js#L46) | Superficies convergen en dispatcher; panel usa runner/sock virtual, WA/TG entran directamente al dispatcher por pipeline. No todos llaman al runner. |
-| Otras salidas | [internalBus.js:927](../gateway/services/internalBus.js#L927), [broadcastService.js:309](../gateway/services/broadcastService.js#L309), [telegramService.js:25](../gateway/services/telegramService.js#L25) | /notify, campañas y avisos tienen caminos propios. /notify llama activeSock.sendMessage con payload legacy; necesita prueba del contrato real cuando activeSock sea un adapter. |
+| Handoff por cliente | [messageHandler.js:281](../apps/gateway/handlers/messageHandler.js#L281) | Cambia estado, notifica admin y cliente. No cancela timers/jobs ni coordina envíos ya iniciados. |
+| Handoff manual | [chatControl.js:19](../apps/gateway/handlers/commands/chatControl.js#L19) | /humano rechaza todo ignored_all, incluso un contacto permitido. /ia establece neutro; con modo estricto eso no garantiza reactivar respuestas. |
+| Caducidad | [contactsRepository.js:37](../apps/gateway/services/contactsRepository.js#L37) | Handoff TTL 24 h por defecto; fecha ausente/inválida se trata activa. Permisos y control comparten estado. |
+| Debounce y pool | [messageHandler.js:389](../apps/gateway/handlers/messageHandler.js#L389), [aiQueue.js:19](../apps/gateway/services/aiQueue.js#L19) | Serialización RAM por chat y concurrencia global. Al vencer timer se revisa typing, sin nueva evaluación de control/permisos; el pool no tiene cancelación por job. |
+| Petición IA | [brainService.js:115](../apps/gateway/services/brainService.js#L115) | POST /chat con timeout 90 s y un retry transitorio. No generationId idempotente. El retry puede duplicar trabajo/contexto si la respuesta se perdió. |
+| Entrega IA | [brainService.js:190](../apps/gateway/services/brainService.js#L190) | Lectura, typing, globos y pausas; no valida control/pause antes de cada globo y no guarda intención/resultado en outbox. |
+| Memoria brain | [main.py:168](../apps/brain/main.py#L168), [memory.py:114](../apps/brain/memory.py#L114) | Guarda intercambio al generar, antes de saber si llegó al canal. SQLite/WAL de contexto; ventana configurada 7 días, sin tope de cantidad y ~5000 tokens de lectura. |
+| Cola de caída IA | [messageQueue.js:21](../apps/gateway/services/messageQueue.js#L21), [messageHandler.js:477](../apps/gateway/handlers/messageHandler.js#L477) | JSONL atómico, máximo 50, TTL 24 h al cargar, hasta 5 intentos en flush. No es archivo ni outbox. Flush invoca IA sin reevaluar handoff/pausa/permisos. |
+| Anti-bucle | [config.js:57](../apps/gateway/config.js#L57) | Set global de IDs con TTL 60 s; sin cuenta/chat/canal. Un message_id de Telegram puede colisionar con otro chat. |
+| Comandos | [commandHandler.js:71](../apps/gateway/handlers/commandHandler.js#L71), [adminCommandRunner.js:46](../apps/gateway/services/adminCommandRunner.js#L46) | Superficies convergen en dispatcher; panel usa runner/sock virtual, WA/TG entran directamente al dispatcher por pipeline. No todos llaman al runner. |
+| Otras salidas | [internalBus.js:927](../apps/gateway/services/internalBus.js#L927), [broadcastService.js:309](../apps/gateway/services/broadcastService.js#L309), [telegramService.js:25](../apps/gateway/services/telegramService.js#L25) | /notify, campañas y avisos tienen caminos propios. /notify llama activeSock.sendMessage con payload legacy; necesita prueba del contrato real cuando activeSock sea un adapter. |
 
 ## 5. Transporte y generación de conexiones
 
-- WA captura sock de la conexión en [whatsappAdapter.js:137](../gateway/adapters/whatsappAdapter.js#L137)
+- WA captura sock de la conexión en [whatsappAdapter.js:137](../apps/gateway/adapters/whatsappAdapter.js#L137)
   y compara identidad en connection.update. messages.upsert, contactos, historial
   y presencia se registran sin la misma guarda. La protección declarada por ADR-003
   está incompleta para esos callbacks; la carrera no se reprodujo contra WhatsApp.
 - Telegram incrementa pollGeneration al conectar y verifica después de esperar
-  respuesta, [telegramAdapter.js:28](../gateway/adapters/telegramAdapter.js#L28).
+  respuesta, [telegramAdapter.js:28](../apps/gateway/adapters/telegramAdapter.js#L28).
   Los tests cubren standby/loop/admin, no ack durable ni crash del consumidor.
 - Sigue existiendo otro getUpdates en
-  [telegramService.js:79](../gateway/services/telegramService.js#L79), usado desde
-  [internalBus.js:905](../gateway/services/internalBus.js#L905) para descubrir Chat ID.
+  [telegramService.js:79](../apps/gateway/services/telegramService.js#L79), usado desde
+  [internalBus.js:905](../apps/gateway/services/internalBus.js#L905) para descubrir Chat ID.
   No hay exclusión visible cuando el token ya está en polling. Puede competir con
   el adapter; el test llamado «único dueño» comprueba que cuatro exports de polling
   legacy no existan, sin recorrer esa dependencia indirecta. No se ejecutaron dos
@@ -107,13 +107,13 @@ Por tanto no aporta, por sí sola, el contexto de mensajes humanos al responder.
 
 ## 6. UI, API y operación existentes
 
-Panel en [gateway/panel/index.js:188](../gateway/panel/index.js#L188): HTTP propio,
+Panel en [apps/panel/index.js:188](../apps/panel/index.js#L188): HTTP propio,
 sesión OAuth opcional, estáticos y proxy /api/* sin actor autenticado propagado
 al caso de uso. Navegación por hash con seis páginas; refresh de status cada 10 s
-en [app.js:86](../gateway/panel/public/js/app.js#L86). No existe bandeja, timeline,
+en [app.js:86](../apps/panel/public/js/app.js#L86). No existe bandeja, timeline,
 compositor humano, API de mensajes ni cursor de lectura de operador.
 
-Bus [internalBus.js:766](../gateway/services/internalBus.js#L766): status, logs/QR
+Bus [internalBus.js:766](../apps/gateway/services/internalBus.js#L766): status, logs/QR
 SSE, pairing, brain/start, Telegram config/test, command, notify, reset/restart,
 contactos y perfiles. Los SSE actuales son de QR/logs, sin log durable de cambios
 de conversaciones ni replay de mensajes. Contactos usa page/limit, no cursor.
@@ -124,7 +124,7 @@ GET /telegram/settings devuelve el token al panel actual; no debe trasladarse a
 DTOs de conversaciones. /history del brain está exento de API key de forma expresa
 y comprobada por la suite actual: la futura API de historial debe autorizar lectura.
 
-Inventario runtime: [factoryReset.js:74](../gateway/services/factoryReset.js#L74).
+Inventario runtime: [factoryReset.js:74](../apps/gateway/services/factoryReset.js#L74).
 Incluir nueva DB/WAL/SHM, cursores y adjuntos antes de escribirlos. El runtime del
 gateway fija .gateway.lock junto a index; SDK_GATEWAY_LOCK_PATH en reset es una
 separación intencional para tests según su comentario, no configuración efectiva
@@ -135,7 +135,7 @@ volúmenes [compose.yml:76](../deploy/docker/compose.yml#L76).
 
 | Área | Evidencia existente | Brecha para la plataforma nueva |
 |---|---|---|
-| Decisiones IA | [pipeline.test.js:24](../gateway/tests/pipeline.test.js#L24): self/admin, pausa, estados, TTL, estricto, keywords y reconexión pura | No prueba cancelación de un job admitido ni guardas de despacho. |
+| Decisiones IA | [pipeline.test.js:24](../apps/gateway/tests/pipeline.test.js#L24): self/admin, pausa, estados, TTL, estricto, keywords y reconexión pura | No prueba cancelación de un job admitido ni guardas de despacho. |
 | Identidad/DB | contactsRepository.test.js, db.test.js, commandHelpers.test.js | Sin prueba de colisión cuenta/canal, TG con signo o migración al modelo separado. |
 | Sync | contactSyncQueue.test.js prueba orden/chunks/errores | No hay suite de messageSyncQueue/chatStore ni integración de lote WA/historial live. |
 | Telegram | telegram.test.js prueba config, clasificación y emisión admin con HTTPS falso | Sin crash/ack, entrega incierta, colisiones por chat ni prueba de exclusión del descubridor. |
@@ -191,7 +191,7 @@ for name in subprocess.check_output(["git", "ls-files", "-z"], text=True).split(
         dst = checkout / name
         dst.parent.mkdir(parents=True, exist_ok=True)
         shutil.copy2(src, dst)
-for name in ("gateway/node_modules", "brain/venv"):
+for name in ("apps/gateway/node_modules", "brain/venv"):
     (checkout / name).symlink_to(root / name, target_is_directory=True)
 print(checkout)
 ```

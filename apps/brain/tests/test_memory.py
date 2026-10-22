@@ -1,8 +1,8 @@
-"""Tests de la memoria persistente SQLite (brain/memory.py, F4-P1/P2).
+"""Tests de la memoria persistente SQLite (apps/brain/memory.py, F4-P1/P2).
 
-Correr: venv/bin/python -m pytest tests/ (desde brain/).
+Ejecutar: python -m pytest tests/ (desde apps/brain/).
 Cada test usa un archivo .db temporal vía BRAIN_MEMORY_DB y resetea la
-conexión global del módulo (nunca toca brain/memory.db de prod).
+conexión global del módulo (nunca toca brain/memory.db del runtime).
 """
 import os
 import sys

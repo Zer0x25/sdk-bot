@@ -46,6 +46,7 @@ from profiles import (
     refresh_profiles,
 )
 from providers import generate_ai_response, safe_log
+from runtime_paths import BRAIN_STATE_DIR
 
 START_TIME = time.time()
 
@@ -393,7 +394,7 @@ def _is_rate_limited(user_id: str) -> bool:
 log_instancia = make_logger("brain.instancia")
 
 BRAIN_PORT = int(os.getenv("BRAIN_PORT", "5100"))
-BRAIN_LOCK_FILE = os.path.abspath(os.getenv("SDK_BRAIN_LOCK_PATH") or os.path.join(os.path.dirname(os.path.abspath(__file__)), ".brain.lock"))
+BRAIN_LOCK_FILE = os.path.abspath(os.getenv("SDK_BRAIN_LOCK_PATH") or os.path.join(str(BRAIN_STATE_DIR), ".brain.lock"))
 
 
 def _is_pid_alive(pid):

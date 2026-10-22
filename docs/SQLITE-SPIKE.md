@@ -1,7 +1,7 @@
 # SQLite con worker — resultado F0.2
 
 Fecha: 2026-10-19. Estado: **experimento probado en Linux x64**.
-Código: [sqlite-spike.js](../gateway/scripts/sqlite-spike.js).
+Código: [sqlite-spike.js](../apps/gateway/scripts/sqlite-spike.js).
 Decisión relacionada: [ADR-005](adr/005-plataforma-conversaciones.md).
 
 ## Decisión
@@ -71,7 +71,7 @@ producto ni inventario de factory reset porque no hay persistencia runtime nueva
 
 ## Ejecución y mediciones
 
-Desde `gateway/`:
+Desde `apps/gateway/`:
 
 ```bash
 npm run spike:sqlite

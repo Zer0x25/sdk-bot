@@ -131,8 +131,9 @@ VERIFICACIÓN
 
 - Usa checks vigentes de AGENTS y añade pruebas enfocadas al comportamiento que
   cambias: dominio/repositorios/contratos, UI y E2E según el alcance de la unidad.
-- En la estructura actual: gateway/npm run check; brain/venv/bin/ruff check . y
-  brain/venv/bin/python -m pytest tests/ -q. Smoke según AGENTS/CI si aplica.
+- En la estructura actual: `cd apps/gateway && npm run check`; Brain: desde
+  `apps/brain`, `../../brain/venv/bin/ruff check .` y
+  `../../brain/venv/bin/python -m pytest tests/ -q`. Smoke según AGENTS/CI si aplica.
 - Usa adapters falsos, proveedores simulados y rutas temporales para DB, logs,
   locks, auth y colas. Nunca producción como fixture; cierra recursos SSE/pollers.
 - Para control/envío prueba takeover durante generación/typing, entre globos,

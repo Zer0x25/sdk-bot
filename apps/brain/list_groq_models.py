@@ -3,7 +3,9 @@ import os
 from dotenv import load_dotenv
 from openai import OpenAI
 
-load_dotenv()
+from runtime_paths import BRAIN_ENV_PATH
+
+load_dotenv(dotenv_path=BRAIN_ENV_PATH, override=False)
 
 client = OpenAI(
     base_url="https://api.groq.com/openai/v1",

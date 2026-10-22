@@ -3,7 +3,9 @@ import os
 import requests
 from dotenv import load_dotenv
 
-load_dotenv()
+from runtime_paths import BRAIN_ENV_PATH
+
+load_dotenv(dotenv_path=BRAIN_ENV_PATH, override=False)
 
 headers = {
     "Authorization": f"Bearer {os.getenv('OPENROUTER_API_KEY')}"

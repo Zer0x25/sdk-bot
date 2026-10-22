@@ -9,7 +9,7 @@ El sistema son **tres procesos** con responsabilidades exclusivas y dependencia 
 | Proceso | Puerto | Responsabilidad única |
 |---|---|---|
 | **gateway** (`apps/gateway/index.js`) | bus 5400 · status 5300 | Dueño de TODOS los canales (adapters), del pipeline de mensajes, del estado persistente (contacts/settings DB) y de los comandos admin. Es el ÚNICO proceso que habla con redes de mensajería |
-| **brain** (`brain/main.py`) | 5100 | Inteligencia pura: proveedores IA (Gemini primary → Groq → OpenRouter, orden tunable), memoria conversacional (memory.db), perfiles SOUL. No sabe qué es WhatsApp ni Telegram |
+| **brain** (`apps/brain/main.py`, estado en `brain/`) | 5100 | Inteligencia pura: proveedores IA (Gemini primary → Groq → OpenRouter, orden tunable), memoria conversacional (memory.db), perfiles SOUL. No sabe qué es WhatsApp ni Telegram |
 | **panel** (`apps/panel/index.js`) | 5201 | Plano de control: sirve UI estática y proxifica `/api/*` al bus interno del gateway. No tiene acceso directo a ningún canal |
 
 Reglas de dependencia (nunca se invierten):

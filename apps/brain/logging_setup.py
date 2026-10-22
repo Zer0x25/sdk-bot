@@ -8,7 +8,11 @@ import logging
 import os
 from logging.handlers import RotatingFileHandler
 
-LOG_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "logs")
+from runtime_paths import BRAIN_STATE_DIR
+
+LOG_DIR = os.environ.get("SDK_ADMIN_WEB_LOG_BRAIN") or os.path.join(
+    str(BRAIN_STATE_DIR), "logs"
+)
 os.makedirs(LOG_DIR, exist_ok=True)
 
 _FORMATTER = logging.Formatter(

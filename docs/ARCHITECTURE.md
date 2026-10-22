@@ -1,10 +1,10 @@
 # SDK-Bot: arquitectura de la plataforma de conversaciones
 
 Fecha: 2026-10-22. Estado: **diseño para implementación incremental**.
-F8.1a mueve STT a `apps/stt/`, F8.1b Gateway a `apps/gateway/` y F8.1c separa
-el proceso y frontend del panel en `apps/panel/`. `gateway/` conserva estado,
-credenciales, logs y locks; `brain/` conserva código y sus perfiles/estado hasta
-su unidad F8.1d. La imagen STT mantiene el mismo `STT_CACHE` de producción.
+F8.1a movió STT a `apps/stt/`, F8.1b Gateway a `apps/gateway/`, F8.1c separó
+el proceso y frontend del panel en `apps/panel/`, y F8.1d movió el código Brain
+a `apps/brain/`. `gateway/` y `brain/` conservan estado, credenciales, perfiles,
+logs y locks. La imagen STT mantiene el mismo `STT_CACHE` de producción.
 Las demás carpetas, tablas, servicios y endpoints de destino no existen todavía,
 salvo indicación expresa. F1A implementa `packages/contracts` y workspace raíz
 para `packages/*`; Gateway y panel conservan instalaciones y locks independientes.
@@ -38,13 +38,13 @@ un marcador visible aunque todavía no pueda abrirse o descargarse.
 
 | Pieza actual | Evidencia | Implicación |
 |---|---|---|
-| Memoria IA | `brain/memory.py`: append_exchange, barrido y límites; `.env.tuning`: 7 días y ~5000 tokens de contexto | Es contexto de generación, no archivo íntegro del chat. |
+| Memoria IA | `apps/brain/memory.py`: append_exchange, barrido y límites; `.env.tuning`: 7 días y ~5000 tokens de contexto | Es contexto de generación, no archivo íntegro del chat. |
 | Historial WA | `gateway/store/chatStore.js`: Map, máximo por chat y expulsión por inactividad | Se pierde al reiniciar; fromMe se normaliza como assistant sin distinguir humano. |
 | Captura WA | `gateway/adapters/whatsappAdapter.js`: messages.upsert procesa m.messages[0], filtra mensajes del bot y deriva audio antes de emitir texto | Capturar todos los mensajes y separar archivo de decisión de respuesta. |
 | Captura Telegram | `telegramAdapter.js` verifica `getMe`, normaliza mensajes individuales y espera `captureTelegramBatch`; el worker confirma mensaje, evento y cursor del bot en una transacción | El cursor sobrevive reinicios y rotación de token del mismo bot. Bot API no da un archivo histórico arbitrario; grupos/eventos se excluyen y no se conservan binarios (audio deja marcador/transcripción). |
 | Handoff | stateService.js, contactsRepository.js y commands/chatControl.js | Mezcla permisos y automatización, TTL de 24 h y resolución por dígitos; no garantiza cancelación. |
 | Envío IA | `services/brainService.js`: petición, esperas, typing y varios globos | Falta barrera común de validación antes de cada envío. |
-| Memoria prematura | `brain/main.py`: /chat llama append_exchange antes de entregar al gateway | Una generación cancelada puede quedar en contexto como si se hubiera enviado. |
+| Memoria prematura | `apps/brain/main.py`: /chat llama append_exchange antes de entregar al gateway | Una generación cancelada puede quedar en contexto como si se hubiera enviado. |
 | Envíos directos | `internalBus.js`: /notify usa activeSock.sendMessage; otros servicios llaman al adapter | Converger en un caso de uso con auditoría e idempotencia. |
 | UI | `apps/panel/public/`: ES Modules y CSS sin build | Sin bandeja ni cliente tipado para conversaciones. |
 | Documentación | ROADMAP declaraba pendientes índices ya presentes en contactsRepository.js; ARCHITECTURE tenía OAuth desactualizado | Confirmar con código/pruebas; no marcar validaciones reales como realizadas. |
@@ -170,11 +170,12 @@ Vite funciona en desarrollo/build. En producción el proceso del panel sirve el
 build: no se agrega un servicio de frontend. CI puede distribuir artefactos a
 Termux. No se requiere SSR para esta consola privada.
 
-La adopción de `apps/` está en curso. Gateway y panel viven en `apps/gateway/` y
-`apps/panel/`; brain y sus perfiles permanecen en `brain/`. `gateway/` conserva
-el estado runtime y credenciales. `repoPaths.js` resuelve las rutas existentes
-para que mover código no cambie las rutas de datos. El panel importa únicamente
-la infraestructura HTTP sin estado de `apps/gateway/lib/`.
+La adopción de `apps/` está en curso. Gateway, panel, brain y STT viven en
+`apps/gateway/`, `apps/panel/`, `apps/brain/` y `apps/stt/`. `gateway/` y
+`brain/` conservan estado runtime, perfiles y credenciales. `repoPaths.js` y
+`apps/brain/runtime_paths.py` resuelven las rutas existentes para que mover
+código no cambie las rutas de datos. El panel importa únicamente la
+infraestructura HTTP sin estado de `apps/gateway/lib/`.
 
 La app React vive en `apps/panel/web`: el bundle se sirve en `/inbox` por
 el mismo proceso OAuth del panel y requiere `PANEL_CONVERSATIONS_UI_ENABLED=true`.
