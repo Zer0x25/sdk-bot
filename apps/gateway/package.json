@@ -17,6 +17,7 @@
     "spike:sqlite": "node scripts/sqlite-spike.js",
     "conversations:control-dry-run": "node scripts/control-import-dry-run.js",
     "conversations:control-import": "node scripts/control-import.js",
+    "conversations:restore-check": "node scripts/restore-promotion-check.js",
     "bench:conversations": "node scripts/conversation-load.js --full",
     "check": "npm run lint && npm run typecheck && npm run panel:check && npm test"
   },

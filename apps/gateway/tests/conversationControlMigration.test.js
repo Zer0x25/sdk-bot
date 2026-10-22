@@ -151,6 +151,13 @@ test('F5.4 v6 to v7 migration preserves the event timeline and permits audited g
         PRAGMA user_version=6;`);
     db.close();
 
+    const readonly = createArchive({ path: databasePath, readOnly: true });
+    t.after(() => readonly.close());
+    assert.equal((await readonly.ready).schemaVersion, 6);
+    assert.equal((await readonly.recoveryCheckpoint()).schemaVersion, 6);
+    assert.equal((await readonly.recoveryCheckpoint()).outboundIntentCount, 0);
+    await readonly.close();
+
     const migrated = createArchive({ path: databasePath });
     t.after(() => migrated.close());
     assert.equal((await migrated.ready).schemaVersion, 11);

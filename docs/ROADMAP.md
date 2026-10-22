@@ -429,8 +429,9 @@ son necesarios para una fase previa y pasan sus mismas comprobaciones.
   - [x] F8.3c — [Rollback de código sin rollback de datos y recuperación del
     corte de control antes del cambio de autoridad](F8.3-OPERACION-RECUPERACION.md).
   - [x] F8.3d — [Minimizar datos de cliente en métricas y logs, con pruebas](F8.3-OPERACION-RECUPERACION.md#f83d--minimizacion-de-datos-en-metricas-y-logs).
-- [ ] Ensayar migración/restauración con fixture representativo y delta posterior
-  al corte; no perder envíos nuevos restaurando snapshots antiguos.
+- [x] F8.4 — Ensayar migración/restauración con fixture representativo y delta
+  posterior al corte; bloquear snapshots obsoletos por cursor, autoridad o ledger
+  de envíos. [Runbook y límites](F8.3-OPERACION-RECUPERACION.md#f84--ensayo-aislado-y-puerta-de-frescura-de-restore).
 
 **Aceptación:** instalación limpia y upgrade simulados; build/checks/smoke en Linux;
 Windows/Termux con evidencia real o pendientes explícitos. Ningún doble transporte.

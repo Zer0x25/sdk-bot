@@ -79,6 +79,10 @@ export interface ControlPolicy {
 export interface Archive {
     ready: Promise<Contract<'EventCursor'> & { schemaVersion: number; journalMode: string; synchronous: number; threadId: number; readOnly?: boolean }>;
     snapshot(): Promise<Contract<'EventCursor'>>;
+    recoveryCheckpoint(): Promise<Contract<'EventCursor'> & { schemaVersion: number;
+        controlAuthority: { mode: 'legacy' | 'sqlite'; migrationId: string | null; serviceReady: boolean; changedAt: string | null };
+        outboundIntentCount: number; outboundIntentSha256: string; unresolvedOutboundCount: number;
+        integrity: string; foreignKeys: number }>;
     registerAccount(input: { id?: string; channel: 'whatsapp' | 'telegram'; providerKey: string }): Promise<{ id: string; channel: string; provider_key: string }>;
     telegramCursor(accountId: string): Promise<string | null>;
     captureTelegramBatch(input: { accountId: string; updates: Array<{ updateId: string; message: ArchiveInput | null }> }): Promise<{

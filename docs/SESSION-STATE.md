@@ -1220,3 +1220,24 @@ Cierres históricos: commits F2C.1/F2C.2/F2D/F2E.1 están en el log local; F2B.3
   privacidad usan sentinels y almacenamiento temporal; no iniciaron proveedores
   ni canales reales. `git diff --check`.
 - Siguiente punto: F8.4, ensayo aislado de restauración con fixture y delta.
+
+## Fase 8.4 — Ensayo aislado de restauración y delta — 2026-10-22
+
+- `apps/gateway/scripts/restore-promotion-check.js` agrega una puerta offline y
+  de solo lectura. Compara la fuente detenida con el candidato por schema,
+  `dataEpoch`, secuencia, autoridad de control y huella SHA-256 del ledger entero
+  de envíos. Bloquea integridad/FK incorrectas y estados outbound sin resolver;
+  no imprime payloads ni muta/restaura/promueve archivos. Gateway detenido y DB
+  sin WAL/SHM/journal son requisitos.
+- El fixture importa contactos/settings y ejecuta el corte F5 antes del backup.
+  Después del snapshot prueba un aviso aceptado sin evento, un intent pendiente,
+  un inbound y una respuesta humana aceptada. La puerta bloquea cada delta; el
+  restore antiguo solo se abre en una DB temporal y la fuente conserva sus
+  mensajes/salidas nuevos. Un snapshot fresco vuelve a pasar.
+- Límite: la puerta verifica el archivo SQLite de conversaciones, no valida por
+  sí sola el resto del volumen de estado ni promueve una recuperación real. Sin
+  fuente actual solo se permite restore aislado y se debe declarar la ventana sin
+  cobertura.
+- Verificación: `cd apps/gateway && node --test tests/conversationRecovery.test.js`
+  (1/1); `npm run check` (lint, typecheck, panel 38/38 + build integration 1/1,
+  Gateway 331/331); `git diff --check`. No se conectaron canales ni proveedores.

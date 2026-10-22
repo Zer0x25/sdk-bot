@@ -133,6 +133,7 @@ function createArchive(options = {}) {
             return () => eventListeners.delete(listener);
         },
         diagnostics: () => call('diagnostics'),
+        recoveryCheckpoint: () => call('recoveryCheckpoint'),
         purge: (input = {}) => call('purge', input),
         backup: destination => call('backup', destination),
         close() {

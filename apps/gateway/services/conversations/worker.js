@@ -14,7 +14,7 @@ const READ_ONLY_METHODS = new Set(['snapshot','telegramCursor','pendingLegacyDis
     'pendingResumeMessages','shouldProcessArchivedInbound',
     'outboundIntent','outboundIntents',
     'conversation','conversations','conversationRows','conversationView','conversationAddress','accounts','messages','messagePage','messageByProviderId','aiContext',
-    'events','eventsPage','diagnostics','summary','close']);
+    'events','eventsPage','diagnostics','recoveryCheckpoint','summary','close']);
 function fail(code) { throw Object.assign(new Error(code), { code }); }
 function one(sql, ...params) { return db.prepare(sql).get(...params); }
 function run(sql, ...params) { return db.prepare(sql).run(...params); }
@@ -27,6 +27,25 @@ function transaction(fn) {
 function snapshot() {
     const row = one('SELECT epoch,seq FROM archive_meta WHERE id=1');
     return { dataEpoch: row.epoch, seq: row.seq };
+}
+function recoveryCheckpoint() {
+    const digest = createHash('sha256');
+    const schemaVersion = one('PRAGMA user_version').user_version;
+    let outboundIntentCount = 0;
+    let unresolvedOutboundCount = 0;
+    // Schema v6 predates the durable outbox; keep it readable so the gate can
+    // report the schema mismatch instead of failing before comparing metadata.
+    if (schemaVersion >= 7) {
+        for (const row of db.prepare('SELECT * FROM outbound_intents ORDER BY idempotency_key').iterate()) {
+            digest.update(stable(row)).update('\n');
+            outboundIntentCount += 1;
+        }
+        unresolvedOutboundCount = one("SELECT COUNT(*) n FROM outbound_intents WHERE state IN ('intent','sending','delivery_unknown')").n;
+    }
+    return { ...snapshot(), schemaVersion,
+        controlAuthority: controlAuthority(), outboundIntentCount, outboundIntentSha256: digest.digest('hex'),
+        unresolvedOutboundCount, integrity: one('PRAGMA integrity_check').integrity_check,
+        foreignKeys: all('PRAGMA foreign_key_check').length };
 }
 function initialize() {
     const requested = path.resolve(workerData.path);
@@ -2057,6 +2076,7 @@ function dispatch(method, input) {
             legacyDispatchPending: one("SELECT COUNT(*) n FROM legacy_dispatch WHERE status='pending'").n,
             legacyDispatchWaiting: one("SELECT COUNT(*) n FROM legacy_dispatch WHERE status='waiting'").n,
             integrity: one('PRAGMA integrity_check').integrity_check, foreignKeys: all('PRAGMA foreign_key_check').length };
+        case 'recoveryCheckpoint': return recoveryCheckpoint();
         case 'backup': {
             if (typeof input !== 'string' || !path.isAbsolute(input)) fail('INVALID_BACKUP_PATH');
             // SQLite rejects an existing/nonempty target; never overwrite snapshots.
