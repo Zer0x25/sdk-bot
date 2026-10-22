@@ -1472,3 +1472,18 @@ Cierres históricos: commits F2C.1/F2C.2/F2D/F2E.1 están en el log local; F2B.3
 - BUG-072 (sonda `/telegram/test` para token borrador) queda fuera del camino de
   atención al cliente y no bloquea las fases. Siguiente punto ejecutable: BUG-073,
   eco propio de WhatsApp recibido antes del ACK del envío.
+
+## BUG-073 — Correlación del eco WhatsApp — 2026-10-22
+
+- El eco consulta primero la salida aceptada; si hay un intent local `sending`
+  para la misma cuenta, conversación y destino, espera y vuelve a consultar cada
+  100 ms. La ventana máxima es 5 s.
+- Un ACK local demorado con el mismo ID no produce handoff. Una salida sin intent
+  coincidente lo produce tras la espera inicial; un envío aún incierto lo produce
+  al vencer la ventana.
+- Evidencia: [BUG-073](BUG-073-ECO-WHATSAPP-ACK-LENTO.md).
+- Verificación: Gateway `npm run check`, Panel 42/42, build, servido 1/1 y
+  Gateway 386/386; pruebas focales 3/3; `git diff --check`. Sin WhatsApp real.
+- Commit local de esta unidad; no publicar.
+- Siguiente punto de mayor alcance ejecutable: BUG-074, retención de respuestas
+  durables de generación en Brain.

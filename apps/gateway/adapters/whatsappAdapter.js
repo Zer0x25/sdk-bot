@@ -22,6 +22,9 @@ const log = cat('WHATSAPP');
 const logError = cat('ERROR');
 
 const AUTH_DIR = process.env.SDK_AUTH_DIR || path.join(GATEWAY_STATE_DIR, 'auth_info_baileys');
+const SELF_ECHO_INITIAL_DELAY_MS = 500;
+const SELF_ECHO_RECHECK_MS = 100;
+const SELF_ECHO_MAX_SETTLE_MS = 5000;
 
 class WhatsappAdapter extends ChannelAdapter {
     constructor({ archive, attachmentStore, makeSocket = makeWASocket, loadAuth = useMultiFileAuthState,
@@ -365,11 +368,23 @@ class WhatsappAdapter extends ChannelAdapter {
         if (!conversationId || !this.archive) return;
         const target = observation.remote;
         const providerMessageId = observation.providerMessageId;
-        const timer = setTimeout(async () => {
+        const startedAt = Date.now();
+        const scheduleCheck = delay => {
+            const timer = setTimeout(() => { void check(); }, delay);
+            timer.unref?.();
+        };
+        const check = async () => {
             try {
                 const intents = await this.archive.outboundIntents({ conversationId, limit: 500 });
                 if (providerMessageId && intents.some(intent => intent.providerMessageId === providerMessageId
                     && intent.state === 'accepted')) return;
+                const pendingLocalSend = intents.some(intent => intent.state === 'sending'
+                    && intent.channel === 'whatsapp' && intent.accountId === this.accountId
+                    && individualJid(intent.destination) === target);
+                if (pendingLocalSend && Date.now() - startedAt < SELF_ECHO_MAX_SETTLE_MS) {
+                    scheduleCheck(SELF_ECHO_RECHECK_MS);
+                    return;
+                }
                 const { setNumberState } = require('../services/stateService');
                 const result = await setNumberState(target, 'handoff', { channel: 'whatsapp',
                     accountId: this.accountId, reason: 'external_self' });
@@ -381,8 +396,8 @@ class WhatsappAdapter extends ChannelAdapter {
             } catch (error) {
                 logError.error(`No se pudo revisar la salida propia (${safeErrorLabel(error)}).`);
             }
-        }, 500);
-        timer.unref?.();
+        };
+        scheduleCheck(SELF_ECHO_INITIAL_DELAY_MS);
     }
 
     captureBatch(sock, messages, source) {

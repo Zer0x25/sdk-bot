@@ -269,17 +269,39 @@ test('WhatsApp echo racing the send response keeps one deterministic external_se
     const f = await fixture(t); const a = await f.adapter(); const sock = a.sockets[0];
     const provider = deferred();
     sock.sendMessage = async () => provider.promise;
-    const send = a.instance.sendMessage('whatsapp:200@s.whatsapp.net', 'race text');
-    const echo = msg('race-id', '200@s.whatsapp.net', { conversation: 'race text' }); echo.key.fromMe = true;
-    sock.ev.emit('messages.upsert', { type: 'notify', messages: [echo] });
-    await settled(a.instance);
-    provider.resolve({ key: { id: 'race-id' }, messageTimestamp: '1792368000' });
-    await send;
-    const identity = await f.archive.resolve({ accountId: (await f.archive.registerAccount({ channel: 'whatsapp', providerKey: session.providerKey })).id,
-        channel: 'whatsapp', kind: 'whatsapp_jid', exactValue: '200@s.whatsapp.net' });
-    const messages = await f.archive.messages({ conversationId: identity.conversation_id });
-    assert.equal(messages.length, 1); assert.equal(messages[0].authorKind, 'external_self');
-    assert.equal(messages[0].content.text, 'race text');
+    const stateService = require('../services/stateService');
+    const originalSetNumberState = stateService.setNumberState;
+    const controlChanges = [];
+    stateService.setNumberState = async (...args) => { controlChanges.push(args); return { success: true }; };
+    try {
+        const account = await f.archive.registerAccount({ channel: 'whatsapp', providerKey: session.providerKey });
+        await f.archive.ingestBatch([{ identity: { accountId: account.id, channel: 'whatsapp',
+            kind: 'whatsapp_jid', exactValue: '200@s.whatsapp.net' }, providerMessageId: 'before-slow-echo',
+        source: 'history', direction: 'inbound', authorKind: 'customer', occurredAt: '2026-10-22T12:00:00.000Z',
+        content: { type: 'text', text: 'incoming' } }]);
+
+        const send = a.instance.sendMessage('whatsapp:200@s.whatsapp.net', 'race text');
+        const echo = msg('race-id', '200@s.whatsapp.net', { conversation: 'race text' }); echo.key.fromMe = true;
+        sock.ev.emit('messages.upsert', { type: 'notify', messages: [echo] });
+        await settled(a.instance);
+        await new Promise(resolve => setTimeout(resolve, 700));
+        assert.equal(controlChanges.length, 0, 'the pending local send keeps the echo observation open');
+
+        provider.resolve({ key: { id: 'race-id' }, messageTimestamp: '1792368000' });
+        await send;
+        await new Promise(resolve => setTimeout(resolve, 150));
+        assert.equal(controlChanges.length, 0, 'the accepted provider id resolves the echo as a local send');
+
+        const identity = await f.archive.resolve({ accountId: account.id,
+            channel: 'whatsapp', kind: 'whatsapp_jid', exactValue: '200@s.whatsapp.net' });
+        const messages = await f.archive.messages({ conversationId: identity.conversation_id });
+        assert.equal(messages.length, 2);
+        const sent = messages.find(message => message.providerMessageId === 'race-id');
+        assert.equal(sent.authorKind, 'external_self');
+        assert.equal(sent.content.text, 'race text');
+    } finally {
+        stateService.setNumberState = originalSetNumberState;
+    }
 });
 
 test('unknown live self output pauses automation after checking accepted outbox echoes', async () => {
@@ -304,6 +326,27 @@ test('unknown live self output pauses automation after checking accepted outbox 
             result: { message: { conversationId: 'conversation-fixture' } } });
         await new Promise(resolve => setTimeout(resolve, 550));
         assert.equal(calls.length, 0);
+    } finally {
+        stateService.setNumberState = original;
+    }
+});
+
+test('unmatched self echo pauses automation after the local-send correlation window expires', async () => {
+    const stateService = require('../services/stateService');
+    const original = stateService.setNumberState;
+    const calls = [];
+    stateService.setNumberState = async (...args) => { calls.push(args); return { success: true }; };
+    try {
+        const adapter = Object.create(WhatsappAdapter.prototype);
+        adapter.accountId = 'wa-account-fixture';
+        adapter.archive = { outboundIntents: async () => [{ accountId: 'wa-account-fixture', channel: 'whatsapp',
+            destination: '200@s.whatsapp.net', state: 'sending' }] };
+        adapter.deferUnknownSelfHandoff({ remote: '200@s.whatsapp.net', providerMessageId: 'phone-send',
+            result: { message: { conversationId: 'conversation-fixture' } } });
+        await new Promise(resolve => setTimeout(resolve, 5500));
+        assert.deepEqual(calls, [['200@s.whatsapp.net', 'handoff', {
+            channel: 'whatsapp', accountId: 'wa-account-fixture', reason: 'external_self'
+        }]]);
     } finally {
         stateService.setNumberState = original;
     }

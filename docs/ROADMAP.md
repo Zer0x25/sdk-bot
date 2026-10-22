@@ -38,6 +38,9 @@ que mantienen bloqueadas las respuestas. Evidencia:
 BUG-071 corrige el resumen de `/ignorar contactos de agenda`: cuenta conversaciones
 únicas e informa solo transiciones efectivas. Evidencia:
 [BUG-071](BUG-071-RESUMEN-IGNORAR-AGENDA.md).
+BUG-073 cierra la carrera del eco WhatsApp antes del ACK local con una ventana de
+correlación acotada. Evidencia:
+[BUG-073](BUG-073-ECO-WHATSAPP-ACK-LENTO.md).
 F2D completa replay durable hasta el handler tras el commit (BUG-045). F2E.1 ya
 registra salidas aceptadas y deduplica ecos WA; conserva autoría external_self.
 F2E.2 cierra la carga sintética completa y F3.1 implementa la API autenticada de
