@@ -13,6 +13,18 @@ process.env.SDK_MESSAGE_QUEUE_PATH = path.join(tempDir, 'pending.jsonl');
 const { logger, safeErrorLabel } = require('../services/logger');
 const messageQueue = require('../services/messageQueue');
 
+async function waitForLog(filePath, predicate, timeoutMs = 2000) {
+    const deadline = Date.now() + timeoutMs;
+    while (Date.now() < deadline) {
+        if (fs.existsSync(filePath)) {
+            const contents = fs.readFileSync(filePath, 'utf8');
+            if (predicate(contents)) return contents;
+        }
+        await new Promise(resolve => setTimeout(resolve, 10));
+    }
+    return fs.existsSync(filePath) ? fs.readFileSync(filePath, 'utf8') : '';
+}
+
 test('la cola conserva el mensaje y omite identidad/contenido de los logs', async () => {
     const privateId = 'whatsapp:569876543210@s.whatsapp.net';
     const privateText = 'private-customer-message-75b4';
@@ -24,8 +36,8 @@ test('la cola conserva el mensaje y omite identidad/contenido de los logs', asyn
     }), true);
     assert.equal(messageQueue.peek().text, privateText);
 
-    await new Promise(resolve => logger.flush(resolve));
-    const logs = fs.readFileSync(logPath, 'utf8');
+    logger.flush();
+    const logs = await waitForLog(logPath, contents => contents.includes('Mensaje encolado'));
     assert.match(logs, /Mensaje encolado/);
     assert.equal(logs.includes(privateId), false);
     assert.equal(logs.includes(privateText), false);
@@ -40,7 +52,6 @@ test('safeErrorLabel omite el mensaje privado y acota identificadores numéricos
 });
 
 after(async () => {
-    await new Promise(resolve => logger.flush(resolve));
     messageQueue.clearQueueForTest();
     fs.rmSync(tempDir, { recursive: true, force: true });
 });
