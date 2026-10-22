@@ -1648,3 +1648,16 @@ Cierres históricos: commits F2C.1/F2C.2/F2D/F2E.1 están en el log local; F2B.3
   `MemorySwapMax=0` informó 2 CPU y 4 GiB bajo cgroup v2.
 - Siguiente unidad: repetir F2E.2 completo con ese scope; conservar informe distinto
   del benchmark anterior y revisar umbrales antes de certificar Fase 2.
+
+## F2E.2 — Timeout del chequeo completo — 2026-10-22
+
+- Primer run limitado importó el millón sintético y alcanzó el chequeo del archivo,
+  pero terminó con `Archivo de conversaciones no disponible`; no hubo OOM y el
+  directorio temporal se limpió. El worker reutilizaba 60 s también para
+  `integrity_check`, claves foráneas y `VACUUM INTO`, un límite insuficiente posible
+  para el archivo de 2,5 GiB en este perfil.
+- El runner ahora cierra el worker de ingesta, reabre el mismo archivo con un límite
+  de 20 min para validación/snapshot e informa etapa/código si falla. Verificación:
+  `conversationLoad.test.js` 5/5, ESLint focal y `npm run typecheck` limpios.
+- Próximo paso exacto: repetir F2E.2 completo bajo `CPUQuota=200%`, `MemoryMax=4G`
+  y sin swap; conservar reporte nuevo solo si todas las etapas y umbrales pasan.

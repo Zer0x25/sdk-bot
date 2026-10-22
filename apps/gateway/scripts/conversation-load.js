@@ -16,6 +16,7 @@ const FIXTURE_PATH = path.join(REPO_ROOT, 'docs/fixtures/v1-acceptance.json');
 const SCHEMA_PATH = path.join(REPO_ROOT, 'packages/contracts/schema.json');
 const MAX_QUEUE_ITEMS = 1000;
 const MAX_QUEUE_BYTES = 32 * 1024 * 1024;
+const FULL_VALIDATION_TIMEOUT_MS = 20 * 60_000;
 
 function uuidBytes(value) {
     const hex = value.replaceAll('-', '');
@@ -657,16 +658,24 @@ async function runFull({ reportPath, temporaryRoot } = {}) {
     const snapshotPath = path.join(workdir, 'baseline.db');
     const reports = [];
     const reportDestination = path.resolve(reportPath || path.join(REPO_ROOT, 'docs/evidence/F2E2-load-report.json'));
-    let archive;
+    let archive, stage = 'generate dataset';
     try {
         process.stdout.write(`F2E.2: generando ${profile.uniqueMessages.toLocaleString('es')} mensajes sintéticos…\n`);
         const dataset = await generateDataset(datasetDirectory);
         process.stdout.write(`F2E.2: JSONL generado; importando en lotes de 1.000…\n`);
         archive = createArchive({ path: databasePath, timeoutMs: 60_000 });
-        const ready = await archive.ready;
+        let ready = await archive.ready;
+        stage = 'import dataset';
         const imported = await importDataset(archive, dataset, progress => {
             process.stdout.write(`F2E.2: ${progress.imported.toLocaleString('es')}/${progress.total.toLocaleString('es')} mensajes\n`);
         });
+        process.stdout.write('F2E.2: importación terminada; cerrando worker para validar el archivo…\n');
+        stage = 'reopen archive for full validation';
+        await archive.close();
+        archive = createArchive({ path: databasePath, timeoutMs: FULL_VALIDATION_TIMEOUT_MS });
+        ready = await archive.ready;
+        process.stdout.write('F2E.2: comprobando integridad y claves foráneas…\n');
+        stage = 'integrity and foreign-key checks';
         const afterImport = await archive.diagnostics();
         const expectedAliases = Array.from({ length: profile.contacts }, (_, c) => c)
             .filter(c => c < 100 && c % 5 < profile.accounts.whatsapp).length;
@@ -675,10 +684,14 @@ async function runFull({ reportPath, temporaryRoot } = {}) {
             || imported.duplicateCount !== profile.duplicateDeliveries || afterImport.seq !== String(profile.uniqueMessages)) {
             throw new Error(`post-import invariants failed: ${JSON.stringify({ afterImport, imported: imported.imported, duplicates: imported.duplicateCount })}`);
         }
+        process.stdout.write('F2E.2: verificando ventana de eventos…\n');
+        stage = 'event tail verification';
         const eventTail = await readEventTail(archive, profile.uniqueMessages);
         if (eventTail.events !== profile.retainedReplayEvents || eventTail.lastSeq !== String(profile.uniqueMessages)) {
             throw new Error(`event tail mismatch: ${JSON.stringify(eventTail)}`);
         }
+        process.stdout.write('F2E.2: creando snapshot SQLite…\n');
+        stage = 'baseline snapshot';
         await archive.backup(snapshotPath);
         await archive.close();
         archive = null;
@@ -696,6 +709,7 @@ async function runFull({ reportPath, temporaryRoot } = {}) {
             const runArchive = createArchive({ path: runPath, timeoutMs: 60_000 });
             await runArchive.ready;
             process.stdout.write(`F2E.2: ${kind} ${index + 1} — 150 s de ingesta concurrente y 4.000 consultas…\n`);
+            stage = `${kind} ${index + 1}`;
             const result = await runMeasuredScenario(runArchive, dataset, i, kind);
             reports.push(result);
             await runArchive.close();
@@ -706,6 +720,7 @@ async function runFull({ reportPath, temporaryRoot } = {}) {
         }
 
         process.stdout.write('F2E.2: probando límites FIFO por elementos/bytes y cursor Telegram…\n');
+        stage = 'saturation scenario';
         const saturation = await saturationScenario(snapshotPath, workdir, dataset);
         const finalReport = {
             benchmark: 'sdk-bot-conversations-v1',
@@ -729,6 +744,9 @@ async function runFull({ reportPath, temporaryRoot } = {}) {
         await fsp.writeFile(reportDestination, `${canonicalJson(finalReport)}\n`, { mode: 0o600 });
         process.stdout.write(`F2E.2: informe guardado en ${reportDestination}\n`);
         return { reportPath: reportDestination, report: finalReport };
+    } catch (error) {
+        if (error && typeof error === 'object') error.benchmarkStage = stage;
+        throw error;
     } finally {
         if (archive) await archive.close().catch(() => {});
         await fsp.rm(workdir, { recursive: true, force: true });
@@ -751,7 +769,8 @@ if (require.main === module) {
         runFull({ reportPath, temporaryRoot }).then(({ reportPath: destination, report }) => {
             process.stdout.write(`F2E.2 status: import=${report.database.importMessagesPerSecond.toFixed(0)} msg/s; runs=${report.runs.length}; report=${destination}\n`);
         }).catch(error => {
-            process.stderr.write(`F2E.2 falló: ${error.message}\n`);
+            const code = typeof error?.code === 'string' && /^[A-Z0-9_]{1,64}$/.test(error.code) ? error.code : error?.name || 'UNKNOWN';
+            process.stderr.write(`F2E.2 falló en ${error?.benchmarkStage || 'runner'} (${code}): ${error.message}\n`);
             process.exitCode = 1;
         });
     }
