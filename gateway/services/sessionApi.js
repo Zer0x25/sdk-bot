@@ -13,7 +13,7 @@ const CAPABILITIES = {
 };
 
 function capabilityFor(method, pathname) {
-    if (method === 'GET' && /^\/v1\/(session|accounts|summary|conversations(?:\/[^/]+(?:\/(?:messages|pending-resume))?)?|operations\/[^/]+|events)$/.test(pathname)) return 'conversations:read';
+    if (method === 'GET' && /^\/v1\/(session|accounts|profiles|summary|conversations(?:\/[^/]+(?:\/(?:messages|pending-resume))?)?|operations\/[^/]+|events)$/.test(pathname)) return 'conversations:read';
     if (method === 'POST' && /^\/v1\/conversations\/[^/]+\/(takeover|release)$/.test(pathname)) return 'control:write';
     if (method === 'POST' && /^\/v1\/conversations\/[^/]+\/messages$/.test(pathname)) return 'messages:send';
     if (method === 'POST' && /^\/v1\/conversations\/[^/]+\/read$/.test(pathname)) return 'conversations:read';
@@ -565,8 +565,8 @@ function archiveBoundary(error) {
     return new BoundaryError(503, 'SERVICE_UNAVAILABLE', 'Archivo de conversaciones no disponible.');
 }
 
-/** @param {() => any} getPolicy @param {any} archive @param {() => any} [getContacts] @param {(channel:string,accountId:string) => any} [getChannelStatus] @param {any} [controlService] @param {(channel:string,accountId:string) => any} [getAdapter] */
-function createSessionApi(getPolicy, archive, getContacts = () => ({}), getChannelStatus = (_channel, _accountId) => 'disconnected', controlService = null, getAdapter = () => null) {
+/** @param {() => any} getPolicy @param {any} archive @param {() => any} [getContacts] @param {(channel:string,accountId:string) => any} [getChannelStatus] @param {any} [controlService] @param {(channel:string,accountId:string) => any} [getAdapter] @param {() => Promise<any[]>} [getProfiles] */
+function createSessionApi(getPolicy, archive, getContacts = () => ({}), getChannelStatus = (_channel, _accountId) => 'disconnected', controlService = null, getAdapter = () => null, getProfiles = async () => []) {
     const readRevisions = new Map();
     return async function route(req, res, context, pathname, requestBody = Buffer.alloc(0)) {
         const capability = capabilityFor(req.method, pathname);
@@ -588,6 +588,18 @@ function createSessionApi(getPolicy, archive, getContacts = () => ({}), getChann
                     status: accountStatus(getChannelStatus(row.channel, row.id)), capabilities: CAPABILITIES[row.channel]
                 })) });
                 return send(res, 200, body, context.requestId);
+            }
+            if (req.method === 'GET' && pathname === '/v1/profiles') {
+                rejectQuery(req);
+                const profiles = await getProfiles();
+                const items = (Array.isArray(profiles) ? profiles : []).flatMap(profile => {
+                    if (!profile || typeof profile !== 'object' || typeof profile.key !== 'string'
+                        || !/^[A-Za-z0-9_.-]{1,80}$/.test(profile.key)) return [];
+                    const name = safeString(typeof profile.nombre === 'string' ? profile.nombre
+                        : typeof profile.name === 'string' ? profile.name : profile.key) || profile.key;
+                    return [{ key: profile.key, name: Array.from(name).slice(0, 100).join('') }];
+                }).sort((left, right) => left.key.localeCompare(right.key)).slice(0, 200);
+                return send(res, 200, assertValid('AutomationProfilesResponse', { items }), context.requestId);
             }
             if (req.method === 'GET' && pathname === '/v1/summary') {
                 const query = parseQuery(req, 'SummaryQuery');
@@ -881,7 +893,7 @@ function createSessionApi(getPolicy, archive, getContacts = () => ({}), getChann
                 if (!validate('UpdateConversationRequest', request).valid) throw invalid('Solicitud de actualización inválida.');
                 await controlService.updateConversation({ conversationId, actorId: context.actor.id,
                     expectedVersion: request.expectedVersion, lifecycle: request.lifecycle,
-                    accessPolicy: request.accessPolicy });
+                    accessPolicy: request.accessPolicy, profileKey: request.profileKey });
                 const row = await archive.conversationView({ conversationId, actorId: context.actor.id });
                 if (!row) throw new BoundaryError(404, 'NOT_FOUND', 'Conversación no encontrada.');
                 const authority = await archive.controlAuthority();

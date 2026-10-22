@@ -20,6 +20,8 @@ export type SendMessageResponse = Contract<'SendMessageResponse'>;
 export type SendMessageRequest = Contract<'SendMessageRequest'>;
 export type PendingResumeResponse = Contract<'PendingResumeResponse'>;
 export type SummaryResponse = Contract<'SummaryResponse'>;
+export type AutomationProfilesResponse = Contract<'AutomationProfilesResponse'>;
+export type UpdateConversationRequest = Contract<'UpdateConversationRequest'>;
 
 export type ControlResponse = Contract<'TakeoverConfirmedResponse'> | Contract<'TakeoverPendingResponse'>;
 
@@ -136,6 +138,10 @@ export function getSummary(input: { from: string; to: string }, signal?: AbortSi
   return getJson<SummaryResponse>(`/summary?${query.toString()}`, signal);
 }
 
+export function getAutomationProfiles(signal?: AbortSignal) {
+  return getJson<AutomationProfilesResponse>('/profiles', signal);
+}
+
 export function getConversations(input: {
   cursor?: PageCursor;
   search?: string;
@@ -186,7 +192,11 @@ export function getPendingResumeMessages(conversationId: string, signal?: AbortS
 }
 
 export function updateConversationLifecycle(conversationId: string, expectedVersion: ConversationControl['controlVersion'], lifecycle: Lifecycle) {
-  return fetchConversationUpdate<ControlResponse>(conversationId, { expectedVersion, lifecycle }, `panel_lifecycle_${crypto.randomUUID()}`);
+  return updateConversationSettings(conversationId, { expectedVersion, lifecycle });
+}
+
+export function updateConversationSettings(conversationId: string, request: UpdateConversationRequest) {
+  return fetchConversationUpdate<ControlResponse>(conversationId, request, `panel_conversation_update_${crypto.randomUUID()}`);
 }
 
 async function fetchConversationUpdate<T>(conversationId: string, body: unknown, idempotencyKey: string): Promise<T> {

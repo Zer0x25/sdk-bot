@@ -33,6 +33,12 @@ function modeLabel(mode: Conversation['control']['automationMode']) {
   return 'Atención IA';
 }
 
+function accessLabel(policy: Conversation['control']['accessPolicy']) {
+  if (policy === 'allowed') return 'Permitido';
+  if (policy === 'ignored') return 'Ignorado';
+  return 'Neutro';
+}
+
 export function ConversationDetails({ conversation, account, selected = false, loading = false }: Props) {
   if (!conversation) {
     return (
@@ -66,7 +72,9 @@ export function ConversationDetails({ conversation, account, selected = false, l
       <dl className="detail-list">
         <div><dt>Canal</dt><dd>{account ? channelNames[account.channel] : 'No disponible'}</dd></div>
         <div><dt>Estado del canal</dt><dd>{account ? accountStatusNames[account.status] : 'No disponible'}</dd></div>
+        <div><dt>Permiso</dt><dd>{accessLabel(conversation.control.accessPolicy)}</dd></div>
         <div><dt>Atención</dt><dd>{modeLabel(conversation.control.automationMode)}</dd></div>
+        <div><dt>Perfil IA</dt><dd>{conversation.control.profileKey || 'Heredado del sistema'}</dd></div>
         <div><dt>Estado</dt><dd>{conversation.control.lifecycle === 'open' ? 'Abierta' : 'Resuelta'}</dd></div>
         <div><dt>Mensajes sin leer</dt><dd>{conversation.unreadCount}</dd></div>
         <div><dt>Cobertura</dt><dd>{coverageLabel(conversation)}</dd></div>

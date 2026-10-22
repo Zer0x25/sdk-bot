@@ -8,6 +8,7 @@ function responseContract(method, pathname, status) {
     if (status >= 400) return 'ErrorResponse';
     if (method === 'GET' && pathname === '/v1/session') return 'SessionResponse';
     if (method === 'GET' && pathname === '/v1/accounts') return 'AccountsResponse';
+    if (method === 'GET' && pathname === '/v1/profiles') return 'AutomationProfilesResponse';
     if (method === 'GET' && pathname === '/v1/summary') return 'SummaryResponse';
     if (method === 'GET' && pathname === '/v1/conversations') return 'ConversationsResponse';
     if (method === 'GET' && /^\/v1\/operations\/[^/]+$/.test(pathname)) return 'Operation';

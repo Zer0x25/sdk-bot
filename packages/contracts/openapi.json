@@ -94,6 +94,24 @@
         }
       }
     },
+    "/profiles": {
+      "get": {
+        "operationId": "listAutomationProfiles",
+        "responses": {
+          "200": {
+            "description": "Claves y nombres disponibles; no expone contenido de los perfiles.",
+            "content": {
+              "application/json": {
+                "schema": { "$ref": "#/components/schemas/AutomationProfilesResponse" }
+              }
+            }
+          },
+          "401": { "$ref": "#/components/responses/401" },
+          "403": { "$ref": "#/components/responses/403" },
+          "503": { "$ref": "#/components/responses/503" }
+        }
+      }
+    },
     "/summary": {
       "get": {
         "operationId": "getSummary",
@@ -901,6 +919,9 @@
       "AutomationMode": {
         "$ref": "./schema.json#/$defs/AutomationMode"
       },
+      "AutomationProfile": {
+        "$ref": "./schema.json#/$defs/AutomationProfile"
+      },
       "Lifecycle": {
         "$ref": "./schema.json#/$defs/Lifecycle"
       },
@@ -996,6 +1017,9 @@
       },
       "AccountsResponse": {
         "$ref": "./schema.json#/$defs/AccountsResponse"
+      },
+      "AutomationProfilesResponse": {
+        "$ref": "./schema.json#/$defs/AutomationProfilesResponse"
       },
       "ConversationsResponse": {
         "$ref": "./schema.json#/$defs/ConversationsResponse"

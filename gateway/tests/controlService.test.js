@@ -190,18 +190,21 @@ test('F5.4 API uses signed actor identity, expectedVersion and durable operation
         else process.env.SDK_PANEL_GATEWAY_SECRET = previousSecret; });
     const { archive, accountId, migrationId } = await fixture(t);
     await cutover(archive, migrationId);
-    const service = createControlService(archive, { drainConversation: () => ({ drained: true }) });
+    const service = createControlService(archive, { drainConversation: () => ({ drained: true }),
+        validateProfile: async key => key === 'default' });
     const target = await service.resolveLegacyTarget({ targetId: '111', channel: 'whatsapp', accountId });
     const route = createSessionApi(() => ({ globalMode: 'allowed_all', globalPaused: false, policyVersion: '1' }),
-        archive, () => ({}), undefined, service);
+        archive, () => ({}), undefined, service, undefined, async () => [
+            { key: 'default', nombre: 'Predeterminado', descripcion: 'No se devuelve esta descripción.' }
+        ]);
     const actor = { id: randomUUID(), capabilities: ['control:write','conversations:read','conversations:write'] };
-    async function request(method, pathname, body = null, headers = {}) {
+    async function request(method, pathname, body = null, headers = {}, requestActor = actor) {
         let status, response;
         const res = { writeHead(value) { status = value; }, end(value) { response = JSON.parse(value); } };
         const effectiveHeaders = method === 'PATCH' && !headers['idempotency-key']
             ? { ...headers, 'idempotency-key': `test-idempotency-${randomUUID()}` } : headers;
         try {
-            await route({ method, url: pathname, headers: effectiveHeaders }, res, { actor, requestId: randomUUID() }, pathname,
+            await route({ method, url: pathname, headers: effectiveHeaders }, res, { actor: requestActor, requestId: randomUUID() }, pathname,
                 body === null ? Buffer.alloc(0) : Buffer.from(JSON.stringify(body)));
         } catch (error) { return { status: error.status, response: { code: error.code } }; }
         return { status, response };
@@ -230,6 +233,18 @@ test('F5.4 API uses signed actor identity, expectedVersion and durable operation
     assert.equal(operation.status, 200);
     assert.equal(operation.response.status, 'completed');
     assert.equal(operation.response.actorId, actor.id);
+
+    const profiles = await request('GET', '/v1/profiles');
+    assert.equal(profiles.status, 200);
+    assert.deepEqual(profiles.response.items, [{ key: 'default', name: 'Predeterminado' }]);
+    const namedActor = { id: randomUUID(), capabilities: ['conversations:read'] };
+    const deniedProfileWrite = await request('PATCH', `/v1/conversations/${target.conversationId}`,
+        { expectedVersion: resolved.response.conversation.control.controlVersion, profileKey: 'default' }, {}, namedActor);
+    assert.equal(deniedProfileWrite.status, 403);
+    const profileUpdate = await request('PATCH', `/v1/conversations/${target.conversationId}`,
+        { expectedVersion: resolved.response.conversation.control.controlVersion, profileKey: 'default' });
+    assert.equal(profileUpdate.status, 200);
+    assert.equal(profileUpdate.response.conversation.control.profileKey, 'default');
 });
 
 test('F5.4 policy updates are actor-audited and notification events allow no conversation target', async t => {

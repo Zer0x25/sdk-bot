@@ -316,6 +316,40 @@ button:focus-visible, a:focus-visible, [tabindex]:focus-visible {
 .summary-state-error { color: #914b45; }
 .summary-retry { display: inline-flex; min-height: 35px; align-items: center; gap: 7px; border: 1px solid var(--line); border-radius: 8px; padding: 0 11px; color: var(--ink-secondary); background: var(--surface); font-size: 11px; cursor: pointer; }
 .summary-retry:hover { background: var(--surface-hover); }
+.contacts-page { width: min(100%, 1280px); min-height: 100vh; margin: 0 auto; padding: 38px clamp(20px, 4vw, 48px) 48px; }
+.contacts-header { border-bottom: 1px solid var(--line); padding-bottom: 19px; }
+.contacts-header .eyebrow { display: flex; align-items: center; gap: 6px; margin: 0; color: var(--accent-strong); }
+.contacts-header h1 { margin: 10px 0 4px; font-size: 30px; font-weight: 730; letter-spacing: -.045em; line-height: 1.15; }
+.contacts-subtitle { margin: 0; color: var(--muted); font-size: 12px; }
+.contacts-privacy-note { border: 1px solid #dbece3; border-radius: 10px; margin: 16px 0; padding: 11px 13px; color: #356b50; background: #f3faf6; font-size: 11px; }
+.contacts-toolbar { display: flex; flex-wrap: wrap; align-items: end; gap: 11px; margin: 17px 0 14px; }
+.contacts-search { display: flex; min-width: min(100%, 280px); min-height: 40px; flex: 1 1 260px; align-items: center; gap: 8px; border: 1px solid var(--line); border-radius: 9px; padding: 0 11px; color: var(--muted); background: var(--surface); }
+.contacts-search:focus-within { border-color: #7cb49a; box-shadow: 0 0 0 3px rgb(80 173 146 / 12%); }
+.contacts-search input { width: 100%; min-width: 0; border: 0; outline: 0; color: var(--ink); background: transparent; font-size: 12px; }
+.contacts-search input::placeholder { color: #9aa79f; }
+.contacts-channel-filter { display: grid; min-width: 150px; gap: 4px; color: var(--muted); font-size: 10px; font-weight: 650; }
+.contacts-channel-filter select, .contacts-table select { min-height: 35px; border: 1px solid var(--line); border-radius: 8px; padding: 0 28px 0 9px; color: var(--ink-secondary); background: var(--surface); font-size: 11px; }
+.contacts-permission-state { margin-left: auto; padding-bottom: 9px; color: var(--muted); font-size: 10px; }
+.contacts-table-wrap { overflow: auto; border: 1px solid var(--line); border-radius: 12px; background: var(--surface); }
+.contacts-table { width: 100%; min-width: 700px; border-collapse: collapse; text-align: left; }
+.contacts-table th, .contacts-table td { border-bottom: 1px solid #eef2ef; padding: 11px 14px; font-size: 11px; vertical-align: middle; }
+.contacts-table thead th { color: var(--muted); background: #fbfdfc; font-size: 10px; font-weight: 650; }
+.contacts-table tbody th { color: var(--ink-secondary); font-weight: 650; }
+.contacts-table tbody tr:last-child th, .contacts-table tbody tr:last-child td { border-bottom: 0; }
+.contacts-name { display: block; overflow-wrap: anywhere; }
+.contacts-review { display: inline-block; margin-top: 3px; color: #986a2e; font-size: 9px; font-weight: 600; }
+.contacts-table select { min-width: 145px; max-width: 190px; }
+.contacts-table select:disabled { color: var(--muted); background: #f6f8f6; cursor: not-allowed; }
+.contacts-open-link { display: inline-flex; align-items: center; gap: 5px; color: var(--accent-strong); font-size: 10px; font-weight: 650; text-decoration: none; white-space: nowrap; }
+.contacts-open-link:hover { text-decoration: underline; }
+.contacts-load-more, .contacts-state button { display: inline-flex; min-height: 36px; align-items: center; justify-content: center; gap: 7px; border: 1px solid var(--line); border-radius: 8px; margin: 13px auto 0; padding: 0 12px; color: var(--ink-secondary); background: var(--surface); font-size: 11px; cursor: pointer; }
+.contacts-load-more:hover, .contacts-state button:hover { background: var(--surface-hover); }
+.contacts-load-more:disabled { color: var(--muted); cursor: wait; }
+.contacts-state { display: flex; min-height: 180px; flex-direction: column; align-items: center; justify-content: center; gap: 8px; border: 1px solid var(--line); border-radius: 12px; margin-top: 14px; padding: 22px; color: var(--muted); background: var(--surface); text-align: center; font-size: 12px; }
+.contacts-state h2 { margin: 0; color: var(--ink); font-size: 14px; }
+.contacts-state p { margin: 0; }
+.contacts-state-error { color: #914b45; }
+.contacts-error { border: 1px solid #efd1ca; border-radius: 8px; margin: 10px 0; padding: 9px 11px; color: #914b45; background: #fff8f6; font-size: 11px; }
 
 @media (max-width: 1160px) {
   .inbox-layout { grid-template-columns: minmax(280px, 330px) minmax(340px, 1fr); }
@@ -334,6 +368,12 @@ button:focus-visible, a:focus-visible, [tabindex]:focus-visible {
   .rail-link { grid-template-rows: 24px 12px; gap: 3px; }
   .app-content { height: calc(100vh - 64px); min-height: 0; overflow: hidden; }
   .summary-page { height: 100%; min-height: 0; overflow: auto; padding: 24px 16px 92px; }
+  .contacts-page { height: 100%; min-height: 0; overflow: auto; padding: 24px 16px 92px; }
+  .contacts-header h1 { font-size: 26px; }
+  .contacts-toolbar { align-items: stretch; flex-direction: column; gap: 9px; }
+  .contacts-search, .contacts-channel-filter { width: 100%; min-width: 0; }
+  .contacts-permission-state { margin-left: 0; padding: 0; }
+  .contacts-table { min-width: 680px; }
   .summary-heading-row { align-items: flex-start; flex-direction: column; gap: 17px; }
   .summary-period-select { width: 100%; }
   .summary-range { align-items: flex-start; flex-direction: column; gap: 4px; }
@@ -362,6 +402,7 @@ button:focus-visible, a:focus-visible, [tabindex]:focus-visible {
 
 @media (max-width: 380px) {
   .summary-metrics { grid-template-columns: minmax(0, 1fr); }
+  .contacts-page { padding-right: 12px; padding-left: 12px; }
 }
 
 @media (prefers-reduced-motion: reduce) {

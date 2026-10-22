@@ -370,6 +370,23 @@
       ],
       "additionalProperties": false
     },
+    "AutomationProfile": {
+      "type": "object",
+      "properties": {
+        "key": {
+          "type": "string",
+          "pattern": "^[A-Za-z0-9_.-]{1,80}$"
+        },
+        "name": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 100,
+          "format": "unicode-text"
+        }
+      },
+      "required": ["key", "name"],
+      "additionalProperties": false
+    },
     "DeduplicationKey": {
       "type": "object",
       "properties": {
@@ -1026,6 +1043,18 @@
       ],
       "additionalProperties": false
     },
+    "AutomationProfilesResponse": {
+      "type": "object",
+      "properties": {
+        "items": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/AutomationProfile" },
+          "maxItems": 200
+        }
+      },
+      "required": ["items"],
+      "additionalProperties": false
+    },
     "ConversationsResponse": {
       "type": "object",
       "properties": {
@@ -1277,15 +1306,25 @@
         },
         "accessPolicy": {
           "$ref": "#/$defs/AccessPolicy"
+        },
+        "profileKey": {
+          "anyOf": [
+            { "type": "string", "pattern": "^[A-Za-z0-9_.-]{1,80}$" },
+            { "type": "null" }
+          ]
         }
       },
       "required": ["expectedVersion"],
       "anyOf": [
         { "properties": { "lifecycle": { "$ref": "#/$defs/Lifecycle" } }, "required": ["lifecycle"] },
-        { "properties": { "accessPolicy": { "$ref": "#/$defs/AccessPolicy" } }, "required": ["accessPolicy"] }
+        { "properties": { "accessPolicy": { "$ref": "#/$defs/AccessPolicy" } }, "required": ["accessPolicy"] },
+        { "properties": { "profileKey": { "anyOf": [
+          { "type": "string", "pattern": "^[A-Za-z0-9_.-]{1,80}$" },
+          { "type": "null" }
+        ] } }, "required": ["profileKey"] }
       ],
       "additionalProperties": false,
-      "description": "CAS por controlVersion; se requiere al menos un cambio de lifecycle, acceso o perfil."
+      "description": "CAS por controlVersion; se requiere al menos un cambio de ciclo, acceso o perfil. null en profileKey hereda el perfil global."
     },
     "Operation": {
       "type": "object",

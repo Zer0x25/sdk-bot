@@ -161,6 +161,22 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/profiles": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get: operations["listAutomationProfiles"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/session": {
         parameters: {
             query?: never;
@@ -221,6 +237,14 @@ export interface components {
         };
         /** @enum {string} */
         AutomationMode: "ai" | "human" | "off";
+        AutomationProfile: {
+            key: string;
+            /** Format: unicode-text */
+            name: string;
+        };
+        AutomationProfilesResponse: {
+            items: components["schemas"]["AutomationProfile"][];
+        };
         /** @enum {string} */
         Capability: "conversations:read" | "messages:send" | "control:write" | "control:override" | "conversations:write";
         /** @enum {string} */
@@ -656,15 +680,18 @@ export interface components {
          */
         Timestamp: string;
         unreadOnly: boolean;
-        /** @description CAS por controlVersion; se requiere al menos un cambio de lifecycle, acceso o perfil. */
+        /** @description CAS por controlVersion; se requiere al menos un cambio de ciclo, acceso o perfil. null en profileKey hereda el perfil global. */
         UpdateConversationRequest: {
             accessPolicy?: components["schemas"]["AccessPolicy"];
             expectedVersion: components["schemas"]["Version"];
             lifecycle?: components["schemas"]["Lifecycle"];
+            profileKey?: string | null;
         } | {
             lifecycle: components["schemas"]["Lifecycle"];
         } | {
             accessPolicy: components["schemas"]["AccessPolicy"];
+        } | {
+            profileKey: string | null;
         };
         /** @description Versión positiva decimal como texto. No intercambiar controlVersion con aggregateVersion. */
         Version: string;
@@ -1142,6 +1169,29 @@ export interface operations {
             409: components["responses"]["409"];
             410: components["responses"]["410"];
             422: components["responses"]["422"];
+            503: components["responses"]["503"];
+        };
+    };
+    listAutomationProfiles: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Claves y nombres disponibles; no expone contenido de los perfiles. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AutomationProfilesResponse"];
+                };
+            };
+            401: components["responses"]["401"];
+            403: components["responses"]["403"];
             503: components["responses"]["503"];
         };
     };

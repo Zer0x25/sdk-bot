@@ -352,7 +352,7 @@ Esta es la v1 útil; publicar/desplegar es una acción separada, no automática.
 **Depende de:** v1 estable.
 
 - [x] Resumen orientado a decisiones con métricas reales y periodos explícitos (unidad F7.1).
-- [ ] Contactos con permisos/perfiles y ficha compartida con bandeja.
+- [x] Contactos con permisos/perfiles y ficha compartida con bandeja (unidad F7.2).
 - [ ] Canales con pairing existente, ventana QR de 140s, código manual y estados
   restaurables. No alterar exclusión QR/código ni crear otro gateway.
 - [ ] Asistente: perfiles, editor, cambios sin guardar e importación/exportación.
@@ -370,6 +370,15 @@ archivados y salidas de conversación aceptadas, con desglose WhatsApp/Telegram 
 fecha mínima disponible de entradas. La API limita cada consulta a 90 días y exige
 `conversations:read`; no expone identidades ni texto de mensajes. La Fase 7 sigue
 abierta para las demás secciones y el inventario de paridad.
+
+**Unidad F7.2 — Contactos:** `/inbox/contacts` pagina conversaciones archivadas,
+busca por nombre y filtra por canal. Los campos de teléfono/JID/ID remoto no se
+exponen. La vista permite editar acceso y perfil por conversación mediante PATCH
+v1 con `controlVersion` y `conversations:write`; actores de solo lectura ven valores
+sin controles de edición. La ficha de Bandeja muestra los mismos valores. `GET
+/profiles` entrega solo claves/nombres, y la actualización valida el inventario de
+perfiles en ControlService. No se añadieron operadores con grants limitados ni se
+usaron rutas legacy para estas acciones; BUG-024 conserva su alcance explícito.
 
 ## Fase 8 — Estructura final y operación
 

@@ -163,6 +163,16 @@ test('summary contracts require explicit UTC bounds and expose only bounded aggr
     metrics, byChannel: [{ channel: 'whatsapp', ...metrics, phone: '+56900000000' }], snapshot: cursor });
 });
 
+test('automation profile inventory exposes names only and conversation profile updates support global inheritance', () => {
+  accept('AutomationProfile', { key: 'default', name: 'Predeterminado' });
+  reject('AutomationProfile', { key: 'default', name: 'Predeterminado', description: 'prompt privado' });
+  accept('AutomationProfilesResponse', { items: [{ key: 'default', name: 'Predeterminado' }] });
+  reject('AutomationProfilesResponse', { items: [{ key: 'default', name: 'Predeterminado', content: 'privado' }] });
+  accept('UpdateConversationRequest', { expectedVersion: '3', profileKey: 'default' });
+  accept('UpdateConversationRequest', { expectedVersion: '3', profileKey: null });
+  reject('UpdateConversationRequest', { expectedVersion: '3', profileKey: 'invalid key' });
+});
+
 test('entities and snapshots roundtrip JSON with explicit nullable fields', () => {
   const cases = [
     ['Actor', actor], ['Identity', identity], ['Contact', { id: id(3), displayName: null, identities: [identity] }],

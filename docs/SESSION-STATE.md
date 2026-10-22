@@ -940,3 +940,25 @@ Cierres históricos: commits F2C.1/F2C.2/F2D/F2E.1 están en el log local; F2B.3
 - Alcance cerrado: solo la unidad Resumen. Contactos, Canales, Asistente, Sistema
   e inventario de paridad siguen pendientes dentro de F7. No se hizo push ni
   despliegue.
+
+## Fase 7.2 — Contactos — 2026-10-22
+
+- React reemplaza el placeholder de Contactos por una lista paginada de conversaciones
+  archivadas, búsqueda por nombre y filtro por canal. La lista no expone teléfono,
+  JID ni ID remoto; incluye acceso, perfil IA y enlace a la conversación.
+- Los cambios de acceso/perfil usan PATCH v1 por `conversationId`, exigen
+  `conversations:write` y comparan `controlVersion`. El backend delega al
+  ControlService SQLite; cambiar el perfil mantiene la invalidación durable del
+  contexto. El endpoint autenticado `/v1/profiles` devuelve únicamente clave y
+  nombre, nunca contenido de prompts. Actores sin escritura ven valores de solo
+  lectura. La ficha de Bandeja muestra permiso y perfil desde la misma proyección.
+- BUG-024 no se amplió: la UI nueva no llama endpoints legacy y no se incorporaron
+  grants limitados. Perfiles no disponibles quedan visibles como tales; la API
+  valida cada asignación contra el inventario actual antes de guardar.
+- Verificación: raíz `npm run check` pasó (17 pruebas de contratos); tras regenerar
+  contratos se ejecutó `cd gateway && npm ci`. `cd gateway && npm run check` pasó
+  lint, typecheck, panel typecheck, 16 pruebas React, build Vite, prueba de montaje
+  y 318 pruebas de Gateway. La suite de API cubre listado de perfiles sin contenido,
+  denegación de escritura a actor de solo lectura y asignación de perfil con CAS.
+- No se hizo push ni despliegue. Siguiente unidad: F7.3 Canales; cubrir pairing
+  existente sin iniciar una segunda instancia ni alterar QR/código vigentes.
