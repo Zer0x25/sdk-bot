@@ -868,8 +868,9 @@ Cierres históricos: commits F2C.1/F2C.2/F2D/F2E.1 están en el log local; F2B.3
 
 ## Revisión del backlog antes de F7
 
-- Se confirmó que `work` y `origin/work` están sincronizados en `5a77104`. No se
-  iniciará F7 mientras F6.4 siga pendiente, porque la hoja de ruta exige v1 estable.
+- En esa revisión, `work` y `origin/work` estaban sincronizados en `5a77104` y no se
+  iniciaría F7 mientras F6.4 siguiera pendiente, porque la hoja de ruta exige v1
+  estable. F6.4 se cerró en la continuación documentada abajo.
 - BUG-006/007 tenían evidencia de cierre F5.5/F5.7/F5.8, pero sus filas seguían
   abiertas; BACKLOG.md ahora refleja los cierres y referencias de aceptación.
 - Gates por alcance de F7: BUG-024 antes de habilitar operadores limitados;
@@ -911,6 +912,9 @@ Cierres históricos: commits F2C.1/F2C.2/F2D/F2E.1 están en el log local; F2B.3
 - Telegram se reserva para administración. El marcador enviado al chat
   administrativo/self-chat se enrutó por `self_chat_ai` y produjo una respuesta
   legacy; queda como observación de esa ruta. El smoke de atención a clientes TG
-  no aplica al alcance acordado. No se registró el payload de contexto del
-  proveedor. F6.4/Fase 6 siguen abiertas únicamente por inspeccionar ese contexto
-  live. [Evidencia](F6.4-SMOKE-CANAL.md).
+  no aplica al alcance acordado. La revisión final trazó la petición live desde el
+  inbound seleccionado hasta `message`, el historial SQLite y la etiqueta
+  `Operador humano`; `node --test tests/f63ConversationFlow.test.js` pasó 1/1 y
+  comprueba el contrato integrado. No se conservó el JSON literal de la petición
+  live. F6.4 y Fase 6 quedan completadas con esa limitación registrada.
+  [Evidencia](F6.4-SMOKE-CANAL.md).

@@ -117,6 +117,11 @@ salvo indicación contraria. La evidencia detallada y líneas están en la basel
   en esta revisión. BUG-071/073/074 y los pendientes de CI/release quedan
   registrados para sus alcances; BUG-051 sigue siendo puerta antes de migrar un
   archivo runtime preexistente.
+- Actualización 2026-10-22: F6.4 quedó completada con el recorrido live de
+  WhatsApp, la revisión de contexto por traza de código y la regresión integrada
+  F6.3 (1/1). No se conservó el cuerpo JSON literal de la petición live. Telegram
+  de atención a clientes se excluye del alcance acordado; las identidades ambiguas
+  siguen en cuarentena. Ver [F6.4](F6.4-SMOKE-CANAL.md).
 
 ## Clasificación para la unidad activa
 

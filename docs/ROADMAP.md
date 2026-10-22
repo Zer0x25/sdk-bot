@@ -329,7 +329,7 @@ Compositor todavía no ofrece enviar.
 - [x] **F6.3** Flujo integrado: entrada -> hilo -> takeover -> mensaje humano ->
   recepción de cliente durante human -> release explícito -> respuesta IA con
   contexto correcto. Evidencia y límites: [F6.3](F6.3-FLUJO-CONVERSACION.md).
-- [ ] **F6.4** Smoke manual en cuenta de prueba de WhatsApp; una única
+- [x] **F6.4** Smoke manual en cuenta de prueba de WhatsApp; una única
   instancia y resultados separados de simulación. Telegram se usa para
   administración, así que el smoke de atención a clientes en ese canal no aplica.
   No ejecutar reset para
@@ -338,11 +338,13 @@ Compositor todavía no ofrece enviar.
   enviada una vez. El 2026-10-22 también se verificó el hilo/compositor móvil a
   390 × 844 y 320 × 844 px; `ignored_all` quedó activo y el chat volvió a
   `neutral/off`. El recorrido Tab completo y el foco de `Tomar control` quedaron
-  verificados; solo sigue pendiente inspeccionar el contexto live. Las dos parejas
-  teléfono/LID ambiguas permanecen en
-  cuarentena. Estado y evidencia: [F6.4](F6.4-SMOKE-CANAL.md).
+  verificados. El contexto se comprobó con la traza del constructor live y la
+  regresión integrada F6.3; no se conservó el JSON literal de la petición live.
+  Las dos parejas teléfono/LID ambiguas permanecen en cuarentena, sin bloquear esta
+  aceptación. Estado y evidencia: [F6.4](F6.4-SMOKE-CANAL.md).
 
-**Aceptación:** flujo operativo completo, reinicios/reconexión, móvil y teclado.
+**Estado: completada. Aceptación:** flujo operativo completo, reinicios/reconexión,
+móvil y teclado.
 Esta es la v1 útil; publicar/desplegar es una acción separada, no automática.
 
 ## Fase 7 — Sustituir el resto del panel
