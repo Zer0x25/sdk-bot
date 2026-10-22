@@ -53,7 +53,8 @@ test('OpenAPI 3.1 references resolve locally and every component uses the canoni
       if (!op) continue;
       for (const param of op.parameters || []) {
         if (param.in !== 'query') continue;
-        const query = path === '/conversations' ? 'ConversationsQuery' : path === '/summary' ? 'SummaryQuery' : 'MessagesQuery';
+        const query = path === '/conversations' ? 'ConversationsQuery' : path === '/summary' ? 'SummaryQuery'
+          : path === '/conversations/{conversationId}/search' ? 'MessageSearchQuery' : 'MessagesQuery';
         assert.equal(param.schema.$ref, `./schema.json#/$defs/${query}/properties/${param.name}`);
       }
     }

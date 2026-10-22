@@ -211,6 +211,11 @@ export interface Archive {
     summary(input: { from: string; to: string }): Promise<Contract<'SummaryResponse'>>;
     messages(input: { conversationId: string; limit?: number; before?: { occurredAt: string; id: string } }): Promise<Contract<'Message'>[]>;
     messagePage(input: { conversationId: string; limit?: number; before?: { occurredAt: string; id: string } }): Promise<{ items: Contract<'Message'>[]; hasMore: boolean }>;
+    searchMessages(input: { conversationId: string; query: string; limit?: number;
+        after?: { occurredAt: string; id: string }; expectedSnapshot?: Contract<'EventCursor'> }): Promise<{
+        items: Contract<'MessageSearchHit'>[]; hasMore: boolean; snapshot: Contract<'EventCursor'>;
+        nextPosition: { occurredAt: string; id: string } | null;
+    }>;
     messageByProviderId(input: { conversationId: string; providerMessageId: string }): Promise<Contract<'Message'> | null>;
     attachmentTarget(input: { messageId: string }): Promise<{ messageId: string; conversationId: string;
         contentType: 'audio' | 'image' | 'video' | 'document'; ingestedAt: string; expiresAt: string } | null>;

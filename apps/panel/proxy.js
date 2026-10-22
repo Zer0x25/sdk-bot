@@ -17,6 +17,7 @@ function responseContract(method, pathname, status) {
     if (method === 'GET' && /^\/v1\/conversations\/[^/]+\/pending-resume$/.test(pathname)) return 'PendingResumeResponse';
     if (method === 'GET' && /^\/v1\/conversations\/[^/]+$/.test(pathname)) return 'ConversationResponse';
     if (method === 'GET' && /^\/v1\/conversations\/[^/]+\/messages$/.test(pathname)) return 'MessagesResponse';
+    if (method === 'GET' && /^\/v1\/conversations\/[^/]+\/search$/.test(pathname)) return 'MessageSearchResponse';
     if (method === 'POST' && /^\/v1\/conversations\/[^/]+\/messages$/.test(pathname)) return 'SendMessageResponse';
     if (method === 'POST' && /^\/v1\/conversations\/[^/]+\/read$/.test(pathname)) return 'ReadResponse';
     const control = /^\/v1\/conversations\/[^/]+\/(takeover|release)$/.exec(pathname);

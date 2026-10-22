@@ -547,6 +547,54 @@
         }
       }
     },
+    "/conversations/{conversationId}/search": {
+      "get": {
+        "operationId": "searchConversationMessages",
+        "responses": {
+          "200": {
+            "description": "Resultados FTS paginados y ligados a un snapshot inmutable del archivo.",
+            "content": {
+              "application/json": {
+                "schema": { "$ref": "#/components/schemas/MessageSearchResponse" }
+              }
+            }
+          },
+          "401": { "$ref": "#/components/responses/401" },
+          "403": { "$ref": "#/components/responses/403" },
+          "404": { "$ref": "#/components/responses/404" },
+          "409": { "$ref": "#/components/responses/409" },
+          "410": { "$ref": "#/components/responses/410" },
+          "422": { "$ref": "#/components/responses/422" },
+          "503": { "$ref": "#/components/responses/503" }
+        },
+        "parameters": [
+          {
+            "name": "conversationId",
+            "in": "path",
+            "required": true,
+            "schema": { "$ref": "#/components/schemas/Id" }
+          },
+          {
+            "name": "query",
+            "in": "query",
+            "required": true,
+            "schema": { "$ref": "./schema.json#/$defs/MessageSearchQuery/properties/query" }
+          },
+          {
+            "name": "cursor",
+            "in": "query",
+            "required": false,
+            "schema": { "$ref": "./schema.json#/$defs/MessageSearchQuery/properties/cursor" }
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "required": false,
+            "schema": { "$ref": "./schema.json#/$defs/MessageSearchQuery/properties/limit" }
+          }
+        ]
+      }
+    },
     "/conversations/{conversationId}/takeover": {
       "post": {
         "operationId": "takeControl",
@@ -1043,6 +1091,15 @@
       },
       "MessagesQuery": {
         "$ref": "./schema.json#/$defs/MessagesQuery"
+      },
+      "MessageSearchQuery": {
+        "$ref": "./schema.json#/$defs/MessageSearchQuery"
+      },
+      "MessageSearchHit": {
+        "$ref": "./schema.json#/$defs/MessageSearchHit"
+      },
+      "MessageSearchResponse": {
+        "$ref": "./schema.json#/$defs/MessageSearchResponse"
       },
       "SessionResponse": {
         "$ref": "./schema.json#/$defs/SessionResponse"

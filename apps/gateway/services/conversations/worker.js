@@ -7,6 +7,7 @@ const { randomUUID, createHash } = require('node:crypto');
 const { DatabaseSync } = require('node:sqlite');
 const { assertValid } = require('@sdk-bot/contracts');
 const { retentionCutoff } = require('./eventRetention');
+const { normalizeSearchQuery } = require('./searchQuery');
 const schema = require('./schema');
 const MAX_ATTACHMENT_BYTES = 16 * 1024 * 1024;
 const ATTACHMENT_RETENTION_MS = 90 * 86400000;
@@ -15,7 +16,7 @@ const READ_ONLY_METHODS = new Set(['snapshot','telegramCursor','pendingLegacyDis
     'controlPolicy','controlOperation','pendingControlOperations','controlTargets','controlByIdentity',
     'pendingResumeMessages','shouldProcessArchivedInbound',
     'outboundIntent','outboundIntents',
-    'conversation','conversations','conversationRows','conversationView','conversationAddress','accounts','messages','messagePage','messageByProviderId','aiContext',
+    'conversation','conversations','conversationRows','conversationView','conversationAddress','accounts','messages','messagePage','searchMessages','messageByProviderId','aiContext',
     'events','eventsPage','diagnostics','recoveryCheckpoint','summary','attachmentTarget','attachment','attachmentRegistry','pendingAttachmentDeletions','close']);
 function fail(code) { throw Object.assign(new Error(code), { code }); }
 function one(sql, ...params) { return db.prepare(sql).get(...params); }
@@ -75,7 +76,7 @@ function initialize() {
         // committed WAL records or touching another process's snapshot.
         db = new DatabaseSync(`${pathToFileURL(file).href}?immutable=1`, { readOnly: true });
         const schemaVersion = one('PRAGMA user_version').user_version;
-        if (![6, 7, 8, 9, 10, 11, 12].includes(schemaVersion)) fail('SCHEMA_VERSION_REQUIRED');
+        if (![6, 7, 8, 9, 10, 11, 12, 13].includes(schemaVersion)) fail('SCHEMA_VERSION_REQUIRED');
         if (one("SELECT migration_id FROM control_import_migrations WHERE status IN ('cutover_applying','rolling_back') LIMIT 1")) {
             fail('CONTROL_CUTOVER_RECOVERY_REQUIRED');
         }
@@ -95,7 +96,7 @@ function initialize() {
     // SQLite owns the OS lock for the full connection lifetime; crash releases it.
     db.exec('BEGIN IMMEDIATE; COMMIT;');
     const version = one('PRAGMA user_version').user_version;
-    if (version > 12) fail('SCHEMA_TOO_NEW');
+    if (version > 13) fail('SCHEMA_TOO_NEW');
     if (version === 0) transaction(() => {
         db.exec(schema);
         run('INSERT INTO archive_meta VALUES(1,?,?)', randomUUID(), '0');
@@ -315,6 +316,31 @@ function initialize() {
         CREATE INDEX attachments_retention ON attachments(state,expires_at,id);
         PRAGMA user_version=12;`);
     });
+    if (one('PRAGMA user_version').user_version === 12) transaction(() => {
+        const body = alias => `substr(trim(COALESCE(json_extract(${alias}.payload,'$.content.text'),'') || ' ' ||
+            COALESCE(json_extract(${alias}.payload,'$.content.caption'),'') || ' ' ||
+            COALESCE(json_extract(${alias}.payload,'$.content.transcript'),'')),1,16384)`;
+        const eligible = alias => `json_extract(${alias}.payload,'$.deletedAt') IS NULL AND
+            json_extract(${alias}.payload,'$.content.type')!='oversized' AND length(${body(alias)})>0`;
+        db.exec(`CREATE VIRTUAL TABLE message_search USING fts5(message_id UNINDEXED,conversation_id UNINDEXED,body,
+            tokenize='unicode61 remove_diacritics 2');
+        CREATE TRIGGER messages_search_insert AFTER INSERT ON messages WHEN ${eligible('NEW')} BEGIN
+            INSERT INTO message_search(rowid,message_id,conversation_id,body)
+            VALUES(NEW.rowid,NEW.id,NEW.conversation_id,${body('NEW')});
+        END;
+        CREATE TRIGGER messages_search_update AFTER UPDATE OF payload,conversation_id ON messages BEGIN
+            DELETE FROM message_search WHERE rowid=OLD.rowid;
+            INSERT INTO message_search(rowid,message_id,conversation_id,body)
+            SELECT NEW.rowid,NEW.id,NEW.conversation_id,${body('NEW')} WHERE ${eligible('NEW')};
+        END;
+        CREATE TRIGGER messages_search_delete AFTER DELETE ON messages BEGIN
+            DELETE FROM message_search WHERE rowid=OLD.rowid;
+        END;
+        INSERT INTO message_search(rowid,message_id,conversation_id,body)
+        SELECT rowid,id,conversation_id,${body('messages')} FROM messages
+        WHERE ${eligible('messages')};
+        PRAGMA user_version=13;`);
+    });
     if (one("SELECT id FROM outbound_intents WHERE state='sending' LIMIT 1")) transaction(() => {
         run(`UPDATE outbound_intents SET state='delivery_unknown',error_code='PROCESS_RESTARTED_DURING_SEND',
             updated_at=?,completed_at=? WHERE state='sending'`, new Date().toISOString(), new Date().toISOString());
@@ -336,7 +362,7 @@ function initialize() {
         transaction(() => pending.forEach(row => updateTranscription({ messageId: row.id, expectedStatus: 'pending', status: 'failed' })));
         after = pending[pending.length - 1].id;
     }
-    return { ...snapshot(), schemaVersion: 12, journalMode: one('PRAGMA journal_mode').journal_mode,
+    return { ...snapshot(), schemaVersion: 13, journalMode: one('PRAGMA journal_mode').journal_mode,
         synchronous: one('PRAGMA synchronous').synchronous, threadId: require('node:worker_threads').threadId };
 }
 function registerAccount(input) {
@@ -1483,7 +1509,7 @@ function beginControlImport(input) {
     const report = input.report;
     if (!report || report.schemaVersion !== 1 || report.dryRun !== true || !Array.isArray(report.entries)
         || !Array.isArray(report.blockers) || typeof report.cutoverAllowed !== 'boolean') fail('INVALID_IMPORT_REPORT');
-    if (![6, 7, 8, 9, 10, 11, 12].includes(report.sourceManifest?.archive?.schemaVersion) || typeof report.sourceManifest.archive.dataEpoch !== 'string'
+    if (![6, 7, 8, 9, 10, 11, 12, 13].includes(report.sourceManifest?.archive?.schemaVersion) || typeof report.sourceManifest.archive.dataEpoch !== 'string'
         || !/^(0|[1-9][0-9]*)$/.test(report.sourceManifest.archive.seq || '')) fail('INVALID_IMPORT_SNAPSHOT');
     const currentSnapshot = snapshot();
     if (report.sourceManifest.archive.dataEpoch !== currentSnapshot.dataEpoch || report.sourceManifest.archive.seq !== currentSnapshot.seq) {
@@ -2066,6 +2092,41 @@ function messagePage(input) {
     const items = rows.slice(0, limit).reverse().map(row => JSON.parse(row.payload));
     return { items, hasMore };
 }
+function searchMessages(input) {
+    assertValid('Id', input?.conversationId);
+    const limit = input.limit ?? 20;
+    if (!Number.isInteger(limit) || limit < 1 || limit > 100) fail('INVALID_LIMIT');
+    const { match } = normalizeSearchQuery(input.query);
+    const current = snapshot();
+    if (input.expectedSnapshot) {
+        assertValid('EventCursor', input.expectedSnapshot);
+        if (input.expectedSnapshot.dataEpoch !== current.dataEpoch) fail('DATA_EPOCH_MISMATCH');
+        if (input.expectedSnapshot.seq !== current.seq) fail('CURSOR_EXPIRED');
+    }
+    let rows;
+    if (input.after) {
+        assertValid('Timestamp', input.after.occurredAt);
+        assertValid('Id', input.after.id);
+        const afterTime = new Date(input.after.occurredAt).toISOString();
+        rows = all(`SELECT m.payload,snippet(message_search,2,'','',' … ',12) AS snippet
+            FROM message_search JOIN messages m ON m.rowid=message_search.rowid
+            WHERE message_search MATCH ? AND message_search.conversation_id=?
+                AND (m.occurred_at<? OR (m.occurred_at=? AND m.id<?))
+            ORDER BY m.occurred_at DESC,m.id DESC LIMIT ?`,
+        match, input.conversationId, afterTime, afterTime, input.after.id, limit + 1);
+    } else {
+        rows = all(`SELECT m.payload,snippet(message_search,2,'','',' … ',12) AS snippet
+            FROM message_search JOIN messages m ON m.rowid=message_search.rowid
+            WHERE message_search MATCH ? AND message_search.conversation_id=?
+            ORDER BY m.occurred_at DESC,m.id DESC LIMIT ?`, match, input.conversationId, limit + 1);
+    }
+    const hasMore = rows.length > limit;
+    const pageRows = rows.slice(0, limit);
+    const items = pageRows.map(row => ({ message: JSON.parse(row.payload), snippet: row.snippet.slice(0, 1024) }));
+    const last = items.at(-1)?.message;
+    return { items, hasMore, snapshot: current,
+        nextPosition: hasMore && last ? { occurredAt: last.occurredAt, id: last.id } : null };
+}
 function messageByProviderId(input) {
     assertValid('Id', input?.conversationId);
     assertValid('ProviderMessageId', input?.providerMessageId);
@@ -2316,6 +2377,7 @@ function dispatch(method, input) {
         case 'summary': return summary(input);
         case 'messages': return page(input);
         case 'messagePage': return messagePage(input);
+        case 'searchMessages': return searchMessages(input);
         case 'messageByProviderId': return messageByProviderId(input);
         case 'aiContext': return aiContext(input);
         case 'markRead': return transaction(() => markRead(input));

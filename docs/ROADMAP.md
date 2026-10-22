@@ -449,7 +449,7 @@ Windows/Termux con evidencia real o pendientes explícitos. Ningún doble transp
   citas y ediciones de mensajes disponibles; revocación WhatsApp redacta contenido
   y borra el adjunto. Telegram no aporta borrado general ni recibos para mensajes
   normales de bots; no se simulan. [Evidencia](F9.2-MULTIMEDIA-CANALES.md).
-- [ ] SQLite FTS para búsqueda del contenido con índices y páginas verificables.
+- [x] SQLite FTS5 para búsqueda de texto, captions y transcripciones con páginas ligadas a un snapshot verificable. [Evidencia F9.3](F9.3-BUSQUEDA-FTS.md).
 - [ ] Integrar ledger, binarios e índices en backup/restauración coherente y
   ensayar el ciclo completo. F9.1 ya registra el directorio en factory reset;
   la consistencia de backup queda para F9.4.

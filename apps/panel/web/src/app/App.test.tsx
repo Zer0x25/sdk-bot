@@ -130,6 +130,9 @@ function installApiMock(options: { empty?: boolean; listError?: boolean; paginat
     if (url.pathname === `/api/v1/conversations/${conversationId}`) {
       return jsonResponse({ conversation: projectedConversation(), channelCapabilities: capabilities, snapshot });
     }
+    if (url.pathname === `/api/v1/conversations/${conversationId}/search`) {
+      return jsonResponse({ items: [{ message: olderMessage, snippet: '<mark>pedido</mark> confirmado' }], nextCursor: null, snapshot });
+    }
     if (url.pathname === `/api/v1/conversations/${conversationId}/messages`) {
       if (options.pagination && url.searchParams.has('cursor')) {
         return jsonResponse({ items: [olderMessage], nextCursor: null, snapshot });
@@ -255,6 +258,26 @@ describe('inbox shell and real API integration', () => {
       expect(readRequest?.[1]?.method).toBe('POST');
       expect(JSON.parse(String(readRequest?.[1]?.body)).throughInboundSeq).toBe('1');
       expect(document.querySelector('.unread-count')).toBeNull();
+    });
+  });
+
+  it('searches messages in the selected conversation and renders snippets as plain text', async () => {
+    const fetchMock = installApiMock();
+    const user = userEvent.setup();
+    const { container } = renderApp(`/inbox/${conversationId}`);
+
+    await user.click(await screen.findByRole('button', { name: 'Buscar en el chat' }));
+    const searchInput = screen.getByPlaceholderText('Buscar palabras en este chat');
+    await user.type(searchInput, 'pedido');
+    expect(await screen.findByText('<mark>pedido</mark> confirmado')).toBeInTheDocument();
+    expect(container.querySelector('mark')).toBeNull();
+    await waitFor(() => {
+      const request = fetchMock.mock.calls.find(([input]) => {
+        const url = new URL(String(input), 'http://panel.local');
+        return url.pathname === `/api/v1/conversations/${conversationId}/search`;
+      });
+      expect(request).toBeDefined();
+      expect(new URL(String(request?.[0]), 'http://panel.local').searchParams.get('query')).toBe('pedido');
     });
   });
 

@@ -125,6 +125,7 @@ function createArchive(options = {}) {
         summary: input => call('summary', input),
         messages: input => call('messages', input),
         messagePage: input => call('messagePage', input),
+        searchMessages: input => call('searchMessages', input),
         messageByProviderId: input => call('messageByProviderId', input),
         attachmentTarget: input => call('attachmentTarget', input),
         attachment: input => call('attachment', input),

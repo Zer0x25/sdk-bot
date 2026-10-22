@@ -13,6 +13,8 @@ export type ConversationsResponse = Contract<'ConversationsResponse'>;
 export type ConversationResponse = Contract<'ConversationResponse'>;
 export type AccountsResponse = Contract<'AccountsResponse'>;
 export type MessagesResponse = Contract<'MessagesResponse'>;
+export type MessageSearchHit = Contract<'MessageSearchHit'>;
+export type MessageSearchResponse = Contract<'MessageSearchResponse'>;
 export type ReadResponse = Contract<'ReadResponse'>;
 export type SessionResponse = Contract<'SessionResponse'>;
 export type Operation = Contract<'Operation'>;
@@ -233,6 +235,12 @@ export function getMessages(conversationId: string, input: { cursor?: PageCursor
   const query = new URLSearchParams({ limit: '50' });
   if (input.cursor) query.set('cursor', input.cursor);
   return getJson<MessagesResponse>(`/conversations/${encodeURIComponent(conversationId)}/messages?${query.toString()}`, signal);
+}
+
+export function getSearchMessages(conversationId: string, input: { query: string; cursor?: PageCursor }, signal?: AbortSignal) {
+  const query = new URLSearchParams({ query: input.query, limit: '20' });
+  if (input.cursor) query.set('cursor', input.cursor);
+  return getJson<MessageSearchResponse>(`/conversations/${encodeURIComponent(conversationId)}/search?${query.toString()}`, signal);
 }
 
 export async function markConversationRead(conversationId: string, throughInboundSeq: Sequence, signal?: AbortSignal) {

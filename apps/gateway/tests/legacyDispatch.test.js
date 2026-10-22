@@ -79,7 +79,9 @@ test('v2 migration adds the outbox but leaves unreceipted historic rows untouche
     await archive.ingestBatch([telegramInput(account.id)]);
     await archive.close();
     const oldVersion = new DatabaseSync(f.dbPath);
-    oldVersion.exec(`DROP TABLE attachments; DROP INDEX messages_summary_period; DROP TABLE outbound_intents; DROP INDEX messages_ai_context; DROP TABLE message_sequence;
+    oldVersion.exec(`DROP TRIGGER IF EXISTS messages_search_insert; DROP TRIGGER IF EXISTS messages_search_update;
+        DROP TRIGGER IF EXISTS messages_search_delete; DROP TABLE IF EXISTS message_search;
+        DROP TABLE attachments; DROP INDEX messages_summary_period; DROP TABLE outbound_intents; DROP INDEX messages_ai_context; DROP TABLE message_sequence;
         ALTER TABLE messages DROP COLUMN archive_seq; ALTER TABLE conversations DROP COLUMN context_through_seq;
         DROP TABLE control_operations; DROP TABLE control_import_entries; DROP TABLE control_import_snapshots;
         DROP TABLE control_policy_snapshots; DROP TABLE control_import_runs; DROP TABLE control_import_migrations;
@@ -103,7 +105,7 @@ test('v2 migration adds the outbox but leaves unreceipted historic rows untouche
     oldVersion.close();
 
     archive = await f.open();
-    assert.equal((await archive.ready).schemaVersion, 12);
+    assert.equal((await archive.ready).schemaVersion, 13);
     assert.equal((await archive.diagnostics()).messages, 1);
     assert.equal((await archive.pendingLegacyDispatches()).length, 0);
 });

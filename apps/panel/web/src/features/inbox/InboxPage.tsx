@@ -16,11 +16,13 @@ import {
   PanelApiError,
   releaseConversation,
   sendConversationMessage,
+  getSearchMessages,
   takeoverConversation,
   updateConversationLifecycle,
   type ControlResponse,
   getMessages,
   type Message,
+  type MessageSearchHit,
   type Channel,
   type PageCursor
 } from './api';
@@ -40,6 +42,8 @@ export function InboxPage() {
   const [channel, setChannel] = useState<Channel | ''>('');
   const [searchInput, setSearchInput] = useState('');
   const [search, setSearch] = useState('');
+  const [messageSearchInput, setMessageSearchInput] = useState('');
+  const [messageSearchTerm, setMessageSearchTerm] = useState('');
   const [draft, setDraft] = useState('');
   const [optimisticMessages, setOptimisticMessages] = useState<Message[]>([]);
   const [uncertainSends, setUncertainSends] = useState<Array<{
@@ -75,12 +79,19 @@ export function InboxPage() {
     activeConversationId.current = conversationId;
     setIsAtLatest(true);
     readAttempt.current = null;
+    setMessageSearchInput('');
+    setMessageSearchTerm('');
   }, [conversationId]);
 
   useEffect(() => {
     const timer = window.setTimeout(() => setSearch(searchInput.trim()), 250);
     return () => window.clearTimeout(timer);
   }, [searchInput]);
+
+  useEffect(() => {
+    const timer = window.setTimeout(() => setMessageSearchTerm(messageSearchInput.trim()), 250);
+    return () => window.clearTimeout(timer);
+  }, [messageSearchInput]);
 
   const filters = useMemo(() => ({
     search: search || undefined,
@@ -119,8 +130,18 @@ export function InboxPage() {
     staleTime: 5_000
   });
 
+  const messageSearchQuery = useInfiniteQuery({
+    queryKey: ['inbox', 'message-search', conversationId, messageSearchTerm],
+    initialPageParam: undefined as PageCursor | undefined,
+    queryFn: ({ pageParam, signal }) => getSearchMessages(conversationId!, { query: messageSearchTerm, cursor: pageParam }, signal),
+    getNextPageParam: page => page.nextCursor ?? undefined,
+    enabled: Boolean(conversationId && messageSearchTerm),
+    staleTime: 0
+  });
+
   const conversations = conversationsQuery.data?.pages.flatMap(page => page.items) ?? [];
   const messagePages = messagesQuery.data?.pages ?? [];
+  const messageSearchHits: MessageSearchHit[] = messageSearchQuery.data?.pages.flatMap(page => page.items) ?? [];
   const liveMessagesQuery = useQuery({
     queryKey: ['inbox', 'live-messages', conversationId],
     queryFn: ({ signal }) => getMessages(conversationId!, {}, signal),
@@ -469,6 +490,13 @@ export function InboxPage() {
         messagePageCount={messagePages.length}
         messagesLoading={Boolean(conversationId) && messagesQuery.isLoading}
         messagesError={messageError}
+        messageSearchInput={messageSearchInput}
+        messageSearchTerm={messageSearchTerm}
+        messageSearchHits={messageSearchHits}
+        messageSearchLoading={messageSearchQuery.isLoading}
+        messageSearchError={messageSearchQuery.isError ? asError(messageSearchQuery.error) : null}
+        messageSearchHasMore={Boolean(messageSearchQuery.hasNextPage)}
+        messageSearchLoadingMore={messageSearchQuery.isFetchingNextPage}
         hasOlder={Boolean(messagesQuery.hasNextPage)}
         loadingOlder={messagesQuery.isFetchingNextPage}
         readError={readError}
@@ -485,6 +513,16 @@ export function InboxPage() {
               queryFn: () => getMessages(conversationId, {}),
               staleTime: 0
             }).catch(() => undefined);
+          }
+        }}
+        onMessageSearchInputChange={setMessageSearchInput}
+        onLoadMoreMessageSearch={() => messageSearchQuery.fetchNextPage()}
+        onRetryMessageSearch={() => {
+          const error = messageSearchQuery.error;
+          if (error instanceof PanelApiError && (error.code === 'CURSOR_EXPIRED' || error.code === 'DATA_EPOCH_MISMATCH')) {
+            void queryClient.resetQueries({ queryKey: ['inbox', 'message-search', conversationId, messageSearchTerm] });
+          } else {
+            void messageSearchQuery.refetch();
           }
         }}
         onRetryRead={sendReadCursor}

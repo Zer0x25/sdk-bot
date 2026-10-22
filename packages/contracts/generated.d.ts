@@ -129,6 +129,22 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/conversations/{conversationId}/search": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get: operations["searchConversationMessages"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/conversations/{conversationId}/takeover": {
         parameters: {
             query?: never;
@@ -552,6 +568,29 @@ export interface components {
             /** @constant */
             type: "oversized";
         };
+        MessageSearchHit: {
+            message: components["schemas"]["Message"];
+            /**
+             * Format: unicode-text
+             * @description Fragmento de texto plano; nunca HTML.
+             */
+            snippet: string;
+        };
+        MessageSearchQuery: {
+            cursor?: components["schemas"]["PageCursor"];
+            limit?: components["schemas"]["PageLimit"];
+            /**
+             * Format: unicode-text
+             * @description Términos literales; la API normaliza y limita el número de términos.
+             */
+            query: string;
+        };
+        /** @description Página FTS estable ligada a la época y secuencia exactas del archivo. */
+        MessageSearchResponse: {
+            items: components["schemas"]["MessageSearchHit"][];
+            nextCursor: components["schemas"]["PageCursor"] | null;
+            snapshot: components["schemas"]["EventCursor"];
+        };
         MessagesQuery: {
             cursor?: components["schemas"]["PageCursor"];
             limit?: components["schemas"]["PageLimit"];
@@ -606,6 +645,11 @@ export interface components {
             uncertainOutboundCount: number;
         };
         ProviderMessageId: string;
+        /**
+         * Format: unicode-text
+         * @description Términos literales; la API normaliza y limita el número de términos.
+         */
+        query: string;
         /** @description Cursor monotónico del actor y chat; no recibo del proveedor. */
         ReadRequest: {
             throughInboundSeq: components["schemas"]["Sequence"];
@@ -1114,6 +1158,39 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["TakeoverConfirmedResponse"];
+                };
+            };
+            401: components["responses"]["401"];
+            403: components["responses"]["403"];
+            404: components["responses"]["404"];
+            409: components["responses"]["409"];
+            410: components["responses"]["410"];
+            422: components["responses"]["422"];
+            503: components["responses"]["503"];
+        };
+    };
+    searchConversationMessages: {
+        parameters: {
+            query: {
+                cursor?: components["schemas"]["PageCursor"];
+                limit?: components["schemas"]["PageLimit"];
+                query: components["schemas"]["query"];
+            };
+            header?: never;
+            path: {
+                conversationId: components["schemas"]["Id"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Resultados FTS paginados y ligados a un snapshot inmutable del archivo. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["MessageSearchResponse"];
                 };
             };
             401: components["responses"]["401"];

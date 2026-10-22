@@ -452,6 +452,7 @@ test('proxy valida cada respuesta v1 con su contrato y no deja pasar rutas sin e
     assert.equal(responseContract('GET', '/v1/summary', 200), 'SummaryResponse');
     assert.equal(responseContract('GET', '/v1/conversations/00000000-0000-4000-8000-000000000001', 200), 'ConversationResponse');
     assert.equal(responseContract('GET', '/v1/conversations/00000000-0000-4000-8000-000000000001/messages', 200), 'MessagesResponse');
+    assert.equal(responseContract('GET', '/v1/conversations/00000000-0000-4000-8000-000000000001/search', 200), 'MessageSearchResponse');
     assert.equal(responseContract('GET', '/v1/conversations/00000000-0000-4000-8000-000000000001/pending-resume', 200), 'PendingResumeResponse');
     assert.equal(responseContract('GET', '/v1/operations/00000000-0000-4000-8000-000000000001', 200), 'Operation');
     assert.equal(responseContract('POST', '/v1/conversations/00000000-0000-4000-8000-000000000001/messages', 202), 'SendMessageResponse');

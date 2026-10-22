@@ -153,6 +153,17 @@ button:focus-visible, a:focus-visible, [tabindex]:focus-visible {
 .thread-contact h2 { margin: 0 0 2px; font-size: 14px; font-weight: 680; }
 .thread-contact p { overflow: hidden; margin: 0; color: var(--muted); font-size: 11px; text-overflow: ellipsis; white-space: nowrap; }
 .thread-actions { display: flex; gap: 7px; }
+.icon-button.is-active { border-color: #b6d8c5; color: #256547; background: #eef8f2; }
+.thread-search-panel { display: grid; max-height: 330px; gap: 9px; overflow: auto; border-bottom: 1px solid var(--line); padding: 12px 22px; background: #fbfdfc; }
+.thread-search-field { display: flex; min-height: 38px; align-items: center; gap: 8px; border: 1px solid var(--line); border-radius: 8px; padding: 0 9px; color: var(--muted); background: white; }
+.thread-search-field:focus-within { border-color: #98cdb8; box-shadow: 0 0 0 3px rgb(80 173 146 / 12%); }
+.thread-search-field input { width: 100%; min-width: 0; border: 0; outline: 0; color: var(--ink); background: transparent; font-size: 12px; }
+.thread-search-hint { margin: 0; color: var(--muted); font-size: 11px; }
+.thread-search-results { display: grid; max-height: 210px; gap: 6px; overflow: auto; margin: 0; padding: 0; list-style: none; }
+.thread-search-results li { display: grid; gap: 4px; border: 1px solid var(--line); border-radius: 8px; padding: 8px 10px; background: white; }
+.thread-search-meta { color: var(--muted); font-size: 10px; }
+.thread-search-results p { overflow-wrap: anywhere; margin: 0; color: var(--ink-secondary); font-size: 11px; line-height: 1.5; }
+.thread-search-more { justify-self: start; }
 .thread-control-toolbar { display: flex; min-height: 48px; align-items: center; justify-content: space-between; gap: 12px; border-bottom: 1px solid var(--line); padding: 7px 22px; background: #fbfdfc; }
 .thread-control-state { display: inline-flex; min-width: 0; align-items: center; gap: 7px; color: var(--ink-secondary); font-size: 11px; font-weight: 650; }
 .thread-control-buttons { display: flex; flex-wrap: wrap; justify-content: flex-end; gap: 7px; }

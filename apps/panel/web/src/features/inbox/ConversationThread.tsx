@@ -1,8 +1,8 @@
-import { useLayoutEffect, useRef } from 'react';
+import { useEffect, useLayoutEffect, useRef, useState } from 'react';
 import type { KeyboardEvent } from 'react';
 import { Link } from 'react-router-dom';
 import { ArrowLeft, Bell, Bot, MessageSquareText, Search, SendHorizontal, UserRound } from 'lucide-react';
-import type { Account, Actor, Conversation, Message, PendingResumeResponse } from './api';
+import type { Account, Actor, Conversation, Message, MessageSearchHit, PendingResumeResponse } from './api';
 import { PanelApiError } from './api';
 
 interface Props {
@@ -14,6 +14,13 @@ interface Props {
   messagePageCount: number;
   messagesLoading: boolean;
   messagesError: Error | null;
+  messageSearchInput: string;
+  messageSearchTerm: string;
+  messageSearchHits: MessageSearchHit[];
+  messageSearchLoading: boolean;
+  messageSearchError: Error | null;
+  messageSearchHasMore: boolean;
+  messageSearchLoadingMore: boolean;
   hasOlder: boolean;
   loadingOlder: boolean;
   readError: Error | null;
@@ -23,6 +30,9 @@ interface Props {
   onLoadOlder(): Promise<unknown>;
   onRetryDetail(): void;
   onRetryMessages(): void;
+  onMessageSearchInputChange(value: string): void;
+  onLoadMoreMessageSearch(): Promise<unknown>;
+  onRetryMessageSearch(): void;
   onRetryRead(): void;
   actor?: Actor;
   account?: Account;
@@ -92,6 +102,12 @@ function formatTime(timestamp: string) {
   return new Intl.DateTimeFormat('es-MX', { hour: '2-digit', minute: '2-digit' }).format(date);
 }
 
+function formatSearchTime(timestamp: string) {
+  const date = new Date(timestamp);
+  if (Number.isNaN(date.getTime())) return '';
+  return new Intl.DateTimeFormat('es-CL', { dateStyle: 'short', timeStyle: 'short' }).format(date);
+}
+
 function deliveryLabel(message: Message) {
   if (message.direction !== 'outbound') return '';
   if (message.deliveryStatus === 'queued') return 'En cola';
@@ -114,10 +130,14 @@ function ErrorPanel({ error, onRetry, title }: { error: Error; onRetry(): void; 
 }
 
 export function ConversationThread(props: Props) {
+  const [searchOpen, setSearchOpen] = useState(false);
   const {
     conversationId, conversation, detailLoading, detailError, messages, messagePageCount,
-    messagesLoading, messagesError, hasOlder, loadingOlder, readError, newMessagesCount,
+    messagesLoading, messagesError, messageSearchInput, messageSearchTerm, messageSearchHits,
+    messageSearchLoading, messageSearchError, messageSearchHasMore, messageSearchLoadingMore,
+    hasOlder, loadingOlder, readError, newMessagesCount,
     onMessagesSeen, onAtLatestChange, onLoadOlder, onRetryDetail, onRetryMessages, onRetryRead,
+    onMessageSearchInputChange, onLoadMoreMessageSearch, onRetryMessageSearch,
     actor, account, canTakeover, canRelease, canResolve, canReopen, canSend, controlBusy, controlError,
     controlNotice, releaseOptionsOpen, pendingResume, pendingResumeLoading, pendingResumeError, selectedPendingIds,
     onTakeover, onRelease, onOpenPendingResume, onTogglePendingResume, onReleaseFutureOnly,
@@ -132,6 +152,11 @@ export function ConversationThread(props: Props) {
   const atLatestRef = useRef(true);
   const previousScroll = useRef({ height: 0, top: 0 });
   const messageById = new Map(messages.map(message => [message.id, message]));
+
+  useEffect(() => {
+    setSearchOpen(false);
+    onMessageSearchInputChange('');
+  }, [conversationId, onMessageSearchInputChange]);
 
   function updatePosition() {
     const container = historyRef.current;
@@ -230,10 +255,55 @@ export function ConversationThread(props: Props) {
           </div>
         </div>
         <div className="thread-actions">
-          <button className="icon-button" type="button" aria-label="Buscar en el chat" disabled><Search aria-hidden="true" size={19} /></button>
+          <button className={`icon-button${searchOpen ? ' is-active' : ''}`} type="button" aria-label="Buscar en el chat"
+            aria-expanded={searchOpen} disabled={!conversationId} onClick={() => {
+              setSearchOpen(open => {
+                if (open) onMessageSearchInputChange('');
+                return !open;
+              });
+            }}><Search aria-hidden="true" size={19} /></button>
           <button className="icon-button" type="button" aria-label="Notificaciones del chat" disabled><Bell aria-hidden="true" size={19} /></button>
         </div>
       </header>
+
+      {conversationId && searchOpen && (
+        <section className="thread-search-panel" role="search" aria-label="Buscar mensajes de esta conversación">
+          <label className="thread-search-field" htmlFor="thread-message-search">
+            <Search aria-hidden="true" size={16} />
+            <input id="thread-message-search" type="search" maxLength={256} value={messageSearchInput}
+              placeholder="Buscar palabras en este chat" onChange={event => onMessageSearchInputChange(event.target.value)} />
+            {messageSearchInput && <button className="text-button" type="button" onClick={() => onMessageSearchInputChange('')}>Limpiar</button>}
+          </label>
+          {messageSearchInput.trim().length > 0 && messageSearchInput.trim() !== messageSearchTerm && (
+            <p className="thread-search-hint" role="status">Preparando búsqueda…</p>
+          )}
+          {messageSearchTerm && messageSearchInput.trim() === messageSearchTerm && (
+            <>
+              {messageSearchLoading && <p className="thread-search-hint" role="status">Buscando mensajes…</p>}
+              {messageSearchError && <ErrorPanel error={messageSearchError} onRetry={onRetryMessageSearch} title="No se pudo buscar" />}
+              {!messageSearchLoading && !messageSearchError && messageSearchHits.length === 0 && (
+                <p className="thread-search-hint" role="status">No hay mensajes que coincidan.</p>
+              )}
+              {messageSearchHits.length > 0 && (
+                <ul className="thread-search-results" aria-label="Coincidencias">
+                  {messageSearchHits.map(hit => (
+                    <li key={hit.message.id}>
+                      <span className="thread-search-meta">{authorNames[hit.message.authorKind]} · {formatSearchTime(hit.message.occurredAt)}</span>
+                      <p>{hit.snippet}</p>
+                    </li>
+                  ))}
+                </ul>
+              )}
+              {messageSearchHasMore && (
+                <button className="text-button thread-search-more" type="button" disabled={messageSearchLoadingMore}
+                  onClick={() => { void onLoadMoreMessageSearch(); }}>
+                  {messageSearchLoadingMore ? 'Cargando…' : 'Cargar más resultados'}
+                </button>
+              )}
+            </>
+          )}
+        </section>
+      )}
 
       {!conversationId && (
         <div className="thread-empty" role="status">

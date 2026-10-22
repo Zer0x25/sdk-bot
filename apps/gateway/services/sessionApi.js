@@ -5,6 +5,7 @@ const { assertValid, validate } = require('@sdk-bot/contracts');
 const { BoundaryError } = require('../lib/httpBoundary');
 const { requireCapability } = require('../lib/panelContext');
 const { isHandoffActive } = require('./contactsRepository');
+const { normalizeSearchQuery } = require('./conversations/searchQuery');
 
 const PAGE_SCAN = 250;
 const PAGE_SCAN_MAX = 5000;
@@ -14,7 +15,7 @@ const CAPABILITIES = {
 };
 
 function capabilityFor(method, pathname) {
-    if (method === 'GET' && (/^\/v1\/(session|accounts|profiles|summary|conversations(?:\/[^/]+(?:\/(?:messages|pending-resume))?)?|operations\/[^/]+|events)$/.test(pathname)
+    if (method === 'GET' && (/^\/v1\/(session|accounts|profiles|summary|conversations(?:\/[^/]+(?:\/(?:messages|pending-resume|search))?)?|operations\/[^/]+|events)$/.test(pathname)
         || /^\/v1\/attachments\/[0-9a-f-]{36}$/.test(pathname))) return 'conversations:read';
     if (method === 'POST' && /^\/v1\/conversations\/[^/]+\/(takeover|release)$/.test(pathname)) return 'control:write';
     if (method === 'POST' && /^\/v1\/conversations\/[^/]+\/messages$/.test(pathname)) return 'messages:send';
@@ -42,7 +43,8 @@ function parseQuery(req, contract) {
     const url = currentUrl(req);
     const allowed = contract === 'ConversationsQuery'
         ? new Set(['cursor', 'limit', 'channel', 'accountId', 'automationMode', 'lifecycle', 'unreadOnly', 'search'])
-        : contract === 'SummaryQuery' ? new Set(['from', 'to']) : new Set(['cursor', 'limit']);
+        : contract === 'SummaryQuery' ? new Set(['from', 'to'])
+            : contract === 'MessageSearchQuery' ? new Set(['query', 'cursor', 'limit']) : new Set(['cursor', 'limit']);
     const values = new Map();
     for (const [key, value] of url.searchParams) {
         if (!allowed.has(key) || values.has(key)) throw invalid();
@@ -59,7 +61,7 @@ function parseQuery(req, contract) {
         if (!/^[1-9][0-9]*$/.test(raw) || !Number.isSafeInteger(Number(raw))) throw invalid();
         result.limit = Number(raw);
     }
-    for (const key of ['channel', 'accountId', 'automationMode', 'lifecycle', 'search']) {
+    for (const key of ['channel', 'accountId', 'automationMode', 'lifecycle', 'search', 'query']) {
         if (values.has(key)) result[key] = values.get(key);
     }
     if (values.has('unreadOnly')) {
@@ -529,7 +531,10 @@ function accountStatus(statusValue) {
 
 function archiveBoundary(error) {
     if (error instanceof BoundaryError) return error;
-    if (['INVALID_LIMIT', 'INVALID_CHANNEL', 'INVALID_READ_CURSOR', 'INVALID_INPUT', 'INVALID_SUMMARY_PERIOD'].includes(error?.code)) return invalid();
+    if (['INVALID_LIMIT', 'INVALID_CHANNEL', 'INVALID_READ_CURSOR', 'INVALID_INPUT', 'INVALID_SUMMARY_PERIOD',
+        'INVALID_SEARCH_QUERY', 'SEARCH_TOO_COMPLEX'].includes(error?.code)) return invalid('La búsqueda debe incluir entre 1 y 32 términos de texto.');
+    if (error?.code === 'CURSOR_EXPIRED') return new BoundaryError(410, 'CURSOR_EXPIRED', 'El archivo cambió durante la búsqueda; inicia la búsqueda de nuevo.');
+    if (error?.code === 'DATA_EPOCH_MISMATCH') return new BoundaryError(409, 'DATA_EPOCH_MISMATCH', 'El archivo cambió de época; inicia la búsqueda de nuevo.');
     const pendingResumeErrors = {
         PENDING_RESUME_NOT_AVAILABLE: 'La conversación no está disponible para reanudar entradas pendientes.',
         PENDING_RESUME_SELECTION_STALE: 'La lista cambió. Actualiza las entradas pendientes y vuelve a seleccionarlas.',
@@ -742,6 +747,39 @@ function createSessionApi(getPolicy, archive, getContacts = () => ({}), getChann
                 const result = await archive.pendingResumeMessages({ conversationId });
                 if (!result) throw new BoundaryError(404, 'NOT_FOUND', 'Conversación no encontrada.');
                 return send(res, 200, assertValid('PendingResumeResponse', result), context.requestId);
+            }
+            const messageSearch = /^\/v1\/conversations\/([^/]+)\/search$/.exec(pathname);
+            if (req.method === 'GET' && messageSearch) {
+                if (!archive) throw new BoundaryError(503, 'SERVICE_UNAVAILABLE', 'Archivo de conversaciones no disponible.');
+                const conversationId = conversationPathId(messageSearch[1]);
+                const query = parseQuery(req, 'MessageSearchQuery');
+                const limit = query.limit ?? 20;
+                const normalized = normalizeSearchQuery(query.query);
+                const scope = stableHash({ actorId: context.actor.id, conversationId, terms: normalized.terms, limit,
+                    order: 'occurredAt,id:desc' });
+                /** @type {{occurredAt:string;id:string} | undefined} */
+                let searchAfter;
+                /** @type {import('@sdk-bot/contracts').Contract<'EventCursor'> | undefined} */
+                let expectedSnapshot;
+                if (query.cursor) {
+                    const cursor = decodeCursor(query.cursor, 'message-search');
+                    if (cursor.scope !== scope) throw invalid('El cursor pertenece a otra búsqueda o conversación.');
+                    if (!cursor.snapshot || !validate('EventCursor', cursor.snapshot).valid
+                        || cursor.epoch !== cursor.snapshot.dataEpoch) throw invalid('Cursor de búsqueda inválido.');
+                    if (!cursor.position || !validate('Timestamp', cursor.position.occurredAt).valid
+                        || !validate('Id', cursor.position.id).valid) throw invalid('Cursor de búsqueda inválido.');
+                    searchAfter = cursor.position;
+                    expectedSnapshot = cursor.snapshot;
+                }
+                const row = await archive.conversationView({ conversationId, actorId: context.actor.id });
+                if (!row) throw new BoundaryError(404, 'NOT_FOUND', 'Conversación no encontrada.');
+                const page = await archive.searchMessages({ conversationId, query: normalized.terms.join(' '), limit,
+                    ...(searchAfter && expectedSnapshot ? { after: searchAfter, expectedSnapshot } : {}) });
+                const nextCursor = page.nextPosition ? encodeCursor({ v: 1, kind: 'message-search',
+                    epoch: page.snapshot.dataEpoch, snapshot: page.snapshot, scope, position: page.nextPosition }) : null;
+                return send(res, 200, assertValid('MessageSearchResponse', {
+                    items: page.items, nextCursor, snapshot: page.snapshot
+                }), context.requestId);
             }
             const messages = /^\/v1\/conversations\/([^/]+)\/messages$/.exec(pathname);
             if (req.method === 'GET' && messages) {

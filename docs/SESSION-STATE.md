@@ -1278,3 +1278,23 @@ Cierres históricos: commits F2C.1/F2C.2/F2D/F2E.1 están en el log local; F2B.3
   tests/conversationMultimedia.test.js` (4/4); `git diff --check`.
 - Commit local de la unidad creado. No publicar.
 - Siguiente punto: F9.3, búsqueda de contenido con FTS5 y paginación verificable.
+
+## Fase 9.3 — Búsqueda FTS5 — 2026-10-22
+
+- SQLite v13 crea el índice FTS5, lo rellena al migrar desde v12 y sincroniza
+  altas, ediciones, transcripciones, revocaciones y purgas mediante triggers.
+  Indexa texto, captions y transcripciones; excluye cuerpos oversized y borrados.
+- `GET /v1/conversations/{id}/search` requiere `conversations:read` y comprueba
+  acceso al hilo antes de buscar. Normaliza los términos como texto literal; no
+  permite inyectar operadores FTS. Cursor HMAC ligado a actor, hilo, consulta,
+  límite, época y secuencia; SQLite valida el snapshot en la misma llamada que
+  consulta la página. Una escritura durante la paginación devuelve
+  `CURSOR_EXPIRED`; la bandeja permite reiniciar la búsqueda. Los snippets se
+  muestran como texto plano.
+- Evidencia: [F9.3-BUSQUEDA-FTS.md](F9.3-BUSQUEDA-FTS.md).
+- `npm run check` raíz: contratos 17/17. `cd apps/gateway && npm run check`:
+  lint, typecheck, Panel 40/40, build, integración 1/1 y Gateway 346/346.
+  `git diff --check` limpio. Sin proveedores reales.
+- Commit local de la unidad creado. No publicar.
+- Siguiente punto: F9.4, integrar ledger, binarios e índices en backup/restauración
+  coherente y ensayar el ciclo completo.

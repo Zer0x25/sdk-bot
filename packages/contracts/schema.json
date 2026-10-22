@@ -1056,6 +1056,27 @@
       "required": [],
       "additionalProperties": false
     },
+    "MessageSearchQuery": {
+      "type": "object",
+      "properties": {
+        "query": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 256,
+          "format": "unicode-text",
+          "x-maxUtf8Bytes": 1024,
+          "description": "Términos literales; la API normaliza y limita el número de términos."
+        },
+        "cursor": {
+          "$ref": "#/$defs/PageCursor"
+        },
+        "limit": {
+          "$ref": "#/$defs/PageLimit"
+        }
+      },
+      "required": ["query"],
+      "additionalProperties": false
+    },
     "SessionResponse": {
       "type": "object",
       "properties": {
@@ -1185,6 +1206,41 @@
       ],
       "additionalProperties": false,
       "description": "Página en orden cronológico estable (occurredAt,id), retención por ingestedAt."
+    },
+    "MessageSearchHit": {
+      "type": "object",
+      "properties": {
+        "message": { "$ref": "#/$defs/Message" },
+        "snippet": {
+          "type": "string",
+          "maxLength": 1024,
+          "format": "unicode-text",
+          "x-maxUtf8Bytes": 4096,
+          "description": "Fragmento de texto plano; nunca HTML."
+        }
+      },
+      "required": ["message", "snippet"],
+      "additionalProperties": false
+    },
+    "MessageSearchResponse": {
+      "type": "object",
+      "properties": {
+        "items": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/MessageSearchHit" },
+          "maxItems": 100
+        },
+        "nextCursor": {
+          "anyOf": [
+            { "$ref": "#/$defs/PageCursor" },
+            { "type": "null" }
+          ]
+        },
+        "snapshot": { "$ref": "#/$defs/EventCursor" }
+      },
+      "required": ["items", "nextCursor", "snapshot"],
+      "additionalProperties": false,
+      "description": "Página FTS estable ligada a la época y secuencia exactas del archivo."
     },
     "TakeoverRequest": {
       "type": "object",
