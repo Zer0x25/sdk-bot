@@ -51,9 +51,10 @@ lista e historial reales. F4.3 añade conexión SSE, actualización paginada sin
 huecos, ancla de scroll, contador de novedades, reconexión y resync. Evidencia:
 [F4.3](F4.3-STREAM-INBOX.md); BUG-070 cerrado.
 BUG-043 quedó cerrado con una guarda de reintento ligada a la cuenta Telegram de
-origen. BUG-050 conserva salidas ambiguas; BUG-051 es puerta antes de usar archivos
-preexistentes reales. La atribución IA/operador queda en F5 junto a su outbox.
-Sin canales reales ni migración.
+origen. BUG-050 conserva salidas ambiguas. BUG-051 ya ofrece un informe y revisión
+offline; completar esa revisión sigue siendo puerta antes de migrar un archivo
+preexistente real. La atribución IA/operador queda en F5 junto a su outbox. Sin
+canales reales ni migración.
 
 ## Alcance y entregas
 
@@ -190,7 +191,8 @@ se presenta como aceptación live de proveedor/STT.
   está conectado, ACK persistente y espera STT. Prueba cae entre commit y wake,
   reinicia y confirma una entrega y ningún redespacho después del ACK. El retry es
   at-least-once ante efectos/ACK ambiguos (BUG-050); la migración no reencola filas
-  pre-v3 (BUG-051). [Evidencia](REPLAY-LEGACY-F2D.md).
+  pre-v3. El diagnóstico y la revisión offline de esas filas se cubren en
+  [BUG-051](BUG-051-RECONCILIACION-LEGACY.md), sin auto-replay.
 - [x] Persistir entrada live aunque IA esté pausada, ignorando o en handoff/human;
   WA F2B.2 y TG F2C.2 archivan antes del pipeline. Chats administrativos/grupos
   quedan fuera del archivo de clientes; los textos admin usan el inbox separado

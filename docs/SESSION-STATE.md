@@ -80,8 +80,9 @@ respuesta humana desde el chat y retorno seguro a IA con contexto actualizado.
   el pump reconstruye `StandardMessage` cuando el canal abre, trata eventos como
   wake-up y persiste ACK. Audio espera STT; respond mantiene pendiente el ACK hasta
   completar debounce/IA. BUG-045 cerrado para el corte post-commit→handler;
-  BUG-050 mantiene abierta la idempotencia de efectos externos y BUG-051 la
-  reconciliación antes de desplegar sobre archivos reales. Evidencia:
+  BUG-050 mantiene abierta la idempotencia de efectos externos. BUG-051 ya tiene
+  diagnóstico y revisión offline; completar la revisión sigue siendo obligatorio
+  antes de desplegar sobre archivos reales. Evidencia:
   [REPLAY-LEGACY-F2D](REPLAY-LEGACY-F2D.md).
 - F2E.1: `sendMessage` de WA archiva la aceptación del proveedor con su ID y el eco
   `fromMe` converge en ese mensaje; la prueba cubre el eco antes del retorno. TG
@@ -682,7 +683,8 @@ ausencia de Vite/CA. Commit separado de la UI.
 ## Pendientes materiales
 
 - F5 aborda toma de control, cancelación de IA, contexto y outbox; BUG-046/050
-  son puertas de esa entrega y BUG-051 antes de migrar archivos preexistentes.
+  son puertas de esa entrega. BUG-051 mantiene una revisión obligatoria antes de
+  migrar archivos preexistentes; su herramienta de informe ya está implementada.
 - BUG-010 sigue parcial; BUG-035/037 quedan para F8. Windows/Termux y canales reales
   no están validados; la historia previa que conservan los proveedores es limitada.
 - BUG-024 antes de operadores limitados; BUG-014 antes de Python paralelo.
@@ -1616,3 +1618,21 @@ Cierres históricos: commits F2C.1/F2C.2/F2D/F2E.1 están en el log local; F2B.3
   sin publicar. Siguiente pendiente que requiere atención antes de migrar un
   archivo legacy real: BUG-051; la ruta normal de F6.4 permanece cerrada y esta
   prueba offline no altera ni reabre su aceptación.
+
+## Cierre BUG-051 — Diagnóstico y revisión offline — 2026-10-22
+
+- `conversations:legacy-reconcile` lee SQLite v2 y v3–v17 con `immutable=1`,
+  requiere Gateway detenido y rechaza archivos con WAL/SHM/journal. El informe
+  vincula candidatos al SHA-256 y no expone texto ni identidades remotas.
+- La revisión debe cubrir cada ID e incluir decisión, referencia de evidencia,
+  revisor y fecha UTC. Marca ausencia como entrega desconocida; `confirmed_not_dispatched`
+  queda identificado para una acción posterior. El comando nunca muta el archivo ni
+  encola/reproduce mensajes.
+- La fixture pre-v3 se reporta y revisa antes de abrir el migrador; el schema queda
+  v2 tras ambas lecturas y, luego de migrar, no aparecen despachos históricos.
+  Ningún archivo runtime real fue leído.
+- Verificación: `legacyDispatch.test.js` 8/8 y `cd apps/gateway && npm run check`
+  en Node 24.21.0: lint/typecheck limpios, Panel 44/44, build/servido 1/1 y
+  Gateway 399/399; `git diff --check` limpio. Evidencia:
+  [BUG-051](BUG-051-RECONCILIACION-LEGACY.md). La revisión de un archivo real
+  sigue siendo puerta operativa.

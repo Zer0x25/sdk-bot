@@ -5,9 +5,11 @@ const assert = require('node:assert/strict');
 const fs = require('node:fs/promises');
 const os = require('node:os');
 const path = require('node:path');
+const { spawnSync } = require('node:child_process');
 const { DatabaseSync } = require('node:sqlite');
 const { createArchive } = require('../services/conversations');
 const { createLegacyDispatchPump } = require('../services/conversations/legacyDispatch');
+const { buildReport, validateReconciliation } = require('../scripts/legacy-dispatch-reconcile');
 
 const envelope = (text = 'mensaje durable') => ({ waitForTranscription: false, message: {
     channel: 'telegram', remoteId: 'telegram:-77', rawId: '-77', text, transcript: '', isAudio: false,
@@ -106,10 +108,72 @@ test('v2 migration adds the outbox but leaves unreceipted historic rows untouche
         PRAGMA user_version=2;`);
     oldVersion.close();
 
+    const script = path.join(__dirname, '../scripts/legacy-dispatch-reconcile.js');
+    const lockPath = path.join(path.dirname(f.dbPath), '.gateway.lock');
+    const env = { ...process.env, SDK_GATEWAY_LOCK_PATH: lockPath };
+    await fs.writeFile(`${f.dbPath}-wal`, 'uncheckpointed-fixture');
+    const blockedBySidecar = spawnSync(process.execPath, [script, '--db', f.dbPath], { encoding: 'utf8', env });
+    assert.equal(blockedBySidecar.status, 2);
+    assert.equal(JSON.parse(blockedBySidecar.stdout).blockers[0].code, 'ARCHIVE_NOT_QUIESCENT');
+    await fs.rm(`${f.dbPath}-wal`);
+    const candidateReport = spawnSync(process.execPath, [script, '--db', f.dbPath], { encoding: 'utf8', env });
+    assert.equal(candidateReport.status, 0, candidateReport.stderr);
+    const report = JSON.parse(candidateReport.stdout);
+    assert.equal(report.source.schemaVersion, 2);
+    assert.equal(report.status, 'review_required');
+    assert.equal(report.replayPerformed, false);
+    assert.equal(report.writesPerformed, false);
+    assert.equal(report.counts.candidates, 1);
+    assert.match(report.candidates[0].messageId, /^[0-9a-f-]{36}$/);
+    assert.equal(report.candidates[0].deliveryState, 'unknown');
+    assert.ok(!candidateReport.stdout.includes('mensaje durable'));
+
+    const reconciliationPath = path.join(path.dirname(f.dbPath), 'review.json');
+    const reconciliation = report.reviewTemplate;
+    reconciliation.reviewedBy = 'test-reviewer';
+    reconciliation.reviewedAt = '2026-10-22T12:00:00.000Z';
+    reconciliation.decisions[0] = { messageId: reconciliation.decisions[0].messageId,
+        disposition: 'confirmed_not_dispatched', evidenceRef: 'incident-review:BUG-051-fixture' };
+    await fs.writeFile(reconciliationPath, JSON.stringify(reconciliation));
+    const reconciled = spawnSync(process.execPath, [script, '--db', f.dbPath, '--reconciliation', reconciliationPath], { encoding: 'utf8', env });
+    assert.equal(reconciled.status, 0, `${reconciled.stderr}\n${reconciled.stdout}`);
+    const reconciledReport = JSON.parse(reconciled.stdout);
+    assert.equal(reconciledReport.status, 'reconciled');
+    assert.equal(reconciledReport.counts.confirmedNotDispatched, 1);
+    assert.equal(reconciledReport.candidates[0].review.evidenceRef, 'incident-review:BUG-051-fixture');
+    assert.equal(reconciledReport.reconciliation.reviewedBy, 'test-reviewer');
+    assert.equal(reconciledReport.reconciliation.reviewedAt, '2026-10-22T12:00:00.000Z');
+    assert.equal(reconciledReport.replayPerformed, false);
+    const stillV2 = new DatabaseSync(f.dbPath);
+    assert.equal(stillV2.prepare('PRAGMA user_version').get().user_version, 2);
+    stillV2.close();
+
     archive = await f.open();
     assert.equal((await archive.ready).schemaVersion, 17);
     assert.equal((await archive.diagnostics()).messages, 1);
     assert.equal((await archive.pendingLegacyDispatches()).length, 0);
+});
+
+test('BUG-051 reconciliation requires complete source-bound decisions and evidence references', () => {
+    const source = { fileName: 'archive.db', sizeBytes: 10, sha256: 'a'.repeat(64) };
+    const candidates = [{ messageId: 'message-1', deliveryState: 'unknown' }];
+    const review = { schemaVersion: 1, sourceSha256: source.sha256, reviewedBy: 'operator', reviewedAt: '2026-10-22T12:00:00.000Z',
+        decisions: [{ messageId: 'message-1', disposition: 'confirmed_processed', evidenceRef: 'review:case-1' }] };
+    assert.equal(validateReconciliation(review, source.sha256, candidates).decisions.get('message-1').disposition, 'confirmed_processed');
+    assert.throws(() => validateReconciliation({ ...review, sourceSha256: 'b'.repeat(64) }, source.sha256, candidates),
+        { code: 'RECONCILIATION_MISMATCH' });
+    assert.throws(() => validateReconciliation({ ...review, decisions: [] }, source.sha256, candidates),
+        { code: 'RECONCILIATION_MISMATCH' });
+    assert.throws(() => validateReconciliation({ ...review, decisions: [{ ...review.decisions[0], evidenceRef: ' ' }] }, source.sha256, candidates),
+        { code: 'RECONCILIATION_MISMATCH' });
+    assert.throws(() => validateReconciliation({ ...review, reviewedAt: 'yesterday' }, source.sha256, candidates),
+        { code: 'RECONCILIATION_MISMATCH' });
+    const report = buildReport({ source, schemaVersion: 2, candidates, reconciliationFile: null, generatedAt: '2026-10-22T12:00:00.000Z' });
+    assert.equal(report.status, 'review_required');
+    assert.equal(report.candidates[0].deliveryState, 'unknown');
+    assert.equal(report.replayPerformed, false);
+    assert.equal(report.reviewTemplate.reviewedBy, '');
+    assert.deepEqual(report.reviewTemplate.decisions[0], { messageId: 'message-1', disposition: 'unreviewed', evidenceRef: '' });
 });
 
 test('BUG-076 keeps only replay names and expires them after the 24-hour window', async t => {

@@ -43,10 +43,13 @@ intenciones y la idempotencia de salidas humanas/IA. El inbox durable de comando
 admin es BUG-046.
 
 La migración v2→v3 no puede saber si mensajes anteriores ya llegaron al handler;
-por eso no los reencola a ciegas. Este repositorio aún no ha migrado un archivo de
-conversaciones real. Antes de desplegar F2D sobre un archivo preexistente con
-usuarios, se necesita una reconciliación explícita de esas filas antiguas
-(BUG-051).
+por eso no los reencola a ciegas. `conversations:legacy-reconcile` produce un
+informe offline y un formato de revisión ligado al hash de una copia cerrada. La
+revisión clasifica cada ausencia como no despachada, ya procesada o incierta; no
+escribe el archivo ni encola mensajes. Antes de desplegar sobre un archivo real,
+la revisión es obligatoria y cualquier replay debe ser una acción posterior
+explícita. Este repositorio aún no ha migrado un archivo runtime real. Ver
+[BUG-051](BUG-051-RECONCILIACION-LEGACY.md).
 
 ## Verificación
 
@@ -56,6 +59,9 @@ conexión, reintento de handler, ACK diferido de debounce/IA, espera/promoción 
 descarte de transcripción y migración v2→v3 sin auto-replay histórico. Las pruebas
 Telegram y WhatsApp también cubren que solo el ingreso live elegible cree filas
 outbox, y que history, duplicates y oversized no habiliten automatización.
+
+La puerta offline y la fixture pre-v3 están documentadas en
+[BUG-051](BUG-051-RECONCILIACION-LEGACY.md).
 
 El replay F2D cubre ingresos que forman parte del historial de clientes. El chat
 administrativo Telegram usa el inbox separado de F2C.3 y su semántica conservadora
