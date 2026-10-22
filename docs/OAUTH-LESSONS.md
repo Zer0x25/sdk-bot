@@ -1,7 +1,7 @@
 # Lecciones de OAuth Google en el Panel Web
 
 Documentación de los fallos reales encontrados al integrar login con Google
-OAuth 2.0 en `gateway/panel/index.js` (SDK-Bot Panel) y cómo se resolvieron.
+OAuth 2.0 en `apps/panel/index.js` (SDK-Bot Panel) y cómo se resolvieron.
 Útil para no repetir los mismos errores en futuros despliegues.
 
 Fecha de resolución: 2026-08-15. Estado: funciona en producción
@@ -47,7 +47,7 @@ Beneficios adicionales:
 - Elimina el fallo de raíz sin depender del comportamiento de cookies.
 
 Ver también: función `saveOAuthState` / `consumeOAuthState` en
-`gateway/panel/index.js`.
+`apps/panel/index.js`.
 
 ---
 
@@ -69,7 +69,7 @@ Por qué `Lax` funciona y `None` no:
 - `None` la exponía al bloqueo de "cookies de terceros" sin necesidad, porque
   la sesión solo se usa en navegaciones same-site, no cross-site.
 
-Ver también: función `cookieFlags` en `gateway/panel/index.js`.
+Ver también: función `cookieFlags` en `apps/panel/index.js`.
 
 ---
 

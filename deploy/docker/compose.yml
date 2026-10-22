@@ -9,7 +9,9 @@ services:
       NODE_ENV: production
       BRAIN_HOST: 0.0.0.0
       BRAIN_PORT: 3400
+      SDK_BRAIN_STATE_DIR: /app/brain
       BRAIN_MEMORY_DB: /var/lib/sdk-bot/memory.db
+      SDK_ADMIN_WEB_LOG_BRAIN: /app/brain/logs
     volumes:
       - sdk_bot_state:/var/lib/sdk-bot
       - sdk_bot_brain_logs:/app/brain/logs
@@ -77,6 +79,7 @@ services:
       SDK_AUTH_DIR: /var/lib/sdk-bot/auth_info_baileys
       SDK_CONTACTS_DB_PATH: /var/lib/sdk-bot/contacts_db.json
       SDK_CONVERSATIONS_DB_PATH: /var/lib/sdk-bot/conversations.db
+      SDK_ATTACHMENT_DIR: /var/lib/sdk-bot/attachments
       SDK_SETTINGS_DB_PATH: /var/lib/sdk-bot/settings_db.json
       SDK_BROADCAST_DB_PATH: /var/lib/sdk-bot/broadcast_db.json
       SDK_MESSAGE_QUEUE_PATH: /var/lib/sdk-bot/queue/pending_messages.jsonl
@@ -111,10 +114,10 @@ services:
     build:
       context: ../..
       dockerfile: deploy/docker/gateway.Dockerfile
-    # El panel es un proceso DISTINTO del gateway: debe correr panel/index.js
-    # (solo proxifica el bus interno en :5400), NO index.js (que conecta WhatsApp
+    # El panel es un proceso DISTINTO del gateway: debe correr el entrypoint de apps/panel
+    # (solo proxifica el bus interno en :3240), NO index.js (que conecta WhatsApp
     # y generaria un segundo gateway del mismo numero -> conflicto de sesion).
-    command: ["node", "panel/index.js"]
+    command: ["node", "/app/apps/panel/index.js"]
     env_file:
       - ../../gateway/panel/.env
     environment:
@@ -124,6 +127,7 @@ services:
       GATEWAY_INTERNAL_URL: http://gateway:3240
       SDK_PANEL_GATEWAY_SECRET: ${SDK_PANEL_GATEWAY_SECRET:?Define SDK_PANEL_GATEWAY_SECRET para gateway y panel}
       PANEL_CONVERSATIONS_UI_ENABLED: ${PANEL_CONVERSATIONS_UI_ENABLED:-false}
+      NODE_PATH: /app/apps/gateway/node_modules
     volumes:
       - sdk_bot_gateway_logs:/app/gateway/logs
       - sdk_bot_brain_logs:/app/brain/logs

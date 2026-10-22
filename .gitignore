@@ -7,6 +7,11 @@ __pycache__/
 brain/venv/
 stt/venv/
 stt/.model_cache/
+apps/stt/venv/
+apps/stt/.model_cache/
+apps/brain/venv/
+apps/brain/.pytest_cache/
+apps/brain/.ruff_cache/
 
 # WhatsApp session, auth & private contact data (SENSITIVE / PRIVACY)
 gateway/auth_info_baileys/
@@ -29,6 +34,7 @@ brain/.brain.lock
 # Logs rotados (R6)
 gateway/logs/
 brain/logs/
+apps/brain/logs/
 
 # Environment variables
 .env
@@ -50,3 +56,5 @@ Thumbs.db
 # Archivo operativo SQLite, WAL/SHM y backups locales
 gateway/data/
 gateway/panel/web/dist/
+apps/gateway/panel/web/dist/
+apps/panel/web/dist/

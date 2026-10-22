@@ -1,6 +1,6 @@
 # Hoja de ruta: plataforma de conversaciones SDK-Bot
 
-Actualización: 2026-10-20. Arquitectura: [ARCHITECTURE.md](ARCHITECTURE.md).
+Actualización: 2026-10-22. Arquitectura: [ARCHITECTURE.md](ARCHITECTURE.md).
 Decisión: [ADR-005](adr/005-plataforma-conversaciones.md).
 Estado por sesión: [SESSION-STATE.md](SESSION-STATE.md).
 Prompt reutilizable: [PROMPT-CONTINUIDAD.md](PROMPT-CONTINUIDAD.md).
@@ -25,6 +25,22 @@ autenticada probados. F2A completada (repositorios del archivo); F2B.1 cierra la
 F2B.2 conecta captura base WA y F2B.3 completa enriquecimiento multimedia durable.
 F2C.1 completa dueño único del polling/descubrimiento Telegram.
 F2C.2 completa la captura base TG con cursor durable y namespace exacto.
+F2C.3 cierra el inbox durable de updates administrativos (BUG-046).
+BUG-008 cierra la resolución legacy con identidad completa y rechazo de sufijos
+ambiguos; los comandos administrativos Telegram responden por Telegram y siguen
+dirigiendo el objetivo a WhatsApp. Evidencia: [BUG-008](BUG-008-RESOLUCION-IDENTIDAD-LEGACY.md).
+BUG-010 acota envíos, presencia, menú y helpers Telegram; un timeout de envío
+durable queda incierto y bloquea reenvío con la misma clave. Evidencia:
+[BUG-010](BUG-010-TIMEOUTS-SALIDA-TELEGRAM.md).
+BUG-011 conserva los permisos al usar `/humano` y `/ia` y explica las políticas
+que mantienen bloqueadas las respuestas. Evidencia:
+[BUG-011](BUG-011-CONTROL-LEGACY.md).
+BUG-071 corrige el resumen de `/ignorar contactos de agenda`: cuenta conversaciones
+únicas e informa solo transiciones efectivas. Evidencia:
+[BUG-071](BUG-071-RESUMEN-IGNORAR-AGENDA.md).
+BUG-073 cierra la carrera del eco WhatsApp antes del ACK local con una ventana de
+correlación acotada. Evidencia:
+[BUG-073](BUG-073-ECO-WHATSAPP-ACK-LENTO.md).
 F2D completa replay durable hasta el handler tras el commit (BUG-045). F2E.1 ya
 registra salidas aceptadas y deduplica ecos WA; conserva autoría external_self.
 F2E.2 cierra la carga sintética completa y F3.1 implementa la API autenticada de
@@ -35,9 +51,10 @@ lista e historial reales. F4.3 añade conexión SSE, actualización paginada sin
 huecos, ancla de scroll, contador de novedades, reconexión y resync. Evidencia:
 [F4.3](F4.3-STREAM-INBOX.md); BUG-070 cerrado.
 BUG-043 quedó cerrado con una guarda de reintento ligada a la cuenta Telegram de
-origen. BUG-050 conserva salidas ambiguas; BUG-051 es puerta antes de usar archivos
-preexistentes reales. La atribución IA/operador queda en F5 junto a su outbox.
-Sin canales reales ni migración.
+origen. BUG-050 conserva salidas ambiguas. BUG-051 ya ofrece un informe y revisión
+offline; completar esa revisión sigue siendo puerta antes de migrar un archivo
+preexistente real. La atribución IA/operador queda en F5 junto a su outbox. Sin
+canales reales ni migración.
 
 ## Alcance y entregas
 
@@ -126,15 +143,16 @@ alterado/vencido y desarrollo explícito, sin conectarse a canales reales.
 
 ## Fase 2 — Historial durable y captura completa
 
-**Depende de:** Fase 1. **Estado: F2A/F2B/F2C/F2D/F2E completas; carga de referencia pendiente.**
+**Depende de:** Fase 1. **Estado: completada; F2A/F2B/F2C/F2D/F2E y carga de referencia verificadas.**
 Evidencia: [ARCHIVO-CONVERSACIONES-F2A](ARCHIVO-CONVERSACIONES-F2A.md).
 F2B.1 completa la puerta BUG-029/031 del reset CLI; evidencia en
 [RESET-SEGURO-F2B1](RESET-SEGURO-F2B1.md). F2B integra WA; F2C Telegram/cursor;
 F2D replay durable y F2E.1 salidas aceptadas/ecos; carga completa antes de cerrar F2.
 Captura base WA probada en
 [CAPTURA-WHATSAPP-F2B2](CAPTURA-WHATSAPP-F2B2.md); F2B.3 completa multimedia en
-[MULTIMEDIA-WHATSAPP-F2B3](MULTIMEDIA-WHATSAPP-F2B3.md). BUG-037 descarga sin
-abort físico queda como puerta de aceptación STT real F8, sin prometerlo aquí.
+[MULTIMEDIA-WHATSAPP-F2B3](MULTIMEDIA-WHATSAPP-F2B3.md). BUG-037 ya cancela
+físicamente la descarga HTTP mediante un dispatcher privado; su prueba local no
+se presenta como aceptación live de proveedor/STT.
 
 - [x] Repositorios y migraciones SQLite para cuentas, identidades, mensajes,
   conversaciones y eventos. Worker único; constraints e índices para consultas.
@@ -161,16 +179,24 @@ abort físico queda como puerta de aceptación STT real F8, sin prometerlo aquí
   distintos no colisiona y el STT de audio actualiza el mismo mensaje. Cierra
   BUG-005/009/044/047 y la parte de archivo TG de BUG-008; BUG-008 conserva su alcance
   legacy de resolución por dígitos. [Evidencia](TELEGRAM-CAPTURA-F2C2.md).
+- [x] F2C.3 Inbox administrativo Telegram (BUG-046): el mensaje normalizado y el
+  cursor se guardan juntos en SQLite v15; el pump reclama por cuenta/update antes
+  del pipeline, guarda resultado idempotente y convierte claims interrumpidos en
+  `uncertain` sin replay ciego. Los textos terminales se eliminan y los recibos
+  vencen a 180 días. El restore-check compara el digest del inbox. No se crea
+  historial de clientes ni se promete exactly-once de efectos legacy. Evidencia:
+  [BUG-046](BUG-046-TELEGRAM-ADMIN-INBOX.md).
 - [x] F2D Replay durable de mensajes archivados tras reinicio (BUG-045): outbox
   SQLite v3 en la misma transacción que captura/cursor, reanudación cuando el canal
   está conectado, ACK persistente y espera STT. Prueba cae entre commit y wake,
   reinicia y confirma una entrega y ningún redespacho después del ACK. El retry es
   at-least-once ante efectos/ACK ambiguos (BUG-050); la migración no reencola filas
-  pre-v3 (BUG-051). [Evidencia](REPLAY-LEGACY-F2D.md).
+  pre-v3. El diagnóstico y la revisión offline de esas filas se cubren en
+  [BUG-051](BUG-051-RECONCILIACION-LEGACY.md), sin auto-replay.
 - [x] Persistir entrada live aunque IA esté pausada, ignorando o en handoff/human;
   WA F2B.2 y TG F2C.2 archivan antes del pipeline. Chats administrativos/grupos
-  quedan fuera del archivo de clientes. Cobertura en CAPTURA-WHATSAPP-F2B2 y
-  TELEGRAM-CAPTURA-F2C2.
+  quedan fuera del archivo de clientes; los textos admin usan el inbox separado
+  de F2C.3. Cobertura en CAPTURA-WHATSAPP-F2B2, TELEGRAM-CAPTURA-F2C2 y BUG-046.
 - [x] F2E.1 Registrar salidas WA/TG aceptadas y deduplicar eco WA por ID de
   proveedor; conservar `external_self` mientras no haya origen correlacionado.
   HTTP 200 `{ok:false}` no se considera envío. [Evidencia](SALIDAS-ACEPTADAS-F2E1.md).
@@ -191,9 +217,11 @@ canales/cuentas/IDs con signo no colisionan; audio fallido sigue visible. Carga 
 miles de mensajes sin bloquear pings del transporte falso; progreso observable.
 F2C.2 prueba reapertura/cursor y redelivery; F2D prueba replay post-commit; F2E.1
 prueba salida aceptada y eco WA; F2E.2 conserva volumen, deduplicación y rendimiento
-de archivo. El entorno medido (3 CPU/10,45 GiB) difiere de la referencia
-(2 CPU/4 GiB), por lo que repetir allí antes de certificar ese perfil. Control/toma
-de control y atribución de autoría outbound quedan para F5.
+de archivo. La carga completa se repitió el 2026-10-22 bajo cgroup v2 con límites
+efectivos de 2 CPU/4 GiB y sin swap; pasó los umbrales y su presión de memoria quedó
+documentada en [F2E2-CARGA-COMPLETA](F2E2-CARGA-COMPLETA.md). Es evidencia del perfil
+limitado Linux x64, no de hardware físico equivalente ni de Windows/Termux.
+Control/toma de control y atribución de autoría outbound quedan para F5.
 
 ## Fase 3 — API de lectura y eventos en vivo
 
@@ -212,8 +240,8 @@ de control y atribución de autoría outbound quedan para F5.
 - [x] F3.2: probar autorización SSE, proxy, desconexión, cierre de recursos y falta
   temporal del gateway. Los grants activos duran como máximo 30 s y se revalidan
   al reconectar.
-  Resolver BUG-024 antes de operadores limitados: grants v1 deben acompañarse de
-  autorización administrativa legacy.
+  F7.3 cerró BUG-024: la UI y todas las rutas legacy requieren `admin:write`
+  explícito; el acceso de solo lectura a la nueva bandeja queda disponible.
 
 **Aceptación F3.1:** respuestas de lectura conformes al contrato; páginas sin
 duplicados con timestamps iguales; cursores de lista se invalidan ante cambios de
@@ -329,51 +357,121 @@ Compositor todavía no ofrece enviar.
 - [x] **F6.3** Flujo integrado: entrada -> hilo -> takeover -> mensaje humano ->
   recepción de cliente durante human -> release explícito -> respuesta IA con
   contexto correcto. Evidencia y límites: [F6.3](F6.3-FLUJO-CONVERSACION.md).
-- [ ] **F6.4** Smoke manual en cuenta de prueba WA/TG conectada; una única
-  instancia y resultados separados de simulación. No ejecutar reset para
-  fabricar datos. El 2026-10-21 se completó el recorrido live de WhatsApp hasta
-  release con `process_pending`; una respuesta IA figura enviada. `ignored_all`
-  quedó activo y el chat de prueba volvió a `neutral/off`. El contexto real del
-  proveedor no se instrumentó; quedan pendientes la revisión completa de teclado,
-  compositor y controles móviles, además del smoke de Telegram. Las dos parejas
-  teléfono/LID ambiguas permanecen en cuarentena. Estado y evidencia:
-  [F6.4](F6.4-SMOKE-CANAL.md).
+- [x] **F6.4** Smoke manual en cuenta de prueba de WhatsApp; una única
+  instancia y resultados separados de simulación. Telegram se usa para
+  administración, así que el smoke de atención a clientes en ese canal no aplica.
+  No ejecutar reset para
+  fabricar datos. El recorrido live de WhatsApp incluyó takeover, respuesta
+  humana, segunda entrada y release con `process_pending`; la respuesta IA figura
+  enviada una vez. El 2026-10-22 también se verificó el hilo/compositor móvil a
+  390 × 844 y 320 × 844 px; `ignored_all` quedó activo y el chat volvió a
+  `neutral/off`. El recorrido Tab completo y el foco de `Tomar control` quedaron
+  verificados. El contexto se comprobó con la traza del constructor live y la
+  regresión integrada F6.3; no se conservó el JSON literal de la petición live.
+  Las dos parejas teléfono/LID ambiguas permanecen en cuarentena, sin bloquear esta
+  aceptación. Estado y evidencia: [F6.4](F6.4-SMOKE-CANAL.md).
 
-**Aceptación:** flujo operativo completo, reinicios/reconexión, móvil y teclado.
+**Estado: completada. Aceptación:** flujo operativo completo, reinicios/reconexión,
+móvil y teclado.
 Esta es la v1 útil; publicar/desplegar es una acción separada, no automática.
 
 ## Fase 7 — Sustituir el resto del panel
 
 **Depende de:** v1 estable.
 
-- [ ] Resumen orientado a decisiones con métricas reales y periodos explícitos.
-- [ ] Contactos con permisos/perfiles y ficha compartida con bandeja.
-- [ ] Canales con pairing existente, ventana QR de 140s, código manual y estados
-  restaurables. No alterar exclusión QR/código ni crear otro gateway.
-- [ ] Asistente: perfiles, editor, cambios sin guardar e importación/exportación.
-- [ ] Sistema: logs, terminal, diagnóstico y mantenimiento; preservar confirmación
-  de factory reset. Campañas tienen su espacio cuando haya flujo completo.
-- [ ] Inventario de paridad: cada función antigua sustituida, descontinuada de forma
-  expresa o aún disponible. Retirar panel viejo después de esa comprobación.
+- [x] Resumen orientado a decisiones con métricas reales y periodos explícitos (unidad F7.1).
+- [x] Contactos con permisos/perfiles y ficha compartida con bandeja (unidad F7.2).
+- [x] **F7.3 — Canales:** estado de WhatsApp/Telegram desde API autenticada; pairing
+  WhatsApp QR/código reutiliza el bus existente, restaura estados activos y respeta
+  ventana QR de 140s/exclusión QR-código. No crea otra instancia. Telegram queda
+  identificado como administrativo, con configuración sin lectura del token y sin
+  ejecutar prueba de envío. BUG-024 cerrado con `admin:write`. Evidencia:
+  [F7.3](F7.3-CANALES.md).
+- [x] **F7.4 — Asistente:** perfiles con vista de solo lectura por metadatos v1 y
+  edición protegida por `admin:write`, cambios sin guardar con confirmación,
+  importación/exportación Markdown, recarga, prompt compilado y borrado confirmado.
+  Evidencia: [F7.4](F7.4-ASISTENTE.md).
+- [x] **F7.5 — Sistema:** logs Gateway/Brain, terminal administrativa,
+  diagnóstico y mantenimiento; se conserva la doble confirmación del factory reset.
+  La UI evita reintentar una operación cuyo resultado no se confirmó. Evidencia:
+  [F7.5](F7.5-SISTEMA.md).
+- [x] **F7.6 — Inventario de paridad:** cada función antigua queda identificada
+  como migrada, deliberadamente fuera de React o disponible en el panel legacy.
+  `/` se mantiene mientras existan detalles y operaciones legacy-only. Evidencia:
+  [F7.6](F7.6-PARIDAD-PANEL.md).
+- [x] **Seguimiento BUG-075 — Conciliación de salida:** la bandeja v1 puede
+  revisar salidas inciertas humanas/IA con API autenticada y evidencia archivada,
+  sin reenvío automático; `process_pending` queda bloqueado hasta decidir.
+  Evidencia: [BUG-075](BUG-075-OUTBOUND-RECONCILIATION.md).
+- [x] **Seguimiento BUG-076 — Metadatos de replay:** conservar solo nombres de
+  contacto por la ventana de `process_pending`, con purga y migración SQLite v16.
+  Evidencia: [BUG-076](BUG-076-RESUME-METADATA.md).
 
 **Aceptación:** paridad funcional documentada, sin perder OAuth, pairing, comandos,
 perfiles o reset por un cambio visual.
+
+**Unidad F7.1 — Resumen:** el panel React ofrece periodos móviles de 7 y 30 días,
+expresados como intervalos UTC `[from,to)`. Los conteos salen de mensajes entrantes
+archivados y salidas de conversación aceptadas, con desglose WhatsApp/Telegram y
+fecha mínima disponible de entradas. La API limita cada consulta a 90 días y exige
+`conversations:read`; no expone identidades ni texto de mensajes. La Fase 7 sigue
+abierta para las demás secciones y el inventario de paridad.
+
+**Unidad F7.2 — Contactos:** `/inbox/contacts` pagina conversaciones archivadas,
+busca por nombre y filtra por canal. Los campos de teléfono/JID/ID remoto no se
+exponen. La vista permite editar acceso y perfil por conversación mediante PATCH
+v1 con `controlVersion` y `conversations:write`; actores de solo lectura ven valores
+sin controles de edición. La ficha de Bandeja muestra los mismos valores. `GET
+/profiles` entrega solo claves/nombres, y la actualización valida el inventario de
+perfiles en ControlService. No se añadieron operadores con grants limitados ni se
+usaron rutas legacy para estas acciones; BUG-024 conserva su alcance explícito.
+
+**Unidad F7.4 — Asistente:** `/inbox/assistant` preserva la paridad de perfiles
+Markdown con protección de permisos. Las sesiones de solo lectura consultan solo
+metadatos v1; `admin:write` habilita el contenido y las operaciones legacy ya
+protegidas desde F7.3. Se conservan borradores al rechazar una operación y se
+confirma antes de descartarlos, sobrescribir claves existentes o eliminar perfiles.
+La importación y exportación trabajan con archivos locales; exportar incluye el
+texto editado aunque aún no se haya guardado. El brain mantiene la validación de las
+secciones requeridas y el perfil `default` no se puede eliminar. Véase [F7.4](F7.4-ASISTENTE.md).
 
 ## Fase 8 — Estructura final y operación
 
 **Depende de:** límites estables y v1; movimientos pequeños pueden adelantarse si
 son necesarios para una fase previa y pasan sus mismas comprobaciones.
 
-- [ ] Mover gateway, panel, brain y STT a apps/ uno a uno; imports/entrypoints y
+- [x] Mover gateway, panel, brain y STT a apps/ uno a uno; imports/entrypoints y
   perfiles siguen funcionando. Compartir solo contratos/testkit, no estados runtime.
-- [ ] Migrar settings/campañas restantes por repositorios con corte verificable;
-  retirar accesos JSON directos. Revisar locks y release-please al mover paquetes.
-- [ ] Actualizar Dockerfiles multi-stage, Compose, CI, launchers de Linux/Windows/
+  F8.1a movió STT a `apps/stt/`; F8.1b movió Gateway a
+  `apps/gateway/`; F8.1c movió el panel a `apps/panel/` con paquete y lockfile
+  propios; F8.1d movió código, tests y requirements de Brain a `apps/brain/`.
+  Las rutas `.env`, perfiles y estado permanecen en `brain/`.
+- [x] Migrar settings/campañas restantes por repositorios con corte verificable;
+  retirar accesos JSON directos de los servicios. F8.2a y F8.2b separan campañas
+  y settings en repositorios; los formatos/rutas JSON existentes se conservan y
+  el corte se verifica con reinicio simulado y snapshot de control SQLite vigente.
+  No se migraron los archivos runtime. Revisar locks y release-please al mover paquetes.
+- [x] Actualizar Dockerfiles multi-stage, Compose, CI, launchers de Linux/Windows/
   Termux y artefactos frontend. Mantener volúmenes/rutas de credenciales existentes.
-- [ ] Runbook backup/restauración, retención/exportación/purga, rollback de código y
-  datos, métricas y logs con datos de cliente minimizados.
-- [ ] Ensayar migración/restauración con fixture representativo y delta posterior
-  al corte; no perder envíos nuevos restaurando snapshots antiguos.
+  Linux, Compose y Docker se verificaron en esta sesión. Windows y Termux tienen
+  launchers/documentación actualizados; falta la prueba real en esos sistemas.
+- [x] Runbook de operación y recuperación: backup/restauración,
+  retención/exportación/purga, rollback de código/datos y minimización de métricas/logs.
+  - [x] F8.3a — [Inventario y captura offline del volumen de estado; documentar
+    el límite de recuperación y validar copias solo en un volumen aislado](F8.3-OPERACION-RECUPERACION.md).
+  - [x] F8.3b — [Documentar retención efectiva, purga global disponible y límites
+    de exportación/borrado por solicitud](F8.3-OPERACION-RECUPERACION.md).
+  - [x] F8.3c — [Rollback de código sin rollback de datos y recuperación del
+    corte de control antes del cambio de autoridad](F8.3-OPERACION-RECUPERACION.md).
+  - [x] F8.3d — [Minimizar datos de cliente en métricas y logs, con pruebas](F8.3-OPERACION-RECUPERACION.md#f83d--minimizacion-de-datos-en-metricas-y-logs).
+  Cierre F8.3: actualizado tras F9.4 y BUG-076/079/080. Documenta que no hay job
+  diario ni réplica externa de backups o exportación/borrado selectivo; las
+  retenciones administrativas y su comparación en restore están fijadas.
+- [x] F8.4 — Ensayar migración/restauración con fixture representativo y delta
+  posterior al corte; bloquear snapshots obsoletos por cursor, autoridad o ledger
+  de envíos y metadatos de adjuntos. F9.4 amplía luego la puerta para validar
+  los blobs físicos y el índice FTS.
+  [Runbook y límites](F8.3-OPERACION-RECUPERACION.md#f84--ensayo-aislado-y-puerta-de-frescura-de-restore).
 
 **Aceptación:** instalación limpia y upgrade simulados; build/checks/smoke en Linux;
 Windows/Termux con evidencia real o pendientes explícitos. Ningún doble transporte.
@@ -382,11 +480,18 @@ Windows/Termux con evidencia real o pendientes explícitos. Ningún doble transp
 
 **Depende de:** v1 y política de almacenamiento definida.
 
-- [ ] Persistir metadatos/archivos con acceso autenticado, límites y retención.
-- [ ] Audio, imágenes, documentos, citas, ediciones y borrados según capacidades;
-  no simular recibos de entrega/lectura que Telegram no entrega al bot.
-- [ ] SQLite FTS para búsqueda del contenido con índices y páginas verificables.
-- [ ] Registrar adjuntos/índices en backup/factory reset y probar acceso/purga.
+- [x] Persistir metadatos/archivos con acceso autenticado, límites y retención.
+  F9.1 añade descarga autenticada por conversación, archivo privado de 16 MiB
+  máximo, cuota total de 1 GiB y purga a 90 días. F9.2 conecta las descargas live
+  que cada canal permite. [Evidencia F9.1](F9.1-ADJUNTOS.md).
+- [x] Captura live de audio, imágenes, documentos y video por WhatsApp/Telegram;
+  citas y ediciones de mensajes disponibles; revocación WhatsApp redacta contenido
+  y borra el adjunto. Telegram no aporta borrado general ni recibos para mensajes
+  normales de bots; no se simulan. [Evidencia](F9.2-MULTIMEDIA-CANALES.md).
+- [x] SQLite FTS5 para búsqueda de texto, captions y transcripciones con páginas ligadas a un snapshot verificable. [Evidencia F9.3](F9.3-BUSQUEDA-FTS.md).
+- [x] F9.4 — Integrar ledger, blobs e índice FTS en la puerta de
+  backup/restauración y ensayar el ciclo completo en destino aislado.
+  [Evidencia](F9.4-BACKUP-RESTORE.md).
 
 **Aceptación:** adjuntos accesibles solo al operador autorizado; mensaje permanece
 comprensible si el archivo expiró o no está disponible.
@@ -395,13 +500,17 @@ comprensible si el archivo expiró o no está disponible.
 
 **Depende de:** contexto/autoría robustos y política explícita de capacidades.
 
-- [ ] Resúmenes, borradores y propuestas de respuesta con referencias al hilo.
-- [ ] Contratos de herramientas: schemas, permisos, timeout, auditoría, idempotencia
+- [x] Resúmenes, borradores y propuestas de respuesta con referencias al hilo.
+  [Evidencia F10.1](F10.1-ASISTENCIA-OPERADOR.md).
+- [x] Contratos de herramientas: schemas, permisos, timeout, auditoría, idempotencia
   y separación read/write. Gateway ejecuta; brain solicita sin acceder a canales.
+  [Evidencia F10.2](F10.2-HERRAMIENTAS-IA.md).
 - [ ] ADR para efectos externos/equipos si se solicitan; no activar automáticamente
   CRM, calendarios, mensajes externos ni cambiar SDK/proveedores por disponibilidad.
-- [ ] Evaluaciones con conversaciones sintéticas: no enviar en human, no confundir
+  Condicional: no hay efectos externos solicitados; nada se habilita en F10.2.
+- [x] Evaluaciones con conversaciones sintéticas: no enviar en human, no confundir
   notas con mensajes entregados, no usar datos de otra cuenta y reconocer límites.
+  [Evidencia F10.4](F10.4-EVALUACIONES-SINTETICAS.md).
 
 **Aceptación:** asistencia comprobable que respeta control humano y permisos.
 

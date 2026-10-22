@@ -90,7 +90,8 @@
         "messages:send",
         "control:write",
         "control:override",
-        "conversations:write"
+        "conversations:write",
+        "admin:write"
       ]
     },
     "Actor": {
@@ -368,6 +369,23 @@
         "displayName",
         "identities"
       ],
+      "additionalProperties": false
+    },
+    "AutomationProfile": {
+      "type": "object",
+      "properties": {
+        "key": {
+          "type": "string",
+          "pattern": "^[A-Za-z0-9_.-]{1,80}$"
+        },
+        "name": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 100,
+          "format": "unicode-text"
+        }
+      },
+      "required": ["key", "name"],
       "additionalProperties": false
     },
     "DeduplicationKey": {
@@ -693,6 +711,10 @@
                 "failed"
               ]
             },
+            "attachmentId": {
+              "$ref": "#/$defs/Id",
+              "description": "ID opaco descargable solo mediante la API autenticada de adjuntos."
+            },
             "transcript": {
               "anyOf": [
                 {
@@ -723,7 +745,38 @@
             "transcript",
             "transcriptionStatus"
           ],
-          "additionalProperties": false
+          "additionalProperties": false,
+          "allOf": [
+            {
+              "if": {
+                "properties": { "availability": { "const": "available" } },
+                "required": ["availability"]
+              },
+              "then": {
+                "properties": { "attachmentId": { "$ref": "#/$defs/Id" } },
+                "required": ["attachmentId"]
+              }
+            },
+            {
+              "if": {
+                "properties": { "attachmentId": { "$ref": "#/$defs/Id" } },
+                "required": ["attachmentId"]
+              },
+              "then": {
+                "properties": { "availability": { "const": "available" } },
+                "required": ["availability"]
+              }
+            },
+            {
+              "if": { "properties": { "type": { "const": "unsupported" } }, "required": ["type"] },
+              "then": {
+                "not": {
+                  "properties": { "attachmentId": { "$ref": "#/$defs/Id" } },
+                  "required": ["attachmentId"]
+                }
+              }
+            }
+          ]
         },
         {
           "type": "object",
@@ -844,6 +897,14 @@
         "deliveryStatus": {
           "$ref": "#/$defs/DeliveryStatus"
         },
+        "editedAt": {
+          "$ref": "#/$defs/Timestamp",
+          "description": "Última edición observada del proveedor; omitido si el canal no la reporta."
+        },
+        "deletedAt": {
+          "$ref": "#/$defs/Timestamp",
+          "description": "Revocación observada del proveedor; el contenido local queda redactado."
+        },
         "replyToId": {
           "anyOf": [
             {
@@ -853,6 +914,10 @@
               "type": "null"
             }
           ]
+        },
+        "replyPreview": {
+          "$ref": "#/$defs/StoredText",
+          "description": "Recorte del mensaje citado cuando su referencia interna no existe o ya se purgó."
         },
         "source": {
           "type": "string",
@@ -926,6 +991,58 @@
       "required": [],
       "additionalProperties": false
     },
+    "SummaryQuery": {
+      "type": "object",
+      "properties": {
+        "from": { "$ref": "#/$defs/Timestamp" },
+        "to": { "$ref": "#/$defs/Timestamp" }
+      },
+      "required": ["from", "to"],
+      "additionalProperties": false
+    },
+    "SummaryChannelMetrics": {
+      "type": "object",
+      "properties": {
+        "channel": { "$ref": "#/$defs/Channel" },
+        "inboundMessages": { "type": "integer", "minimum": 0 },
+        "activeConversations": { "type": "integer", "minimum": 0, "description": "Conversaciones con al menos una entrada durante el intervalo." },
+        "acceptedAiReplies": { "type": "integer", "minimum": 0 },
+        "acceptedHumanReplies": { "type": "integer", "minimum": 0 }
+      },
+      "required": ["channel", "inboundMessages", "activeConversations", "acceptedAiReplies", "acceptedHumanReplies"],
+      "additionalProperties": false
+    },
+    "SummaryResponse": {
+      "type": "object",
+      "properties": {
+        "period": {
+          "type": "object",
+          "properties": {
+            "from": { "$ref": "#/$defs/Timestamp" },
+            "to": { "$ref": "#/$defs/Timestamp" },
+            "interval": { "const": "[from,to)" }
+          },
+          "required": ["from", "to", "interval"],
+          "additionalProperties": false
+        },
+        "coverageStartAt": { "anyOf": [{ "$ref": "#/$defs/Timestamp" }, { "type": "null" }] },
+        "metrics": {
+          "type": "object",
+          "properties": {
+            "inboundMessages": { "type": "integer", "minimum": 0 },
+            "activeConversations": { "type": "integer", "minimum": 0, "description": "Conversaciones con al menos una entrada durante el intervalo." },
+            "acceptedAiReplies": { "type": "integer", "minimum": 0 },
+            "acceptedHumanReplies": { "type": "integer", "minimum": 0 }
+          },
+          "required": ["inboundMessages", "activeConversations", "acceptedAiReplies", "acceptedHumanReplies"],
+          "additionalProperties": false
+        },
+        "byChannel": { "type": "array", "items": { "$ref": "#/$defs/SummaryChannelMetrics" }, "maxItems": 2 },
+        "snapshot": { "$ref": "#/$defs/EventCursor" }
+      },
+      "required": ["period", "coverageStartAt", "metrics", "byChannel", "snapshot"],
+      "additionalProperties": false
+    },
     "MessagesQuery": {
       "type": "object",
       "properties": {
@@ -937,6 +1054,27 @@
         }
       },
       "required": [],
+      "additionalProperties": false
+    },
+    "MessageSearchQuery": {
+      "type": "object",
+      "properties": {
+        "query": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 256,
+          "format": "unicode-text",
+          "x-maxUtf8Bytes": 1024,
+          "description": "Términos literales; la API normaliza y limita el número de términos."
+        },
+        "cursor": {
+          "$ref": "#/$defs/PageCursor"
+        },
+        "limit": {
+          "$ref": "#/$defs/PageLimit"
+        }
+      },
+      "required": ["query"],
       "additionalProperties": false
     },
     "SessionResponse": {
@@ -972,6 +1110,18 @@
       "required": [
         "items"
       ],
+      "additionalProperties": false
+    },
+    "AutomationProfilesResponse": {
+      "type": "object",
+      "properties": {
+        "items": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/AutomationProfile" },
+          "maxItems": 200
+        }
+      },
+      "required": ["items"],
       "additionalProperties": false
     },
     "ConversationsResponse": {
@@ -1056,6 +1206,171 @@
       ],
       "additionalProperties": false,
       "description": "Página en orden cronológico estable (occurredAt,id), retención por ingestedAt."
+    },
+    "MessageSearchHit": {
+      "type": "object",
+      "properties": {
+        "message": { "$ref": "#/$defs/Message" },
+        "snippet": {
+          "type": "string",
+          "maxLength": 1024,
+          "format": "unicode-text",
+          "x-maxUtf8Bytes": 4096,
+          "description": "Fragmento de texto plano; nunca HTML."
+        }
+      },
+      "required": ["message", "snippet"],
+      "additionalProperties": false
+    },
+    "MessageSearchResponse": {
+      "type": "object",
+      "properties": {
+        "items": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/MessageSearchHit" },
+          "maxItems": 100
+        },
+        "nextCursor": {
+          "anyOf": [
+            { "$ref": "#/$defs/PageCursor" },
+            { "type": "null" }
+          ]
+        },
+        "snapshot": { "$ref": "#/$defs/EventCursor" }
+      },
+      "required": ["items", "nextCursor", "snapshot"],
+      "additionalProperties": false,
+      "description": "Página FTS estable ligada a la época y secuencia exactas del archivo."
+    },
+    "ConversationAssistanceRequest": {
+      "type": "object",
+      "properties": {
+        "expectedContextVersion": { "$ref": "#/$defs/Version" },
+        "expectedSnapshot": { "$ref": "#/$defs/EventCursor" }
+      },
+      "required": ["expectedContextVersion", "expectedSnapshot"],
+      "additionalProperties": false,
+      "description": "Genera ayuda sobre el contexto confirmado y la época/secuencia que ve el operador."
+    },
+    "ConversationAssistanceReference": {
+      "type": "object",
+      "properties": {
+        "messageId": { "$ref": "#/$defs/Id" },
+        "occurredAt": { "$ref": "#/$defs/Timestamp" },
+        "authorKind": {
+          "type": "string",
+          "enum": ["customer", "ai", "operator", "external_self", "system", "unknown"]
+        }
+      },
+      "required": ["messageId", "occurredAt", "authorKind"],
+      "additionalProperties": false
+    },
+    "ConversationAssistancePoint": {
+      "type": "object",
+      "properties": {
+        "text": { "type": "string", "minLength": 1, "maxLength": 600, "format": "unicode-text", "x-maxUtf8Bytes": 2400 },
+        "references": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/ConversationAssistanceReference" },
+          "minItems": 1,
+          "maxItems": 5
+        }
+      },
+      "required": ["text", "references"],
+      "additionalProperties": false
+    },
+    "ConversationAssistanceResponse": {
+      "type": "object",
+      "properties": {
+        "conversationId": { "$ref": "#/$defs/Id" },
+        "contextVersion": { "$ref": "#/$defs/Version" },
+        "throughMessageId": { "$ref": "#/$defs/Id" },
+        "snapshot": { "$ref": "#/$defs/EventCursor" },
+        "summaryPoints": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/ConversationAssistancePoint" },
+          "minItems": 1,
+          "maxItems": 6
+        },
+        "draft": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 4096,
+          "pattern": "\\S",
+          "format": "unicode-text",
+          "x-maxUtf8Bytes": 16384
+        },
+        "draftReferences": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/ConversationAssistanceReference" },
+          "minItems": 1,
+          "maxItems": 5
+        }
+      },
+      "required": ["conversationId", "contextVersion", "throughMessageId", "snapshot", "summaryPoints", "draft", "draftReferences"],
+      "additionalProperties": false
+    },
+    "AssistantToolRequest": {
+      "type": "object",
+      "properties": {
+        "kind": { "type": "string", "const": "tool_request" },
+        "toolName": { "type": "string", "const": "conversation.search_messages" },
+        "effect": { "type": "string", "const": "read" },
+        "input": { "$ref": "#/$defs/ConversationSearchToolInput" }
+      },
+      "required": ["kind", "toolName", "effect", "input"],
+      "additionalProperties": false,
+      "description": "Solicitud tipada de lectura; el Gateway valida permisos y ejecuta el caso de uso."
+    },
+    "ConversationSearchToolInput": {
+      "type": "object",
+      "properties": {
+        "query": { "type": "string", "minLength": 1, "maxLength": 256, "format": "unicode-text", "x-maxUtf8Bytes": 1024 },
+        "limit": { "type": "integer", "minimum": 1, "maximum": 5 }
+      },
+      "required": ["query", "limit"],
+      "additionalProperties": false
+    },
+    "ConversationSearchToolHit": {
+      "type": "object",
+      "properties": {
+        "messageId": { "$ref": "#/$defs/Id" },
+        "occurredAt": { "$ref": "#/$defs/Timestamp" },
+        "authorKind": { "type": "string", "enum": ["customer", "ai", "operator"] },
+        "snippet": { "type": "string", "minLength": 1, "maxLength": 512, "format": "unicode-text", "x-maxUtf8Bytes": 2048 }
+      },
+      "required": ["messageId", "occurredAt", "authorKind", "snippet"],
+      "additionalProperties": false
+    },
+    "ConversationSearchToolResult": {
+      "type": "object",
+      "properties": {
+        "toolName": { "type": "string", "const": "conversation.search_messages" },
+        "invocationKey": { "type": "string", "pattern": "^[a-f0-9]{64}$" },
+        "snapshot": { "$ref": "#/$defs/EventCursor" },
+        "hits": { "type": "array", "items": { "$ref": "#/$defs/ConversationSearchToolHit" }, "maxItems": 5 }
+      },
+      "required": ["toolName", "invocationKey", "snapshot", "hits"],
+      "additionalProperties": false
+    },
+    "AssistantToolAuditRecord": {
+      "type": "object",
+      "properties": {
+        "invocationKey": { "type": "string", "pattern": "^[a-f0-9]{64}$" },
+        "requestFingerprint": { "type": "string", "pattern": "^[a-f0-9]{64}$" },
+        "resultFingerprint": { "anyOf": [{ "type": "string", "pattern": "^[a-f0-9]{64}$" }, { "type": "null" }] },
+        "actorId": { "$ref": "#/$defs/Id" },
+        "conversationId": { "$ref": "#/$defs/Id" },
+        "toolName": { "type": "string", "const": "conversation.search_messages" },
+        "effect": { "type": "string", "const": "read" },
+        "status": { "type": "string", "enum": ["completed", "failed", "denied"] },
+        "attemptCount": { "type": "integer", "minimum": 1 },
+        "createdAt": { "$ref": "#/$defs/Timestamp" },
+        "updatedAt": { "$ref": "#/$defs/Timestamp" }
+      },
+      "required": ["invocationKey", "requestFingerprint", "resultFingerprint", "actorId", "conversationId", "toolName", "effect", "status", "attemptCount", "createdAt", "updatedAt"],
+      "additionalProperties": false,
+      "description": "Auditoría sin texto de consulta ni contenido de mensajes; retención de 180 días."
     },
     "TakeoverRequest": {
       "type": "object",
@@ -1166,6 +1481,62 @@
       "required": ["conversationId", "controlVersion", "selectionVersion", "candidates", "candidateCount", "truncated", "excludedPendingDispatchCount", "excludedUnprocessableCount", "uncertainOutboundCount", "automationMayBeBlocked"],
       "additionalProperties": false
     },
+    "OutboundReconciliationQuery": {
+      "type": "object",
+      "properties": {
+        "cursor": { "$ref": "#/$defs/PageCursor" },
+        "limit": { "type": "integer", "minimum": 1, "maximum": 100, "default": 50 }
+      },
+      "additionalProperties": false
+    },
+    "OutboundReconciliationItem": {
+      "type": "object",
+      "properties": {
+        "id": { "$ref": "#/$defs/Id" },
+        "conversationId": { "$ref": "#/$defs/Id" },
+        "channel": { "type": "string", "enum": ["whatsapp", "telegram"] },
+        "source": { "type": "string", "enum": ["human", "ai"] },
+        "text": { "anyOf": [{ "$ref": "#/$defs/OutgoingText" }, { "type": "null" }] },
+        "clientMessageId": { "anyOf": [{ "$ref": "#/$defs/Id" }, { "type": "null" }] },
+        "createdAt": { "$ref": "#/$defs/Timestamp" },
+        "sendingAt": { "anyOf": [{ "$ref": "#/$defs/Timestamp" }, { "type": "null" }] },
+        "updatedAt": { "$ref": "#/$defs/Timestamp" },
+        "errorCode": { "anyOf": [{ "type": "string", "maxLength": 80 }, { "type": "null" }] }
+      },
+      "required": ["id", "conversationId", "channel", "source", "text", "clientMessageId", "createdAt", "sendingAt", "updatedAt", "errorCode"],
+      "additionalProperties": false
+    },
+    "OutboundReconciliationResponse": {
+      "type": "object",
+      "properties": {
+        "items": { "type": "array", "items": { "$ref": "#/$defs/OutboundReconciliationItem" }, "maxItems": 100 },
+        "nextCursor": { "anyOf": [{ "$ref": "#/$defs/PageCursor" }, { "type": "null" }] }
+      },
+      "required": ["items", "nextCursor"],
+      "additionalProperties": false
+    },
+    "ReconcileOutboundIntentRequest": {
+      "type": "object",
+      "properties": {
+        "state": { "type": "string", "enum": ["accepted", "rejected"] },
+        "providerMessageId": { "$ref": "#/$defs/ProviderMessageId" },
+        "note": { "type": "string", "minLength": 1, "maxLength": 500, "format": "unicode-text" }
+      },
+      "required": ["state", "note"],
+      "additionalProperties": false,
+      "description": "accepted requires providerMessageId; rejected must omit it. Server also materializes the correlated message before advancing its watermark."
+    },
+    "ReconcileOutboundIntentResponse": {
+      "type": "object",
+      "properties": {
+        "status": { "type": "string", "enum": ["reconciled", "existing"] },
+        "intentId": { "$ref": "#/$defs/Id" },
+        "state": { "type": "string", "enum": ["accepted", "rejected"] },
+        "reconciledAt": { "$ref": "#/$defs/Timestamp" }
+      },
+      "required": ["status", "intentId", "state", "reconciledAt"],
+      "additionalProperties": false
+    },
     "SendMessageRequest": {
       "type": "object",
       "properties": {
@@ -1225,15 +1596,25 @@
         },
         "accessPolicy": {
           "$ref": "#/$defs/AccessPolicy"
+        },
+        "profileKey": {
+          "anyOf": [
+            { "type": "string", "pattern": "^[A-Za-z0-9_.-]{1,80}$" },
+            { "type": "null" }
+          ]
         }
       },
       "required": ["expectedVersion"],
       "anyOf": [
         { "properties": { "lifecycle": { "$ref": "#/$defs/Lifecycle" } }, "required": ["lifecycle"] },
-        { "properties": { "accessPolicy": { "$ref": "#/$defs/AccessPolicy" } }, "required": ["accessPolicy"] }
+        { "properties": { "accessPolicy": { "$ref": "#/$defs/AccessPolicy" } }, "required": ["accessPolicy"] },
+        { "properties": { "profileKey": { "anyOf": [
+          { "type": "string", "pattern": "^[A-Za-z0-9_.-]{1,80}$" },
+          { "type": "null" }
+        ] } }, "required": ["profileKey"] }
       ],
       "additionalProperties": false,
-      "description": "CAS por controlVersion; se requiere al menos un cambio de lifecycle, acceso o perfil."
+      "description": "CAS por controlVersion; se requiere al menos un cambio de ciclo, acceso o perfil. null en profileKey hereda el perfil global."
     },
     "Operation": {
       "type": "object",
@@ -1367,6 +1748,9 @@
         "IDEMPOTENCY_KEY_REUSED",
         "OUTBOUND_DELIVERY_UNKNOWN",
         "OUTBOUND_IN_PROGRESS",
+        "OUTBOUND_ARCHIVE_RECONCILIATION_FAILED",
+        "OUTBOUND_MESSAGE_CORRELATION_REQUIRED",
+        "OUTBOUND_RECONCILIATION_CONFLICT",
         "OUTBOUND_REJECTED",
         "PENDING_RESUME_MESSAGE_NOT_ELIGIBLE",
         "PENDING_RESUME_NOT_AVAILABLE",

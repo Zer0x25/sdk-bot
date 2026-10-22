@@ -5,7 +5,7 @@
 ## Bandeja de conversaciones
 
 La bandeja nueva está implementada como una aplicación React/TypeScript en
-`gateway/panel/web`. Se abre en `/inbox`, lee conversaciones e historial desde la
+`apps/panel/web`. Se abre en `/inbox`, lee conversaciones e historial desde la
 API autenticada y recibe actualizaciones en vivo. También permite tomar control,
 responder como operador y devolverlo a la IA con selección explícita de mensajes
 pendientes. El panel anterior se conserva en `/`; la nueva bandeja está apagada
@@ -21,11 +21,12 @@ revisión de teclado y móvil, y el smoke de Telegram
 Usa Node.js 22.13.0 o superior. Desde la raíz del repositorio:
 
 ```bash
-# Solo si faltan las dependencias del gateway o cambió su lockfile
-(cd gateway && npm ci)
+# Instala por separado los paquetes del gateway y del panel si faltan o cambió un lockfile
+(cd apps/gateway && npm ci)
+(cd apps/panel && npm ci)
 
 # Recompila después de cambiar la interfaz; el launcher no hace el build
-(cd gateway && npm run panel:build)
+(cd apps/panel && npm run build)
 
 # Arranca el stack local con /inbox habilitada
 PANEL_CONVERSATIONS_UI_ENABLED=true bash deploy/linux/dev.sh up all
@@ -97,7 +98,7 @@ y [F4.3: actualización en vivo](docs/F4.3-STREAM-INBOX.md).
 
 ```
 SDK-Bot/
-├── gateway/                      # Capa de Mensajería (Node.js + Adapter Hub)
+├── apps/gateway/                 # Código del Gateway y su bus interno
 │   ├── index.js                  # Orquestador del Hub (adapters, pipeline, bus interno :5400)
 │   ├── core/                     # Interfaces abstractas (ChannelAdapter, StandardMessage)
 │   ├── adapters/                 # Adaptadores de red (whatsappAdapter, telegramAdapter)
@@ -105,9 +106,6 @@ SDK-Bot/
 │   ├── reset-clean.js            # Reset limpio de fábrica F7 (npm run clean)
 │   ├── config.js                 # Estado global, URLs y registro anti-bucle
 │   ├── tuning.js                 # Variables de afinación y rendimiento
-│   ├── panel/                    # Panel Web — 3er proceso independiente (puerto 5201)
-│   │   ├── index.js              # Servidor HTTP proxy hacia el bus interno (:5400) y estáticos
-│   │   └── public/               # Frontend web estático modular (dashboard, pairing WA, telegram, contactos, etc.)
 │   ├── store/
 │   │   └── chatStore.js          # Store RAM de mensajes de Baileys (precarga web-like)
 │   ├── services/
@@ -133,15 +131,24 @@ SDK-Bot/
 │   ├── settings_db.json.example  # Plantilla de configuración global
 │   ├── *.json.example            # Plantillas de ejemplo para despliegues limpios
 │   └── auth_info_baileys/        # Sesión y estado de WhatsApp (gitignored)
-├── brain/                        # Capa de Inteligencia (Python + FastAPI)
-│   ├── main.py                   # Aplicación FastAPI modularizada (/chat, /reset-memory, /profiles, :5100)
-│   ├── config.py                 # API Keys y modelos (Groq, OpenRouter, Gemini)
-│   ├── memory.py                 # Gestor de memoria persistente SQLite (brain/memory.db)
-│   ├── providers.py              # Router multi-proveedor (Groq 25s → OpenRouter 25s → Gemini 40s)
+├── apps/panel/                   # Panel Web — proceso independiente (puerto 5201)
+│   ├── index.js                  # Servidor HTTP proxy hacia el bus interno y estáticos
+│   ├── public/                   # Frontend legacy modular (dashboard, pairing, Telegram, contactos)
+│   └── web/                      # Bandeja React/TypeScript/Vite
+├── gateway/                      # Estado runtime (sesión, DB, credenciales, logs y locks)
+├── apps/brain/                   # Código FastAPI, tests y requisitos Python
+│   ├── main.py                   # API modular (/chat, /reset-memory, /profiles, :5100)
+│   ├── config.py                 # Lectura de modelo y API keys desde estado
+│   ├── memory.py                 # Acceso a memoria SQLite del directorio brain/
+│   ├── providers.py              # Router multi-proveedor (Groq → OpenRouter → Gemini)
 │   ├── profiles.py               # Motor de perfiles SOUL en caliente
-│   ├── profiles/                 # Perfiles SOUL editables en Markdown (default, lucia, mateo, cobranzas, recepcion)
+│   └── requirements*.txt         # Requisitos Linux/Termux/dev
+├── brain/                        # Estado y configuración editable del Brain
+│   ├── profiles/                 # Perfiles SOUL Markdown conservados al actualizar código
 │   ├── .env                      # API Keys (gitignored)
-│   └── requirements.txt          # Dependencias Python
+│   ├── memory.db                 # Memoria SQLite (gitignored)
+│   ├── logs/                     # Logs rotados (gitignored)
+│   └── venv/                     # Entorno Python local (gitignored)
 ├── deploy/                       # Scripts y configuraciones de despliegue por plataforma
 │   ├── docker/                   # Producción Linux: Docker Compose (brain, gateway, panel)
 │   ├── linux/                    # Lanzamiento manual dev y alternativa systemd legacy
@@ -166,25 +173,27 @@ SDK-Bot/
 ```bash
 cd brain
 # Linux / macOS
-python3 -m venv venv && venv/bin/pip install -r requirements.txt
+python3 -m venv venv && venv/bin/pip install -r ../apps/brain/requirements.txt
 # Windows
-python -m venv venv && venv\Scripts\pip install -r requirements.txt
+python -m venv venv && venv\Scripts\pip install -r ..\apps\brain\requirements.txt
 ```
 
 ### 1. Iniciar Cerebro IA (Python FastAPI):
 ```bash
-cd brain
+cd apps/brain
 # Linux / macOS (desarrollo manual: puerto 5100, bind 0.0.0.0)
 export NODE_ENV=development BRAIN_PORT=5100 BRAIN_HOST=0.0.0.0
-venv/bin/python main.py
+export SDK_BRAIN_STATE_DIR="$(cd ../../brain && pwd)"
+../../brain/venv/bin/python main.py
 # Windows
-venv\Scripts\python.exe main.py
-# Si ya está corriendo (puerto ocupado): `venv/bin/python main.py --restart` lo reinicia
+set SDK_BRAIN_STATE_DIR=..\..\brain
+..\..\brain\venv\Scripts\python.exe main.py
+# Si ya está corriendo (puerto ocupado): `../../brain/venv/bin/python main.py --restart` lo reinicia
 ```
 
 ### 2. Iniciar Gateway WhatsApp (Node.js):
 ```bash
-cd gateway
+cd apps/gateway
 export NODE_ENV=development
 npm start
 # o: node index.js
@@ -194,8 +203,9 @@ npm start
 
 ### 3. Iniciar Panel Web (Opcional, proceso independiente):
 ```bash
-cd gateway/panel
+cd apps/panel
 export NODE_ENV=development
+export NODE_PATH="$(cd ../gateway && pwd)/node_modules"
 node index.js
 # Acceso en el navegador: http://localhost:5201 (o tu IP / Tailscale en el puerto 5201)
 ```
@@ -275,7 +285,9 @@ bash deploy/termux/setup-termux.sh           # dependencias + runit + boot autom
 deploy\windows\startBrain.bat    # terminal 1 (siempre primero)
 deploy\windows\startGateway.bat  # terminal 2
 # Para el panel web (opcional):
-cd gateway\panel && node index.js # terminal 3
+cd apps\panel
+$env:NODE_PATH = (Resolve-Path ..\gateway\node_modules).Path
+node index.js # terminal 3
 ```
 
 ### 5. Desarrollo en Linux — lanzamiento manual:
@@ -301,13 +313,15 @@ relanza (no deja duplicados ni `EADDRINUSE`). `NODE_ENV=development` identifica
 estos lanzamientos, pero la aplicación no
 usa esa variable como interruptor de comportamiento. No ejecutes a la vez una
 instancia manual y los contenedores de producción sobre la misma sesión.
+Por defecto los logs van a `/tmp/sdk-bot-{brain,gateway,panel}.log`; define
+`SDK_BOT_DEV_LOG_DIR` para guardarlos en otro directorio.
 
 > 📋 **Logs:** rotación automática (5MB × 3) en `gateway/logs/gateway.log` y `brain/logs/brain.log` (en Termux: `~/logs/sdk-gateway.log`).
 > Los tests no escriben en esos logs: `npm test` guarda sus logs técnicos en `/tmp/sdk-bot-test-<pid>.log` y deja en consola solo el resultado de `node:test`.
 
 ### 6. Re-sincronizar Libreta Completa de Contactos (Fresh QR):
 ```bash
-cd gateway
+cd apps/gateway
 npm run reset          # interactivo: pide confirmación y luego genera QR
 npm run reset -- --yes # no interactivo: borra la sesión y sale (el gateway ya corriendo regenera el QR)
 ```

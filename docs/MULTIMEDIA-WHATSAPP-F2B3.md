@@ -89,18 +89,20 @@ copia empaquetada de contracts. El paquete privado mantiene 0.1.0; no se publica
 - Shutdown/reset cancelan trabajos, drenan sus resultados durables y luego cierran
   archivo. Las operaciones que ignoran cancelación no pueden publicar resultados
   tardíos ni efectuar escrituras después del cierre desde este coordinador.
-- **BUG-037 abierto, P2/F8:** Baileys 7.0.0-rc14 getHttpStream omite signal al llamar
-  fetch. La cancelación del resultado es efectiva; la descarga subyacente puede
-  seguir esperando/recibiendo. No afirmar cancelación física del HTTP ni ausencia
-  universal de handles residuales. Resolver en la frontera de descarga/pin del
-  proveedor antes de aceptar STT real. No bloquea actualización durable ni los
-  tests offline de esta unidad. No se parcheó global.fetch ni node_modules.
+- **BUG-037 cerrado en F8:** el downloader real de Baileys recibe un `undici.Agent`
+  privado por descarga. El coordinador conecta su señal de cancelación/deadline al
+  `destroy()` del dispatcher y del stream; fin, error y cierre temprano también
+  liberan el agente. Una prueba HTTP local sin headers/body ejecuta ocho ciclos y
+  verifica el cierre de todos los sockets. No se parcheó `global.fetch` ni
+  `node_modules`; esto cierra la frontera de cancelación, no una aceptación live
+  de proveedor/STT. Evidencia: [BUG-037](BUG-037-CANCELACION-BAILEYS.md).
 
 ## Verificación
 
 Copias separadas de archivos actuales, sin .env, cuentas ni DB originales; solo
-las dependencias instaladas están enlazadas. npm ci --offline gateway completado,
-scripts habilitados; sin cambios de manifiestos/locks ni nuevas dependencias.
+las dependencias instaladas están enlazadas. `undici@7.29.1` se declara como
+dependencia directa para el dispatcher aislado; `npm ci` reproduce el lock y la
+auditoría no informa vulnerabilidades.
 
 | Entorno | Resultado |
 |---|---|
@@ -117,8 +119,10 @@ carga completa siguen siendo puertas futuras, no 75 casos nuevos ejecutados.
 
 Reproducción aislada de adapter/normalizador 7d99f36: cinco STT simultáneos sin
 límite específico; los cinco audios siguen not_requested tras terminar; caption
-queda type=text. Reproducción separada del getHttpStream instalado con fetch
-sustituido: signal ya abortado no se transmite, sin red. No es prueba de proveedor.
+queda type=text. La reproducción de getHttpStream instalado con `fetch`
+sustituido confirmó que Baileys no reenvía `signal`. BUG-037 agrega una prueba de
+red local que usa el downloader real de la versión instalada y demuestra el cierre
+físico del socket; no se conectó a WhatsApp ni a STT.
 
 Docker construye sdkbot-f2b3:local con npm ci --omit=dev y contracts actual
 empaquetado, sin node_modules raíz. Adaptación cloud del Dockerfile temporal:

@@ -34,35 +34,38 @@ jobs:
         node: ['22.22.2', '24']
     defaults:
       run:
-        working-directory: gateway
+        working-directory: apps/gateway
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
         with:
           node-version: ${{ matrix.node }}
           cache: npm
-          cache-dependency-path: gateway/package-lock.json
+          cache-dependency-path: |
+            apps/gateway/package-lock.json
+            apps/panel/package-lock.json
       - run: npm ci
+      - run: npm --prefix ../panel ci
       - run: npm run lint
       - run: npm run typecheck
       - run: npm run panel:check
       - run: npm run spike:sqlite
       - run: npm test
-      - run: bash ../deploy/linux/tests/dev-smoke.sh
+      - run: SDK_BOT_DEV_SMOKE_INBOX=1 PANEL_CONVERSATIONS_UI_ENABLED=true bash ../../deploy/linux/tests/dev-smoke.sh
 
   brain:
     name: Brain (ruff + pytest)
     runs-on: ubuntu-latest
     defaults:
       run:
-        working-directory: brain
+        working-directory: apps/brain
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
         with:
           python-version: '3.12'
           cache: pip
-          cache-dependency-path: brain/requirements-dev.txt
+          cache-dependency-path: apps/brain/requirements-dev.txt
       - run: pip install -r requirements-dev.txt
       - run: ruff check .
       - run: python -m pytest tests/ -q

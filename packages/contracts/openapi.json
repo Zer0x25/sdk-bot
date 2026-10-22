@@ -94,6 +94,86 @@
         }
       }
     },
+    "/profiles": {
+      "get": {
+        "operationId": "listAutomationProfiles",
+        "responses": {
+          "200": {
+            "description": "Claves y nombres disponibles; no expone contenido de los perfiles.",
+            "content": {
+              "application/json": {
+                "schema": { "$ref": "#/components/schemas/AutomationProfilesResponse" }
+              }
+            }
+          },
+          "401": { "$ref": "#/components/responses/401" },
+          "403": { "$ref": "#/components/responses/403" },
+          "503": { "$ref": "#/components/responses/503" }
+        }
+      }
+    },
+    "/summary": {
+      "get": {
+        "operationId": "getSummary",
+        "description": "Métricas de entradas y salidas archivadas en el intervalo UTC [from,to); solo se cuentan salidas aceptadas.",
+        "parameters": [
+          {
+            "name": "from",
+            "in": "query",
+            "required": true,
+            "schema": { "$ref": "./schema.json#/$defs/SummaryQuery/properties/from" }
+          },
+          {
+            "name": "to",
+            "in": "query",
+            "required": true,
+            "schema": { "$ref": "./schema.json#/$defs/SummaryQuery/properties/to" }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Conteos verificables del archivo y fecha mínima de una entrada archivada.",
+            "content": { "application/json": { "schema": { "$ref": "#/components/schemas/SummaryResponse" } } }
+          },
+          "401": { "$ref": "#/components/responses/401" },
+          "403": { "$ref": "#/components/responses/403" },
+          "422": { "$ref": "#/components/responses/422" },
+          "503": { "$ref": "#/components/responses/503" }
+        }
+      }
+    },
+    "/attachments/{attachmentId}": {
+      "get": {
+        "operationId": "downloadAttachment",
+        "description": "Descarga de bytes solo tras verificar conversations:read y acceso a la conversación asociada. Los archivos caducan 90 días después de la captura durable.",
+        "parameters": [
+          {
+            "name": "attachmentId",
+            "in": "path",
+            "required": true,
+            "schema": { "$ref": "#/components/schemas/Id" }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Archivo opaco; no se sirve como contenido ejecutable del origen.",
+            "headers": {
+              "Content-Disposition": { "schema": { "type": "string" } },
+              "Content-Length": { "schema": { "type": "integer", "minimum": 1, "maximum": 16777216 } },
+              "X-Content-Type-Options": { "schema": { "type": "string", "const": "nosniff" } }
+            },
+            "content": {
+              "application/octet-stream": { "schema": { "type": "string", "format": "binary" } }
+            }
+          },
+          "401": { "$ref": "#/components/responses/401" },
+          "403": { "$ref": "#/components/responses/403" },
+          "404": { "$ref": "#/components/responses/404" },
+          "422": { "$ref": "#/components/responses/422" },
+          "503": { "$ref": "#/components/responses/503" }
+        }
+      }
+    },
     "/conversations": {
       "get": {
         "operationId": "listConversations",
@@ -342,6 +422,55 @@
         ]
       }
     },
+    "/conversations/{conversationId}/outbound-reconciliations": {
+      "get": {
+        "operationId": "listOutboundReconciliations",
+        "description": "Lista solo salidas inciertas de IA/operador de esta conversación. Requiere conversations:read; no expone payloads del proveedor ni claves de idempotencia.",
+        "responses": {
+          "200": {
+            "description": "Página de salidas que esperan decisión manual.",
+            "content": { "application/json": { "schema": { "$ref": "#/components/schemas/OutboundReconciliationResponse" } } }
+          },
+          "401": { "$ref": "#/components/responses/401" },
+          "403": { "$ref": "#/components/responses/403" },
+          "404": { "$ref": "#/components/responses/404" },
+          "409": { "$ref": "#/components/responses/409" },
+          "422": { "$ref": "#/components/responses/422" },
+          "503": { "$ref": "#/components/responses/503" }
+        },
+        "parameters": [
+          { "name": "conversationId", "in": "path", "required": true, "schema": { "$ref": "#/components/schemas/Id" } },
+          { "name": "cursor", "in": "query", "required": false, "schema": { "$ref": "./schema.json#/$defs/OutboundReconciliationQuery/properties/cursor" } },
+          { "name": "limit", "in": "query", "required": false, "schema": { "$ref": "./schema.json#/$defs/OutboundReconciliationQuery/properties/limit" } }
+        ]
+      }
+    },
+    "/conversations/{conversationId}/outbound-intents/{intentId}/reconcile": {
+      "post": {
+        "operationId": "reconcileOutboundIntent",
+        "description": "Registra una decisión auditada sin volver a enviar. accepted exige ID remoto y materializa la salida antes de avanzar entradas atendidas; rejected requiere nota y habilita una revisión posterior de pendientes. Requiere messages:send.",
+        "responses": {
+          "200": {
+            "description": "Conciliación durable.",
+            "content": { "application/json": { "schema": { "$ref": "#/components/schemas/ReconcileOutboundIntentResponse" } } }
+          },
+          "401": { "$ref": "#/components/responses/401" },
+          "403": { "$ref": "#/components/responses/403" },
+          "404": { "$ref": "#/components/responses/404" },
+          "409": { "$ref": "#/components/responses/409" },
+          "422": { "$ref": "#/components/responses/422" },
+          "503": { "$ref": "#/components/responses/503" }
+        },
+        "parameters": [
+          { "name": "conversationId", "in": "path", "required": true, "schema": { "$ref": "#/components/schemas/Id" } },
+          { "name": "intentId", "in": "path", "required": true, "schema": { "$ref": "#/components/schemas/Id" } }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": { "application/json": { "schema": { "$ref": "#/components/schemas/ReconcileOutboundIntentRequest" } } }
+        }
+      }
+    },
     "/conversations/{conversationId}/messages": {
       "get": {
         "operationId": "listMessages",
@@ -464,6 +593,93 @@
               }
             }
           }
+        }
+      }
+    },
+    "/conversations/{conversationId}/search": {
+      "get": {
+        "operationId": "searchConversationMessages",
+        "responses": {
+          "200": {
+            "description": "Resultados FTS paginados y ligados a un snapshot inmutable del archivo.",
+            "content": {
+              "application/json": {
+                "schema": { "$ref": "#/components/schemas/MessageSearchResponse" }
+              }
+            }
+          },
+          "401": { "$ref": "#/components/responses/401" },
+          "403": { "$ref": "#/components/responses/403" },
+          "404": { "$ref": "#/components/responses/404" },
+          "409": { "$ref": "#/components/responses/409" },
+          "410": { "$ref": "#/components/responses/410" },
+          "422": { "$ref": "#/components/responses/422" },
+          "503": { "$ref": "#/components/responses/503" }
+        },
+        "parameters": [
+          {
+            "name": "conversationId",
+            "in": "path",
+            "required": true,
+            "schema": { "$ref": "#/components/schemas/Id" }
+          },
+          {
+            "name": "query",
+            "in": "query",
+            "required": true,
+            "schema": { "$ref": "./schema.json#/$defs/MessageSearchQuery/properties/query" }
+          },
+          {
+            "name": "cursor",
+            "in": "query",
+            "required": false,
+            "schema": { "$ref": "./schema.json#/$defs/MessageSearchQuery/properties/cursor" }
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "required": false,
+            "schema": { "$ref": "./schema.json#/$defs/MessageSearchQuery/properties/limit" }
+          }
+        ]
+      }
+    },
+    "/conversations/{conversationId}/assistance": {
+      "post": {
+        "operationId": "prepareConversationAssistance",
+        "description": "Genera puntos de resumen y un borrador con referencias validadas al contexto confirmado. Requiere admin:write y conversations:read. No escribe en el historial ni envía al canal.",
+        "parameters": [
+          {
+            "name": "conversationId",
+            "in": "path",
+            "required": true,
+            "schema": { "$ref": "#/components/schemas/Id" }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": { "$ref": "#/components/schemas/ConversationAssistanceRequest" }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Resumen y borrador no enviados, ligados al snapshot de mensajes citado.",
+            "content": {
+              "application/json": {
+                "schema": { "$ref": "#/components/schemas/ConversationAssistanceResponse" }
+              }
+            }
+          },
+          "401": { "$ref": "#/components/responses/401" },
+          "403": { "$ref": "#/components/responses/403" },
+          "404": { "$ref": "#/components/responses/404" },
+          "409": { "$ref": "#/components/responses/409" },
+          "410": { "$ref": "#/components/responses/410" },
+          "422": { "$ref": "#/components/responses/422" },
+          "503": { "$ref": "#/components/responses/503" }
         }
       }
     },
@@ -871,6 +1087,9 @@
       "AutomationMode": {
         "$ref": "./schema.json#/$defs/AutomationMode"
       },
+      "AutomationProfile": {
+        "$ref": "./schema.json#/$defs/AutomationProfile"
+      },
       "Lifecycle": {
         "$ref": "./schema.json#/$defs/Lifecycle"
       },
@@ -949,14 +1168,62 @@
       "ConversationsQuery": {
         "$ref": "./schema.json#/$defs/ConversationsQuery"
       },
+      "SummaryQuery": {
+        "$ref": "./schema.json#/$defs/SummaryQuery"
+      },
+      "SummaryChannelMetrics": {
+        "$ref": "./schema.json#/$defs/SummaryChannelMetrics"
+      },
+      "SummaryResponse": {
+        "$ref": "./schema.json#/$defs/SummaryResponse"
+      },
       "MessagesQuery": {
         "$ref": "./schema.json#/$defs/MessagesQuery"
+      },
+      "MessageSearchQuery": {
+        "$ref": "./schema.json#/$defs/MessageSearchQuery"
+      },
+      "MessageSearchHit": {
+        "$ref": "./schema.json#/$defs/MessageSearchHit"
+      },
+      "MessageSearchResponse": {
+        "$ref": "./schema.json#/$defs/MessageSearchResponse"
+      },
+      "ConversationAssistanceRequest": {
+        "$ref": "./schema.json#/$defs/ConversationAssistanceRequest"
+      },
+      "ConversationAssistanceReference": {
+        "$ref": "./schema.json#/$defs/ConversationAssistanceReference"
+      },
+      "ConversationAssistancePoint": {
+        "$ref": "./schema.json#/$defs/ConversationAssistancePoint"
+      },
+      "ConversationAssistanceResponse": {
+        "$ref": "./schema.json#/$defs/ConversationAssistanceResponse"
+      },
+      "AssistantToolRequest": {
+        "$ref": "./schema.json#/$defs/AssistantToolRequest"
+      },
+      "ConversationSearchToolInput": {
+        "$ref": "./schema.json#/$defs/ConversationSearchToolInput"
+      },
+      "ConversationSearchToolHit": {
+        "$ref": "./schema.json#/$defs/ConversationSearchToolHit"
+      },
+      "ConversationSearchToolResult": {
+        "$ref": "./schema.json#/$defs/ConversationSearchToolResult"
+      },
+      "AssistantToolAuditRecord": {
+        "$ref": "./schema.json#/$defs/AssistantToolAuditRecord"
       },
       "SessionResponse": {
         "$ref": "./schema.json#/$defs/SessionResponse"
       },
       "AccountsResponse": {
         "$ref": "./schema.json#/$defs/AccountsResponse"
+      },
+      "AutomationProfilesResponse": {
+        "$ref": "./schema.json#/$defs/AutomationProfilesResponse"
       },
       "ConversationsResponse": {
         "$ref": "./schema.json#/$defs/ConversationsResponse"
@@ -978,6 +1245,21 @@
       },
       "PendingResumeResponse": {
         "$ref": "./schema.json#/$defs/PendingResumeResponse"
+      },
+      "OutboundReconciliationQuery": {
+        "$ref": "./schema.json#/$defs/OutboundReconciliationQuery"
+      },
+      "OutboundReconciliationItem": {
+        "$ref": "./schema.json#/$defs/OutboundReconciliationItem"
+      },
+      "OutboundReconciliationResponse": {
+        "$ref": "./schema.json#/$defs/OutboundReconciliationResponse"
+      },
+      "ReconcileOutboundIntentRequest": {
+        "$ref": "./schema.json#/$defs/ReconcileOutboundIntentRequest"
+      },
+      "ReconcileOutboundIntentResponse": {
+        "$ref": "./schema.json#/$defs/ReconcileOutboundIntentResponse"
       },
       "SendMessageRequest": {
         "$ref": "./schema.json#/$defs/SendMessageRequest"

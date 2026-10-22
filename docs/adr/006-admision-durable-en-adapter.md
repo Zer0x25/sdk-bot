@@ -37,6 +37,13 @@ compone el único archivo, su purga y su ciclo de vida.
   RPC del worker; el siguiente `offset` se calcula después de recibir su commit.
   Updates administrativos, grupos y tipos no admitidos pueden avanzar cursor si
   su `update_id` es válido, dentro de la misma transacción.
+- F2C.3 añade una fila al inbox administrativo para texto normalizado del chat
+  admin, en la misma transacción que su cursor. Tras el commit, un evento solo
+  despierta un pump del gateway; el pump reclama `(account_id, update_id)` antes
+  del pipeline y persiste resultado/estado. El adapter no clasifica comandos ni
+  aplica permisos. Un claim que sigue `processing` al reiniciar pasa a
+  `uncertain` y no se repite, porque los efectos legacy no comparten transacción
+  con SQLite.
 
 Las decisiones de negocio de respuesta/comandos permanecen en pipeline y los
 efectos legacy en su handler. F5 deberá concentrar despacho/control en los casos
@@ -50,6 +57,11 @@ El acoplamiento transitorio del adapter a un puerto de archivo es explícito y
 reemplazable. Evita emitir al handler antes de guardar, a costa de no ser todavía
 la separación completa de observaciones/casos de uso de la arquitectura destino.
 No incorpora control humano ni salida durable por sí solo.
+
+El inbox admin queda separado del historial de clientes. La ventana entre el
+claim y el efecto no puede hacerse atómica con cada comando legacy: un reinicio
+en esa ventana produce resultado incierto y requiere revisión antes de una
+repetición manual. Véase [BUG-046](../BUG-046-TELEGRAM-ADMIN-INBOX.md).
 
 Pruebas de commit previo, fallo después de commit, saturación, sockets antiguos,
 reapertura y composición del entry real en
@@ -67,8 +79,8 @@ debounce/IA. El audio con STT espera transcripción; el fallo lo marca omitido.
 
 BUG-045 cubre el corte entre commit y entrada al pipeline. El despacho es
 at-least-once ante fallos/ACK incierto dentro de ramas con efectos externos; la
-idempotencia de salidas permanece en F5 (BUG-050). Updates admin/grupo/tipos
-excluidos pueden confirmar cursor sin crear mensaje; el inbox durable de comandos
-admin sigue en F5 (BUG-046). Redelivery stale admin se filtra desde F2C.2
+idempotencia de salidas permanece en F5 (BUG-050). Updates de grupos/tipos
+excluidos pueden confirmar cursor sin crear mensaje. El inbox durable admin se
+añadió después en F2C.3 (BUG-046). Redelivery stale admin se filtra desde F2C.2
 (BUG-047). Evidencia y límites: [REPLAY-LEGACY-F2D](../REPLAY-LEGACY-F2D.md) y
 [TELEGRAM-CAPTURA-F2C2](../TELEGRAM-CAPTURA-F2C2.md).

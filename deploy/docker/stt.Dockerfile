@@ -11,10 +11,10 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
 WORKDIR /app
 
 # Deps primero (capa cacheable). faster-whisper tira de torch/ctranslate2.
-COPY stt/requirements.txt /app/stt/requirements.txt
+COPY apps/stt/requirements.txt /app/stt/requirements.txt
 RUN pip install --no-cache-dir -r /app/stt/requirements.txt
 
-COPY stt /app/stt
+COPY apps/stt /app/stt
 
 # El modelo se descarga en runtime al primer uso y se cachea en el volumen
 # montado en STT_CACHE (ver compose.yml). No lo bajamos en build para

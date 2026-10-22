@@ -11,14 +11,15 @@ npm run check
 npm run contracts:generate
 ```
 
-El workspace raíz contiene `packages/*`. Gateway sigue siendo paquete independiente:
-`cd gateway && npm ci && npm run check`. Desde F1B consume el paquete como
-`file:../packages/contracts`; gateway/.npmrc usa install-links=true para empaquetarlo
+El workspace raíz contiene `packages/*`. Gateway y panel son paquetes independientes:
+`cd apps/gateway && npm ci` y `cd apps/panel && npm ci`; el check integrado se ejecuta
+con `cd apps/gateway && npm run check`. Ambos consumen el paquete como
+`file:../../packages/contracts`; sus `.npmrc` usan install-links=true para empaquetarlo
 con sus dependencias, sin symlink ni instalación raíz en producción. Docker copia
 el paquete antes de npm ci. Tras cambiar fuente/tipos de contracts, repetir npm ci
-en gateway: la copia instalada no se actualiza sola. CI instala desde checkout;
+en ambos paquetes: la copia instalada no se actualiza sola. CI instala desde checkout;
 launchers comprueban ausencia/cambios de index/schema. Python mantiene requirements.
-No se movieron aplicaciones. Release-please sigue usando `simple` en raíz y
+El brain y STT conservan tooling Python independiente. Release-please sigue usando `simple` en raíz y
 CHANGELOG, sin publicar paquetes npm; ambos manifests nuevos son privados y el
 workspace raíz no tiene versión de producto.
 
@@ -28,7 +29,7 @@ workspace raíz no tiene versión de producto.
   objetos cerrados, null explícito y formatos. No editar tipos para cambiar DTOs.
 - [openapi.json](openapi.json): OpenAPI 3.1 público `/api/v1`, referencias locales
   a esos schemas incluso para propiedades de query; no duplica campos de DTO.
-  El panel futuro traduce a `/v1` interna con actor firmado (F1B).
+  El panel traduce a `/v1` interna con actor firmado (F1B).
 - [generated.d.ts](generated.d.ts): tipos reproducibles de servidor/cliente,
   rutas y operaciones generados con openapi-typescript; `--check` detecta deriva.
 - [index.js](index.js) / [index.d.ts](index.d.ts): validación AJV y API tipada común.
@@ -86,5 +87,5 @@ CI prepara ejecutarlos en Node 22.13.0/24; Windows/Termux siguen pendientes.
 Evidencia local en [CONTRATOS-V1](../../docs/CONTRATOS-V1.md).
 
 F2B.3 amplía MessageContent multimedia con caption opcional (StoredText), sin
-invalidar marcadores previos. Tipos regenerados y dependencia gateway refrescada.
+invalidar marcadores previos. Tipos regenerados y dependencias de gateway/panel refrescadas.
 Semántica durable y límites: [multimedia WA](../../docs/MULTIMEDIA-WHATSAPP-F2B3.md).

@@ -16,6 +16,23 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/attachments/{attachmentId}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** @description Descarga de bytes solo tras verificar conversations:read y acceso a la conversación asociada. Los archivos caducan 90 días después de la captura durable. */
+        get: operations["downloadAttachment"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/conversations": {
         parameters: {
             query?: never;
@@ -48,6 +65,23 @@ export interface paths {
         patch: operations["updateConversation"];
         trace?: never;
     };
+    "/conversations/{conversationId}/assistance": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** @description Genera puntos de resumen y un borrador con referencias validadas al contexto confirmado. Requiere admin:write y conversations:read. No escribe en el historial ni envía al canal. */
+        post: operations["prepareConversationAssistance"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/conversations/{conversationId}/messages": {
         parameters: {
             query?: never;
@@ -58,6 +92,40 @@ export interface paths {
         get: operations["listMessages"];
         put?: never;
         post: operations["sendMessage"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/conversations/{conversationId}/outbound-intents/{intentId}/reconcile": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** @description Registra una decisión auditada sin volver a enviar. accepted exige ID remoto y materializa la salida antes de avanzar entradas atendidas; rejected requiere nota y habilita una revisión posterior de pendientes. Requiere messages:send. */
+        post: operations["reconcileOutboundIntent"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/conversations/{conversationId}/outbound-reconciliations": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** @description Lista solo salidas inciertas de IA/operador de esta conversación. Requiere conversations:read; no expone payloads del proveedor ni claves de idempotencia. */
+        get: operations["listOutboundReconciliations"];
+        put?: never;
+        post?: never;
         delete?: never;
         options?: never;
         head?: never;
@@ -106,6 +174,22 @@ export interface paths {
         get?: never;
         put?: never;
         post: operations["releaseControl"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/conversations/{conversationId}/search": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get: operations["searchConversationMessages"];
+        put?: never;
+        post?: never;
         delete?: never;
         options?: never;
         head?: never;
@@ -161,6 +245,22 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/profiles": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get: operations["listAutomationProfiles"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/session": {
         parameters: {
             query?: never;
@@ -169,6 +269,23 @@ export interface paths {
             cookie?: never;
         };
         get: operations["getSession"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/summary": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** @description Métricas de entradas y salidas archivadas en el intervalo UTC [from,to); solo se cuentan salidas aceptadas. */
+        get: operations["getSummary"];
         put?: never;
         post?: never;
         delete?: never;
@@ -202,10 +319,45 @@ export interface components {
             displayName: string;
             id: components["schemas"]["Id"];
         };
+        /** @description Auditoría sin texto de consulta ni contenido de mensajes; retención de 180 días. */
+        AssistantToolAuditRecord: {
+            actorId: components["schemas"]["Id"];
+            attemptCount: number;
+            conversationId: components["schemas"]["Id"];
+            createdAt: components["schemas"]["Timestamp"];
+            /** @constant */
+            effect: "read";
+            invocationKey: string;
+            requestFingerprint: string;
+            resultFingerprint: string | null;
+            /** @enum {string} */
+            status: "completed" | "failed" | "denied";
+            /** @constant */
+            toolName: "conversation.search_messages";
+            updatedAt: components["schemas"]["Timestamp"];
+        };
+        /** @description Solicitud tipada de lectura; el Gateway valida permisos y ejecuta el caso de uso. */
+        AssistantToolRequest: {
+            /** @constant */
+            effect: "read";
+            input: components["schemas"]["ConversationSearchToolInput"];
+            /** @constant */
+            kind: "tool_request";
+            /** @constant */
+            toolName: "conversation.search_messages";
+        };
         /** @enum {string} */
         AutomationMode: "ai" | "human" | "off";
+        AutomationProfile: {
+            key: string;
+            /** Format: unicode-text */
+            name: string;
+        };
+        AutomationProfilesResponse: {
+            items: components["schemas"]["AutomationProfile"][];
+        };
         /** @enum {string} */
-        Capability: "conversations:read" | "messages:send" | "control:write" | "control:override" | "conversations:write";
+        Capability: "conversations:read" | "messages:send" | "control:write" | "control:override" | "conversations:write" | "admin:write";
         /** @enum {string} */
         Channel: "whatsapp" | "telegram";
         ChannelCapabilities: {
@@ -234,6 +386,32 @@ export interface components {
             requiresReview: boolean;
             unreadCount: number;
         };
+        ConversationAssistancePoint: {
+            references: components["schemas"]["ConversationAssistanceReference"][];
+            /** Format: unicode-text */
+            text: string;
+        };
+        ConversationAssistanceReference: {
+            /** @enum {string} */
+            authorKind: "customer" | "ai" | "operator" | "external_self" | "system" | "unknown";
+            messageId: components["schemas"]["Id"];
+            occurredAt: components["schemas"]["Timestamp"];
+        };
+        /** @description Genera ayuda sobre el contexto confirmado y la época/secuencia que ve el operador. */
+        ConversationAssistanceRequest: {
+            expectedContextVersion: components["schemas"]["Version"];
+            expectedSnapshot: components["schemas"]["EventCursor"];
+        };
+        ConversationAssistanceResponse: {
+            contextVersion: components["schemas"]["Version"];
+            conversationId: components["schemas"]["Id"];
+            /** Format: unicode-text */
+            draft: string;
+            draftReferences: components["schemas"]["ConversationAssistanceReference"][];
+            snapshot: components["schemas"]["EventCursor"];
+            summaryPoints: components["schemas"]["ConversationAssistancePoint"][];
+            throughMessageId: components["schemas"]["Id"];
+        };
         /** @description Forma de proyección; elegibilidad/cancelación/barrera se verifican en servicio de dominio F5. */
         ConversationControl: {
             accessPolicy: components["schemas"]["AccessPolicy"];
@@ -254,6 +432,26 @@ export interface components {
             channelCapabilities: components["schemas"]["ChannelCapabilities"];
             conversation: components["schemas"]["Conversation"];
             snapshot: components["schemas"]["EventCursor"];
+        };
+        ConversationSearchToolHit: {
+            /** @enum {string} */
+            authorKind: "customer" | "ai" | "operator";
+            messageId: components["schemas"]["Id"];
+            occurredAt: components["schemas"]["Timestamp"];
+            /** Format: unicode-text */
+            snippet: string;
+        };
+        ConversationSearchToolInput: {
+            limit: number;
+            /** Format: unicode-text */
+            query: string;
+        };
+        ConversationSearchToolResult: {
+            hits: components["schemas"]["ConversationSearchToolHit"][];
+            invocationKey: string;
+            snapshot: components["schemas"]["EventCursor"];
+            /** @constant */
+            toolName: "conversation.search_messages";
         };
         ConversationsQuery: {
             accountId?: components["schemas"]["Id"];
@@ -280,7 +478,7 @@ export interface components {
         /** @enum {string} */
         DeliveryStatus: "received" | "queued" | "sending" | "sent" | "delivered" | "read" | "failed" | "delivery_unknown" | "cancelled";
         /** @enum {string} */
-        ErrorCode: "UNAUTHENTICATED" | "FORBIDDEN" | "NOT_FOUND" | "VALIDATION_ERROR" | "VERSION_CONFLICT" | "OWNER_CONFLICT" | "IDENTITY_AMBIGUOUS" | "IDENTITY_CONFLICT" | "IDEMPOTENCY_CONFLICT" | "IDEMPOTENCY_RESULT_EXPIRED" | "CONTROL_NOT_CONFIRMED" | "CHANNEL_NOT_READY" | "CONVERSATION_NOT_FOUND" | "CONTROL_AUTHORITY_NOT_ACTIVE" | "CONTROL_HUMAN_SEND_IN_FLIGHT" | "CONTROL_OPERATION_MISSING" | "CONTROL_OWNER_CONFLICT" | "CONTROL_SERVICE_NOT_READY" | "CONTROL_TARGET_NOT_FOUND" | "CONTROL_VERSION_CONFLICT" | "ACCESS_IGNORED" | "CURSOR_EXPIRED" | "DATA_EPOCH_MISMATCH" | "IDEMPOTENCY_KEY_REUSED" | "OUTBOUND_DELIVERY_UNKNOWN" | "OUTBOUND_IN_PROGRESS" | "OUTBOUND_REJECTED" | "PENDING_RESUME_MESSAGE_NOT_ELIGIBLE" | "PENDING_RESUME_NOT_AVAILABLE" | "PENDING_RESUME_SELECTION_STALE" | "SERVICE_UNAVAILABLE" | "TIMEOUT" | "INTERNAL_ERROR";
+        ErrorCode: "UNAUTHENTICATED" | "FORBIDDEN" | "NOT_FOUND" | "VALIDATION_ERROR" | "VERSION_CONFLICT" | "OWNER_CONFLICT" | "IDENTITY_AMBIGUOUS" | "IDENTITY_CONFLICT" | "IDEMPOTENCY_CONFLICT" | "IDEMPOTENCY_RESULT_EXPIRED" | "CONTROL_NOT_CONFIRMED" | "CHANNEL_NOT_READY" | "CONVERSATION_NOT_FOUND" | "CONTROL_AUTHORITY_NOT_ACTIVE" | "CONTROL_HUMAN_SEND_IN_FLIGHT" | "CONTROL_OPERATION_MISSING" | "CONTROL_OWNER_CONFLICT" | "CONTROL_SERVICE_NOT_READY" | "CONTROL_TARGET_NOT_FOUND" | "CONTROL_VERSION_CONFLICT" | "ACCESS_IGNORED" | "CURSOR_EXPIRED" | "DATA_EPOCH_MISMATCH" | "IDEMPOTENCY_KEY_REUSED" | "OUTBOUND_DELIVERY_UNKNOWN" | "OUTBOUND_IN_PROGRESS" | "OUTBOUND_ARCHIVE_RECONCILIATION_FAILED" | "OUTBOUND_MESSAGE_CORRELATION_REQUIRED" | "OUTBOUND_RECONCILIATION_CONFLICT" | "OUTBOUND_REJECTED" | "PENDING_RESUME_MESSAGE_NOT_ELIGIBLE" | "PENDING_RESUME_NOT_AVAILABLE" | "PENDING_RESUME_SELECTION_STALE" | "SERVICE_UNAVAILABLE" | "TIMEOUT" | "INTERNAL_ERROR";
         /** @description Solo mensajes saneados. Sin raw, stack, rutas locales, tokens ni payload arbitrario. */
         ErrorResponse: {
             error: {
@@ -444,6 +642,8 @@ export interface components {
         };
         /** @enum {string} */
         Lifecycle: "open" | "resolved";
+        /** @default 50 */
+        limit: number;
         Message: {
             actorId: components["schemas"]["Id"] | null;
             /** @enum {string} */
@@ -453,14 +653,20 @@ export interface components {
             conversationId: components["schemas"]["Id"];
             /** @enum {string} */
             deduplicationQuality: "provider_id" | "unknown";
+            /** @description Revocación observada del proveedor; el contenido local queda redactado. */
+            deletedAt?: components["schemas"]["Timestamp"];
             deliveryStatus: components["schemas"]["DeliveryStatus"];
             /** @enum {string} */
             direction: "inbound" | "outbound";
+            /** @description Última edición observada del proveedor; omitido si el canal no la reporta. */
+            editedAt?: components["schemas"]["Timestamp"];
             id: components["schemas"]["Id"];
             inboundSeq: components["schemas"]["Sequence"] | null;
             ingestedAt: components["schemas"]["Timestamp"];
             occurredAt: components["schemas"]["Timestamp"];
             providerMessageId: components["schemas"]["ProviderMessageId"] | null;
+            /** @description Recorte del mensaje citado cuando su referencia interna no existe o ya se purgó. */
+            replyPreview?: components["schemas"]["StoredText"];
             replyToId: components["schemas"]["Id"] | null;
             /** @enum {string} */
             source: "live" | "history" | "panel" | "automation" | "command" | "import";
@@ -469,7 +675,9 @@ export interface components {
             text: components["schemas"]["StoredText"];
             /** @constant */
             type: "text";
-        } | {
+        } | ({
+            /** @description ID opaco descargable solo mediante la API autenticada de adjuntos. */
+            attachmentId?: components["schemas"]["Id"];
             /** @enum {string} */
             availability: "not_stored" | "available" | "expired" | "failed";
             /** @description Texto adjunto literal; opcional para compatibilidad con marcadores anteriores. */
@@ -479,12 +687,35 @@ export interface components {
             transcriptionStatus: "not_requested" | "pending" | "completed" | "failed";
             /** @enum {string} */
             type: "audio" | "image" | "video" | "document" | "unsupported";
-        } | {
+        } & (unknown & unknown & unknown)) | {
             originalBytes: number;
             /** @constant */
             reason: "text_limit";
             /** @constant */
             type: "oversized";
+        };
+        MessageSearchHit: {
+            message: components["schemas"]["Message"];
+            /**
+             * Format: unicode-text
+             * @description Fragmento de texto plano; nunca HTML.
+             */
+            snippet: string;
+        };
+        MessageSearchQuery: {
+            cursor?: components["schemas"]["PageCursor"];
+            limit?: components["schemas"]["PageLimit"];
+            /**
+             * Format: unicode-text
+             * @description Términos literales; la API normaliza y limita el número de términos.
+             */
+            query: string;
+        };
+        /** @description Página FTS estable ligada a la época y secuencia exactas del archivo. */
+        MessageSearchResponse: {
+            items: components["schemas"]["MessageSearchHit"][];
+            nextCursor: components["schemas"]["PageCursor"] | null;
+            snapshot: components["schemas"]["EventCursor"];
         };
         MessagesQuery: {
             cursor?: components["schemas"]["PageCursor"];
@@ -508,6 +739,29 @@ export interface components {
             /** @constant */
             type: "takeover";
             uncertainMessageIds: components["schemas"]["Id"][];
+        };
+        OutboundReconciliationItem: {
+            /** @enum {string} */
+            channel: "whatsapp" | "telegram";
+            clientMessageId: components["schemas"]["Id"] | null;
+            conversationId: components["schemas"]["Id"];
+            createdAt: components["schemas"]["Timestamp"];
+            errorCode: string | null;
+            id: components["schemas"]["Id"];
+            sendingAt: components["schemas"]["Timestamp"] | null;
+            /** @enum {string} */
+            source: "human" | "ai";
+            text: components["schemas"]["OutgoingText"] | null;
+            updatedAt: components["schemas"]["Timestamp"];
+        };
+        OutboundReconciliationQuery: {
+            cursor?: components["schemas"]["PageCursor"];
+            /** @default 50 */
+            limit?: number;
+        };
+        OutboundReconciliationResponse: {
+            items: components["schemas"]["OutboundReconciliationItem"][];
+            nextCursor: components["schemas"]["PageCursor"] | null;
         };
         /**
          * Format: unicode-text
@@ -540,12 +794,33 @@ export interface components {
             uncertainOutboundCount: number;
         };
         ProviderMessageId: string;
+        /**
+         * Format: unicode-text
+         * @description Términos literales; la API normaliza y limita el número de términos.
+         */
+        query: string;
         /** @description Cursor monotónico del actor y chat; no recibo del proveedor. */
         ReadRequest: {
             throughInboundSeq: components["schemas"]["Sequence"];
         };
         ReadResponse: {
             throughInboundSeq: components["schemas"]["Sequence"];
+        };
+        /** @description accepted requires providerMessageId; rejected must omit it. Server also materializes the correlated message before advancing its watermark. */
+        ReconcileOutboundIntentRequest: {
+            /** Format: unicode-text */
+            note: string;
+            providerMessageId?: components["schemas"]["ProviderMessageId"];
+            /** @enum {string} */
+            state: "accepted" | "rejected";
+        };
+        ReconcileOutboundIntentResponse: {
+            intentId: components["schemas"]["Id"];
+            reconciledAt: components["schemas"]["Timestamp"];
+            /** @enum {string} */
+            state: "accepted" | "rejected";
+            /** @enum {string} */
+            status: "reconciled" | "existing";
         };
         /** @description Selección pendiente explícita; servicio comprueba live/no atendida/24h/versión. No reanima jobs antiguos. */
         ReleaseRequest: {
@@ -588,6 +863,36 @@ export interface components {
         };
         /** Format: unicode-text */
         StoredText: string;
+        SummaryChannelMetrics: {
+            acceptedAiReplies: number;
+            acceptedHumanReplies: number;
+            /** @description Conversaciones con al menos una entrada durante el intervalo. */
+            activeConversations: number;
+            channel: components["schemas"]["Channel"];
+            inboundMessages: number;
+        };
+        SummaryQuery: {
+            from: components["schemas"]["Timestamp"];
+            to: components["schemas"]["Timestamp"];
+        };
+        SummaryResponse: {
+            byChannel: components["schemas"]["SummaryChannelMetrics"][];
+            coverageStartAt: components["schemas"]["Timestamp"] | null;
+            metrics: {
+                acceptedAiReplies: number;
+                acceptedHumanReplies: number;
+                /** @description Conversaciones con al menos una entrada durante el intervalo. */
+                activeConversations: number;
+                inboundMessages: number;
+            };
+            period: {
+                from: components["schemas"]["Timestamp"];
+                /** @constant */
+                interval: "[from,to)";
+                to: components["schemas"]["Timestamp"];
+            };
+            snapshot: components["schemas"]["EventCursor"];
+        };
         TakeoverConfirmedResponse: {
             conversation: components["schemas"]["Conversation"];
         };
@@ -609,15 +914,18 @@ export interface components {
          */
         Timestamp: string;
         unreadOnly: boolean;
-        /** @description CAS por controlVersion; se requiere al menos un cambio de lifecycle, acceso o perfil. */
+        /** @description CAS por controlVersion; se requiere al menos un cambio de ciclo, acceso o perfil. null en profileKey hereda el perfil global. */
         UpdateConversationRequest: {
             accessPolicy?: components["schemas"]["AccessPolicy"];
             expectedVersion: components["schemas"]["Version"];
             lifecycle?: components["schemas"]["Lifecycle"];
+            profileKey?: string | null;
         } | {
             lifecycle: components["schemas"]["Lifecycle"];
         } | {
             accessPolicy: components["schemas"]["AccessPolicy"];
+        } | {
+            profileKey: string | null;
         };
         /** @description Versión positiva decimal como texto. No intercambiar controlVersion con aggregateVersion. */
         Version: string;
@@ -719,6 +1027,36 @@ export interface operations {
             404: components["responses"]["404"];
             409: components["responses"]["409"];
             410: components["responses"]["410"];
+            422: components["responses"]["422"];
+            503: components["responses"]["503"];
+        };
+    };
+    downloadAttachment: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                attachmentId: components["schemas"]["Id"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Archivo opaco; no se sirve como contenido ejecutable del origen. */
+            200: {
+                headers: {
+                    "Content-Disposition"?: string;
+                    "Content-Length"?: number;
+                    "X-Content-Type-Options"?: "nosniff";
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/octet-stream": string;
+                };
+            };
+            401: components["responses"]["401"];
+            403: components["responses"]["403"];
+            404: components["responses"]["404"];
             422: components["responses"]["422"];
             503: components["responses"]["503"];
         };
@@ -831,6 +1169,39 @@ export interface operations {
             503: components["responses"]["503"];
         };
     };
+    prepareConversationAssistance: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                conversationId: components["schemas"]["Id"];
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ConversationAssistanceRequest"];
+            };
+        };
+        responses: {
+            /** @description Resumen y borrador no enviados, ligados al snapshot de mensajes citado. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ConversationAssistanceResponse"];
+                };
+            };
+            401: components["responses"]["401"];
+            403: components["responses"]["403"];
+            404: components["responses"]["404"];
+            409: components["responses"]["409"];
+            410: components["responses"]["410"];
+            422: components["responses"]["422"];
+            503: components["responses"]["503"];
+        };
+    };
     listMessages: {
         parameters: {
             query?: {
@@ -896,6 +1267,70 @@ export interface operations {
             404: components["responses"]["404"];
             409: components["responses"]["409"];
             410: components["responses"]["410"];
+            422: components["responses"]["422"];
+            503: components["responses"]["503"];
+        };
+    };
+    reconcileOutboundIntent: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                conversationId: components["schemas"]["Id"];
+                intentId: components["schemas"]["Id"];
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ReconcileOutboundIntentRequest"];
+            };
+        };
+        responses: {
+            /** @description Conciliación durable. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ReconcileOutboundIntentResponse"];
+                };
+            };
+            401: components["responses"]["401"];
+            403: components["responses"]["403"];
+            404: components["responses"]["404"];
+            409: components["responses"]["409"];
+            422: components["responses"]["422"];
+            503: components["responses"]["503"];
+        };
+    };
+    listOutboundReconciliations: {
+        parameters: {
+            query?: {
+                cursor?: components["schemas"]["PageCursor"];
+                limit?: components["schemas"]["limit"];
+            };
+            header?: never;
+            path: {
+                conversationId: components["schemas"]["Id"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Página de salidas que esperan decisión manual. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["OutboundReconciliationResponse"];
+                };
+            };
+            401: components["responses"]["401"];
+            403: components["responses"]["403"];
+            404: components["responses"]["404"];
+            409: components["responses"]["409"];
             422: components["responses"]["422"];
             503: components["responses"]["503"];
         };
@@ -985,6 +1420,39 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["TakeoverConfirmedResponse"];
+                };
+            };
+            401: components["responses"]["401"];
+            403: components["responses"]["403"];
+            404: components["responses"]["404"];
+            409: components["responses"]["409"];
+            410: components["responses"]["410"];
+            422: components["responses"]["422"];
+            503: components["responses"]["503"];
+        };
+    };
+    searchConversationMessages: {
+        parameters: {
+            query: {
+                cursor?: components["schemas"]["PageCursor"];
+                limit?: components["schemas"]["PageLimit"];
+                query: components["schemas"]["query"];
+            };
+            header?: never;
+            path: {
+                conversationId: components["schemas"]["Id"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Resultados FTS paginados y ligados a un snapshot inmutable del archivo. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["MessageSearchResponse"];
                 };
             };
             401: components["responses"]["401"];
@@ -1098,6 +1566,29 @@ export interface operations {
             503: components["responses"]["503"];
         };
     };
+    listAutomationProfiles: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Claves y nombres disponibles; no expone contenido de los perfiles. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AutomationProfilesResponse"];
+                };
+            };
+            401: components["responses"]["401"];
+            403: components["responses"]["403"];
+            503: components["responses"]["503"];
+        };
+    };
     getSession: {
         parameters: {
             query?: never;
@@ -1121,6 +1612,33 @@ export interface operations {
             404: components["responses"]["404"];
             409: components["responses"]["409"];
             410: components["responses"]["410"];
+            422: components["responses"]["422"];
+            503: components["responses"]["503"];
+        };
+    };
+    getSummary: {
+        parameters: {
+            query: {
+                from: components["schemas"]["Timestamp"];
+                to: components["schemas"]["Timestamp"];
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Conteos verificables del archivo y fecha mínima de una entrada archivada. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SummaryResponse"];
+                };
+            };
+            401: components["responses"]["401"];
+            403: components["responses"]["403"];
             422: components["responses"]["422"];
             503: components["responses"]["503"];
         };

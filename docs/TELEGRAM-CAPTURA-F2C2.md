@@ -88,3 +88,11 @@ los perfiles versionados de `brain/` requeridos por tres pruebas de reset; al re
 con el snapshot completo pasan. No se usó estado local, credenciales, proveedores,
 canales reales, STT real ni aceptación de carga. Las limitaciones y próxima tarea
 están en [`SESSION-STATE.md`](SESSION-STATE.md) y en el commit de esta unidad.
+
+## Extensión posterior F2C.3 — inbox de administración
+
+La aceptación original de F2C.2 dejaba los updates administrativos fuera del
+archivo de clientes y marcaba BUG-046 como pendiente. F2C.3 conserva esa
+separación, pero añade un inbox SQLite aparte que confirma el texto del admin
+junto al cursor y lo despacha después del commit. Véase
+[BUG-046](BUG-046-TELEGRAM-ADMIN-INBOX.md).

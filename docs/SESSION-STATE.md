@@ -1,6 +1,6 @@
 # Estado de continuidad — SDK-Bot
 
-Actualización: 2026-10-20. El checkout se sincronizó con `origin/main` en
+Actualización: 2026-10-22. El checkout se sincronizó con `origin/main` en
 `df1f111` antes de iniciar F5. F4.2 se fusionó en main en 7526edc (PR #4).
 BUG-064 y BUG-065 están cerrados y sus arreglos pasaron CI. Release PR #2 actualizó
 el manifiesto a 0.3.0 en 9b0d0b5; PR #6 fusionó la versión 0.4.0 en bfe3fa9.
@@ -80,8 +80,9 @@ respuesta humana desde el chat y retorno seguro a IA con contexto actualizado.
   el pump reconstruye `StandardMessage` cuando el canal abre, trata eventos como
   wake-up y persiste ACK. Audio espera STT; respond mantiene pendiente el ACK hasta
   completar debounce/IA. BUG-045 cerrado para el corte post-commit→handler;
-  BUG-050 mantiene abierta la idempotencia de efectos externos y BUG-051 la
-  reconciliación antes de desplegar sobre archivos reales. Evidencia:
+  BUG-050 mantiene abierta la idempotencia de efectos externos. BUG-051 ya tiene
+  diagnóstico y revisión offline; completar la revisión sigue siendo obligatorio
+  antes de desplegar sobre archivos reales. Evidencia:
   [REPLAY-LEGACY-F2D](REPLAY-LEGACY-F2D.md).
 - F2E.1: `sendMessage` de WA archiva la aceptación del proveedor con su ID y el eco
   `fromMe` converge en ese mensaje; la prueba cubre el eco antes del retorno. TG
@@ -682,7 +683,8 @@ ausencia de Vite/CA. Commit separado de la UI.
 ## Pendientes materiales
 
 - F5 aborda toma de control, cancelación de IA, contexto y outbox; BUG-046/050
-  son puertas de esa entrega y BUG-051 antes de migrar archivos preexistentes.
+  son puertas de esa entrega. BUG-051 mantiene una revisión obligatoria antes de
+  migrar archivos preexistentes; su herramienta de informe ya está implementada.
 - BUG-010 sigue parcial; BUG-035/037 quedan para F8. Windows/Termux y canales reales
   no están validados; la historia previa que conservan los proveedores es limitada.
 - BUG-024 antes de operadores limitados; BUG-014 antes de Python paralelo.
@@ -864,14 +866,13 @@ Cierres históricos: commits F2C.1/F2C.2/F2D/F2E.1 están en el log local; F2B.3
   en un panel adicional de loopback y luego se cerró; el actor del panel original
   conservó sus capacidades. El chat de prueba quedó `neutral/off` y
   `globalMode=ignored_all` se verificó al final. La evidencia no inspeccionó el
-  payload de contexto live. Telegram y la validación completa de teclado, compositor
-  y controles móviles siguen pendientes; F6.4/Fase 6 no se cierran aún. Ver
-  [F6.4](F6.4-SMOKE-CANAL.md).
+  payload de contexto live. Ver [F6.4](F6.4-SMOKE-CANAL.md).
 
 ## Revisión del backlog antes de F7
 
-- Se confirmó que `work` y `origin/work` están sincronizados en `5a77104`. No se
-  iniciará F7 mientras F6.4 siga pendiente, porque la hoja de ruta exige v1 estable.
+- En esa revisión, `work` y `origin/work` estaban sincronizados en `5a77104` y no se
+  iniciaría F7 mientras F6.4 siguiera pendiente, porque la hoja de ruta exige v1
+  estable. F6.4 se cerró en la continuación documentada abajo.
 - BUG-006/007 tenían evidencia de cierre F5.5/F5.7/F5.8, pero sus filas seguían
   abiertas; BACKLOG.md ahora refleja los cierres y referencias de aceptación.
 - Gates por alcance de F7: BUG-024 antes de habilitar operadores limitados;
@@ -882,3 +883,838 @@ Cierres históricos: commits F2C.1/F2C.2/F2D/F2E.1 están en el log local; F2B.3
   legacy. BUG-051 bloquea migrar un archivo runtime existente; BUG-071/073/074 y
   BUG-066/069 siguen en sus límites anotados. No se ejecutaron pruebas en esta
   revisión documental.
+
+## Reanudación de F6.4 — 2026-10-22
+
+- En `d7af68b` se inició una instancia local de Brain, Gateway y Panel con listeners
+  loopback. Health checks: HTTP 200; WhatsApp/Telegram `open`; Brain `ok`;
+  `globalMode=ignored_all`; cola pendiente 0. El actor de Panel tuvo solo
+  `conversations:read`. La API mostró 48 conversaciones, 0 no leídas y 4 con
+  `requiresReview`; no se modificaron controles ni se enviaron mensajes.
+- `cd gateway && npm run panel:check`: typecheck pasa, 13 pruebas Vitest pasan,
+  build Vite pasa y `panelWebBuild.test.js` pasa 1/1. `/inbox/` respondió HTTP 200;
+  las cuentas WA y TG reportaron estado `connected`.
+- En la primera inspección visual CUA reportó inventario vacío de aplicaciones y
+  navegadores. El contexto de una generación live no se instrumentó y el smoke de
+  Telegram seguía sin ejecutar; la instancia quedó disponible en loopback.
+- En la continuación del 2026-10-22 se recibió un segundo marcador WA live durante
+  `human`; `pending-resume` mostró un candidato y cero salidas inciertas. Se procesó
+  la selección explícita y el archivo confirmó una respuesta IA `external_self`
+  enviada una vez. Se permitió temporalmente solo ese chat, con `globalMode` aún
+  `ignored_all`; al terminar quedó `neutral/off`, `status=confirmed`, cola y
+  trabajos en vuelo en cero. El panel de escritura adicional se cerró.
+- Se corrigió el layout móvil: con un hilo seleccionado, 390 × 844 y 320 × 844 px
+  mostraron historial y compositor sin overflow ni solapamiento con la navegación;
+  a 390 × 844 px el compositor estuvo habilitado durante takeover humano. El build
+  de la bandeja pasó con `npm run panel:build`. En la continuación, Tab recorrió
+  los 64 elementos alcanzables del hilo con foco visible en todos; incluyó
+  devolución de control, resolución, historial y compositor. `Tomar control`
+  también recibió foco visible en modo pausado. El hilo se restauró a atención
+  pausada y el panel temporal se cerró.
+- Telegram se reserva para administración. El marcador enviado al chat
+  administrativo/self-chat se enrutó por `self_chat_ai` y produjo una respuesta
+  legacy; queda como observación de esa ruta. El smoke de atención a clientes TG
+  no aplica al alcance acordado. La revisión final trazó la petición live desde el
+  inbound seleccionado hasta `message`, el historial SQLite y la etiqueta
+  `Operador humano`; `node --test tests/f63ConversationFlow.test.js` pasó 1/1 y
+  comprueba el contrato integrado. No se conservó el JSON literal de la petición
+  live. F6.4 y Fase 6 quedan completadas con esa limitación registrada.
+  [Evidencia](F6.4-SMOKE-CANAL.md).
+
+## Fase 7.1 — Resumen con métricas del archivo — 2026-10-22
+
+- En `main`, se añadió la primera vista real de F7: Resumen con periodos móviles
+  de 7/30 días, inicio incluido y fin excluido en UTC. La API autenticada exige
+  ambos límites, máximo 90 días y permiso `conversations:read`.
+- Los conteos usan mensajes entrantes con secuencia durable y salidas de IA/humano
+  cuyo estado del outbox es `accepted`, agrupados por canal. Se muestra la fecha
+  mínima de entrada aún disponible en el archivo; no se infiere actividad fuera
+  de sus datos retenidos y no se expone texto ni identidad.
+- La migración SQLite v11 añade índices de consulta temporal; se aceptó v11 en
+  lectura inmutable/importación. El proxy valida `SummaryResponse`. La navegación
+  React enlaza `/inbox/summary`, con estados de carga/error, periodo, métricas,
+  tabla de canales y nota de cobertura.
+- Verificación: `npm run check` en la raíz (contratos) y `cd gateway && npm run
+  check` (lint, typecheck, 14 pruebas Vitest, build y pruebas completas del
+  Gateway). La prueba agregada comprueba límites `[from,to)`, conversaciones
+  únicas por canal, salidas aceptadas y rechazo de intervalos inválidos; la prueba
+  de API cubre contrato, query incompleta y permiso.
+- Alcance cerrado: solo la unidad Resumen. Contactos, Canales, Asistente, Sistema
+  e inventario de paridad siguen pendientes dentro de F7. No se hizo push ni
+  despliegue.
+
+## Fase 7.2 — Contactos — 2026-10-22
+
+- React reemplaza el placeholder de Contactos por una lista paginada de conversaciones
+  archivadas, búsqueda por nombre y filtro por canal. La lista no expone teléfono,
+  JID ni ID remoto; incluye acceso, perfil IA y enlace a la conversación.
+- Los cambios de acceso/perfil usan PATCH v1 por `conversationId`, exigen
+  `conversations:write` y comparan `controlVersion`. El backend delega al
+  ControlService SQLite; cambiar el perfil mantiene la invalidación durable del
+  contexto. El endpoint autenticado `/v1/profiles` devuelve únicamente clave y
+  nombre, nunca contenido de prompts. Actores sin escritura ven valores de solo
+  lectura. La ficha de Bandeja muestra permiso y perfil desde la misma proyección.
+- BUG-024 no se amplió: la UI nueva no llama endpoints legacy y no se incorporaron
+  grants limitados. Perfiles no disponibles quedan visibles como tales; la API
+  valida cada asignación contra el inventario actual antes de guardar.
+- Verificación: raíz `npm run check` pasó (17 pruebas de contratos); tras regenerar
+  contratos se ejecutó `cd gateway && npm ci`. `cd gateway && npm run check` pasó
+  lint, typecheck, panel typecheck, 16 pruebas React, build Vite, prueba de montaje
+  y 318 pruebas de Gateway. La suite de API cubre listado de perfiles sin contenido,
+  denegación de escritura a actor de solo lectura y asignación de perfil con CAS.
+- No se hizo push ni despliegue. Siguiente unidad: F7.3 Canales; cubrir pairing
+  existente sin iniciar una segunda instancia ni alterar QR/código vigentes.
+
+## Fase 7.3 — Canales — 2026-10-22
+
+- `/inbox/channels` muestra el estado de WhatsApp y Telegram desde cuentas v1.
+  Pairing WhatsApp reutiliza el único gateway: SSE QR con vencimiento visible,
+  solicitud por código restaurada, expiración informativa y bloqueo de controles
+  mientras otro método está activo. No se agregó inicio de gateway ni transporte.
+- Telegram se presenta solo como canal administrativo. La pantalla escribe token
+  y Chat ID reingresados por el administrador; nunca lee sus valores guardados.
+  `/telegram/settings/meta` responde solo `configured` y `chatIdConfigured`. No
+  hay botón de prueba ni ejecución de `/telegram/test` desde React.
+- BUG-024 cerrado: con OAuth, `admin:write` explícito habilita `/api/*` legacy y
+  su UI; sesiones de solo lectura conservan `/inbox/*`. Pruebas verifican que
+  status, QR, logs, command y reset se deniegan antes del proxy, incluso con
+  `X-Status-Token`, mientras una cuenta administrativa autorizada pasa.
+- Verificación: raíz `npm run check` pasó (17 contratos). Gateway `npm run check`
+  pasó ESLint, typecheck, 21 pruebas React, build y prueba de montaje, más 320
+  pruebas Gateway. `panelBoundary.test.js` y `telegram.test.js` pasaron 32/32.
+  Se usaron solo datos/stubs; no se inició pairing real ni se envió Telegram.
+- No se hizo push ni despliegue. Siguiente unidad: F7.4 Asistente.
+
+## Fase 7.4 — Asistente — 2026-10-22
+
+- `/inbox/assistant` reemplaza el placeholder con lista y editor de perfiles
+  Markdown. La sesión sin `admin:write` ve solo claves/nombres mediante `/v1/profiles`
+  y no solicita contenido ni llama rutas legacy. La edición usa rutas `/api/*` ya
+  cerradas por la frontera OAuth de F7.3.
+- El borrador protege los cambios al cambiar de perfil y navegar, y avisa ante
+  recarga/cierre. Importa `.md`/`.txt` local hasta 900.000 bytes; exporta desde el
+  borrador actual, incluso con cambios pendientes. Incluye guardar, confirmación
+  antes de sobrescribir una clave, recarga, prompt compilado y eliminación
+  confirmada; `default` conserva su protección. Las restricciones de formato las
+  valida el brain y un rechazo conserva el borrador.
+- Pruebas de componente con APIs simuladas: 9 casos para permisos, lectura, edición,
+  cambios sin guardar, navegación cancelada, guardado exitoso/rechazado, reemplazo,
+  importación/exportación, recarga, prompt y eliminación. No se conectó brain live.
+- Verificación: `cd gateway && npm run check` pasó ESLint, typecheck Gateway/React,
+  30 pruebas React, build Vite y montaje bajo `/inbox`, más 320 pruebas Gateway.
+  No cambiaron contratos y no se ejecutó un proveedor real.
+- No se hizo push ni despliegue. Siguiente unidad: F7.5 Sistema.
+
+## Fase 7.5 — Sistema — 2026-10-22
+
+- `/inbox/system` reemplaza el placeholder e incorpora diagnóstico, logs SSE de
+  Gateway/Brain, consola del manejador administrativo, inicio de Brain, pausa del
+  bot y mantenimiento. Sistema aparece también en la navegación móvil.
+- Solo `admin:write` solicita estado, logs y operaciones legacy. Los comandos no
+  pasan por una shell. Limpiar logs pide confirmación y afecta el archivo activo;
+  los rotados se conservan. La pantalla conserva restart, reset de sesión WA y el
+  reset limpio con confirmación inicial, 10 s de lectura, palabra `BORRAR-TODO`
+  durante 60 s y una sola solicitud. Ante resultado destructivo incierto bloquea
+  otro intento y pide revisar el estado.
+- Prueba enfocada: 8 casos con API y EventSource simulados. Se probaron permisos,
+  estado, Brain, comando único, ciclo SSE/filtros, limpieza de logs, reset WA,
+  temporizadores/palabra exacta del reset limpio y reinicio Gateway. No se ejecutó
+  ningún comando real ni se modificó estado local/runtime.
+- `cd gateway && npm run check` pasó ESLint, typecheck Gateway/React, 38 pruebas
+  React, build Vite, montaje bajo `/inbox` y 320 pruebas Gateway. `git diff --check`
+  pasó. Sin cambios de contratos y sin proveedores externos.
+- Evidencia: [F7.5-SISTEMA](F7.5-SISTEMA.md). No se hizo push ni despliegue.
+  Siguiente unidad: F7.6, inventario de paridad.
+
+## Fase 7.6 — Inventario de paridad — 2026-10-22
+
+- Se compararon las pestañas legacy Dashboard, WhatsApp, Telegram, Contactos,
+  Perfiles y Logs con las rutas React. El documento distingue funciones migradas,
+  nuevas, omitidas deliberadamente y disponibles solo en `/`.
+- El panel legacy se mantiene para administradores: conserva métricas de diagnóstico
+  que aún no están en React, búsqueda por teléfono/LID y contactos antiguos sin
+  conversación. La página React omite la prueba de envío Telegram; configurar el
+  canal con Chat ID manual sigue cubierto. No se retiraron rutas ni se llamó al bot.
+- La suite de frontera ejecutada en F7.5 verifica que OAuth conserva la separación:
+  solo lectura v1 no habilita `/api/*` ni UI legacy y `admin:write` sí. F7.6 es
+  documental; no se repitieron pruebas de runtime. Evidencia:
+  [F7.6-PARIDAD-PANEL](F7.6-PARIDAD-PANEL.md).
+- No se hizo push ni despliegue. Siguiente fase: F8, estructura final y operación.
+
+## Fase 8.1a — STT dentro de `apps/` — 2026-10-22
+
+- `stt/` se movió a `apps/stt/`. La imagen copia desde la nueva ruta de origen,
+  pero conserva `/app/stt`, `STT_CACHE=/var/lib/sdk-bot-stt/models` y el volumen
+  Compose; no se movieron modelos ni estado runtime.
+- `.gitignore`, `.dockerignore`, `AGENTS.md`, `.env.tuning`, comentarios del gateway,
+  arquitectura y roadmap reflejan el nuevo código. El resto de componentes sigue
+  en sus rutas actuales y F8.1 permanece en progreso.
+- Verificación: `python3 -m py_compile apps/stt/server.py`; `cd gateway && node
+  --test tests/stt.test.js` (7/7); `SDK_PANEL_GATEWAY_SECRET=local-validation-placeholder docker
+  compose -f deploy/docker/compose.yml config --quiet`; build real
+  de `deploy/docker/stt.Dockerfile`; contenedor local sin puertos publicados
+  devolvió `/health` con status `ok`, `ready:false` (el modelo no se descargó ni
+  cargó). El contenedor e imagen temporales se eliminaron. `git diff --check` pasó.
+- No se inició Gateway ni se contactó a un canal. Siguiente subunidad: F8.1b,
+  mover Gateway con sus rutas de estado y credenciales preservadas.
+
+## Fase 8.1b — Gateway dentro de `apps/` — 2026-10-22
+
+- Los 161 archivos versionados de `gateway/` se movieron a `apps/gateway/`.
+  Archivos ignorados de sesiones, datos, logs y dependencias no se movieron.
+  `apps/gateway/lib/repoPaths.js` mantiene los defaults de estado en las rutas
+  existentes `gateway/` y `brain/`; no se hizo migración de datos.
+- El paquete independiente ahora consume contracts con `file:../../packages/contracts`.
+  Docker, CI, launchers Linux/Windows/Termux y sus instrucciones ejecutan el nuevo
+  entrypoint. Compose mantiene los volúmenes y archivos de estado existentes.
+- Verificación: prueba de rutas por defecto 1/1; `npm run check` en
+  `apps/gateway/` (lint, typecheck, 38 tests del panel, build Vite y 321 tests del
+  gateway); `bash -n` de los launchers; Compose `config --quiet`; smoke Gateway +
+  panel en puertos/estado temporales con transporte WhatsApp simulado; build real
+  de `deploy/docker/gateway.Dockerfile`; `git diff --check`.
+- El smoke no detuvo ni reemplazó los procesos activos del checkout. No se
+  conectó a proveedores, no se publicó imagen y no se hizo push. F8.1 sigue en
+  progreso; el panel sigue anidado en `apps/gateway/panel/` y el brain en `brain/`.
+- Siguiente subunidad: F8.1c, mover el proceso y frontend del panel a `apps/panel/`
+  manteniendo sus dependencias y rutas de estado.
+
+## Fase 8.1c — Panel dentro de `apps/` — 2026-10-22
+
+- Los 46 archivos versionados del panel se movieron a `apps/panel/`. El proceso,
+  UI legacy y app React/Vite quedan fuera del paquete Gateway; el panel conserva
+  solo imports de infraestructura HTTP sin estado desde `apps/gateway/lib/`.
+- Panel tiene manifest/lock y dependencias propios, igual que Gateway. Ambos
+  consumen `packages/contracts` desde el checkout. El launcher, CI, Docker,
+  Compose, Windows, README, AGENTS y guías de arquitectura/OAuth usan las rutas
+  nuevas; `.env`, sesión, logs y DB siguen bajo `gateway/` y `brain/`.
+- `npm ci` limpio en `apps/gateway/` y `apps/panel/`; `cd apps/gateway && npm run
+  check`: lint/typecheck, 38 pruebas Vitest, build Vite, prueba HTTP del artefacto
+  y 321 pruebas Gateway pasan. La primera corrida encontró un `require.resolve`
+  de test con la ruta vieja; corregido y confirmado con `node --test
+  tests/panelBoundary.test.js` (21/21) y la suite completa posterior (321/321).
+- `bash -n` de launcher/smoke Linux y scripts Termux; Compose `config --quiet`;
+  `git diff --check`. Smoke del launcher en puertos 21510/21520/21530/21540, con
+  WhatsApp sustituido por transporte offline y estado, PID, logs y DB temporales;
+  Gateway, panel y `/inbox` respondieron y el cleanup liberó los puertos.
+- Build de `deploy/docker/gateway.Dockerfile` pasó. Un contenedor temporal con el
+  entrypoint real del panel sirvió `/` y `/inbox/` con HTTP 200; imagen y
+  contenedor temporales eliminados. No se iniciaron canales ni se contactó IA o
+  proveedores; el stack activo de los puertos por defecto permaneció arriba.
+- No se hizo push ni despliegue. F8.1 sigue en progreso; brain y sus perfiles/
+  estado permanecen en `brain/`. Siguiente subunidad: F8.1d, mover el código del
+  brain sin trasladar secretos, memoria ni perfiles.
+
+## Fase 8.1d — Brain dentro de `apps/` — 2026-10-22
+
+- El código Python, tests, requirements y configuración Ruff del Brain viven en
+  `apps/brain/`. `brain/` conserva `.env`, perfiles editables, memoria, logs y el
+  venv. `runtime_paths.py` resuelve el estado configurable con
+  `SDK_BRAIN_STATE_DIR` (por defecto `brain/`); `.env.tuning` continúa en la raíz.
+- Linux, Docker, Compose, CI, Windows y Termux usan el entrypoint nuevo. Los
+  perfiles, DB, logs, lock y credenciales conservan sus rutas; no se migraron
+  datos. Windows/Termux no se ejecutaron en esos sistemas y queda pendiente la
+  validación real allí.
+- Verificación: Ruff limpio; pytest Brain 29/29; `py_compile`; `bash -n` de los
+  launchers; Compose `config --quiet`; `apps/gateway npm run check` (lint,
+  typecheck, Panel 38/38, build y Gateway 321/321); `git diff --check`.
+  El launcher Brain en puerto temporal :21610 y un contenedor de la imagen
+  `brain.Dockerfile` en :21611 devolvieron `/health` con `ok`. Se eliminaron
+  ambos puertos, estado temporal, contenedor e imagen; Brain, Gateway y Panel
+  habituales permanecieron sanos en :5100, :5300 y :5201.
+- No se iniciaron canales ni se contactó a proveedores IA. No se hizo push ni
+  despliegue. F8.1 queda cerrada; siguiente punto: revisar/migrar settings y
+  campañas mediante repositorios con corte verificable (Fase 8).
+
+## Fase 8.2a — Repositorio de persistencia de campañas — 2026-10-22
+
+- `broadcastService.js` delega lectura y escritura en
+  `services/repositories/jsonBroadcastRepository.js`; mantiene el archivo,
+  schema, ruta `gateway/broadcast_db.json` y reemplazo atómico `.tmp` + rename.
+  El servicio conserva recuperación de cursor y la regla que pausa como incierto
+  un envío legado sin clave durable.
+- El inventario de accesos confirma que settings/contactos ya pasan por
+  `services/db.js`; F8.2a saca la última escritura JSON embebida en lógica de
+  campañas. No se hizo corte a SQLite ni migración de datos.
+- Verificación: repositorio y servicio de campañas, 15/15 pruebas; ESLint y
+  typecheck de Gateway; `git diff --check`. Los tests usan archivos temporales y
+  transporte falso; no se iniciaron canales ni se envió ningún mensaje real.
+
+## Fase 8.2b — Repositorio de settings — 2026-10-22
+
+- `db.js` conserva la caché, defaults, debounce, flush de cierre y barrera de
+  factory reset; el read/write de `settings_db.json` se delega a
+  `services/repositories/jsonSettingsRepository.js`. El schema, archivo y
+  autoridad de settings no cambian. La persistencia de contactos sigue en `db.js`.
+- Prueba de corte SQLite: se importa y activa control en una DB temporal, se cambia
+  la política, se guarda después una configuración Telegram con campos legacy
+  antiguos y el snapshot de control sigue vigente; SQLite continúa como autoridad
+  para la política global.
+- Verificación: repositorio/db/control service, 13/13 pruebas; defaults seguros,
+  BOM, debounce con último valor, recarga tras reinicio, ESLint y typecheck. Todo
+  usa rutas temporales; no se leyeron ni mutaron archivos runtime reales.
+- F8.2 queda cerrada: servicios de campañas y settings usan repositorios para
+  persistencia JSON. Los archivos y rutas runtime se conservan; no hay migración
+  de formato de datos. Siguiente punto: runbook de backup/restauración, retención,
+  exportación/purga y rollback (Fase 8).
+
+## Fase 8.3a — Backup offline y ensayo aislado — 2026-10-22
+
+- `docs/F8.3-OPERACION-RECUPERACION.md` inventaría el estado en volúmenes,
+  describe la captura offline del volumen sensible con checksum y fija el límite
+  de restauración: la copia se extrae a un volumen nuevo, nunca encima del estado
+  activo. El worker puede reaplicar retención y rotar epoch en una copia SQLite;
+  la promoción productiva queda pendiente hasta reconciliar el delta posterior.
+- No existe aún un job de backup programado, destino externo configurado ni CLI de
+  recuperación completa. El runbook lo declara explícitamente; no se operó Docker
+  de producción ni se leyeron archivos runtime reales.
+- Verificación: `SDK_BOT_TEST=1 node --test tests/conversationArchive.test.js`
+  (21/21: backup con WAL, rechazo de destino existente, restore con epoch nuevo e
+  independencia del origen); roundtrip tar/checksum/listado/extracción con fixture
+  temporal; `bash -n` en los dos bloques del runbook; `git diff --check`.
+- F8.3a queda documentada. Siguiente punto: F8.3b, retención, exportación y purga;
+  después siguen rollback de código/datos y minimización de métricas/logs.
+
+## Fase 8.3b — Retención, purga y exportación — 2026-10-22
+
+- El runbook documenta la ejecución real de la purga (al arrancar antes de admitir
+  canales y luego cada 24 h), lotes de 500 y límites estrictos: cuerpos 90 días,
+  eventos 7 días/50.000 secuencias y huellas 180 días. Distingue el API autenticado
+  de lectura por páginas de una exportación temporal auditada, que no está
+  implementada; tampoco existe purga inmediata por conversación/actor.
+- Aclara que esta retención no cubre contactos, settings, campañas, cola, memoria,
+  sesión de canal ni logs; los backups tienen su propia ventana y pueden conservar
+  contenido ya purgado del archivo vivo.
+- Verificación: `SDK_BOT_TEST=1 node --test tests/conversationArchive.test.js
+  tests/whatsappCapture.test.js` (46/46). Incluye frontera estricta de 90/180 días,
+  corte de eventos, purga previa a admisión, lotes acotados y fallo inicial.
+  `git diff --check`; pruebas con DB y estado temporales, sin proveedores.
+- Siguiente punto: F8.3c, runbook de rollback de código/datos y delta del corte.
+
+## Fase 8.3c — Rollback de código y corte de control — 2026-10-22
+
+- El runbook separa rollback de código con el mismo volumen, reversión por lotes
+  del corte F5.3 mientras la autoridad sigue `legacy`, y recuperación de pérdida
+  física. Explica que `--resume-cutover` exige fuentes iguales; `--rollback` solo
+  revierte controles aún no activados y deja mensajes, envíos, ledger y JSON en su
+  autoridad vigente. Después del cambio a SQLite no se vuelve a JSON ni se repone
+  un snapshot antiguo encima de la DB activa.
+- Los comandos Compose de recuperación corren Gateway one-shot con el volumen de
+  estado y perfiles, sin levantar canales/dependencias. Una fuente cambiada,
+  autoridad ya conmutada o conflicto deja la recuperación bloqueada.
+- Verificación: `SDK_BOT_TEST=1 node --test tests/conversationControlImport.test.js
+  tests/conversationControlMigration.test.js` (14/14: CLI read-only, fuentes,
+  delta, cutover interrumpido, rollback por lotes y versiones monotónicas);
+  `git diff --check`; pruebas solo con SQLite/JSON temporales.
+- Siguiente punto: F8.3d, minimizar datos de cliente en métricas y logs con pruebas.
+
+## Fase 8.3d — Minimización de datos en métricas y logs — 2026-10-22
+
+- Gateway y Brain ya omiten texto/transcripciones, nombres, teléfonos e IDs de
+  cliente en logs de atención. Errores quedan en etiquetas acotadas; Uvicorn
+  desactiva access logs para no escribir `user_id` de `/history` desde la URL.
+  `/status` publica vínculo administrativo como booleano, motivos/códigos de
+  captura saneados y métricas agregadas; el panel deja de mostrar el teléfono.
+- Los logs históricos no se reescriben y permanecen hasta rotación normal o
+  borrado explícito. El runbook documenta esa exposición residual.
+- Verificación: `cd apps/gateway && npm run check` (lint, typecheck, panel:
+  38 pruebas + 1 prueba de integración/build, Gateway: 330/330); `cd apps/brain && ../../brain/venv/bin/ruff
+  check . && ../../brain/venv/bin/python -m pytest tests/ -q` (30/30). Pruebas de
+  privacidad usan sentinels y almacenamiento temporal; no iniciaron proveedores
+  ni canales reales. `git diff --check`.
+- Siguiente punto: F8.4, ensayo aislado de restauración con fixture y delta.
+
+## Fase 8.4 — Ensayo aislado de restauración y delta — 2026-10-22
+
+- `apps/gateway/scripts/restore-promotion-check.js` agrega una puerta offline y
+  de solo lectura. Compara la fuente detenida con el candidato por schema,
+  `dataEpoch`, secuencia, autoridad de control y huella SHA-256 del ledger entero
+  de envíos. Bloquea integridad/FK incorrectas y estados outbound sin resolver;
+  no imprime payloads ni muta/restaura/promueve archivos. Gateway detenido y DB
+  sin WAL/SHM/journal son requisitos.
+- El fixture importa contactos/settings y ejecuta el corte F5 antes del backup.
+  Después del snapshot prueba un aviso aceptado sin evento, un intent pendiente,
+  un inbound y una respuesta humana aceptada. La puerta bloquea cada delta; el
+  restore antiguo solo se abre en una DB temporal y la fuente conserva sus
+  mensajes/salidas nuevos. Un snapshot fresco vuelve a pasar.
+- Límite: la puerta verifica el archivo SQLite de conversaciones, no valida por
+  sí sola el resto del volumen de estado ni promueve una recuperación real. Sin
+  fuente actual solo se permite restore aislado y se debe declarar la ventana sin
+  cobertura.
+- Verificación: `cd apps/gateway && node --test tests/conversationRecovery.test.js`
+  (1/1); `npm run check` (lint, typecheck, panel 38/38 + build integration 1/1,
+  Gateway 331/331); `git diff --check`. No se conectaron canales ni proveedores.
+
+## Fase 9.1 — Archivo autenticado de adjuntos — 2026-10-22
+
+- SQLite v12 registra metadatos de adjuntos ligados a mensajes y la API v1 los
+  entrega por ID solo tras autorizar `conversations:read` y verificar acceso a
+  la conversación. Los binarios viven en un directorio privado, con nombres
+  opacos, tamaño máximo de 16 MiB, cuota agregada de 1 GiB y retención de 90 días.
+  Panel transmite el binario con límites y headers validados; la purga conserva
+  un marcador comprensible si el blob vence o falta. F8.4 compara también la
+  huella del ledger de metadatos; no comprueba los bytes del volumen.
+- Verificación: `npm run contracts:generate && npm run check` en raíz;
+  `cd apps/gateway && npm ci && npm run check` (lint, typecheck, panel 39/39 +
+  integración/build 1/1, Gateway 338/338); pruebas focales de adjuntos 5/5 y
+  regresión de migración/retención/privacidad 70/70; `git diff --check`. Datos
+  temporales; no se iniciaron canales ni proveedores.
+- Siguiente punto: F9.2, conectar captura durable de medios por canal y cubrir
+  citas/ediciones/borrados solo donde cada proveedor expone esa capacidad.
+
+## Fase 9.2 — Multimedia y mutaciones por canal — 2026-10-22
+
+- WhatsApp y Telegram guardan binarios recibidos live en el archivo F9.1, con
+  concurrencia acotada y marca durable `failed` si la descarga falla. Las citas
+  resuelven el ID interno cuando el original sigue presente; si falta, conservan
+  una vista previa acotada. Ediciones observadas generan `message.updated` e
+  invalidan `contextVersion`. Revocaciones WhatsApp redactan el contenido y
+  programan el borrado del blob. La bandeja representa citas, edición y borrado.
+- Límites verificados: el self-chat WhatsApp sigue excluido y no se descargan
+  medios del historial. Telegram queda como canal administrativo; no hubo prueba
+  real de atención al cliente. El Bot API normal no aporta borrado genérico ni
+  recibos de entrega/lectura; no se inventan esos estados. F9.2 no prueba
+  recepción con proveedores reales.
+- Verificación: `npm run contracts:generate` y `npm run check` en raíz (17/17
+  contratos); `cd apps/gateway && npm run check` (lint, typecheck, panel 39/39,
+  integración/build 1/1, Gateway 342/342); `node --test
+  tests/conversationMultimedia.test.js` (4/4); `git diff --check`.
+- Commit local de la unidad creado. No publicar.
+- Siguiente punto: F9.3, búsqueda de contenido con FTS5 y paginación verificable.
+
+## Fase 9.3 — Búsqueda FTS5 — 2026-10-22
+
+- SQLite v13 crea el índice FTS5, lo rellena al migrar desde v12 y sincroniza
+  altas, ediciones, transcripciones, revocaciones y purgas mediante triggers.
+  Indexa texto, captions y transcripciones; excluye cuerpos oversized y borrados.
+- `GET /v1/conversations/{id}/search` requiere `conversations:read` y comprueba
+  acceso al hilo antes de buscar. Normaliza los términos como texto literal; no
+  permite inyectar operadores FTS. Cursor HMAC ligado a actor, hilo, consulta,
+  límite, época y secuencia; SQLite valida el snapshot en la misma llamada que
+  consulta la página. Una escritura durante la paginación devuelve
+  `CURSOR_EXPIRED`; la bandeja permite reiniciar la búsqueda. Los snippets se
+  muestran como texto plano.
+- Evidencia: [F9.3-BUSQUEDA-FTS.md](F9.3-BUSQUEDA-FTS.md).
+- `npm run check` raíz: contratos 17/17. `cd apps/gateway && npm run check`:
+  lint, typecheck, Panel 40/40, build, integración 1/1 y Gateway 346/346.
+  `git diff --check` limpio. Sin proveedores reales.
+- Commit local de la unidad creado. No publicar.
+- Siguiente punto: F9.4, integrar ledger, binarios e índices en backup/restauración
+  coherente y ensayar el ciclo completo.
+
+## Fase 9.4 — Backup/restauración de ledger, blobs e índice FTS — 2026-10-22
+
+- La puerta offline de restore comprueba consistencia FTS v13 y blobs físicos:
+  compara filas indexadas con mensajes elegibles; valida archivos `.blob` privados,
+  presencia, tamaño, SHA-256 y ausencia de extras contra el ledger. Un candidato
+  que reutiliza el mismo directorio físico de blobs queda bloqueado.
+- Ensayo integral: crea caption y blob, genera DB snapshot con `VACUUM INTO`, copia
+  blobs, pasa la puerta, restaura a un directorio aislado, consulta FTS y compara
+  los bytes descargados. Índice y blob alterados por separado son rechazados.
+  Runbook: [F9.4-BACKUP-RESTORE.md](F9.4-BACKUP-RESTORE.md); límites operativos
+  actualizados en [F8.3](F8.3-OPERACION-RECUPERACION.md).
+- Verificación: pruebas focales F9.4/adjuntos/búsqueda 12/12; `npm run check` raíz
+  con 17/17 contratos; `cd apps/gateway && npm run check` con lint, typecheck,
+  Panel 40/40, build Vite, integración 1/1 y Gateway 347/347; `git diff --check`.
+  Solo DB/archivos temporales; no se iniciaron canales ni proveedores.
+- Commit local de esta unidad creado; no publicar.
+- Siguiente punto: Fase 10, primera entrega vertical de resúmenes/borradores y
+  propuestas de respuesta con referencias verificables al hilo.
+
+## Fase 10.1 — Asistencia al operador con referencias al hilo — 2026-10-22
+
+- Bandeja y contrato v1 preparan resumen y borrador solo para WhatsApp con
+  `admin:write` + `conversations:read`, SQLite como autoridad lista, conversación
+  permitida/abierta/confirmada y sin revisión. Telegram queda fuera por su uso
+  administrativo.
+- El Gateway forma contexto reciente desde SQLite (hasta 40 mensajes, 24.000
+  caracteres; texto, captions y transcripciones), enlaza la solicitud al snapshot
+  y `contextVersion`, valida de nuevo snapshot, control y política al finalizar y
+  reconstruye referencias solo con IDs del contexto fuente. Brain valida JSON e
+  IDs y no persiste memoria. La UI muestra divulgación del proveedor, citas
+  navegables y copia el borrador al compositor solo por acción del operador; esta
+  ruta no crea mensajes ni intenciones de salida.
+- Evidencia: [F10.1-ASISTENCIA-OPERADOR.md](F10.1-ASISTENCIA-OPERADOR.md).
+- Verificación: contratos 18/18; `cd apps/gateway && npm run check` con lint,
+  typecheck, panel 41/41, build, integración 1/1 y Gateway 351/351; Brain Ruff
+  limpio y 32/32; `git diff --check`. Sin proveedor real ni canales iniciados.
+- Commit local de esta unidad creado; no publicar.
+- Siguiente punto: F10.2, contratos de herramientas con schemas, permisos,
+  timeout, auditoría, idempotencia y separación read/write; Gateway ejecuta y
+  Brain solicita sin acceso a canales.
+
+## Fase 10.2 — Contratos y ejecución segura de herramientas IA — 2026-10-22
+
+- Se habilita únicamente `conversation.search_messages`, lectura acotada al hilo
+  y snapshot con `conversations:read`; Brain puede pedirla una vez y Gateway la
+  ejecuta en tres segundos como máximo. El contrato rechaza efectos write y no da
+  al Brain acceso a SQLite, adaptadores, canales, URLs arbitrarias o shell.
+- SQLite v14 conserva auditoría con hashes de solicitud/resultado, actor, hilo,
+  herramienta, estado e intentos; no consulta ni contenido, retención de 180 días.
+  Backup/checkpoint preserva el digest y la puerta de restore bloquea diferencias
+  sin exponerlo. La bandeja puede cargar páginas antiguas hasta 50 para enfocar una
+  cita de asistencia.
+- Evidencia: [F10.2-HERRAMIENTAS-IA.md](F10.2-HERRAMIENTAS-IA.md).
+- Verificación: contratos 19/19; Gateway lint/typecheck, panel 42/42, build,
+  integración 1/1 y Gateway 356/356; Brain Ruff limpio y 34/34; `git diff --check`.
+  Sin proveedores reales ni canales iniciados.
+- Commit local de esta unidad creado; no publicar.
+- F10.3 sigue condicional: no se pidieron integraciones ni acciones externas.
+  Siguiente punto: F10.4, evaluaciones sintéticas de control humano, separación
+  entre notas y mensajes entregados, aislamiento entre cuentas y límites explícitos.
+
+## Fase 10.4 — Evaluaciones sintéticas de asistencia — 2026-10-22
+
+- Gateway ejecuta tres escenarios contra la ruta real y SQLite temporal: asistencia
+  bajo control humano sin cambios de snapshot/mensajes/outbox; borrador visible como
+  borrador y ausente del archivo/outbox; aislamiento de búsqueda entre dos cuentas
+  WhatsApp y rechazo de citas al mensaje ajeno.
+- Brain ejecuta el caso sintético de una pregunta sin precio conocido con el
+  proveedor sustituido; verifica que el prompt pide no inventar y solicitar el dato
+  faltante. No mide obediencia ni precisión estadística de un proveedor real.
+- Evidencia: [F10.4-EVALUACIONES-SINTETICAS.md](F10.4-EVALUACIONES-SINTETICAS.md).
+- Verificación: contratos 19/19; Gateway lint/typecheck, panel 42/42, build,
+  integración 1/1 y Gateway 359/359; Brain Ruff limpio y 35/35; `git diff --check`.
+  Sin proveedor real ni canales iniciados. La primera ejecución concurrente tuvo
+  un fallo de captura en `logPrivacy.test.js`; la prueba aislada pasó y Gateway
+  completo aislado pasó 359/359.
+- F10.3 sigue condicional; no se solicitó habilitar efectos externos. No hay F11 ni
+  otro siguiente punto definido en ROADMAP.md; revisar BACKLOG y priorizar con el
+  usuario antes de abrir una nueva unidad.
+
+## F2C.3 — Inbox administrativo Telegram (BUG-046) — 2026-10-22
+
+- SQLite v15 guarda el texto admin normalizado y el cursor Telegram en una sola
+  transacción. Un pump reclama por cuenta/update antes del pipeline existente;
+  el texto se elimina al terminar. Al reiniciar, claims `processing` pasan a
+  `uncertain` y no se repiten; una caída entre claim y efecto también requiere
+  revisión manual porque el comando legacy no comparte la transacción SQLite.
+- El historial de clientes sigue separado. Checkpoint/restore compara cantidad y
+  digest del inbox sin revelar el digest; los recibos terminales vencen a 180 días.
+- Evidencia: [BUG-046-TELEGRAM-ADMIN-INBOX](BUG-046-TELEGRAM-ADMIN-INBOX.md).
+- Verificación: contratos raíz 19/19; Gateway lint/typecheck, panel 42/42, build,
+  integración 1/1 y Gateway 366/366; `git diff --check`. Sin Telegram real ni
+  cambios de credenciales/configuración.
+- Commit local de esta unidad; no publicar.
+- Siguiente punto ejecutable del backlog: BUG-035, esperar `connect()` completo y
+  propagar su fallo antes de solicitar código/abrir refresh de pairing.
+
+## BUG-035 — Espera asíncrona de pairing — 2026-10-22
+
+- `createWhatsappPairingCallbacks` hace que el pairing por código espere la
+  conexión cuando el socket está cerrado y propague los errores de `connect`.
+  Refresh devuelve/espera la misma promesa; una ventana QR vigente no crea un
+  segundo socket.
+- Evidencia: [BUG-035-PAIRING-ASYNC](BUG-035-PAIRING-ASYNC.md).
+- Verificación focal: `tests/whatsappPairing.test.js`, `tests/adminPairing.test.js`
+  y `tests/whatsappCapture.test.js`, 45/45; Gateway lint y typecheck; diff limpio.
+  Sin cuenta ni transporte WhatsApp real.
+- Commit local de esta unidad; no publicar.
+- Siguiente prioridad local: BUG-008 (resolución exacta de identidad Telegram en
+  el camino legacy, antes de cualquier mutación de contactos).
+
+## BUG-008 — Resolución exacta de identidad legacy — 2026-10-22
+
+- Comandos legacy ahora aceptan solo una identidad completa de teléfono/LID;
+  sufijos y colisiones se rechazan antes de mutar estado, perfil, nombre o
+  contexto. Los índices retiran aliases de teléfono/LID reemplazados.
+- Telegram sigue como canal administrativo: las respuestas conservan ese adapter
+  y el objetivo se resuelve en WhatsApp. SQLite mantiene el resolver por
+  canal/cuenta; el fallback JSON antiguo solo representa la libreta WhatsApp.
+- Evidencia: [BUG-008](BUG-008-RESOLUCION-IDENTIDAD-LEGACY.md).
+- Verificación: Gateway `npm run check`, lint/typecheck, Panel 42/42, build,
+  prueba de servido 1/1 y Gateway 378/378; focales 29/29; `git diff --check`.
+  Sin proveedores ni canales reales.
+- Commit local de esta unidad; no publicar.
+- Siguiente punto ejecutable del backlog: BUG-010, acotar envíos legacy de
+  Telegram sin repetir envíos con resultado incierto.
+
+## BUG-010 — Deadlines de salida Telegram — 2026-10-22
+
+- Adapter: `sendMessage` queda limitado a 10 s y presencia a 3 s. Menú y helper
+  de notificaciones legacy usan 8 s. Solo el rechazo explícito de Markdown HTTP
+  400 conserva su fallback sin formato y valida la cuenta antes del segundo POST.
+- Un envío que vence queda `delivery_unknown`; la clave idempotente impide que
+  otra llamada lo reenvíe automáticamente. Respuestas limitadas a 8 MiB y UTF-8
+  estricto.
+- Evidencia: [BUG-010](BUG-010-TIMEOUTS-SALIDA-TELEGRAM.md).
+- Verificación: Gateway `npm run check`, lint/typecheck, Panel 42/42, build,
+  servido 1/1 y Gateway 381/381; focales Telegram 31/31, incluida la regresión
+  de outbox; `git diff --check`. Sin Telegram real.
+- Commit local de esta unidad; no publicar.
+- Siguiente punto ejecutable: BUG-011, preservar la elegibilidad de control al
+  usar `/humano` y `/ia` con `ignored_all`.
+
+## BUG-011 — Permisos de control legacy — 2026-10-22
+
+- El fallback JSON conserva el acceso que tenía un contacto antes de entrar a
+  `handoff`; `/ia` lo restaura y un handoff antiguo sin dato válido retorna a
+  neutro. La expiración automática mantiene su comportamiento previo.
+- SQLite deja el acceso intacto durante takeover/release. `/humano` y `/ia`
+  explican cuando la política ignora al contacto o el modo global bloquea sus
+  respuestas.
+- Evidencia: [BUG-011](BUG-011-CONTROL-LEGACY.md).
+- Verificación: Gateway `npm run check`, lint/typecheck, Panel 42/42, build,
+  servido 1/1 y Gateway 384/384; focales 17/17; `git diff --check`. Sin
+  proveedores ni canales reales.
+- Commit local de esta unidad; no publicar.
+- Siguiente punto ejecutable: BUG-071, corregir el total inflado del comando
+  `/ignorar contactos de agenda`.
+
+## BUG-071 — Resumen de ignorar agenda — 2026-10-22
+
+- `setNumberState` expone el resultado actualizado/unchanged de SQLite. El
+  resumen descuenta solo cambios efectivos y agrupa aliases por conversación.
+- `totalIgnored` refleja las conversaciones únicas de agenda que quedan en
+  estado ignorado; repetir el comando no aumenta `addedCount`.
+- Evidencia: [BUG-071](BUG-071-RESUMEN-IGNORAR-AGENDA.md).
+- Verificación: Gateway `npm run check`, Panel 42/42, build, servido 1/1 y
+  Gateway 385/385; después del ajuste de lint, lint/typecheck y focal 1/1 pasan.
+  `git diff --check` limpio. Sin canales reales.
+- Commit local de esta unidad; no publicar.
+- BUG-072 (sonda `/telegram/test` para token borrador) queda fuera del camino de
+  atención al cliente y no bloquea las fases. Siguiente punto ejecutable: BUG-073,
+  eco propio de WhatsApp recibido antes del ACK del envío.
+
+## BUG-072 — Sonda administrativa Telegram — 2026-10-22
+
+- Con token/cuenta activa, `/telegram/test` usa `TelegramAdapter.sendMessage` y el
+  outbox común con la clave del panel. El token borrador sigue usando una sonda
+  directa para permitir configuración inicial; una falla después de iniciar el
+  envío queda `delivery: unknown`, incluye destino/clave y no se reintenta sola.
+- El panel guarda solo la clave pendiente (nunca el token), mantiene la advertencia
+  si el Chat ID descubierto aún no se guardó y requiere confirmación explícita
+  antes de crear otra sonda. Un resultado resuelto elimina la clave pendiente.
+- Focales: Telegram bus/ownership/setup 27/27. `npm run check`: lint, typecheck,
+  Panel 44/44, build y servido 1/1; Gateway 403/403. `git diff --check` limpio.
+  Todo con transportes simulados, sin tráfico ni credenciales reales.
+- Evidencia: [BUG-072](BUG-072-SONDA-TELEGRAM.md). Telegram se mantiene como canal
+  administrativo, no como canal de atención a clientes.
+
+## BUG-073 — Correlación del eco WhatsApp — 2026-10-22
+
+- El eco consulta primero la salida aceptada; si hay un intent local `sending`
+  para la misma cuenta, conversación y destino, espera y vuelve a consultar cada
+  100 ms. La ventana máxima es 5 s.
+- Un ACK local demorado con el mismo ID no produce handoff. Una salida sin intent
+  coincidente lo produce tras la espera inicial; un envío aún incierto lo produce
+  al vencer la ventana.
+- Evidencia: [BUG-073](BUG-073-ECO-WHATSAPP-ACK-LENTO.md).
+- Verificación: Gateway `npm run check`, Panel 42/42, build, servido 1/1 y
+  Gateway 386/386; pruebas focales 3/3; `git diff --check`. Sin WhatsApp real.
+- Commit local de esta unidad; no publicar.
+- Siguiente punto de mayor alcance ejecutable: BUG-074, retención de respuestas
+  durables de generación en Brain.
+
+## BUG-074 — Retención de respuestas de generación — 2026-10-22
+
+- Brain conserva las respuestas idempotentes por 7 días, superando las 24 h de
+  replay de la cola Gateway. Al vencer o invalidar, borra cuerpo/proveedor y deja
+  un tombstone por 30 días; reintentos durante ese periodo reciben 409 sin llamar
+  al proveedor.
+- La respuesta admite hasta 64 KiB y el ledger hasta 5000 borradores activos
+  (aprox. 313 MiB de payload). El cupo se verifica antes del proveedor y de nuevo
+  al persistir para mantener el límite ante concurrencia. El tombstone no se
+  rechaza por falta de cupo, para conservar la barrera de cancelación.
+- El barrido corre al inicio, cada hora y antes de leer/escribir el ledger. SQLite
+  activa `secure_delete`, trunca WAL después de limpiar respuestas y compacta con
+  VACUUM cuando hay páginas libres. Si Brain está detenido, el siguiente inicio
+  ejecuta el barrido.
+- Evidencia: [BUG-074](BUG-074-GENERATION-RETENTION.md). Ruff limpio; Brain
+  completo: 39 pruebas. Sin proveedor ni canal real.
+- Commit local de esta unidad; no publicar.
+- Siguiente punto: BUG-075, conciliación autenticada de salidas `delivery_unknown`
+  antes de ofrecer reprocesamiento verificable.
+
+## BUG-075 — Conciliación de salidas inciertas — 2026-10-22
+
+- API autenticada por conversación: lista paginada con proyección sin clave
+  idempotente/resultado del proveedor y decisión auditada con nota, actor y hora.
+  `accepted` valida texto y autoría antes de avanzar el watermark; `rejected`
+  conserva la entrada sin atender y habilita su revisión posterior.
+- El panel consulta pendientes al abrir el hilo, ofrece correlación por eco
+  archivado o ID remoto manual, y exige nota para aceptar/rechazar. No reenvía la
+  salida incierta; el envío posterior usa un `clientMessageId` nuevo.
+- Evidencia: [BUG-075](BUG-075-OUTBOUND-RECONCILIATION.md). `npm run check`
+  raíz: contratos 19/19. Gateway integral: 388/388; Panel: 44/44, build y prueba
+  de servido; `git diff --check` limpio. Sin proveedor/canal real.
+- Commit local de cierre en esta unidad; no publicar. Siguiente punto: BUG-076,
+  preservar o documentar metadatos mínimos de ruta en `process_pending`.
+
+## BUG-076 — Metadatos mínimos para `process_pending` — 2026-10-22
+
+- SQLite v16 guarda únicamente `pushName`/`savedName` en una columna separada
+  durante 24 horas desde `ingested_at`. El sobre completo se limpia tras el ACK;
+  omisiones y fallos de transcripción limpian los nombres al instante. El worker
+  purga al iniciar, cada minuto y antes de consultar/liberar pendientes.
+- La migración v15 backfillea solo rutas pendientes/esperando dentro de 24 horas.
+  `process_pending` usa los nombres retenidos; canal/destino/teléfono/LID operativo
+  se reconstruyen desde identidad canónica SQLite. Perfil y contexto mantienen
+  su snapshot y mensajes archivados. El checkpoint de restore incluye el digest
+  privado y bloquea diferencias sin exponerlo.
+- Evidencia: [BUG-076](BUG-076-RESUME-METADATA.md). Foco `legacyDispatch`, flujo
+  F6.3 y recovery: 14/14. Migraciones archive/control/search/outbox: 42/42.
+  `cd apps/gateway && npm run check`: lint/typecheck, Panel 44/44, build Vite,
+  servido 1/1 y Gateway 391/391. `git diff --check` limpio.
+- No se usó canal/proveedor real. Commit local en `main`, sin push.
+- Siguiente punto: F8.3, revisar y cerrar el runbook agregado de operación y
+  recuperación; actualizarlo con la retención v16 recién añadida.
+
+## Cierre F8.3 — Runbook de operación y recuperación — 2026-10-22
+
+- Se consolidó el runbook después de F9.4 y BUG-076: captura/restauración aislada,
+  retención efectiva del archivo, adjuntos, inbox admin, auditoría, nombres de
+  replay y generaciones Brain; exportación/borrado selectivo aún no existe; incluye
+  rollback de código/corte F5.3 y minimización de métricas/logs.
+- Se corrigieron las referencias de F8.4/F9.4 para reflejar que la puerta actual
+  compara ledger, blobs y FTS. Se registran BUG-079 por intents terminales del
+  outbox sin purga y BUG-080 por operaciones/cutover, cursores y cuarentenas sin
+  política de retención.
+- Verificación documental: `bash -n` en los 5 bloques operativos, 2 destinos
+  Markdown resuelven y `git diff --check` limpio. No se operó Docker/Compose de
+  producción ni se abrieron datos runtime.
+- F8.3 completada en [runbook](F8.3-OPERACION-RECUPERACION.md). Siguiente punto:
+  BUG-079, implementar retención acotada del outbox conservando idempotencia y
+  evitando borrar intents activos o no conciliados.
+
+## Cierre BUG-079 — Retención del outbox — 2026-10-22
+
+- SQLite v17 migra el outbox con fingerprints de payload y marca de redacción.
+  Los intents en cola vencen a las 24 h; a 90 días se borran payload, destino,
+  resultado crudo y metadatos de control; los terminales se purgan a 180 días.
+  `delivery_unknown` conserva su tombstone no reejecutable hasta conciliación.
+- El replay terminal entre 90 y 180 días devuelve 410, y un payload distinto
+  sigue devolviendo conflicto 409. La conciliación posterior a la retención no
+  recrea contenido en el archivo; la UI indica que el texto venció.
+- La prueba de checkpoint confirma que la redacción cambia el digest sin borrar
+  la fila; migración v16→v17 vuelve a calcular fingerprints de filas existentes.
+- Verificación: raíz `npm run check` (contratos 19/19); `cd apps/gateway && npm
+  ci` para refrescar el contrato local; `npm run check` completo (Gateway
+  395/395, Panel 44/44, build servido 1/1), lint y typecheck; `git diff --check`.
+  Sin canal/proveedor real ni cambios runtime de producción.
+- BUG-079 cerrado en [evidencia](BUG-079-RETENCION-OUTBOX.md). Siguiente punto:
+  BUG-080, clasificar y fijar retención para recibos/cutover, cursores de lectura
+  y cuarentenas, preservando recuperaciones y revisiones pendientes.
+
+## Cierre BUG-080 — Retención de metadatos administrativos — 2026-10-22
+
+- La purga elimina recibos `completed`/`failed` de takeover después de 180 días
+  desde el cierre; si falta `completed_at`, usa `created_at`. `taking_control`
+  permanece hasta la recuperación explícita del servicio.
+- Importaciones, entradas, snapshots de control/política, cursores monotónicos y
+  cuarentenas no resueltas quedan retenidos: hoy no hay un flujo seguro que cierre
+  rollback, determine la resolución o quite `requires_review`.
+- `recoveryCheckpoint()` calcula cuentas y huellas de esos cuatro ledgers. F8.4
+  bloquea un snapshot divergente aunque la secuencia de eventos no avance; los
+  hashes no aparecen en la salida de usuario.
+- Verificación: `node --test tests/conversationRecovery.test.js` 8/8; `cd
+  apps/gateway && npm run check` con lint/typecheck limpios, Panel 44/44, build y
+  servido 1/1, Gateway 397/397; `git diff --check` limpio. Solo datos temporales,
+  sin canales/proveedores.
+- Evidencia: [BUG-080](BUG-080-RETENCION-METADATOS.md). Commit local en `main`,
+  sin publicar. Siguiente punto ejecutable del backlog: BUG-037, cerrar la
+  cancelación física de la descarga Baileys antes de aceptar STT real.
+
+## Cierre BUG-037 — Cancelación física de descarga Baileys — 2026-10-22
+
+- Baileys `7.0.0-rc14` sí acepta un `dispatcher` por la opción de descarga aunque
+  omita `signal` de su `fetch`. Cada llamada del adapter usa su propio
+  `undici.Agent@7.29.1`; cancelación/deadline destruye stream/agente, y
+  final/error/cierre temprano liberan el dispatcher. No se tocó `global.fetch` ni
+  `node_modules`.
+- Prueba con downloader real y HTTP local que no responde: ocho solicitudes,
+  cuatro cancelaciones y cuatro deadlines; 8/8 sockets cerrados, ninguno activo
+  al terminar cada vuelta. Focal: 1/1 en Node 22.22.1 y 1/1 en Node 24.21.0.
+- `npm ci` — 0 vulnerabilidades. `cd apps/gateway && npm run check`: lint y
+  typecheck limpios, Panel 44/44, build/servido 1/1 y Gateway 398/398. La primera
+  suite completa tuvo un fallo intermitente de salida vacía en el test preexistente
+  de privacidad de logs; aislado pasó 2/2 y la suite completa repetida pasó.
+  `git diff --check` limpio. Sin WhatsApp ni STT real.
+- Evidencia: [BUG-037](BUG-037-CANCELACION-BAILEYS.md). Commit local en `main`,
+  sin publicar. Siguiente pendiente que requiere atención antes de migrar un
+  archivo legacy real: BUG-051; la ruta normal de F6.4 permanece cerrada y esta
+  prueba offline no altera ni reabre su aceptación.
+
+## Cierre BUG-051 — Diagnóstico y revisión offline — 2026-10-22
+
+- `conversations:legacy-reconcile` lee SQLite v2 y v3–v17 con `immutable=1`,
+  requiere Gateway detenido y rechaza archivos con WAL/SHM/journal. El informe
+  vincula candidatos al SHA-256 y no expone texto ni identidades remotas.
+- La revisión debe cubrir cada ID e incluir decisión, referencia de evidencia,
+  revisor y fecha UTC. Marca ausencia como entrega desconocida; `confirmed_not_dispatched`
+  queda identificado para una acción posterior. El comando nunca muta el archivo ni
+  encola/reproduce mensajes.
+- La fixture pre-v3 se reporta y revisa antes de abrir el migrador; el schema queda
+  v2 tras ambas lecturas y, luego de migrar, no aparecen despachos históricos.
+  Ningún archivo runtime real fue leído.
+- Verificación: `legacyDispatch.test.js` 8/8 y `cd apps/gateway && npm run check`
+  en Node 24.21.0: lint/typecheck limpios, Panel 44/44, build/servido 1/1 y
+  Gateway 399/399; `git diff --check` limpio. Evidencia:
+  [BUG-051](BUG-051-RECONCILIACION-LEGACY.md). La revisión de un archivo real
+  sigue siendo puerta operativa.
+
+## F2E.2 — Detección del perfil cgroup — 2026-10-22
+
+- El runner informa límites efectivos de cgroup v2 (cuota CPU, cpuset y memoria,
+  incluyendo ancestros) por separado de recursos físicos del host. `profileMatch`
+  usa los límites efectivos; sistemas sin cgroup utilizable conservan el fallback
+  al host y no se confunden con un contenedor limitado.
+- Prueba de límites sintéticos y perfil efectivo: `conversationLoad.test.js` 5/5;
+  ESLint focal limpio. Un scope temporal con `CPUQuota=200%`, `MemoryMax=4G` y
+  `MemorySwapMax=0` informó 2 CPU y 4 GiB bajo cgroup v2.
+- Siguiente unidad: repetir F2E.2 completo con ese scope; conservar informe distinto
+  del benchmark anterior y revisar umbrales antes de certificar Fase 2.
+
+## F2E.2 — Timeout del chequeo completo — 2026-10-22
+
+- Primer run limitado importó el millón sintético y alcanzó el chequeo del archivo,
+  pero terminó con `Archivo de conversaciones no disponible`; no hubo OOM y el
+  directorio temporal se limpió. El worker reutilizaba 60 s también para
+  `integrity_check`, claves foráneas y `VACUUM INTO`, un límite insuficiente posible
+  para el archivo de 2,5 GiB en este perfil.
+- El runner ahora cierra el worker de ingesta, reabre el mismo archivo con un límite
+  de 20 min para validación/snapshot e informa etapa/código si falla. Verificación:
+  `conversationLoad.test.js` 5/5, ESLint focal y `npm run typecheck` limpios.
+- Próximo paso exacto: repetir F2E.2 completo bajo `CPUQuota=200%`, `MemoryMax=4G`
+  y sin swap; conservar reporte nuevo solo si todas las etapas y umbrales pasan.
+
+## F2E.2 — Timeout de apertura de copias — 2026-10-22
+
+- El segundo run pasó importación, validación, lectura del event tail y `VACUUM INTO`
+  (903 mensajes/s), pero la apertura de la copia del primer warmup terminó con
+  `ARCHIVE_START_TIMEOUT`. `initialize()` valida el archivo y las claves foráneas
+  en cada apertura; las copias de medición aún tenían 60 s.
+- Las copias de warmup/medición y saturación ahora también usan 20 min y reportan
+  etapa antes de copiar/abrir. El run no produjo informe y limpió temporales.
+- Siguiente unidad: repetir F2E.2 completo con el commit de este cambio. Reutilizar
+  el reporte fechado solo después de completar cinco escenarios y revisar umbrales.
+
+## Cierre F2E.2 — Perfil de referencia 2 CPU/4 GiB — 2026-10-22
+
+- El tercer ensayo completo terminó en el commit `949c22f`. El runner observó
+  límites efectivos de cgroup v2: 2 CPU, 4 GiB, sin swap; `profileMatch=true`.
+  Dataset sintético: 1M mensajes, 50k redeliveries, 2.000 chats y cinco cuentas.
+- Importación 1.249 mensajes/s; integridad `ok`, cero FK, cinco ventanas de 150 s
+  (dos warmups y tres medidas), sin errores. Las tres medidas pasaron latencias,
+  event loop p99 y RSS; el pico RSS fue 430 MiB. Saturación rechazó el exceso por
+  elementos/bytes, dejó el cursor TG en `null` y no añadió mensajes.
+- El scope alcanzó `MemoryPeak=4 GiB` y `memory.events max=2230`, con
+  `oom=0`/`oom_kill=0`; la evidencia explica la presión separada del RSS de la app.
+  Sin hardware físico equivalente, Windows/Termux, canales ni datos de usuario.
+- Informe y detalle: [F2E2-CARGA-COMPLETA](F2E2-CARGA-COMPLETA.md) y
+  [JSON por run](../apps/gateway/docs/evidence/F2E2-load-report-2cpu4g-20261022.json).
+- Verificación final: `cd apps/gateway && npm run check` pasó lint/typecheck,
+  Panel 44/44, build y servido 1/1, Gateway 400/400; `git diff --check` limpio.
+  La Fase 2 queda cerrada para el perfil probado; no se publicó ni se conectó un
+  proveedor real.
+
+## Cierre BUG-014 — Aislamiento de tests Brain — 2026-10-22
+
+- `test_main.py` y `test_memory.py` ahora asignan `memory.db` bajo `tmp_path` por
+  test, cierran la conexión al terminar y restauran `M.DB_PATH`, `BRAIN_MEMORY_DB`
+  y los contadores globales antes de borrar el directorio.
+- Aserciones cubren que cada archivo queda dentro del `tmp_path` del test. Dos
+  procesos simultáneos ejecutando ambos módulos con `--basetemp` independiente
+  pasaron 27/27 cada uno; no compartieron rutas. Entorno Python 3.12.14.
+- Verificación de toda Brain: `venv/bin/ruff check .` limpio y
+  `venv/bin/python -m pytest tests/ -q` pasó 41/41; `git diff --check` limpio.
+  No se tocó la DB runtime ni se llamaron proveedores.

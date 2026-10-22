@@ -12,6 +12,12 @@ const send: Contract<'SendMessageRequest'> = {
   expectedVersion: '1', clientMessageId: 'id', text: 'hola',
 };
 const requestThroughApi: operations['takeControl']['requestBody']['content']['application/json'] = control;
+const assistance: Contract<'ConversationAssistanceRequest'> = {
+  expectedContextVersion: '2', expectedSnapshot: { dataEpoch: '11111111-1111-4111-8111-111111111111', seq: '4' }
+};
+const toolRequest: Contract<'AssistantToolRequest'> = {
+  kind: 'tool_request', toolName: 'conversation.search_messages', effect: 'read', input: { query: 'viernes', limit: 3 }
+};
 const nullableProvider: Contract<'Message'>['providerMessageId'] = null;
 const input: unknown = { expectedVersion: '1' };
 const result = validate('TakeoverRequest', input);
@@ -34,4 +40,4 @@ const forgedActor: Contract<'SendMessageRequest'> = { ...send, actorId: 'id' };
 // @ts-expect-error Contract name is closed and shared with runtime validators.
 validate('MissingContract', input);
 void [release, releasePending, query, queryThroughApi, requestThroughApi, nullableProvider,
-  id, numericId, numericVersion, missingSelection, forgedActor];
+  assistance, toolRequest, id, numericId, numericVersion, missingSelection, forgedActor];

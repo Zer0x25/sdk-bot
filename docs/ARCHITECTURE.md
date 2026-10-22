@@ -1,12 +1,15 @@
 # SDK-Bot: arquitectura de la plataforma de conversaciones
 
-Fecha: 2026-10-20. Estado: **diseño para implementación incremental**.
-El código todavía usa `gateway/`, `brain/`, `stt/` y un panel estático.
-Las carpetas, tablas, servicios y endpoints de destino no existen todavía,
+Fecha: 2026-10-22. Estado: **diseño para implementación incremental**.
+F8.1a movió STT a `apps/stt/`, F8.1b Gateway a `apps/gateway/`, F8.1c separó
+el proceso y frontend del panel en `apps/panel/`, y F8.1d movió el código Brain
+a `apps/brain/`. `gateway/` y `brain/` conservan estado, credenciales, perfiles,
+logs y locks. La imagen STT mantiene el mismo `STT_CACHE` de producción.
+Las demás carpetas, tablas, servicios y endpoints de destino no existen todavía,
 salvo indicación expresa. F1A implementa `packages/contracts` y workspace raíz
-para `packages/*`; gateway conserva instalación/lock independientes. No se migraron
-datos ni UI nueva. F1B implementa sesión v1 y firma panel → gateway, con contratos
-instalados como dependencia local del gateway. F2A añade repositorios SQLite con
+para `packages/*`; Gateway y panel conservan instalaciones y locks independientes.
+No se migraron datos ni UI nueva. F1B implementa sesión v1 y firma panel → gateway,
+con contratos instalados como dependencia local de ambos paquetes. F2A añade repositorios SQLite con
 worker y snapshot durable de sesión; F2B.1 protege el reset CLI antes de captura.
 F2B.2 conecta captura base WA y F2B.3 añade enriquecimiento multimedia durable
 ([evidencia y límites](MULTIMEDIA-WHATSAPP-F2B3.md)). F2C.1 elimina el lector paralelo de descubrimiento TG
@@ -35,15 +38,15 @@ un marcador visible aunque todavía no pueda abrirse o descargarse.
 
 | Pieza actual | Evidencia | Implicación |
 |---|---|---|
-| Memoria IA | `brain/memory.py`: append_exchange, barrido y límites; `.env.tuning`: 7 días y ~5000 tokens de contexto | Es contexto de generación, no archivo íntegro del chat. |
+| Memoria IA | `apps/brain/memory.py`: append_exchange, barrido y límites; `.env.tuning`: 7 días y ~5000 tokens de contexto | Es contexto de generación, no archivo íntegro del chat. |
 | Historial WA | `gateway/store/chatStore.js`: Map, máximo por chat y expulsión por inactividad | Se pierde al reiniciar; fromMe se normaliza como assistant sin distinguir humano. |
 | Captura WA | `gateway/adapters/whatsappAdapter.js`: messages.upsert procesa m.messages[0], filtra mensajes del bot y deriva audio antes de emitir texto | Capturar todos los mensajes y separar archivo de decisión de respuesta. |
 | Captura Telegram | `telegramAdapter.js` verifica `getMe`, normaliza mensajes individuales y espera `captureTelegramBatch`; el worker confirma mensaje, evento y cursor del bot en una transacción | El cursor sobrevive reinicios y rotación de token del mismo bot. Bot API no da un archivo histórico arbitrario; grupos/eventos se excluyen y no se conservan binarios (audio deja marcador/transcripción). |
 | Handoff | stateService.js, contactsRepository.js y commands/chatControl.js | Mezcla permisos y automatización, TTL de 24 h y resolución por dígitos; no garantiza cancelación. |
 | Envío IA | `services/brainService.js`: petición, esperas, typing y varios globos | Falta barrera común de validación antes de cada envío. |
-| Memoria prematura | `brain/main.py`: /chat llama append_exchange antes de entregar al gateway | Una generación cancelada puede quedar en contexto como si se hubiera enviado. |
+| Memoria prematura | `apps/brain/main.py`: /chat llama append_exchange antes de entregar al gateway | Una generación cancelada puede quedar en contexto como si se hubiera enviado. |
 | Envíos directos | `internalBus.js`: /notify usa activeSock.sendMessage; otros servicios llaman al adapter | Converger en un caso de uso con auditoría e idempotencia. |
-| UI | `gateway/panel/public/`: ES Modules y CSS sin build | Sin bandeja ni cliente tipado para conversaciones. |
+| UI | `apps/panel/public/`: ES Modules y CSS sin build | Sin bandeja ni cliente tipado para conversaciones. |
 | Documentación | ROADMAP declaraba pendientes índices ya presentes en contactsRepository.js; ARCHITECTURE tenía OAuth desactualizado | Confirmar con código/pruebas; no marcar validaciones reales como realizadas. |
 
 En esa baseline, upsertMessage del store RAM no tenía llamadas y las guardas
@@ -167,12 +170,21 @@ Vite funciona en desarrollo/build. En producción el proceso del panel sirve el
 build: no se agrega un servicio de frontend. CI puede distribuir artefactos a
 Termux. No se requiere SSR para esta consola privada.
 
-La transición comienza en `gateway/panel/web`: el bundle se sirve en `/inbox` por
+La adopción de `apps/` está en curso. Gateway, panel, brain y STT viven en
+`apps/gateway/`, `apps/panel/`, `apps/brain/` y `apps/stt/`. `gateway/` y
+`brain/` conservan estado runtime, perfiles y credenciales. `repoPaths.js` y
+`apps/brain/runtime_paths.py` resuelven las rutas existentes para que mover
+código no cambie las rutas de datos. El panel importa únicamente la
+infraestructura HTTP sin estado de `apps/gateway/lib/`.
+
+La app React vive en `apps/panel/web`: el bundle se sirve en `/inbox` por
 el mismo proceso OAuth del panel y requiere `PANEL_CONVERSATIONS_UI_ENABLED=true`.
-El valor por defecto es apagado; `/` conserva el panel anterior. Docker compila el
-bundle en una etapa con dependencias de desarrollo y lo copia a la imagen runtime,
-que instala solo dependencias de producción. F4.1 entrega el shell navegable; lista,
-historial y eventos reales se conectan en las unidades siguientes de F4.
+El valor por defecto es apagado; `/` conserva el panel anterior. Con OAuth activo,
+la nueva ruta exige sesión, mientras `/api/*` legacy y su UI requieren el grant
+servidor `admin:write`. Docker compila el bundle en una etapa con dependencias de
+desarrollo y lo copia a la imagen runtime, que instala solo dependencias de
+producción. F4.1 entrega el shell navegable; lista, historial y eventos reales se
+conectan en las unidades siguientes de F4.
 
 Resultado y límites del experimento de almacenamiento:
 [SQLITE-SPIKE.md](SQLITE-SPIKE.md). F2A ya implementa worker y repositorios
@@ -393,13 +405,16 @@ throughMessageId/contextVersion. Limpiar memoria aumenta versión y evita volver
 a importar al contexto lo limpiado. Con varios globos solo confirmar los enviados;
 los de entrega incierta se señalan expresamente.
 
-Más adelante, cada herramienta IA declara nombre, schemas entrada/salida,
-timeout, permisos, clasificación read/write, auditoría e idempotencia. Consultas de
-chat/contactos pasan por casos de uso del gateway. Brain puede devolver solicitudes
-de herramientas tipadas; gateway las ejecuta, sin conexión brain -> canal/DB ni
-shell genérica. Primera función: borradores, sin publicar mientras un humano tenga
-control. Acciones externas con efectos requieren política expresa y ADR de alcance.
-No cambiar proveedores/SDK actuales solo por tener otra herramienta disponible.
+Las herramientas IA declaran nombre, schemas de entrada/salida, timeout, permisos,
+efecto read/write, auditoría e idempotencia. F10.2 habilita solo
+`conversation.search_messages`: lectura del mismo hilo y snapshot, hasta cinco
+resultados, permiso `conversations:read` y plazo de tres segundos. Brain puede
+solicitar una operación tipada; Gateway verifica y ejecuta el caso de uso. Brain no
+accede a SQLite, canales ni shell. El esquema no admite herramientas de escritura;
+la búsqueda deja auditoría con huellas, sin texto consultado o contenido, y retención
+de 180 días. Acciones externas con efectos requieren política expresa y ADR de
+alcance. No cambiar proveedores/SDK actuales solo por tener otra herramienta
+disponible.
 
 Las herramientas de desarrollo se usan con propósito: contratos para detectar
 incompatibilidades, Playwright para revisar el chat, adapters falsos para fallos y
@@ -445,8 +460,10 @@ restaurarse snapshot; después hay que reconciliar/exportar delta o mantener ver
 compatible. No perder mensajes humanos enviados restaurando un backup viejo.
 Backups SQLite consistentes, con manejo correcto WAL/SHM; no copiar WAL aislado.
 
-DB nueva, adjuntos futuros y cursores se agregan a factoryReset.js, .gitignore,
-variables y volúmenes antes de persistirlos. Conservar confirmación destructiva.
+DB nueva, adjuntos y cursores se agregan a factoryReset.js, .gitignore, variables
+y volúmenes antes de persistirlos. `SDK_ATTACHMENT_DIR` apunta al volumen de
+estado; los archivos son privados y factory reset elimina el directorio completo.
+Conservar confirmación destructiva.
 Retención inicial fijada por F0.3: historial 90 días desde ingestedAt; eventos hasta
 50.000 secuencias o 7 días, lo que venza antes; huellas/idempotencia 180 días y
 backups diarios 7 días. Es configurable e independiente de IA. Límites de

@@ -1,0 +1,44 @@
+{
+  "name": "gateway",
+  "version": "1.0.0",
+  "main": "index.js",
+  "scripts": {
+    "start": "node index.js",
+    "reset": "node reset-session.js",
+    "clean": "node reset-clean.js",
+    "test": "SDK_BOT_TEST=1 node --test",
+    "lint": "eslint .",
+    "lint:fix": "eslint . --fix",
+    "typecheck": "tsc -p jsconfig.json",
+    "panel:typecheck": "npm --prefix ../panel run typecheck",
+    "panel:test": "npm --prefix ../panel test",
+    "panel:build": "npm --prefix ../panel run build",
+    "panel:check": "npm --prefix ../panel run check && node --test tests/panelWebBuild.test.js",
+    "spike:sqlite": "node scripts/sqlite-spike.js",
+    "conversations:control-dry-run": "node scripts/control-import-dry-run.js",
+    "conversations:control-import": "node scripts/control-import.js",
+    "conversations:legacy-reconcile": "node scripts/legacy-dispatch-reconcile.js",
+    "conversations:restore-check": "node scripts/restore-promotion-check.js",
+    "bench:conversations": "node scripts/conversation-load.js --full",
+    "check": "npm run lint && npm run typecheck && npm run panel:check && npm test"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "description": "WhatsApp Multi-Bot Gateway with Smart Sync & Metadata",
+  "dependencies": {
+    "@sdk-bot/contracts": "file:../../packages/contracts",
+    "@whiskeysockets/baileys": "^7.0.0-rc14",
+    "pino": "^10.3.1",
+    "pino-roll": "^4.0.0",
+    "qrcode": "^1.5.4",
+    "qrcode-terminal": "^0.12.0",
+    "undici": "7.29.1"
+  },
+  "devDependencies": {
+    "@eslint/js": "^10.0.1",
+    "@types/node": "^26.2.0",
+    "eslint": "^10.8.1",
+    "typescript": "^7.0.2"
+  }
+}

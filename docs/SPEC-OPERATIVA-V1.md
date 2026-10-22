@@ -173,13 +173,17 @@ quedan bloqueadas; no se ocultan para conseguir que los recuentos coincidan.
 
 ## 6. Retención y lectura
 
-Valores iniciales configurables, fijados también en el fixture de aceptación:
+Valores iniciales, fijados también en el fixture de aceptación:
 
 | Dato | Retención / comportamiento inicial |
 |---|---|
-| Cuerpo de mensajes/adjuntos | 90 días desde ingestedAt durable. Una importación antigua tiene 90 días desde su captura. |
+| Cuerpo de mensajes/adjuntos | 90 días desde ingestedAt durable. Una importación antigua tiene 90 días desde su captura. Archivo por adjunto de hasta 16 MiB; cuota inicial total de 1 GiB. |
 | Eventos para SSE | 7 días; payload mínimo, sin copia del texto. |
 | Idempotencia y huellas de deduplicación | 180 días desde captura/intención; sin contenido de mensaje ni token. |
+| Recibos de takeover | `completed`/`failed`: 180 días desde cierre; `taking_control` se conserva hasta recuperar o completar. |
+| Importación/corte de control y snapshots de rollback | Indefinida; no existe poda segura del ledger ni de snapshots. |
+| Cuarentenas sin resolver | Indefinida hasta revisión/eliminación explícita; no se purgan automáticamente. |
+| Cursores de lectura | Indefinida mientras exista la conversación; estado monotónico mínimo por actor. |
 | Contexto IA | Ventana 7 días / presupuesto 5000 tokens, independiente del archivo; incluye humano. |
 | Salida queued sin iniciar | Máximo 24 h, después failed/expired; ningún envío sorpresa tras largas caídas. |
 | Exportaciones temporales | 1 hora, descarga autenticada y vinculada al actor. |
@@ -193,12 +197,37 @@ secuencia de entrada por actor, sin FK obligatoria al cuerpo purgable. No leído
 cuenta solo entradas live retenidas posteriores al cursor; un cursor viejo no
 vuelve a retroceder ni marca leído en el proveedor.
 
+La purga solo elimina recibos terminales de takeover; un `taking_control` queda
+disponible para recuperación tras reinicio. El expediente de importación/corte
+retiene informes, entradas y snapshots antes/después porque habilita auditoría y
+rollback. Las cuarentenas permanecen hasta contar con un flujo explícito de
+resolución y limpieza; las conversaciones marcadas para revisión no se liberan
+por vencer una retención. El checkpoint offline compara estos cuatro ledgers y
+el gate de restore bloquea cualquier divergencia.
+
+Los binarios viven en `SDK_ATTACHMENT_DIR` (por defecto `gateway/data/attachments`
+dentro del volumen de estado), con directorio `0700` y archivos opacos `0600`.
+SQLite guarda el ID, nombre saneado, tipo MIME, tamaño, SHA-256, captura y
+vencimiento; no guarda rutas del proveedor. `GET
+/api/v1/attachments/{attachmentId}` exige `conversations:read` y verifica que la
+conversación siga archivada antes de transmitir bytes como
+`application/octet-stream`, `no-store` y `nosniff`. El límite individual es 16 MiB
+y el acumulado es 1 GiB, incluyendo escrituras concurrentes. Si falta o cambia un
+archivo, el mensaje queda como marcador `failed`; la purga vence estrictamente
+después de 90 días y borra los bytes en pasos idempotentes antes de retirar los
+metadatos. El gate offline de F8.4 compara también el ledger de metadatos, pero no
+valida por sí solo que los bytes estén completos en el backup.
+
 Las huellas dentro de 180 días evitan recrear un mensaje purgado por redelivery.
-Repetir una intención cuyo resultado ya fue purgado devuelve
-`410 IDEMPOTENCY_RESULT_EXPIRED`, nunca la ejecuta otra vez. Tras 180 días esa
-garantía vence; un cliente antiguo debe resincronizar y no reenviar automáticamente.
-No se almacenan cuerpos indefinidamente por tener un envío delivery_unknown;
-se conserva solo su huella/estado mínimo hasta el plazo aplicable.
+En el outbox, un intent que aún no inició transporte vence a las 24 horas. Los
+resultados terminales mantienen una huella de idempotencia hasta 180 días; su
+contenido, destino y resultado crudo se eliminan a los 90 días junto con el plazo
+de cuerpos del archivo. Repetir una intención terminal cuyo resultado venció
+devuelve `410 IDEMPOTENCY_RESULT_EXPIRED`, nunca la ejecuta otra vez. Al cumplir
+180 días se purgan intents terminales y vence esa garantía; un cliente antiguo
+debe resincronizar y no reenviar automáticamente. Un `delivery_unknown` conserva
+su estado/huellas no reejecutables hasta conciliación, pero pierde contenido,
+destino y resultado crudo a los 90 días.
 
 Borrar contexto crea un nuevo contextVersion y límite de mensajes/contexto: la
 proyección no vuelve a importar ese tramo del archivo. Purgar un cuerpo invalida

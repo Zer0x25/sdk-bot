@@ -5,13 +5,14 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
 
 WORKDIR /app
 
-COPY brain/requirements.txt brain/requirements.txt
-RUN pip install --no-cache-dir -r brain/requirements.txt
+COPY apps/brain/requirements.txt apps/brain/requirements.txt
+RUN pip install --no-cache-dir -r apps/brain/requirements.txt
 
-COPY brain brain
+COPY apps/brain apps/brain
 COPY .env.tuning .env.tuning
 
-RUN mkdir -p /app/brain/logs
+ENV SDK_BRAIN_STATE_DIR=/app/brain
+RUN mkdir -p /app/brain/logs /app/brain/profiles
 
-WORKDIR /app/brain
+WORKDIR /app/apps/brain
 CMD ["python", "main.py"]
