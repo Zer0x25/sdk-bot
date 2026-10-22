@@ -14,7 +14,7 @@
  */
 const { BRAIN_API_BASE, BRAIN_API_URL, BRAIN_API_KEY, state, registerSentMessage } = require('../config');
 const { createHash, randomUUID } = require('node:crypto');
-const { cat, errMsg } = require("../services/logger");
+const { cat, errMsg, safeErrorLabel } = require("../services/logger");
 const { num } = require('../tuning');
 const { enqueue, scheduleFlush } = require("./messageQueue");
 const {
@@ -105,7 +105,7 @@ async function notifyAdminError(adapter, metadata, textMessage, errorDetails) {
         const sentAlert = await adapter.sendMessage(adminJid, adminAlert);
         registerSentMessage(sentAlert);
     } catch (err) {
-        logError.error("Error al enviar alerta a Self-Chat del Admin: " + errMsg(err));
+        logError.error(`Error al enviar alerta a Self-Chat del Admin (${safeErrorLabel(err)}).`);
     }
 }
 
@@ -149,7 +149,7 @@ async function invalidateBrainGeneration(generationId, contextVersion) {
             body: JSON.stringify({ generation_id: generationId, context_version: contextVersion })
         });
     } catch (error) {
-        log.warn(`No se pudo registrar la invalidación de ${generationId}: ${errMsg(error)}`);
+        log.warn(`No se pudo registrar la invalidación de generación (${safeErrorLabel(error)}).`);
     }
 }
 
@@ -192,14 +192,13 @@ async function processAIChat(textMessage, remoteJid, metadata, adapter, opts = {
     // NO se inyecta aquí. /chat siempre usa get_history() completo (7d/5000tok).
     brainStats.aiCalls += 1;
     brainStats.lastAiAt = new Date().toISOString();
-    const displayName = metadata.savedName || metadata.pushName || 'Usuario';
     const sourceMessageIds = Array.isArray(opts.sourceMessageIds) ? [...new Set(opts.sourceMessageIds)] : [];
     const generationId = opts.generationId || (opts.controlSnapshot?.conversationId && sourceMessageIds.length
         ? stableGenerationId(opts.controlSnapshot.conversationId, opts.controlSnapshot.contextVersion, sourceMessageIds)
         : randomUUID());
     const explicitContext = Boolean(opts.controlSnapshot && adapter.archive && sourceMessageIds.length);
-    const langLog = metadata.language ? ` | Idioma: ${metadata.language}` : '';
-    log.info(`\n[ENVIANDO A IA] De: ${displayName} (${remoteJid}) | País: ${metadata.country}${langLog}`);
+    const displayName = metadata.savedName || metadata.pushName || 'Desconocido';
+    log.info('[IA] Generación iniciada.');
     
     let payload = {
         user_id: remoteJid,
@@ -253,7 +252,7 @@ async function processAIChat(textMessage, remoteJid, metadata, adapter, opts = {
             const err = /** @type {Error & {status?: number}} */ (error);
             if (!err.status || err.status >= 500) {
                 brainStats.retries += 1;
-                log.warn(`↻ Error transitorio del cerebro (${err.message}). Reintentando (1/1)...`);
+                log.warn(`↻ Error transitorio del cerebro (${safeErrorLabel(err)}). Reintentando (1/1)...`);
                 await waitForJob(1500, opts.signal);
                 await assertJobCurrent(opts);
                 data = await requestBrain(payload, opts.signal, endpoint);
@@ -265,7 +264,7 @@ async function processAIChat(textMessage, remoteJid, metadata, adapter, opts = {
         await assertJobCurrent(opts);
         if (data.response) {
             brainStats.lastOkAt = new Date().toISOString();
-            log.info(`[BOT RESPONDE A ${displayName}]: ${data.response}`);
+            log.info(`[IA] Respuesta generada (${data.response.length} caracteres).`);
 
             // 📥 F4-P4: si había mensajes encolados y el brain volvió, procesarlos
             if (!opts.fromQueue) scheduleFlush();
@@ -311,7 +310,7 @@ async function processAIChat(textMessage, remoteJid, metadata, adapter, opts = {
                 }
             }
         } else {
-            logError.error("Error del cerebro:", data.error);
+            logError.error('El Brain devolvió una respuesta de error.');
             if (opts.fromQueue) {
                 throw new Error(data.error || "Respuesta vacía del cerebro IA");
             }
@@ -321,24 +320,23 @@ async function processAIChat(textMessage, remoteJid, metadata, adapter, opts = {
         const caught = /** @type {Error & {status?: number; code?: string}} */ (error);
         if (opts.signal?.aborted || /** @type {any} */ (error)?.code === 'CONTROL_JOB_CANCELLED') {
             if (explicitContext && contextVersion) await invalidateBrainGeneration(generationId, contextVersion);
-            log.info(`[CONTROL F5] Trabajo IA cancelado para ${remoteJid}; no se continúa con otros globos.`);
+            log.info('[CONTROL F5] Trabajo IA cancelado; no se continúa con otros globos.');
             return;
         }
         if (explicitContext && ['OUTBOUND_CONTROL_STALE','AI_CONTEXT_VERSION_STALE','AI_CONTEXT_ANCHOR_MISSING','GENERATION_INVALIDATED'].includes(caught.code || '')) {
             if (contextVersion) await invalidateBrainGeneration(generationId, contextVersion);
-            log.info(`[CONTROL F5] Generación ${generationId} invalidada para ${remoteJid}; no se continúa con otros globos.`);
+            log.info('[CONTROL F5] Generación invalidada; no se continúa con otros globos.');
             return;
         }
         if (opts.controlSnapshot && ['AI_CONTEXT_SOURCE_REQUIRED','AI_CONTEXT_ANCHOR_MISSING'].includes(caught.code || '')) {
             caught.status = 422;
         }
         brainStats.lastErrorAt = new Date().toISOString();
-        brainStats.lastErrorMsg = errMsg(error);
-        logError.error("Error al conectar con el cerebro: " + errMsg(error));
+        brainStats.lastErrorMsg = safeErrorLabel(error);
+        logError.error(`Error al conectar con el cerebro (${safeErrorLabel(error)}).`);
         if (hasOutboundAttempt(error)) {
-            const outboundError = /** @type {any} */ (error);
             const detail = isAmbiguousOutbound(error) ? 'incierta' : 'fallida';
-            logError.error(`Salida IA ${detail} (${outboundError?.outboundIntentId || 'sin id'}); se suspende el replay automático de la generación.`);
+            logError.error(`Salida IA ${detail}; se suspende el replay automático de la generación.`);
             if (opts.fromQueue) throw error;
             return;
         }
@@ -390,7 +388,7 @@ async function handleBrainFailure(error, textMessage, remoteJid, metadata, adapt
     }
 
     if (now - lastBrainAlertAt < BRAIN_ALERT_THROTTLE_MS) {
-        log.warn(`⏳ [COLA] Alerta al admin omitida (throttle 15 min). Mensaje ${queued ? 'ENCOLADO' : 'fallido'}: ${msg}`);
+        log.warn(`⏳ [COLA] Alerta al admin omitida (throttle 15 min). Mensaje ${queued ? 'ENCOLADO' : 'fallido'}.`);
         return;
     }
     lastBrainAlertAt = now;
@@ -414,7 +412,7 @@ async function clearAIMemory(userJid) {
         const data = /** @type {any} */ (await response.json());
         return data && data.status === 'ok';
     } catch (e) {
-        logError.error("Error al resetear memoria en Brain: " + errMsg(e));
+        logError.error(`Error al resetear memoria en Brain (${safeErrorLabel(e)}).`);
         return false;
     }
 }
@@ -438,7 +436,7 @@ async function getAvailableProfiles() {
         cachedProfilesAt = Date.now();
         return cachedProfiles;
     } catch (e) {
-        logError.error("Error al obtener perfiles del Brain: " + errMsg(e));
+        logError.error(`Error al obtener perfiles del Brain (${safeErrorLabel(e)}).`);
         return [];
     }
 }
@@ -457,7 +455,7 @@ async function getProfileDetail(profileKey) {
         if (!response.ok) return null;
         return await response.json();
     } catch (e) {
-        logError.error("Error al obtener detalle de perfil: " + errMsg(e));
+        logError.error(`Error al obtener detalle de perfil (${safeErrorLabel(e)}).`);
         return null;
     }
 }
@@ -478,7 +476,7 @@ async function exportProfileFile(profileKey) {
         const content = await response.text();
         return { content, filename: `${profileKey}.md` };
     } catch (e) {
-        logError.error("Error al exportar archivo de perfil: " + errMsg(e));
+        logError.error(`Error al exportar archivo de perfil (${safeErrorLabel(e)}).`);
         return null;
     }
 }
@@ -504,7 +502,7 @@ async function importProfileFile(profileKey, content) {
         }
         return result;
     } catch (e) {
-        logError.error("Error al importar perfil al Brain: " + errMsg(e));
+        logError.error(`Error al importar perfil al Brain (${safeErrorLabel(e)}).`);
         return null;
     }
 }
@@ -526,7 +524,7 @@ async function reloadProfiles() {
         cachedProfilesAt = 0;
         return result;
     } catch (e) {
-        logError.error("Error al recargar perfiles del Brain: " + errMsg(e));
+        logError.error(`Error al recargar perfiles del Brain (${safeErrorLabel(e)}).`);
         return null;
     }
 }
@@ -551,7 +549,7 @@ async function deleteProfileFile(profileKey) {
         }
         return result;
     } catch (e) {
-        logError.error("Error al eliminar perfil del Brain: " + errMsg(e));
+        logError.error(`Error al eliminar perfil del Brain (${safeErrorLabel(e)}).`);
         return null;
     }
 }
@@ -595,7 +593,7 @@ async function checkBrainHealth() {
         brainHealth.reachable = false;
         brainHealth.status = null;
         brainHealth.health = null;
-        brainHealth.lastError = errMsg(e);
+        brainHealth.lastError = safeErrorLabel(e);
         brainHealth.checkedAt = Date.now();
     }
     return brainHealth;
@@ -639,7 +637,7 @@ async function getChatHistory(userJid, opts = {}) {
         const data = /** @type {any} */ (await response.json());
         return Array.isArray(data.history) ? data.history : [];
     } catch (e) {
-        logError.error("Error al precargar historial del Brain: " + errMsg(e));
+        logError.error(`Error al precargar historial del Brain (${safeErrorLabel(e)}).`);
         return [];
     }
 }

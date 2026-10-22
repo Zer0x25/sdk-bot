@@ -20,7 +20,7 @@
  */
 const { STT_API_URL, STT_TIMEOUT_MS } = require('../config');
 const { num } = require('../tuning');
-const { cat, errMsg } = require('./logger');
+const { cat, safeErrorLabel } = require('./logger');
 
 const log = cat('STT');
 
@@ -85,13 +85,13 @@ async function postWithRetry(form, signal) {
             });
             if (!res.ok) {
                 // 4xx = validación/bug -> NO reintentar.
-                const detail = await res.text().catch(() => `HTTP ${res.status}`);
+                await res.body?.cancel().catch(() => {});
                 if (res.status < 500) {
-                    log.warn(`⚠️ STT rechazó (${res.status}): ${detail}`);
+                    log.warn(`⚠️ STT rechazó la solicitud (HTTP ${res.status}).`);
                     return null;
                 }
                 // 5xx = transitorio -> reintentar (si es el intento 0).
-                lastErr = Object.assign(new Error(`STT 5xx: ${detail}`), { status: res.status });
+                lastErr = Object.assign(new Error('STT_PROVIDER_ERROR'), { status: res.status });
                 if (attempt === 0) { await backoff(signal); continue; }
                 return null;
             }
@@ -105,15 +105,15 @@ async function postWithRetry(form, signal) {
             const transient = isTransient(err);
             if (signal?.aborted) return null;
             if (transient && attempt === 0) {
-                log.warn(`↻ STT transitorio (${errMsg(err)}). Reintentando (1/1)...`);
+                log.warn(`↻ STT transitorio (${safeErrorLabel(err)}). Reintentando (1/1)...`);
                 await backoff(signal);
                 continue;
             }
-            log.error(`❌ STT falló (no transitorio o agotado): ${errMsg(err)}`);
+            log.error(`❌ STT falló (no transitorio o agotado): ${safeErrorLabel(err)}.`);
             return null;
         }
     }
-    log.error(`❌ STT agotó reintentos: ${errMsg(lastErr)}`);
+    log.error(`❌ STT agotó reintentos: ${safeErrorLabel(lastErr)}.`);
     return null;
 }
 

@@ -106,7 +106,7 @@ class ImportProfileRequest(BaseModel):
 async def reset_memory_endpoint(request: ResetMemoryRequest):
     bot_id = request.bot_id or "single"
     cleared = clear_history(bot_id, request.user_id)
-    safe_log(f"🧹 [MEMORIA REINICIADA] Para usuario: {request.user_id} (Resultado: {cleared})")
+    safe_log(f"🧹 [MEMORIA REINICIADA] Operación completada (resultado: {cleared}).")
     return {"status": "ok", "cleared": cleared, "user_id": request.user_id}
 
 @app.get("/profiles")
@@ -139,7 +139,7 @@ def profile_import_endpoint(request: ImportProfileRequest):
     result = import_profile(request.key, request.content)
     if not result["success"]:
         raise HTTPException(status_code=400, detail=result["message"])
-    safe_log(f"📥 [PERFIL IMPORTADO] {result['key']} ({result['nombre']}) | {result['reglas']} reglas, {result['ejemplos']} ejemplos")
+    safe_log(f"📥 [PERFIL IMPORTADO] Perfil actualizado ({result['reglas']} reglas, {result['ejemplos']} ejemplos).")
     return {"status": "ok", **result}
 
 @app.post("/profiles/reload")
@@ -155,13 +155,13 @@ def profile_delete_endpoint(profile_key: str):
     if not result["success"]:
         status = 400 if result["message"].startswith(("Clave", "'default'")) else 404
         raise HTTPException(status_code=status, detail=result["message"])
-    safe_log(f"🗑️ [PERFIL ELIMINADO] {result['key']}")
+    safe_log("🗑️ [PERFIL ELIMINADO] Perfil eliminado.")
     return {"status": "ok", **result}
 
 @app.post("/chat")
 async def chat_endpoint(request: ChatRequest):
     if RATE_LIMIT_ENABLED and _is_rate_limited(request.user_id):
-        safe_log(f"⏱️ [RATE LIMIT] {request.user_id} excedió {RATE_LIMIT_MAX} llamadas/min")
+        safe_log(f"⏱️ [RATE LIMIT] Se excedió el límite de {RATE_LIMIT_MAX} llamadas/min.")
         raise HTTPException(status_code=429, detail="Demasiados mensajes por minuto. Espera unos segundos.")
 
     base_instruction = build_system_prompt(request.bot_profile)
@@ -198,8 +198,7 @@ async def chat_endpoint(request: ChatRequest):
     # generar la respuesta. La precarga en presencia es SOLO señal de intervención
     # (etapa 1) y NO se inyecta aquí (etapa 2 = respuesta con contexto total).
     history = get_history(bot_id, request.user_id)
-    display_log_name = request.saved_name or request.push_name or request.user_name or 'Desconocido'
-    safe_log(f"\n📩 [CEREBRO RECIBE] De: {display_log_name} ({request.user_id}) | Tel: {request.phone_number or 'N/A'} | LID: {request.lid or 'N/A'} | Bio: {request.bio or 'N/A'}")
+    safe_log("\n📩 [CEREBRO RECIBE] Solicitud de respuesta admitida.")
 
     try:
         response_text, provider_used, _updated_history = await generate_ai_response(
@@ -209,10 +208,10 @@ async def chat_endpoint(request: ChatRequest):
             user_id=request.user_id
         )
         append_exchange(bot_id, request.user_id, request.message, response_text)
-        safe_log(f"🤖 [{provider_used} RESPONDE A {display_log_name}]: {response_text}\n")
+        safe_log(f"🤖 [CEREBRO] Respuesta generada ({len(response_text)} caracteres).\n")
         return {"response": response_text, "provider": provider_used}
     except Exception as err:
-        safe_log(f"❌ Error en router de proveedores: {err}")
+        safe_log(f"❌ Error en router de proveedores ({type(err).__name__}).")
         return {"error": str(err)}
 
 @app.get("/history")
@@ -302,8 +301,7 @@ async def generate_reply_endpoint(request: GenerateReplyRequest):
                     "generation_id": request.generation_id, "context_version": request.context_version,
                     "through_message_id": request.through_message_id, "replayed": True}
 
-        display_name = request.saved_name or request.push_name or request.user_name or "Desconocido"
-        safe_log(f"\n📩 [GENERATE REPLY] {display_name} | generationId={request.generation_id} | contextVersion={request.context_version}")
+        safe_log("\n📩 [GENERATE REPLY] Solicitud admitida.")
         try:
             response_text, provider_used, _ = await generate_ai_response(
                 system_instruction=_system_instruction(request), message=request.message,
@@ -324,7 +322,7 @@ async def generate_reply_endpoint(request: GenerateReplyRequest):
         except HTTPException:
             raise
         except Exception as err:
-            safe_log(f"❌ Error en GenerateReply: {err}")
+            safe_log(f"❌ Error en GenerateReply ({type(err).__name__}).")
             return {"error": str(err)}
 
 
@@ -456,7 +454,7 @@ def ensure_singleton(allow_restart=False):
                         break
                     time.sleep(0.25)
             except Exception as e:
-                log_instancia.error(f"⚠️ No pude detener la instancia anterior ({e}).")
+                log_instancia.error(f"⚠️ No pude detener la instancia anterior ({type(e).__name__}).")
         else:
             log_instancia.info(f"🔒 El Brain YA está corriendo (PID {existing}). Revisa: `ss -tlnp | grep {BRAIN_PORT}`")
             log_instancia.info("   → Para reiniciarlo sin tocar nada: `python main.py --restart`")
@@ -507,7 +505,9 @@ if __name__ == "__main__":
 
     ensure_singleton(allow_restart="--restart" in sys.argv)
     try:
-        uvicorn.run(app, host=BRAIN_HOST, port=BRAIN_PORT)
+        # /history lleva user_id en query string; access logs registrarían ese
+        # identificador incluso aunque los logs de aplicación ya lo omitan.
+        uvicorn.run(app, host=BRAIN_HOST, port=BRAIN_PORT, access_log=False)
     finally:
         # uvicorn no garantiza el retorno normal: limpiar el lock si llegamos aquí
         _remove_lock()

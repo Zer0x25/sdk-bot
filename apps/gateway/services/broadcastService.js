@@ -19,7 +19,7 @@ const path = require('path');
 const crypto = require('crypto');
 const { state, registerSentMessage } = require('../config');
 const { getContactsDB } = require('./db');
-const { cat, errMsg } = require('./logger');
+const { cat, safeErrorLabel } = require('./logger');
 const { num } = require('../tuning');
 const { GATEWAY_STATE_DIR } = require('../lib/repoPaths');
 const { createJsonBroadcastRepository } = require('./repositories/jsonBroadcastRepository');
@@ -73,7 +73,7 @@ function persist() {
     try {
         repository.save(db);
     } catch (e) {
-        logError.error('📢 [BROADCAST] Error al guardar broadcast_db.json: ' + errMsg(e));
+        logError.error(`📢 [BROADCAST] Error al guardar estado (${safeErrorLabel(e)}).`);
     }
 }
 
@@ -100,7 +100,7 @@ function load() {
             if (pending > 0) log.warn(`📢 [BROADCAST] ${pending} broadcast(s) pendiente(s) retomados de disco.`);
         }
     } catch (e) {
-        logError.error('📢 [BROADCAST] Error al leer broadcast_db.json: ' + errMsg(e));
+        logError.error(`📢 [BROADCAST] Error al leer estado (${safeErrorLabel(e)}).`);
     }
     // 🔴 F4-P6: apagado por defecto. El valor persistido manda; si no existe,
     // el admin lo enciende con /broadcast on o el deploy con SDK_BROADCAST_ENABLED=1.
@@ -252,7 +252,7 @@ function enqueueBroadcast(text, scheduledAt = null) {
     });
     db.broadcasts.push(entry);
     persist();
-    log.warn(`📢 [BROADCAST] Programado: "${text.slice(0, 60)}" → ${eligible.length} contactos aptos${scheduledAt ? ` a las ${scheduledAt}` : ' (inmediato)'}.`);
+    log.warn(`📢 [BROADCAST] Programado para ${eligible.length} contactos aptos${scheduledAt ? ` a las ${scheduledAt}` : ' (inmediato)'}.`);
     return entry;
 }
 
@@ -364,7 +364,7 @@ async function tickUnsafe() {
             await notifyAdmin(`📢 *Broadcast finalizado (0 contactos aptos):* ${due.text.slice(0, 80)}`);
             return;
         }
-        log.warn(`📢 [BROADCAST] Comenzando envío a ${due.eligible} contactos: "${due.text.slice(0, 60)}"`);
+        log.warn(`📢 [BROADCAST] Comenzando envío a ${due.eligible} contactos.`);
     }
 
     const contacts = getEligibleContacts();
@@ -409,7 +409,7 @@ async function tickUnsafe() {
         delete active.currentTarget;
         delete active.currentIdempotencyKey;
         markSent(target.phone, db.dailySends);
-        log.info(`📢 [BROADCAST] (${active.sent}/${active.eligible}) → ${target.jid}`);
+        log.info(`📢 [BROADCAST] Envío ${active.sent}/${active.eligible} aceptado.`);
     } catch (e) {
         const error = /** @type {any} */ (e);
         if (error?.outboundState === 'delivery_unknown' || error?.outboundState === 'sending'
@@ -419,14 +419,14 @@ async function tickUnsafe() {
             active.deliveryUnknownIdempotencyKey = intentKey;
             active.deliveryUnknownAt = new Date().toISOString();
             persist();
-            logError.error(`📢 [BROADCAST] Envío incierto a ${target.jid}; campaña pausada para reconciliar.`);
+            logError.error('📢 [BROADCAST] Envío incierto; campaña pausada para reconciliar.');
             return;
         }
         // Contacto problemático: se salta (evita bucles infinitos) y se cuenta
         active.failed += 1;
         delete active.currentTarget;
         delete active.currentIdempotencyKey;
-        logError.error(`📢 [BROADCAST] Fallo al enviar a ${target.jid}: ` + errMsg(error));
+        logError.error(`📢 [BROADCAST] Fallo al enviar (${safeErrorLabel(error)}).`);
     }
     active.cursor += 1;
     persist();
@@ -455,7 +455,7 @@ async function notifyAdmin(text) {
         const sent = await sendMessageSafe(adminJid, text);
         if (sent) registerSentMessage(sent);
     } catch (e) {
-        logError.error('📢 [BROADCAST] No se pudo notificar al admin: ' + errMsg(e));
+        logError.error(`📢 [BROADCAST] No se pudo notificar al admin (${safeErrorLabel(e)}).`);
     }
 }
 

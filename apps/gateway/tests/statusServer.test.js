@@ -1,6 +1,8 @@
 const { test, before, after } = require('node:test');
 const assert = require('node:assert');
-const { startStatusServer } = require('../services/statusServer');
+const { startStatusServer, buildStatus, channels } = require('../services/statusServer');
+const { state } = require('../config');
+const { safeErrorLabel } = require('../services/logger');
 
 let server;
 let port;
@@ -63,6 +65,49 @@ test('GET /health es un healthcheck simple', async () => {
     const data = await res.json();
     assert.strictEqual(data.status, 'ok');
     assert.strictEqual(typeof data.uptime_seconds, 'number');
+});
+
+test('métricas omiten identidades directas y limitan motivos de desconexión a códigos conocidos', () => {
+    const priorPhone = state.ADMIN_PHONE;
+    const priorLid = state.ADMIN_LID;
+    const priorWaReason = channels.whatsapp.lastDisconnectReason;
+    const priorTgReason = channels.telegram.lastDisconnectReason;
+    const priorWaCapture = channels.whatsapp.capture;
+    try {
+        state.ADMIN_PHONE = '56912345678';
+        state.ADMIN_LID = '123456789012345';
+        channels.whatsapp.lastDisconnectReason = 'customer-private-detail 56987654321';
+        channels.whatsapp.capture = {
+            status: 'degraded', code: 'PRIVATE_CUSTOMER_56987654321', at: '2026-10-22T00:00:00.000Z'
+        };
+        channels.telegram.lastDisconnectReason = 'error_captura';
+
+        const data = buildStatus();
+        assert.equal(data.bot.adminLinked, true);
+        assert.equal(Object.hasOwn(data.bot, 'number'), false);
+        assert.equal(Object.hasOwn(data.bot, 'lid'), false);
+        assert.equal(data.channels.whatsapp.lastDisconnectReason, 'error');
+        assert.equal(data.channels.whatsapp.capture.code, 'PRIVATE_CUSTOMER_[id]');
+        assert.equal(data.channels.telegram.lastDisconnectReason, 'error_captura');
+        assert.equal(JSON.stringify(data).includes('56912345678'), false);
+        assert.equal(JSON.stringify(data).includes('56987654321'), false);
+        assert.equal(JSON.stringify(data).includes('PRIVATE_CUSTOMER_56987654321'), false);
+    } finally {
+        state.ADMIN_PHONE = priorPhone;
+        state.ADMIN_LID = priorLid;
+        channels.whatsapp.lastDisconnectReason = priorWaReason;
+        channels.telegram.lastDisconnectReason = priorTgReason;
+        channels.whatsapp.capture = priorWaCapture;
+    }
+});
+
+test('safeErrorLabel registra categorías acotadas sin el mensaje de error', () => {
+    const error = Object.assign(new Error('private-customer-message-75b4'), {
+        code: 'PRIVATE_CUSTOMER_569876543210'
+    });
+    assert.equal(safeErrorLabel(error), 'PRIVATE_CUSTOMER_[id]');
+    assert.equal(safeErrorLabel(Object.assign(new Error('private detail'), { status: 502 })), 'HTTP_502');
+    assert.equal(safeErrorLabel({ name: 'PrivateCustomer' }), 'UNCLASSIFIED');
 });
 
 test('rutas desconocidas responden 404', async () => {

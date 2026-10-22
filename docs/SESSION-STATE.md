@@ -1204,3 +1204,19 @@ Cierres históricos: commits F2C.1/F2C.2/F2D/F2E.1 están en el log local; F2B.3
   delta, cutover interrumpido, rollback por lotes y versiones monotónicas);
   `git diff --check`; pruebas solo con SQLite/JSON temporales.
 - Siguiente punto: F8.3d, minimizar datos de cliente en métricas y logs con pruebas.
+
+## Fase 8.3d — Minimización de datos en métricas y logs — 2026-10-22
+
+- Gateway y Brain ya omiten texto/transcripciones, nombres, teléfonos e IDs de
+  cliente en logs de atención. Errores quedan en etiquetas acotadas; Uvicorn
+  desactiva access logs para no escribir `user_id` de `/history` desde la URL.
+  `/status` publica vínculo administrativo como booleano, motivos/códigos de
+  captura saneados y métricas agregadas; el panel deja de mostrar el teléfono.
+- Los logs históricos no se reescriben y permanecen hasta rotación normal o
+  borrado explícito. El runbook documenta esa exposición residual.
+- Verificación: `cd apps/gateway && npm run check` (lint, typecheck, panel:
+  38 pruebas + 1 prueba de integración/build, Gateway: 330/330); `cd apps/brain && ../../brain/venv/bin/ruff
+  check . && ../../brain/venv/bin/python -m pytest tests/ -q` (30/30). Pruebas de
+  privacidad usan sentinels y almacenamiento temporal; no iniciaron proveedores
+  ni canales reales. `git diff --check`.
+- Siguiente punto: F8.4, ensayo aislado de restauración con fixture y delta.

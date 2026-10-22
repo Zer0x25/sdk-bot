@@ -3,7 +3,7 @@ const fs = require('fs');
 const fsPromises = require('fs/promises');
 const { SETTINGS_FILE_PATH, CONTACTS_FILE_PATH, state } = require('../config');
 const { isWiping } = require('./factoryReset');
-const { cat, errMsg } = require("./logger");
+const { cat, safeErrorLabel } = require("./logger");
 const { num } = require('../tuning');
 const { createJsonSettingsRepository } = require('./repositories/jsonSettingsRepository');
 const log = cat("STORAGE");
@@ -71,7 +71,7 @@ function loadDataOnStartup() {
             cachedSettingsDB = settingsRepository.load();
         }
     } catch (e) {
-        logError.error("Error al leer settings_db.json: " + errMsg(e));
+        logError.error(`Error al leer settings_db.json (${safeErrorLabel(e)}).`);
         cachedSettingsDB = { globalMode: 'ignored_all' };
         state.GLOBAL_MODE = 'ignored_all';
     }
@@ -93,7 +93,7 @@ function loadDataOnStartup() {
             cachedContactsDB = JSON.parse(stripBOM(fs.readFileSync(CONTACTS_FILE_PATH, 'utf8')));
         }
     } catch (e) {
-        logError.error("Error al leer contacts_db.json: " + errMsg(e));
+        logError.error(`Error al leer contacts_db.json (${safeErrorLabel(e)}).`);
         cachedContactsDB = {};
     }
     notifyContactsCache();
@@ -127,7 +127,7 @@ function saveSettingsDB(settings) {
         try {
             await settingsRepository.save(cachedSettingsDB);
         } catch (e) {
-            logError.error("Error al guardar settings_db.json de forma asíncrona: " + errMsg(e));
+            logError.error(`Error al guardar settings_db.json (${safeErrorLabel(e)}).`);
         }
     }, SAVE_DELAY_MS);
     saveSettingsTimer.unref?.();
@@ -154,7 +154,7 @@ function saveContactsDB(db) {
             await fsPromises.writeFile(tmpPath, JSON.stringify(cachedContactsDB, null, 2));
             await fsPromises.rename(tmpPath, CONTACTS_FILE_PATH);
         } catch (e) {
-            logError.error("Error al guardar contacts_db.json de forma asíncrona: " + errMsg(e));
+            logError.error(`Error al guardar contacts_db.json (${safeErrorLabel(e)}).`);
         }
     }, SAVE_DELAY_MS);
     saveContactsTimer.unref?.();
@@ -177,7 +177,7 @@ function flushToDisk() {
         if (cachedContactsDB) fs.writeFileSync(CONTACTS_FILE_PATH, JSON.stringify(cachedContactsDB, null, 2));
         log.info("✅ Datos guardados correctamente.");
     } catch (e) {
-        logError.error("⚠️ Error durante el volcado síncrono a disco: " + errMsg(e));
+        logError.error(`⚠️ Error durante el volcado síncrono a disco (${safeErrorLabel(e)}).`);
     }
 }
 

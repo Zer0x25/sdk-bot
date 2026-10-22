@@ -6,7 +6,7 @@
 // satura el event loop, el socket no responde los pings y WhatsApp corta
 // la conexión — interrumpiendo la agenda a medio descargar. Y esa sync
 // completa SOLO ocurre la primera vez que se vincula (no hay re-sync).
-const { cat, errMsg } = require('./logger');
+const { cat, safeErrorLabel } = require('./logger');
 
 const logError = cat('ERROR');
 
@@ -46,7 +46,7 @@ function tick() {
         try {
             processor(chunk);
         } catch (e) {
-            logError.error(`📇 [AGENDA] Error procesando chunk de contactos: ${errMsg(e)}`);
+            logError.error(`📇 [AGENDA] Error procesando lote (${safeErrorLabel(e)}).`);
         }
     }
     setImmediate(tick);

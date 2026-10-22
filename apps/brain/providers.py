@@ -151,7 +151,7 @@ async def generate_ai_response(system_instruction: str, message: str, memory_his
             return respuesta_texto, provider_used, new_history
         except Exception as err:
             errors.append(f"{name}: {err}")
-            safe_log(f"\n⚠️ {name} falló: {err}. Probando siguiente proveedor...")
+            safe_log(f"\n⚠️ {name} falló ({type(err).__name__}). Probando siguiente proveedor...")
 
     raise Exception(
         "Todos los proveedores fallaron en la cascada. "

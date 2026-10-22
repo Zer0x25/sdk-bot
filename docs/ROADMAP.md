@@ -428,7 +428,7 @@ son necesarios para una fase previa y pasan sus mismas comprobaciones.
     de exportación/borrado por solicitud](F8.3-OPERACION-RECUPERACION.md).
   - [x] F8.3c — [Rollback de código sin rollback de datos y recuperación del
     corte de control antes del cambio de autoridad](F8.3-OPERACION-RECUPERACION.md).
-  - [ ] F8.3d — Minimizar datos de cliente en métricas y logs, con pruebas.
+  - [x] F8.3d — [Minimizar datos de cliente en métricas y logs, con pruebas](F8.3-OPERACION-RECUPERACION.md#f83d--minimizacion-de-datos-en-metricas-y-logs).
 - [ ] Ensayar migración/restauración con fixture representativo y delta posterior
   al corte; no perder envíos nuevos restaurando snapshots antiguos.
 

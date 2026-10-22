@@ -9,7 +9,7 @@
 // medio descargar (por eso antes solo cargaban 59 contactos + 534 msgs).
 // La sync completa SOLO ocurre al vincular (no hay re-sync), así que debe
 // terminar entera.
-const { cat, errMsg } = require('./logger');
+const { cat, safeErrorLabel } = require('./logger');
 
 const logError = cat('ERROR');
 
@@ -51,7 +51,7 @@ function tick() {
         try {
             processor(chunk);
         } catch (e) {
-            logError.error(`💬 [MSG-SYNC] Error procesando chunk de mensajes: ${errMsg(e)}`);
+            logError.error(`💬 [MSG-SYNC] Error procesando lote (${safeErrorLabel(e)}).`);
         }
     }
     setImmediate(tick);

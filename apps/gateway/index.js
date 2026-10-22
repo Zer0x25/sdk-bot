@@ -13,7 +13,7 @@ const { startStatusServer, channels } = require('./services/statusServer');
 const chatStore = require('./store/chatStore');
 const messageSyncQueue = require('./services/messageSyncQueue');
 const { isWiping } = require('./services/factoryReset');
-const { cat } = require('./services/logger');
+const { cat, safeErrorLabel } = require('./services/logger');
 const internalBus = require('./services/internalBus');
 const { setControlService } = require('./services/stateService');
 
@@ -42,7 +42,7 @@ function noteFault(kind, err) {
     const now = Date.now();
     faultStreak = (now - lastFaultAt < 60000) ? faultStreak + 1 : 1;
     lastFaultAt = now;
-    logError.error(`🛡️ [${kind}] #${faultStreak}: ${err && (err.stack || err.message || err)}`);
+    logError.error(`🛡️ [${kind}] #${faultStreak}: ${safeErrorLabel(err)}.`);
     if (kind === 'uncaughtException' && faultStreak >= 4) {
         logError.error('🛡️ Estado posiblemente corrupto: saliendo para reinicio limpio.');
         process.exit(1);
@@ -193,7 +193,7 @@ async function startGateway() {
     whatsapp.on('ready', ({ adminPhone, adminLid }) => {
         if (adminPhone) state.ADMIN_PHONE = adminPhone;
         if (adminLid) state.ADMIN_LID = adminLid;
-        log.info(`👑 ADMIN WA DETECTADO -> Teléfono: ${state.ADMIN_PHONE} | LID: ${state.ADMIN_LID}`);
+        log.info('👑 ADMIN WA DETECTADO.');
     });
 
     whatsapp.on('connection', ({ status, detail }) => {
@@ -210,7 +210,7 @@ async function startGateway() {
 
     whatsapp.on('message', stdMsg => {
         if (stdMsg.archiveMessageId) { void legacyDispatchPump.trigger(); return; }
-        void handleIncomingMessage(stdMsg).catch(error => logError.error(`Mensaje administrativo WhatsApp falló: ${error?.message || error}`));
+        void handleIncomingMessage(stdMsg).catch(error => logError.error(`Mensaje WhatsApp no procesado (${safeErrorLabel(error)}).`));
     });
 
     whatsapp.on('capture_status', status => { channels.whatsapp.capture = status; });
@@ -241,11 +241,11 @@ async function startGateway() {
         archive: conversationArchive,
         dispatch: (message, acknowledge) => handleIncomingMessage(message, { onDurableComplete: acknowledge }),
         isReady: channel => channels[channel]?.connection === 'open',
-        onError: (error, messageId) => logError.error(`Replay durable ${messageId || ''} falló (${error?.code || error?.message || 'unknown'}); queda pendiente.`)
+        onError: (error) => logError.error(`Replay durable falló (${safeErrorLabel(error)}); queda pendiente.`)
     });
 
-    telegram.on('ready', ({ adminLid }) => {
-        log.info(`👑 ADMIN TG DETECTADO -> Chat ID: ${adminLid}`);
+    telegram.on('ready', () => {
+        log.info('👑 ADMIN TG DETECTADO.');
     });
 
     telegram.on('message', stdMsg => {
@@ -253,7 +253,7 @@ async function startGateway() {
         // y conversaciones) entra al pipeline; messageHandler trata el chat
         // del admin de Telegram como self-chat (mismas reglas que WhatsApp).
         if (stdMsg.archiveMessageId) { void legacyDispatchPump.trigger(); return; }
-        void handleIncomingMessage(stdMsg).catch(error => logError.error(`Mensaje administrativo Telegram falló: ${error?.message || error}`));
+        void handleIncomingMessage(stdMsg).catch(error => logError.error(`Mensaje Telegram no procesado (${safeErrorLabel(error)}).`));
     });
     
     telegram.on('connection', ({ status, detail }) => {

@@ -4,6 +4,10 @@ const path = require('path');
 const fs = require('fs');
 const os = require('os');
 const { GATEWAY_STATE_DIR } = require('../lib/repoPaths');
+const SAFE_ERROR_NAMES = new Set([
+    'Error', 'TypeError', 'RangeError', 'SyntaxError', 'ReferenceError', 'URIError',
+    'EvalError', 'AggregateError', 'DOMException', 'AbortError', 'TimeoutError', 'FetchError'
+]);
 
 const LOG_DIR = process.env.SDK_ADMIN_WEB_LOG_GATEWAY || path.join(GATEWAY_STATE_DIR, 'logs');
 const TEST_MODE = process.env.SDK_BOT_TEST === '1' || process.execArgv.includes('--test');
@@ -48,4 +52,16 @@ function errMsg(e) {
     return e instanceof Error ? e.message : String(e);
 }
 
-module.exports = { logger, cat, errMsg };
+/** Return a bounded error category for logs without serializing request data. */
+function safeErrorLabel(error) {
+    if (!error || typeof error !== 'object') return 'UNCLASSIFIED';
+    const code = error.code;
+    if (typeof code === 'string' && /^[A-Z0-9_-]{1,64}$/.test(code)) return code.replace(/[0-9]{4,}/g, '[id]');
+    const status = Number(error.status);
+    if (Number.isInteger(status) && status >= 400 && status <= 599) return `HTTP_${status}`;
+    const name = error.name;
+    if (typeof name === 'string' && SAFE_ERROR_NAMES.has(name)) return name.toUpperCase();
+    return 'UNCLASSIFIED';
+}
+
+module.exports = { logger, cat, errMsg, safeErrorLabel };

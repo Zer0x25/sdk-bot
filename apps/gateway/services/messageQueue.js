@@ -13,7 +13,7 @@
 const fs = require('fs');
 const path = require('path');
 const crypto = require('crypto');
-const { cat, errMsg } = require('./logger');
+const { cat, safeErrorLabel } = require('./logger');
 const { GATEWAY_STATE_DIR } = require('../lib/repoPaths');
 
 const log = cat('STORAGE');
@@ -65,7 +65,7 @@ function loadFromDisk() {
             log.warn(`📥 [COLA] Cargados ${queue.length} mensaje(s) pendientes de la última caída del brain.`);
         }
     } catch (e) {
-        logError.error('📥 [COLA] Error al leer la cola de disco: ' + errMsg(e));
+        logError.error(`📥 [COLA] Error al leer la cola de disco (${safeErrorLabel(e)}).`);
         queue = [];
     }
 }
@@ -80,7 +80,7 @@ loadFromDisk();
  */
 function enqueue(item) {
     if (queue.length >= MAX_QUEUE_ITEMS) {
-        logError.error(`📥 [COLA] Cola llena (${MAX_QUEUE_ITEMS}). Descartado mensaje de ${item.jid}: "${item.text.slice(0, 60)}"`);
+        logError.error(`📥 [COLA] Cola llena (${MAX_QUEUE_ITEMS}); mensaje descartado.`);
         return false;
     }
     const entry = {
@@ -97,11 +97,11 @@ function enqueue(item) {
     try {
         persist();
     } catch (e) {
-        logError.error('📥 [COLA] Error al escribir la cola: ' + errMsg(e));
+        logError.error(`📥 [COLA] Error al escribir la cola (${safeErrorLabel(e)}).`);
         queue.pop();
         return false;
     }
-    log.warn(`📥 [COLA] Mensaje de ${item.jid} encolado en disco (${queue.length}/${MAX_QUEUE_ITEMS}). Se responderá cuando el brain vuelva.`);
+    log.warn(`📥 [COLA] Mensaje encolado (${queue.length}/${MAX_QUEUE_ITEMS}). Se responderá cuando el brain vuelva.`);
     return true;
 }
 
@@ -119,7 +119,7 @@ function removeHead() {
     try {
         persist();
     } catch (e) {
-        logError.error('📥 [COLA] Error al persistir tras desencolar: ' + errMsg(e));
+        logError.error(`📥 [COLA] Error al persistir tras desencolar (${safeErrorLabel(e)}).`);
     }
 }
 
@@ -128,7 +128,7 @@ function saveHead() {
     try {
         persist();
     } catch (e) {
-        logError.error('📥 [COLA] Error al persistir la cola: ' + errMsg(e));
+        logError.error(`📥 [COLA] Error al persistir la cola (${safeErrorLabel(e)}).`);
     }
 }
 
@@ -150,7 +150,7 @@ function invalidateLegacyReplay() {
         }
         persist();
     } catch (e) {
-        logError.error('📥 [COLA] No se pudo archivar la cola heredada: ' + errMsg(e));
+        logError.error(`📥 [COLA] No se pudo archivar la cola heredada (${safeErrorLabel(e)}).`);
         queue = original;
         if (archivedPath) { try { fs.unlinkSync(archivedPath); } catch { /* preserve the queue if archive creation failed */ } }
         archivedPath = null;
@@ -217,7 +217,7 @@ function scheduleFlush() {
         if (flushInProgress) return;
         flushInProgress = true;
         flushHandler(sock)
-            .catch(e => logError.error('📥 [COLA] Error en flush: ' + errMsg(e)))
+            .catch(e => logError.error(`📥 [COLA] Error en flush (${safeErrorLabel(e)}).`))
             .finally(() => { flushInProgress = false; });
     }, 3000);
     flushTimer.unref?.();

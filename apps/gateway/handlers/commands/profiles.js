@@ -2,7 +2,7 @@
  * 🎭 PERFILES SOUL (/perfil, /update, /import) + subida de .md desde WhatsApp
  */
 const { registerSentMessage } = require('../../config');
-const { cat } = require("../../services/logger");
+const { cat, safeErrorLabel } = require("../../services/logger");
 const { downloadMediaMessage } = require('@whiskeysockets/baileys');
 const { setCurrentProfile, setContactProfile } = require('../../services/stateService');
 const { getAvailableProfiles, getProfileDetail, exportProfileFile, importProfileFile, deleteProfileFile } = require('../../services/brainService');
@@ -59,7 +59,7 @@ async function handleProfileUpload(adapter, remoteJid, docMessage, msgKey) {
         registerSentMessage(sent);
         return false;
     } catch (e) {
-        logError.error("⚠️ Error al importar perfil desde documento:", e.message);
+        logError.error(`⚠️ Error al importar perfil desde documento (${safeErrorLabel(e)}).`);
         await adapter.sendMessage(remoteJid, `⚠️ Error al importar el perfil: ${e.message}`).catch(() => {});
         return false;
     }
@@ -118,7 +118,7 @@ async function runPerfil({ adapter, remoteJid, queryParam, rawMsg }) {
             }, { mimetype: 'text/markdown' });
             return null; // La respuesta es el propio documento
         } catch (e) {
-            logError.error("⚠️ Error al enviar documento de perfil:", e.message);
+            logError.error(`⚠️ Error al enviar documento de perfil (${safeErrorLabel(e)}).`);
             return `⚠️ Error al enviar el archivo de perfil: ${e.message}`;
         }
     }

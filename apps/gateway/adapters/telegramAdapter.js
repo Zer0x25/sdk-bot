@@ -7,7 +7,7 @@ const { getSettingsDB } = require('../services/db');
 const { updateTelegramMenu, classifyPollResponse } = require('../services/telegramService');
 const { transcribeAudio } = require('../services/stt');
 const { num } = require('../tuning');
-const { cat } = require('../services/logger');
+const { cat, safeErrorLabel } = require('../services/logger');
 const { requestJson, failure, parseTelegramJson } = require('../services/telegramHttp');
 const { verifiedBotId, normalizeUpdates, createTelegramCapture, normalizeSentMessage, decimalId } = require('../services/conversations/telegramCapture');
 const { setTimeout: delay, setImmediate: yieldLoop } = require('node:timers/promises');
@@ -473,7 +473,7 @@ class TelegramAdapter extends ChannelAdapter {
         } catch (err) {
             const error = /** @type {any} */ (err);
             if (error?.telegramArchiveFailure) throw err;
-            if (current()) logError.error('🎤 Error en STT de Telegram: ' + (error && error.message));
+            if (current()) logError.error(`🎤 Error en STT de Telegram (${safeErrorLabel(error)}).`);
             await markFailed();
             return;
         }
@@ -491,7 +491,7 @@ class TelegramAdapter extends ChannelAdapter {
             if (conversation?.requires_review) return;
         }
         if (!current()) return;
-        log.info(`🎤 [AUDIO TG TRANSCRITO] ${tgChatId}: "${transcript}"`);
+        log.info('🎤 [AUDIO TG TRANSCRITO] Transcripción aceptada.');
         this.emit('message', new StandardMessage({
             channel: 'telegram', remoteId: `telegram:${tgChatId}`, rawId: tgChatId,
             text: transcript, transcript, isAudio: true,

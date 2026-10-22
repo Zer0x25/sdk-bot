@@ -34,17 +34,15 @@ let qrTimer = null;
 let pairingInProgress = false;
 let qrFeedStarted = false;
 let qrEs = null;
-let sessionNumber = '';
 // Antigüedad del código de enlace (rotación aproximada informada por el bus)
 let codeExpiresAt = 0;
 let codeAgeTimer = null;
 
-export function setSession(open, number) {
-  if (number) sessionNumber = number;
+export function setSession(open) {
   noview.hidden = open;
   connview.hidden = !open;
   if (open) {
-    connnum.textContent = sessionNumber || '—';
+    connnum.textContent = 'Sesión activa';
     resetmsg.className = '';
   }
 }
@@ -53,7 +51,7 @@ export async function refreshSession() {
   try {
     const d = await getStatus();
     const isOpen = !!(d.channels && d.channels.whatsapp && d.channels.whatsapp.connection === 'open');
-    setSession(isOpen, (d.bot && d.bot.number) || '');
+    setSession(isOpen);
   } catch (e) { /* reintenta en el próximo tick */ }
 }
 

@@ -14,10 +14,34 @@ const { getRuntimeStats } = require('../handlers/messageHandler');
 const { getCommandStats } = require('../handlers/commandHandler');
 const { getQueueStats } = require('./messageQueue');
 const { getBroadcastStats } = require('./broadcastService');
-const { cat } = require('./logger');
+const { cat, safeErrorLabel } = require('./logger');
 
 const log = cat('CORE');
 const logError = cat('ERROR');
+const PUBLIC_DISCONNECT_REASONS = new Set([
+    'logged_out', 'normal', 'sin_sesion', 'sin_token', 'token_invalido', 'identidad_no_verificada',
+    'archivo_no_disponible', 'error_archivo', 'error_polling', 'error_captura'
+]);
+
+function publicCaptureStatus(capture) {
+    if (!capture || capture.status !== 'degraded') return null;
+    return {
+        status: 'degraded',
+        code: safeErrorLabel({ code: capture.code }),
+        at: capture.at || null
+    };
+}
+
+function publicChannelStatus(channel) {
+    const reason = channel.lastDisconnectReason;
+    return {
+        connection: channel.connection,
+        lastConnectAt: channel.lastConnectAt,
+        reconnectAttempt: channel.reconnectAttempt,
+        lastDisconnectReason: reason ? (PUBLIC_DISCONNECT_REASONS.has(reason) ? reason : 'error') : null,
+        capture: publicCaptureStatus(channel.capture)
+    };
+}
 
 // Estado de conexión que index.js actualiza (no accesible desde aquí)
 const channels = {
@@ -49,10 +73,12 @@ function buildStatus() {
         uptime_seconds: Math.round(process.uptime()),
         pid: process.pid,
         node: process.version,
-        channels,
+        channels: {
+            whatsapp: publicChannelStatus(channels.whatsapp),
+            telegram: publicChannelStatus(channels.telegram)
+        },
         bot: {
-            number: state.ADMIN_PHONE || state.ADMIN_LID || null,
-            lid: state.ADMIN_LID || null,
+            adminLinked: Boolean(state.ADMIN_PHONE || state.ADMIN_LID),
             profile: state.CURRENT_PROFILE,
             globalMode: state.GLOBAL_MODE,
             paused: state.IS_BOT_PAUSED
@@ -101,7 +127,7 @@ function startStatusServer(opts = {}) {
         res.end(JSON.stringify(buildStatus(), null, 2));
     });
 
-    server.on('error', (e) => logError.error('📊 [STATUS] Error en el servidor de métricas: ' + (e && e.message)));
+    server.on('error', (e) => logError.error(`📊 [STATUS] Error en el servidor de métricas (${safeErrorLabel(e)}).`));
     const host = process.env.STATUS_HOST || '127.0.0.1';
     server.listen(port, host, () => {
         log.info(`📊 [STATUS] Métricas en http://${host}:${port}/status`);

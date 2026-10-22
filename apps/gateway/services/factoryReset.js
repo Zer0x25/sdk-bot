@@ -23,7 +23,7 @@ const fs = require('fs');
 const path = require('path');
 const { execFile } = require('child_process');
 const { CONTACTS_FILE_PATH, SETTINGS_FILE_PATH } = require('../config');
-const { cat, errMsg } = require('./logger');
+const { cat, safeErrorLabel } = require('./logger');
 const { statePaths: conversationPaths } = require('./conversations/paths');
 const { GATEWAY_STATE_DIR, BRAIN_STATE_DIR } = require('../lib/repoPaths');
 
@@ -138,7 +138,7 @@ function restartGatewayProcess() {
         if (process.env.SYSTEMD_EXEC_PID) {
             execFile('systemctl', ['restart', process.env.SDK_GATEWAY_SERVICE || 'sdk-bot-gateway'], (e) => {
                 if (e) {
-                    logError.error(`🧹 systemctl restart del gateway falló: ${errMsg(e)} — saliendo igualmente`);
+                    logError.error(`🧹 systemctl restart del gateway falló (${safeErrorLabel(e)}); saliendo igualmente.`);
                     process.exit(0);
                 }
             });
@@ -158,7 +158,7 @@ function restartGatewayProcess() {
 function restartBrainIfSystemd() {
     if (!process.env.SYSTEMD_EXEC_PID) return false;
     execFile('systemctl', ['restart', process.env.SDK_BRAIN_SERVICE || 'sdk-bot-brain'], (e) => {
-        if (e) logError.error(`🧹 systemctl restart del brain falló: ${errMsg(e)}`);
+        if (e) logError.error(`🧹 systemctl restart del brain falló (${safeErrorLabel(e)}).`);
     });
     return true;
 }

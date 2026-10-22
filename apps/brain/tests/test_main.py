@@ -6,6 +6,9 @@ Prueba:
 - GET /history y POST /reset-memory
 - Autenticación por X-API-Key
 """
+import asyncio
+import io
+import logging
 import os
 import shutil
 import sys
@@ -18,6 +21,7 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 import main as brain_main
 import memory as M
+import providers
 
 _TEST_STATE_DIR = tempfile.mkdtemp(prefix="sdkbot-brain-main-")
 _TEST_DB_PATH = os.path.join(_TEST_STATE_DIR, "memory.db")
@@ -97,6 +101,45 @@ def test_history_and_reset_memory():
 
     res_empty = client.get(f"/history?user_id={user}")
     assert res_empty.json()["history"] == []
+
+
+def test_chat_logs_exclude_customer_content_and_identifiers(monkeypatch):
+    sentinels = [
+        "private-customer-name-8f19",
+        "569876543210",
+        "private-lid-123456789012",
+        "private-customer-message-5f44",
+        "private-customer-bio-31aa",
+        "private-ai-response-8842",
+    ]
+    stream = io.StringIO()
+    handler = logging.StreamHandler(stream)
+    providers.log.addHandler(handler)
+    original_level = providers.log.level
+    providers.log.setLevel(logging.INFO)
+
+    async def fake_generate_ai_response(**kwargs):
+        return sentinels[-1], "test-provider", []
+
+    monkeypatch.setattr(brain_main, "generate_ai_response", fake_generate_ai_response)
+    try:
+        request = brain_main.ChatRequest(
+            user_id="whatsapp:" + sentinels[2],
+            message=sentinels[3],
+            saved_name=sentinels[0],
+            phone_number=sentinels[1],
+            lid=sentinels[2],
+            bio=sentinels[4],
+        )
+        result = asyncio.run(brain_main.chat_endpoint(request))
+        assert result["response"] == sentinels[-1]
+    finally:
+        providers.log.removeHandler(handler)
+        providers.log.setLevel(original_level)
+
+    captured = stream.getvalue()
+    for sentinel in sentinels:
+        assert sentinel not in captured
 
 
 def test_generate_reply_uses_explicit_context_and_resumes_idempotently():

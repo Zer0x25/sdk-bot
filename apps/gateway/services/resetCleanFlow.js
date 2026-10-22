@@ -83,7 +83,7 @@ function requestCleanReset(sock, remoteJid) {
 
     pending = { remoteJid, sock, minAcceptAt: Date.now() + READ_MS, expiresAt: Date.now() + TTL_MS, timer };
 
-    log.warn(`🧨 [RESET-CLEAN] Pedido de reset limpio de ${remoteJid} — ventana de confirmación activa (lectura ${Math.round(READ_MS / 1000)}s + escritura ${Math.round(TTL_MS / 1000)}s).`);
+    log.warn(`🧨 [RESET-CLEAN] Pedido de reset limpio recibido — ventana de confirmación activa (lectura ${Math.round(READ_MS / 1000)}s + escritura ${Math.round(TTL_MS / 1000)}s).`);
     return `🧨 *RESET LIMPIO (FÁBRICA)*\n\nSe borrará *TODO* el estado de runtime:\n• Sesión de WhatsApp actual\n• Agenda de contactos (*contacts_db.json*)\n• Configuración (estados, perfil global)\n• Broadcasts programados y cola de mensajes\n• Archivo de conversaciones (SQLite)\n• Memoria del brain (*memory.db*)\n• Logs de gateway y brain\n\n✅ Los *perfiles SOUL* se conservan.\n\n⚠️ La app quedará *como recién instalada*: habrá que volver a vincular con QR o con número (default *ignored_all*).\n\n⏳ *Doble confirmación con timers:*\n1. *Lee* este aviso (la palabra no se acepta antes de ${Math.round(READ_MS / 1000)}s).\n2. Escribe ${'`' + MAGIC_WORD + '`'} antes de ${Math.round(TTL_MS / 1000)}s.\n\n✖️ Para cancelar: escribe *cancelar*.`;
 }
 
@@ -129,7 +129,7 @@ async function tryCleanConfirm(text, activeSock, remoteJid) {
     const report = performFactoryReset();
     if (report.errors.length > 0) {
         setWiping(false);
-        logError.error(`🧨 [RESET-CLEAN] ABORTADO: ${report.errors[0]}`);
+        logError.error('🧨 [RESET-CLEAN] Operación abortada; consultar el resultado mostrado al administrador.');
         await activeSock.sendMessage(remoteJid, { text: `🔴 *Reset limpio abortado:* no se pudo borrar ${report.errors[0]}` });
         return true;
     }

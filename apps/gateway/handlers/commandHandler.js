@@ -1,11 +1,10 @@
 // @ts-check
 const { registerSentMessage } = require('../config');
-const { cat } = require("../services/logger");
+const { cat, safeErrorLabel } = require("../services/logger");
 const log = cat("COMANDO");
 const logError = cat("ERROR");
 const { createRateLimiter } = require('../services/rateLimit');
 const { extractPhoneFromQuoted, chunkAdminText } = require('./commandHelpers');
-const { errMsg } = require("../services/logger");
 const { num } = require('../tuning');
 
 /**
@@ -74,7 +73,7 @@ async function handleAdminCommand(textMessage, remoteJid, adapter, metadata, raw
 
     // ⏱️ S2 — Rate limit de comandos admin (protege de spam accidental de comandos)
     if (adminCommandLimiter(remoteJid)) {
-        log.warn(`⏱️ [RATE LIMIT ADMIN] ${remoteJid} excedió ${ADMIN_CMD_MAX_PER_MIN} comandos/min. Ignorado: ${textMessage.slice(0, 60)}`);
+        log.warn(`⏱️ [RATE LIMIT ADMIN] Límite de ${ADMIN_CMD_MAX_PER_MIN} comandos/min excedido.`);
         await adapter.sendMessage(remoteJid, "⏱️ *Demasiados comandos por minuto.* Espera unos segundos e inténtalo de nuevo.");
         return;
     }
@@ -88,11 +87,11 @@ async function handleAdminCommand(textMessage, remoteJid, adapter, metadata, raw
         const extracted = extractPhoneFromQuoted(rawMsg);
         if (extracted) {
             queryParam = extracted;
-            log.info(`📌 [CITA DETECTADA] Extraído objetivo automáticamente del mensaje citado: ${queryParam}`);
+            log.info('📌 [CITA DETECTADA] Objetivo extraído automáticamente del mensaje citado.');
         }
     }
 
-    log.info(`\n👑 [COMANDO ADMIN EN SELF-CHAT]: ${command} ${queryParam || ''}`);
+    log.info('\n👑 [COMANDO ADMIN EN SELF-CHAT] Solicitud recibida.');
 
     const def = commandRegistry.get(command);
     let adminResponse;
@@ -111,7 +110,7 @@ async function handleAdminCommand(textMessage, remoteJid, adapter, metadata, raw
             registerSentMessage(sentMsg);
         }
     } catch (e) {
-        logError.error("⚠️ No se pudo enviar confirmación admin por reconexión temporal de WhatsApp: " + errMsg(e));
+        logError.error(`⚠️ No se pudo enviar confirmación admin por reconexión temporal de WhatsApp (${safeErrorLabel(e)}).`);
     }
 }
 

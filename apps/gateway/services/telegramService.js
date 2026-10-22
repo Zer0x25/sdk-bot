@@ -57,14 +57,16 @@ function sendTelegramMessage(message, overrideToken = null, overrideChatId = nul
             res.on('data', chunk => body += chunk);
             res.on('end', () => {
                 if (res.statusCode === 200) {
-                    if (useMarkdown) log.info(`Notificación enviada a Telegram (chat ${chatId})`);
+                    if (useMarkdown) log.info('Notificación enviada a Telegram.');
                     resolve(JSON.parse(body));
                 } else {
-                    const errMsg = `Error de Telegram: ${res.statusCode} ${body}`;
                     if (useMarkdown && res.statusCode === 400 && body.includes("can't parse entities")) {
                         sendTelegramMessage(message, token, chatId, false).then(resolve).catch(reject);
                     } else {
-                        reject(new Error(errMsg));
+                        const error = Object.assign(new Error(`TELEGRAM_HTTP_${res.statusCode}`), {
+                            code: `TELEGRAM_HTTP_${res.statusCode}`, status: res.statusCode
+                        });
+                        reject(error);
                     }
                 }
             });

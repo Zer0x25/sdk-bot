@@ -52,7 +52,7 @@ const { num } = require('../tuning');
 const {
     performFactoryReset, prepareFactoryReset, setWiping, restartGatewayProcess, restartBrainIfSystemd
 } = require('./factoryReset');
-const { cat, errMsg } = require('./logger');
+const { cat, errMsg, safeErrorLabel } = require('./logger');
 
 const log = cat('CORE');
 const logError = cat('ERROR');
@@ -227,17 +227,17 @@ function checkPairingRateLimit(ip) {
 
 // --- Notificación al admin (panel/log + Telegram si está configurado) ---
 function notifyAdmin(message) {
-    log.warn(`🔔 [ADMIN] ${message}`);
+    log.warn('🔔 [ADMIN] Notificación administrativa emitida.');
     try {
         const s = getSettingsDB();
         if (s.telegramToken && s.telegramChatId) {
             const adapter = require('../index').getAdapter('telegram');
             if (!adapter) return;
             adapter.sendMessage(`telegram:${s.telegramChatId}`, `🔔 *SDK-Bot*\n\n${message}`, { source: 'notice' })
-                .catch((/** @type {any} */ e) => logError.error(`🔔 [ADMIN] No se pudo avisar por Telegram: ${e && e.message ? e.message : e}`));
+                .catch((/** @type {any} */ e) => logError.error(`🔔 [ADMIN] No se pudo avisar por Telegram (${safeErrorLabel(e)}).`));
         }
     } catch (/** @type {any} */ e) {
-        logError.error(`🔔 [ADMIN] Error leyendo settings para notificar: ${e && e.message ? e.message : e}`);
+        logError.error(`🔔 [ADMIN] Error leyendo settings para notificar (${safeErrorLabel(e)}).`);
     }
 }
 
@@ -407,7 +407,7 @@ async function handleConnectionUpdate(update, sourceSock = null) {
     try {
         dataUrl = await QRCode.toDataURL(update.qr, { margin: 1, width: 280 });
     } catch (e) {
-        logError.error(`🔌 [BUS] Error renderizando QR: ${errMsg(e)}`);
+        logError.error(`🔌 [BUS] Error renderizando QR (${safeErrorLabel(e)}).`);
         if (generation === socketGeneration && sequence === qrSequence && (!sourceSock || sourceSock === activeSock)) {
             lastQrDataUrl = null;
             qrRefreshInProgress = false;
@@ -478,7 +478,7 @@ async function reloadTelegramAdapter() {
         await telegramReloader();
         return true;
     } catch (e) {
-        logError.error(`🔌 [BUS] Error reconectando Telegram: ${errMsg(e)}`);
+        logError.error(`🔌 [BUS] Error reconectando Telegram (${safeErrorLabel(e)}).`);
         return false;
     }
 }
@@ -636,7 +636,7 @@ async function performReset(clean = false) {
         try {
             await resetReconnectCb();
         } catch (e) {
-            logError.error(`🧹 reset-reconnect falló: ${errMsg(e)} — haciendo restart clásico`);
+            logError.error(`🧹 reset-reconnect falló (${safeErrorLabel(e)}); haciendo restart clásico.`);
             scheduleRestart();
         }
         return { success: true, message: `Sesión ${deleted ? 'eliminada' : 'ya borrada'}; escanea el QR nuevo en el panel.` };
@@ -1136,7 +1136,7 @@ function startInternalBus(opts = {}) {
             else sendJson(res, 500, { error: errMsg(e) });
         }
     });
-    server.on('error', (e) => logError.error(`🔌 [BUS] Error en bus interno: ${e && e.message}`));
+    server.on('error', (e) => logError.error(`🔌 [BUS] Error en bus interno (${safeErrorLabel(e)}).`));
     server.listen(port, host, () => {
         log.info(`🔌 [BUS] Bus interno en http://${host}:${port} (panel web lo consume aquí)`);
     });

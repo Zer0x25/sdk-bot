@@ -4,7 +4,7 @@ const { default: makeWASocket, useMultiFileAuthState, DisconnectReason, download
 const pino = require('pino');
 const fs = require('fs');
 const path = require('path');
-const { cat } = require('../services/logger');
+const { cat, safeErrorLabel } = require('../services/logger');
 const { isJunkJid } = require('../services/contactsRepository');
 const { extractUserMetadata } = require('../services/metadataService');
 const { extractTextMessage, decideReconnect } = require('../services/pipeline');
@@ -185,12 +185,11 @@ class WhatsappAdapter extends ChannelAdapter {
                 this.sock = null;
                 this.transcriptions?.cancel();
                 const statusCode = (lastDisconnect?.error)?.output?.statusCode;
-                const closeDetail = (lastDisconnect?.error)?.message || 'sin detalle';
                 const loggedOut = statusCode === DisconnectReason.loggedOut;
                 // Loguea la razon real del cierre (el logger de Baileys esta en silent,
                 // asi que sin esto el pairing fallido queda ciego: statusCode 401/403/409/500
                 // o "Stream Errored" indican el motivo de fondo).
-                log.warn(`🔌 [WHATSAPP] connection.close statusCode=${statusCode ?? 'n/a'} loggedOut=${loggedOut} err=${closeDetail}`);
+                log.warn(`🔌 [WHATSAPP] connection.close statusCode=${statusCode ?? 'n/a'} loggedOut=${loggedOut}.`);
 
                 // [main] Logout real de WhatsApp (el cliente revoco la sesion desde
                 // su movil: Dispositivos vinculados). NO borramos las creds: si
@@ -199,7 +198,7 @@ class WhatsappAdapter extends ChannelAdapter {
                 // de numero (Opcion B) en el futuro.
                 if (loggedOut) {
                     const msg = '🚪 El cliente DESVINCULÓ el bot desde su móvil (WhatsApp > Dispositivos vinculados). El bot quedó en standby (no se borró nada). Si revincula el mismo número, solo genera un QR nuevo y sigue igual; si usa otro número, se reinicia el pairing desde cero.';
-                    log.warn(msg);
+                    log.warn('🚪 WhatsApp desvinculó la sesión; el gateway queda en standby.');
                     if (internalBus && internalBus.notifyAdmin) internalBus.notifyAdmin(msg);
                     this.setKnownAdminPhone('');
                 }
@@ -214,14 +213,14 @@ class WhatsappAdapter extends ChannelAdapter {
 
                 if (decision.reconnect) {
                     this.setStatus('reconnecting');
-                    log.warn(`↻ WhatsApp cerró la conexión (statusCode=${statusCode}, ${closeDetail}). Reconectando en breve…`);
+                    log.warn(`↻ WhatsApp cerró la conexión (statusCode=${statusCode ?? 'n/a'}). Reconectando en breve…`);
                     this.scheduleReconnect();
                 } else {
                     // Sin sesión ni identidad a medias, o revocada desde el
                     // teléfono: no reconectar en bucle (evita baneos); el
                     // admin debe volver a vincular.
                     this.setStatus('standby', decision.reason);
-                    log.warn(`ℹ️ Gateway WhatsApp en STANDBY. Razón: ${decision.reason} (statusCode=${statusCode}, ${closeDetail}). Vincula de nuevo desde el panel (QR o código).`);
+                    log.warn(`ℹ️ Gateway WhatsApp en STANDBY. Razón: ${decision.reason} (statusCode=${statusCode ?? 'n/a'}). Vincula de nuevo desde el panel (QR o código).`);
                 }
             } else if (connection === 'open') {
                 this.reconnectAttempt = 0;
@@ -257,14 +256,14 @@ class WhatsappAdapter extends ChannelAdapter {
                 const knownPhone = this.getKnownAdminPhone();
                 if (adminPhone && knownPhone && adminPhone !== knownPhone) {
                     const msg = `⚠️ Número de WhatsApp del bot CAMBIÓ: antes '${knownPhone}', ahora '${adminPhone}'. Se borra la sesión y se reinicia el pairing desde cero.`;
-                    log.warn(msg);
+                        log.warn('⚠️ La identidad de WhatsApp vinculada cambió; se reiniciará el pairing.');
                     if (internalBus && internalBus.notifyAdmin) internalBus.notifyAdmin(msg);
                     this.setKnownAdminPhone(adminPhone);
                     try {
                         fs.rmSync(AUTH_DIR, { recursive: true, force: true });
                         log.info('🔌 [WHATSAPP] auth_info_baileys borrado por cambio de número.');
                     } catch (e) {
-                        logError.error(`🔌 [WHATSAPP] No se pudo borrar auth_info_baileys: ${e.message}`);
+                        logError.error(`🔌 [WHATSAPP] No se pudo borrar auth_info_baileys (${safeErrorLabel(e)}).`);
                     }
                     // Reconnect limpio: el socket actual se cierra y el nuevo
                     // lee creds vacíos -> emite QR nuevo para re-pairing.
@@ -276,7 +275,7 @@ class WhatsappAdapter extends ChannelAdapter {
                 log.info(`✅ ¡Conectado a WhatsApp con éxito!`);
                 this.emit('ready', { adminPhone, adminLid });
                 
-                this.sendPresenceUpdate('available').catch(e => logError.error('⚠️ Error enviando estado de presencia WA:', e));
+                this.sendPresenceUpdate('available').catch(e => logError.error(`⚠️ Error enviando estado de presencia WA (${safeErrorLabel(e)}).`));
             }
         });
 
@@ -313,9 +312,10 @@ class WhatsappAdapter extends ChannelAdapter {
     }
 
     captureFailure(code) {
-        const status = { status: 'degraded', code, at: new Date().toISOString() };
+        const safeCode = safeErrorLabel({ code });
+        const status = { status: 'degraded', code: safeCode, at: new Date().toISOString() };
         this.emit('capture_status', status);
-        logError.error(`Archivo WhatsApp: ${code}. Captura no confirmada; revisar intervalo afectado.`);
+        logError.error(`Archivo WhatsApp: ${safeCode}. Captura no confirmada; revisar intervalo afectado.`);
     }
 
     deferUnknownSelfHandoff(observation) {
@@ -332,12 +332,12 @@ class WhatsappAdapter extends ChannelAdapter {
                 const result = await setNumberState(target, 'handoff', { channel: 'whatsapp',
                     accountId: this.accountId, reason: 'external_self' });
                 if (!result.success) {
-                    logError.error(`No se pudo pausar IA tras una salida propia no correlacionada (${result.code || result.message || 'error'}).`);
+                    logError.error('No se pudo pausar IA tras una salida propia no correlacionada.');
                 } else {
-                    log.warn(`Salida propia no correlacionada archivada para ${target}; IA pausada hasta liberación humana.`);
+                    log.warn('Salida propia no correlacionada archivada; IA pausada hasta liberación humana.');
                 }
             } catch (error) {
-                logError.error(`No se pudo revisar la salida propia de ${target}: ${error?.code || error?.message || error}`);
+                logError.error(`No se pudo revisar la salida propia (${safeErrorLabel(error)}).`);
             }
         }, 500);
         timer.unref?.();

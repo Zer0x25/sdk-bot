@@ -172,7 +172,7 @@ def _reload_all(files: dict) -> None:
     _profiles_cache.clear()
     for key, path in files.items():
         _profiles_cache[key] = (os.path.getmtime(path), _read_profile(path, key))
-    log.info(f"[PERFILES] Cargados {len(_profiles_cache)} perfiles desde {PROFILES_DIR}")
+    log.info(f"[PERFILES] Cargados {len(_profiles_cache)} perfiles activos.")
 
 
 def _read_profile(path: str, key: str) -> dict:
@@ -180,7 +180,7 @@ def _read_profile(path: str, key: str) -> dict:
         with open(path, encoding="utf-8") as f:
             return _parse_md(f.read(), key)
     except Exception as e:
-        log.info(f"⚠️ Error al leer perfil {key}.md: {e}")
+        log.info(f"⚠️ Error al leer perfil ({type(e).__name__}).")
         return {
             "nombre": key.capitalize(),
             "descripcion": "",

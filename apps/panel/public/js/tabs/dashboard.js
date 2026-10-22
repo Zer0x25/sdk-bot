@@ -32,8 +32,7 @@ export function renderDashboard(d) {
   const brainMemory = (bh.health && bh.health.memory) || {};
   const waSt = channelState(wa);
   const tgSt = channelState(tg);
-  const phone = d.bot && (d.bot.number || d.bot.lid);
-  const phoneFormatted = phone ? (String(phone).startsWith('+') ? String(phone) : '+' + phone) : '—';
+  const adminLinked = Boolean(d.bot && d.bot.adminLinked);
 
   cards.innerHTML =
     card('Gateway (Core)', [
@@ -45,7 +44,7 @@ export function renderDashboard(d) {
       ['WhatsApp', waSt.label, waSt.cls],
       ['wa reconexión', '#' + (wa.reconnectAttempt ?? 0)],
       ['Telegram', tgSt.label, tgSt.cls],
-      ['teléfono admin', phoneFormatted]
+      ['admin WA', adminLinked ? 'vinculado' : '—']
     ]) +
     card('Brain', [
       ['estado', bh.state || 'desconocido', brainStateClass(bh.state)],
@@ -60,7 +59,7 @@ export function renderDashboard(d) {
     (bh.state === 'Stopped' || !bh.reachable ? '<button class="btn-toggle" id="brainStart">⚡ Encender brain</button>' : '') +
     card('Bot', [
       ['estado', paused ? 'Pausado' : 'Activo', paused ? 'warn' : 'ok'],
-      ['número', (d.bot && d.bot.number) || '-'],
+      ['identidad WA', adminLinked ? 'configurada' : '—'],
       ['perfil', (d.bot && d.bot.profile) || '-'],
       ['modo', (d.bot && d.bot.globalMode) || '-']
     ]) +

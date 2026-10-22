@@ -83,7 +83,7 @@ export async function loadTgSettings() {
       ? '✅ Bot configurado. Desconecta para cambiar el token o el Chat ID.'
       : d.token ? 'Token guardado. Envía /start al bot, pulsa Probar y guarda el Chat ID obtenido.' : '';
   } catch (e) {
-    console.error('Error cargando config telegram', e);
+    console.error('Error cargando la configuración de Telegram.');
   }
 }
 
@@ -167,7 +167,7 @@ export function initTelegramTab() {
       tgMsg.style.color = '#aab3c5';
       tgMsg.textContent = 'Telegram desconectado. Puedes volver a vincularlo cuando quieras.';
     } catch (e) {
-      console.error(e);
+      console.error('Error al desconectar Telegram.');
     }
     tgResetBtn.disabled = false;
   });
