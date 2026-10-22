@@ -297,7 +297,26 @@ SQLite real en F2A; falta captura de aliases live antes de cerrar F2 completa.
   [CONTRATOS-V1.md](CONTRATOS-V1.md). Commit F1A: `git log --grep=BUG-018`.
 
 BUG-005/009/012/043/044/045/047/050/052/053/054/055 están cerrados. BUG-006/007/008/010/011,
-BUG-014/024/035/037/046/051/071/072 siguen abiertos o parciales según sus puertas. El perfil
-de carga de F2E.2 se ejecutó fuera del hardware objetivo; repetir con 2 CPU/4 GiB
-antes de certificar ese perfil. BUG-051 se vuelve puerta antes de usar un archivo
-preexistente real. Checks verdes no demuestran escenarios fuera de su alcance.
+BUG-014/024/035/037/046/051/071/072 siguen abiertos o parciales según sus puertas. La
+carga F2E.2 ya pasó con el perfil limitado Linux x64 de 2 CPU/4 GiB; no prueba
+hardware físico equivalente ni Windows/Termux. BUG-051 se vuelve puerta antes de
+usar un archivo preexistente real. Checks verdes no demuestran escenarios fuera de
+su alcance.
+
+## Cierre F2E.2 — Repetición bajo 2 CPU/4 GiB — 2026-10-22
+
+- El ensayo completo bajo cgroup v2 terminó en el commit ejecutado
+  `949c22f6f2396069a34f28b3e86306d548840bce`, con 2 CPU, 4 GiB y swap desactivado.
+  Importó 1M mensajes a 1.249 msg/s y completó dos calentamientos, tres mediciones
+  de 150 s, validación SQLite y saturación.
+- Los tres runs medidos tuvieron cero fallos y cumplieron latencias, event loop p99
+  y RSS (máximo 430 MiB). Saturación rechazó 100 de 1.100 consultas y 131 de 800
+  solicitudes por bytes, sin adelantar cursor TG ni crear mensajes.
+- El scope tocó el máximo de 4 GiB (`memory.events max=2230`, `oom=0`, `oom_kill=0`);
+  el límite de memoria y la presión quedan explícitos en la evidencia. No se probó
+  hardware físico equivalente, Windows/Termux, canales reales ni datos de usuario.
+- Informe: [F2E2-CARGA-COMPLETA](F2E2-CARGA-COMPLETA.md) y
+  [resultados por run](../apps/gateway/docs/evidence/F2E2-load-report-2cpu4g-20261022.json).
+- Verificación: `cd apps/gateway && npm run check` (lint/typecheck limpios,
+  Panel 44/44, build servido 1/1, Gateway 400/400) y `git diff --check` limpio.
+  Fase 2 cerrada para el perfil medido; el trabajo queda en un commit local, sin push.

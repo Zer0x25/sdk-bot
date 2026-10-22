@@ -1672,3 +1672,22 @@ Cierres históricos: commits F2C.1/F2C.2/F2D/F2E.1 están en el log local; F2B.3
   etapa antes de copiar/abrir. El run no produjo informe y limpió temporales.
 - Siguiente unidad: repetir F2E.2 completo con el commit de este cambio. Reutilizar
   el reporte fechado solo después de completar cinco escenarios y revisar umbrales.
+
+## Cierre F2E.2 — Perfil de referencia 2 CPU/4 GiB — 2026-10-22
+
+- El tercer ensayo completo terminó en el commit `949c22f`. El runner observó
+  límites efectivos de cgroup v2: 2 CPU, 4 GiB, sin swap; `profileMatch=true`.
+  Dataset sintético: 1M mensajes, 50k redeliveries, 2.000 chats y cinco cuentas.
+- Importación 1.249 mensajes/s; integridad `ok`, cero FK, cinco ventanas de 150 s
+  (dos warmups y tres medidas), sin errores. Las tres medidas pasaron latencias,
+  event loop p99 y RSS; el pico RSS fue 430 MiB. Saturación rechazó el exceso por
+  elementos/bytes, dejó el cursor TG en `null` y no añadió mensajes.
+- El scope alcanzó `MemoryPeak=4 GiB` y `memory.events max=2230`, con
+  `oom=0`/`oom_kill=0`; la evidencia explica la presión separada del RSS de la app.
+  Sin hardware físico equivalente, Windows/Termux, canales ni datos de usuario.
+- Informe y detalle: [F2E2-CARGA-COMPLETA](F2E2-CARGA-COMPLETA.md) y
+  [JSON por run](../apps/gateway/docs/evidence/F2E2-load-report-2cpu4g-20261022.json).
+- Verificación final: `cd apps/gateway && npm run check` pasó lint/typecheck,
+  Panel 44/44, build y servido 1/1, Gateway 400/400; `git diff --check` limpio.
+  La Fase 2 queda cerrada para el perfil probado; no se publicó ni se conectó un
+  proveedor real.

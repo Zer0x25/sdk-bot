@@ -143,7 +143,7 @@ alterado/vencido y desarrollo explícito, sin conectarse a canales reales.
 
 ## Fase 2 — Historial durable y captura completa
 
-**Depende de:** Fase 1. **Estado: F2A/F2B/F2C/F2D/F2E completas; carga de referencia pendiente.**
+**Depende de:** Fase 1. **Estado: completada; F2A/F2B/F2C/F2D/F2E y carga de referencia verificadas.**
 Evidencia: [ARCHIVO-CONVERSACIONES-F2A](ARCHIVO-CONVERSACIONES-F2A.md).
 F2B.1 completa la puerta BUG-029/031 del reset CLI; evidencia en
 [RESET-SEGURO-F2B1](RESET-SEGURO-F2B1.md). F2B integra WA; F2C Telegram/cursor;
@@ -217,9 +217,11 @@ canales/cuentas/IDs con signo no colisionan; audio fallido sigue visible. Carga 
 miles de mensajes sin bloquear pings del transporte falso; progreso observable.
 F2C.2 prueba reapertura/cursor y redelivery; F2D prueba replay post-commit; F2E.1
 prueba salida aceptada y eco WA; F2E.2 conserva volumen, deduplicación y rendimiento
-de archivo. El entorno medido (3 CPU/10,45 GiB) difiere de la referencia
-(2 CPU/4 GiB), por lo que repetir allí antes de certificar ese perfil. Control/toma
-de control y atribución de autoría outbound quedan para F5.
+de archivo. La carga completa se repitió el 2026-10-22 bajo cgroup v2 con límites
+efectivos de 2 CPU/4 GiB y sin swap; pasó los umbrales y su presión de memoria quedó
+documentada en [F2E2-CARGA-COMPLETA](F2E2-CARGA-COMPLETA.md). Es evidencia del perfil
+limitado Linux x64, no de hardware físico equivalente ni de Windows/Termux.
+Control/toma de control y atribución de autoría outbound quedan para F5.
 
 ## Fase 3 — API de lectura y eventos en vivo
 

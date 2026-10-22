@@ -1,10 +1,11 @@
 # Validación y presupuestos v1 — F0.3
 
 Fecha: 2026-10-19. Define cómo demostrar la especificación. F1A ejecuta los seis
-casos TXT y comprueba formas wire de ID. F2E.2 ejecutó el dataset y la carga completa
-en un host distinto del perfil de referencia; resultados y límites están en
-[F2E2-CARGA-COMPLETA](F2E2-CARGA-COMPLETA.md). No se midió takeover porque la API
-de control pertenece a F5. F2A ejecuta los casos de repositorio descritos en
+casos TXT y comprueba formas wire de ID. F2E.2 ejecutó el dataset y la carga completa;
+la repetición del 2026-10-22 pasó bajo límites cgroup v2 efectivos de 2 CPU/4 GiB.
+Resultados y límites están en [F2E2-CARGA-COMPLETA](F2E2-CARGA-COMPLETA.md). No se
+midió takeover porque la API de control pertenece a F5. F2A ejecuta los casos de
+repositorio descritos en
 [ARCHIVO-CONVERSACIONES-F2A](ARCHIVO-CONVERSACIONES-F2A.md).
 Norma: [SPEC-OPERATIVA-V1.md](SPEC-OPERATIVA-V1.md).
 Valores/ejemplos: [fixtures/v1-acceptance.json](fixtures/v1-acceptance.json).
@@ -129,12 +130,13 @@ Una muestra única de 5.000 escrituras del spike F0.2 no cumple este protocolo.
 No ralentizar la CI de cada cambio con el dataset completo: CI ejecuta casos
 funcionales reducidos; la entrega de almacenamiento/UI conserva un informe de
 carga completo antes de cerrar sus puertas. El runner actual está en
-`apps/gateway/scripts/conversation-load.js`; repetir con 2 CPU/4 GiB antes de certificar
-ese perfil. Para contenedores Linux con cgroup v2, el runner calcula CPU/memoria
-efectivas usando cuota, cpuset y límites de todos los ancestros, además de conservar
-los valores del host en el informe. Si no puede leer límites cgroup, informa los
-recursos del host y no declara que un perfil limitado coincida. Takeover se incorpora
-cuando F5 entregue la operación durable.
+`apps/gateway/scripts/conversation-load.js`; la ejecución del 2026-10-22 certificó
+el perfil limitado Linux x64 de 2 CPU/4 GiB. No equivale a una máquina física
+dedicada con esos recursos. Para contenedores Linux con cgroup v2, el runner calcula
+CPU/memoria efectivas usando cuota, cpuset y límites de todos los ancestros, además
+de conservar los valores del host en el informe. Si no puede leer límites cgroup,
+informa los recursos del host y no declara que un perfil limitado coincida. Takeover
+se incorpora cuando F5 entregue la operación durable.
 
 ## 4. Ensayos de corte y recuperación
 
