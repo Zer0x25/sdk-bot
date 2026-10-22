@@ -424,8 +424,8 @@ son necesarios para una fase previa y pasan sus mismas comprobaciones.
   retención/exportación/purga, rollback de código/datos y minimización de métricas/logs.
   - [x] F8.3a — [Inventario y captura offline del volumen de estado; documentar
     el límite de recuperación y validar copias solo en un volumen aislado](F8.3-OPERACION-RECUPERACION.md).
-  - [ ] F8.3b — Procedimiento de retención y purga; documentar que la exportación
-    de conversaciones autenticada todavía no está soportada.
+  - [x] F8.3b — [Documentar retención efectiva, purga global disponible y límites
+    de exportación/borrado por solicitud](F8.3-OPERACION-RECUPERACION.md).
   - [ ] F8.3c — Rollback de código/datos y reconciliación del delta posterior al corte.
   - [ ] F8.3d — Minimizar datos de cliente en métricas y logs, con pruebas.
 - [ ] Ensayar migración/restauración con fixture representativo y delta posterior

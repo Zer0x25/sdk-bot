@@ -1171,3 +1171,19 @@ Cierres históricos: commits F2C.1/F2C.2/F2D/F2E.1 están en el log local; F2B.3
   temporal; `bash -n` en los dos bloques del runbook; `git diff --check`.
 - F8.3a queda documentada. Siguiente punto: F8.3b, retención, exportación y purga;
   después siguen rollback de código/datos y minimización de métricas/logs.
+
+## Fase 8.3b — Retención, purga y exportación — 2026-10-22
+
+- El runbook documenta la ejecución real de la purga (al arrancar antes de admitir
+  canales y luego cada 24 h), lotes de 500 y límites estrictos: cuerpos 90 días,
+  eventos 7 días/50.000 secuencias y huellas 180 días. Distingue el API autenticado
+  de lectura por páginas de una exportación temporal auditada, que no está
+  implementada; tampoco existe purga inmediata por conversación/actor.
+- Aclara que esta retención no cubre contactos, settings, campañas, cola, memoria,
+  sesión de canal ni logs; los backups tienen su propia ventana y pueden conservar
+  contenido ya purgado del archivo vivo.
+- Verificación: `SDK_BOT_TEST=1 node --test tests/conversationArchive.test.js
+  tests/whatsappCapture.test.js` (46/46). Incluye frontera estricta de 90/180 días,
+  corte de eventos, purga previa a admisión, lotes acotados y fallo inicial.
+  `git diff --check`; pruebas con DB y estado temporales, sin proveedores.
+- Siguiente punto: F8.3c, runbook de rollback de código/datos y delta del corte.
