@@ -412,7 +412,10 @@ son necesarios para una fase previa y pasan sus mismas comprobaciones.
   propios; F8.1d movió código, tests y requirements de Brain a `apps/brain/`.
   Las rutas `.env`, perfiles y estado permanecen en `brain/`.
 - [ ] Migrar settings/campañas restantes por repositorios con corte verificable;
-  retirar accesos JSON directos. Revisar locks y release-please al mover paquetes.
+  retirar accesos JSON directos. En progreso: F8.2a extrae la persistencia de
+  campañas a un repositorio JSON; settings/contactos siguen centralizados en
+  `apps/gateway/services/db.js`. No se ha hecho corte ni migración de datos.
+  Revisar locks y release-please al mover paquetes.
 - [x] Actualizar Dockerfiles multi-stage, Compose, CI, launchers de Linux/Windows/
   Termux y artefactos frontend. Mantener volúmenes/rutas de credenciales existentes.
   Linux, Compose y Docker se verificaron en esta sesión. Windows y Termux tienen

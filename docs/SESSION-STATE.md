@@ -1122,3 +1122,20 @@ Cierres históricos: commits F2C.1/F2C.2/F2D/F2E.1 están en el log local; F2B.3
 - No se iniciaron canales ni se contactó a proveedores IA. No se hizo push ni
   despliegue. F8.1 queda cerrada; siguiente punto: revisar/migrar settings y
   campañas mediante repositorios con corte verificable (Fase 8).
+
+## Fase 8.2a — Repositorio de persistencia de campañas — 2026-10-22
+
+- `broadcastService.js` delega lectura y escritura en
+  `services/repositories/jsonBroadcastRepository.js`; mantiene el archivo,
+  schema, ruta `gateway/broadcast_db.json` y reemplazo atómico `.tmp` + rename.
+  El servicio conserva recuperación de cursor y la regla que pausa como incierto
+  un envío legado sin clave durable.
+- El inventario de accesos confirma que settings/contactos ya pasan por
+  `services/db.js`; F8.2a saca la última escritura JSON embebida en lógica de
+  campañas. No se hizo corte a SQLite ni migración de datos.
+- Verificación: repositorio y servicio de campañas, 15/15 pruebas; ESLint y
+  typecheck de Gateway; `git diff --check`. Los tests usan archivos temporales y
+  transporte falso; no se iniciaron canales ni se envió ningún mensaje real.
+- Siguiente punto: formalizar el repositorio de settings y su persistencia con
+  pruebas de defaults, debounce, reinicio y concurrencia con el snapshot de
+  control SQLite, sin cambiar todavía la autoridad de datos.

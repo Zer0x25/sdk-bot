@@ -15,7 +15,6 @@
  * /programar: misma máquina, con scheduledAt en el futuro (hoy si la hora no
  * pasó, si no mañana).
  */
-const fs = require('fs');
 const path = require('path');
 const crypto = require('crypto');
 const { state, registerSentMessage } = require('../config');
@@ -23,11 +22,14 @@ const { getContactsDB } = require('./db');
 const { cat, errMsg } = require('./logger');
 const { num } = require('../tuning');
 const { GATEWAY_STATE_DIR } = require('../lib/repoPaths');
+const { createJsonBroadcastRepository } = require('./repositories/jsonBroadcastRepository');
 
 const log = cat('BROADCAST');
 const logError = cat('ERROR');
 
-const DB_FILE = process.env.SDK_BROADCAST_DB_PATH || path.join(GATEWAY_STATE_DIR, 'broadcast_db.json');
+const repository = createJsonBroadcastRepository(
+    process.env.SDK_BROADCAST_DB_PATH || path.join(GATEWAY_STATE_DIR, 'broadcast_db.json')
+);
 const DAILY_LIMIT = Number(process.env.SDK_BROADCAST_DAILY_LIMIT || 2);
 const CONFIRMATION_TTL_MS = num('GATEWAY_BROADCAST_CONFIRMATION_TTL_MS', 60000); // 1 minuto para confirmar con "si" (tunable vía .env.tuning)
 
@@ -69,9 +71,7 @@ let isConnectedFn = () => false;
 // -------------------------------------------------------------
 function persist() {
     try {
-        const tmp = `${DB_FILE}.tmp`;
-        fs.writeFileSync(tmp, JSON.stringify(db, null, 2));
-        fs.renameSync(tmp, DB_FILE);
+        repository.save(db);
     } catch (e) {
         logError.error('📢 [BROADCAST] Error al guardar broadcast_db.json: ' + errMsg(e));
     }
@@ -79,8 +79,8 @@ function persist() {
 
 function load() {
     try {
-        if (fs.existsSync(DB_FILE)) {
-            db = JSON.parse(fs.readFileSync(DB_FILE, 'utf8'));
+        if (repository.exists()) {
+            db = repository.load();
             if (!Array.isArray(db.broadcasts)) db.broadcasts = [];
             if (!db.dailySends || typeof db.dailySends !== 'object') db.dailySends = {};
             // Solo se reanuda un envío si su clave durable ya está ligada al
