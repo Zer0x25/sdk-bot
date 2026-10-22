@@ -1,7 +1,9 @@
+import { useEffect, useRef } from 'react';
 import { NavLink } from 'react-router-dom';
 import { Archive, CircleHelp, MessageCircle, Search, Send, UsersRound } from 'lucide-react';
 import { PanelApiError, type Account, type Channel, type Conversation } from './api';
 import { BrandLabel } from '../../app/AppShell';
+import { useInfiniteScroll } from '../../shared/useInfiniteScroll';
 import type { StreamStatus } from './useInboxEvents';
 
 export type InboxFilter = 'all' | 'unread' | 'open';
@@ -53,8 +55,18 @@ export function ConversationList(props: Props) {
     filter, channel, search, onFilterChange, onChannelChange, onSearchChange,
     onLoadMore, onRetry, onRetryMore, streamStatus
   } = props;
+  const listRef = useRef<HTMLUListElement | null>(null);
+  const loadMoreRef = useInfiniteScroll(listRef, {
+    enabled: hasMore && !loading && !loadingMore && !moreError,
+    loading: loadingMore,
+    onLoadMore
+  });
   const accountById = new Map(accounts.map(account => [account.id, account]));
   const expiredListCursor = moreError instanceof PanelApiError && (moreError.code === 'CURSOR_EXPIRED' || moreError.code === 'DATA_EPOCH_MISMATCH');
+
+  useEffect(() => {
+    listRef.current?.scrollTo?.({ top: 0 });
+  }, [filter, channel, search]);
 
   return (
     <section className="conversation-column" aria-label="Conversaciones">
@@ -97,7 +109,7 @@ export function ConversationList(props: Props) {
         </div>
       </header>
 
-      <div className="conversation-results" aria-live="polite" aria-busy={loading}>
+      <div className="conversation-results" aria-live="polite" aria-busy={loading || loadingMore}>
         {loading && <p className="list-state" role="status">Cargando conversaciones…</p>}
         {!loading && error && (
           <div className="list-state list-state-error" role="alert">
@@ -113,7 +125,7 @@ export function ConversationList(props: Props) {
           </div>
         )}
         {!loading && !error && conversations.length > 0 && (
-          <ul className="conversation-list" aria-label="Resultados de conversaciones">
+          <ul className="conversation-list" ref={listRef} aria-label="Resultados de conversaciones" tabIndex={0}>
             {conversations.map(conversation => {
               const account = accountById.get(conversation.accountId);
               const label = account ? channelLabel[account.channel] : 'Canal';
@@ -143,20 +155,22 @@ export function ConversationList(props: Props) {
                 </li>
               );
             })}
+            {hasMore && (
+              <li className="conversation-list-sentinel">
+                <div ref={loadMoreRef}>
+                  {loadingMore ? <span role="status">Cargando conversaciones…</span>
+                    : moreError ? (
+                      <div className="inline-error list-pagination-error" role="alert">
+                        <span>{moreError.message}</span>
+                        <button className="text-button" type="button" onClick={onRetryMore}>
+                          {expiredListCursor ? 'Actualizar lista' : 'Reintentar'}
+                        </button>
+                      </div>
+                    ) : <button className="text-button" type="button" onClick={onLoadMore}>Cargar más conversaciones</button>}
+                </div>
+              </li>
+            )}
           </ul>
-        )}
-        {!loading && !error && moreError && (
-          <div className="inline-error list-pagination-error" role="alert">
-            <span>{moreError.message}</span>
-            <button className="text-button" type="button" onClick={onRetryMore}>{expiredListCursor ? 'Actualizar lista' : 'Reintentar'}</button>
-          </div>
-        )}
-        {!loading && !error && hasMore && conversations.length > 0 && (
-          <div className="load-more-wrap">
-            <button className="text-button" type="button" onClick={onLoadMore} disabled={loadingMore}>
-              {loadingMore ? 'Cargando…' : 'Cargar más conversaciones'}
-            </button>
-          </div>
         )}
       </div>
       <footer className="conversation-footer">

@@ -268,6 +268,10 @@ Evidencia F3.1: [lectura autenticada](F3.1-LECTURA-AUTENTICADA.md). F3.2:
   contador de novedades, reconexión y resync. El replay pagina hasta solapar con
   el snapshot cargado, sin reconstruir todo el hilo por cada evento. Evidencia:
   [F4.3](F4.3-STREAM-INBOX.md).
+- [x] **F4.4 — listas independientes:** limitar la bandeja al viewport, mantener
+  conversaciones, contactos e historial dentro de sus áreas desplazables y pedir
+  páginas al acercarse al final. El hilo abre en la página más reciente. Evidencia:
+  [F4.4](F4.4-LISTAS-INFINITAS.md).
 - [x] Build Vite servido por el proceso existente bajo `/inbox`; pruebas de
   componentes y del artefacto servido. Mantener el panel antiguo en `/` hasta
   completar sustitución. La validación visual de viewport real se registra por

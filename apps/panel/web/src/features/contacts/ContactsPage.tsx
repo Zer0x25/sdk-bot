@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { useInfiniteQuery, useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { Link } from 'react-router-dom';
 import { MessageCircleMore, RefreshCw, Search, UsersRound } from 'lucide-react';
@@ -7,6 +7,7 @@ import {
   getAccounts,
   getConversations,
   getSession,
+  PanelApiError,
   updateConversationSettings,
   type Channel,
   type Conversation,
@@ -14,6 +15,7 @@ import {
   type PageCursor,
   type UpdateConversationRequest
 } from '../inbox/api';
+import { useInfiniteScroll } from '../../shared/useInfiniteScroll';
 
 type ContactUpdate =
   | { conversation: Conversation; kind: 'access'; value: ConversationControl['accessPolicy'] }
@@ -34,6 +36,7 @@ export function ContactsPage() {
   const [search, setSearch] = useState('');
   const [channel, setChannel] = useState<Channel | ''>('');
   const [updateError, setUpdateError] = useState<string | null>(null);
+  const tableWrapRef = useRef<HTMLDivElement | null>(null);
 
   useEffect(() => {
     const timer = window.setTimeout(() => setSearch(searchText.trim()), 250);
@@ -66,6 +69,20 @@ export function ContactsPage() {
     getNextPageParam: page => page.nextCursor ?? undefined,
     staleTime: 5_000
   });
+  const nextPageError = conversationsQuery.isFetchNextPageError
+    ? asError(conversationsQuery.error)
+    : null;
+  const expiredContactsCursor = nextPageError instanceof PanelApiError
+    && (nextPageError.code === 'CURSOR_EXPIRED' || nextPageError.code === 'DATA_EPOCH_MISMATCH');
+  const loadMoreRef = useInfiniteScroll(tableWrapRef, {
+    enabled: Boolean(conversationsQuery.hasNextPage && !nextPageError),
+    loading: conversationsQuery.isFetchingNextPage,
+    onLoadMore: () => conversationsQuery.fetchNextPage()
+  });
+
+  useEffect(() => {
+    tableWrapRef.current?.scrollTo?.({ top: 0 });
+  }, [search, channel]);
 
   const updateMutation = useMutation({
     mutationFn: ({ conversation, kind, value }: ContactUpdate) => {
@@ -99,6 +116,15 @@ export function ContactsPage() {
 
   function saveProfile(conversation: Conversation, value: string) {
     updateMutation.mutate({ conversation, kind: 'profile', value: value || null });
+  }
+
+  function retryNextPage() {
+    if (nextPageError instanceof PanelApiError
+      && (nextPageError.code === 'CURSOR_EXPIRED' || nextPageError.code === 'DATA_EPOCH_MISMATCH')) {
+      void queryClient.resetQueries({ queryKey: ['contacts', 'conversations', search, channel] });
+      return;
+    }
+    void conversationsQuery.fetchNextPage();
   }
 
   return (
@@ -140,23 +166,30 @@ export function ContactsPage() {
       {profilesQuery.isError && (
         <div className="contacts-error" role="alert">No se pudo cargar el inventario de perfiles. Puedes conservar el perfil heredado.</div>
       )}
-      {conversationsQuery.isPending && <div className="contacts-state" role="status">Cargando contactos…</div>}
-      {conversationsQuery.isError && (
-        <div className="contacts-state contacts-state-error" role="alert">
-          <div><h2>No se pudieron cargar los contactos</h2><p>{asError(conversationsQuery.error).message}</p></div>
-          <button type="button" onClick={() => void conversationsQuery.refetch()}><RefreshCw aria-hidden="true" size={15} /> Reintentar</button>
+      {conversationsQuery.isError && conversationsQuery.data && !conversationsQuery.isFetchNextPageError && (
+        <div className="contacts-error" role="alert">
+          No se pudo actualizar la lista. {asError(conversationsQuery.error).message}
+          <button className="text-button" type="button" onClick={() => void conversationsQuery.refetch()}>Reintentar</button>
         </div>
       )}
+      <div className="contacts-results">
+        {conversationsQuery.isPending && <div className="contacts-state" role="status">Cargando contactos…</div>}
+        {conversationsQuery.isError && !conversationsQuery.data && (
+          <div className="contacts-state contacts-state-error" role="alert">
+            <div><h2>No se pudieron cargar los contactos</h2><p>{asError(conversationsQuery.error).message}</p></div>
+            <button type="button" onClick={() => void conversationsQuery.refetch()}><RefreshCw aria-hidden="true" size={15} /> Reintentar</button>
+          </div>
+        )}
 
-      {conversationsQuery.data && conversations.length === 0 && (
-        <div className="contacts-state"><h2>No hay contactos para mostrar</h2>
-          <p>{search || channel ? 'Prueba con otra búsqueda o canal.' : 'Las conversaciones nuevas aparecerán aquí cuando queden archivadas.'}</p>
-        </div>
-      )}
+        {conversationsQuery.data && conversations.length === 0 && (
+          <div className="contacts-state"><h2>No hay contactos para mostrar</h2>
+            <p>{search || channel ? 'Prueba con otra búsqueda o canal.' : 'Las conversaciones nuevas aparecerán aquí cuando queden archivadas.'}</p>
+          </div>
+        )}
 
-      {conversations.length > 0 && (
-        <>
-          <div className="contacts-table-wrap">
+        {conversations.length > 0 && (
+          <div className="contacts-table-wrap" ref={tableWrapRef} role="region" aria-label="Lista de contactos"
+            aria-busy={conversationsQuery.isFetchingNextPage} tabIndex={0}>
             <table className="contacts-table">
               <thead><tr>
                 <th scope="col">Contacto</th><th scope="col">Canal</th>
@@ -196,18 +229,26 @@ export function ContactsPage() {
                     </Link></td>
                   </tr>
                 );
-              })}</tbody>
+              })}
+                {conversationsQuery.hasNextPage && <tr className="contacts-pagination-row"><td colSpan={5}>
+                  <div className="contacts-load-more-sentinel" ref={loadMoreRef}>
+                    {conversationsQuery.isFetchingNextPage ? <span role="status">Cargando contactos…</span>
+                      : nextPageError ? <div className="contacts-pagination-error" role="alert">
+                        <span>{nextPageError.message}</span>
+                        <button className="contacts-load-more" type="button" onClick={retryNextPage}>
+                          {expiredContactsCursor ? 'Actualizar lista' : 'Reintentar'}
+                        </button>
+                      </div>
+                        : <button className="contacts-load-more" type="button" onClick={() => void conversationsQuery.fetchNextPage()}>
+                          Cargar más contactos
+                        </button>}
+                  </div>
+                </td></tr>}
+              </tbody>
             </table>
           </div>
-          {conversationsQuery.hasNextPage && (
-            <button className="contacts-load-more" type="button" disabled={conversationsQuery.isFetchingNextPage}
-              onClick={() => void conversationsQuery.fetchNextPage()}>
-              {conversationsQuery.isFetchingNextPage ? 'Cargando…' : 'Cargar más contactos'}
-            </button>
-          )}
-          {conversationsQuery.isFetchNextPageError && <p className="contacts-error" role="alert">No se pudo cargar la página siguiente.</p>}
-        </>
-      )}
+        )}
+      </div>
     </section>
   );
 }

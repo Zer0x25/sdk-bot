@@ -91,12 +91,15 @@ button:focus-visible, a:focus-visible, [tabindex]:focus-visible {
 .rail-link-label { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0, 0, 0, 0); white-space: nowrap; }
 .inbox-layout {
   display: grid;
+  width: 100%;
+  height: 100vh;
   min-width: 0;
-  min-height: 100vh;
+  min-height: 0;
   grid-template-columns: minmax(280px, 336px) minmax(360px, 1fr) minmax(250px, 294px);
+  overflow: hidden;
   background: var(--surface);
 }
-.conversation-column, .thread-column, .context-column { min-width: 0; min-height: 100vh; }
+.conversation-column, .thread-column, .context-column { width: 100%; height: 100%; min-width: 0; min-height: 0; overflow: hidden; }
 .conversation-column { display: flex; flex-direction: column; border-right: 1px solid var(--line); background: var(--surface); }
 .conversation-header { padding: 25px 22px 17px; border-bottom: 1px solid var(--line); }
 .conversation-title-row { display: flex; align-items: flex-start; justify-content: space-between; gap: 12px; }
@@ -237,7 +240,7 @@ button:focus-visible, a:focus-visible, [tabindex]:focus-visible {
 .composer-error { color: #914b45; }
 .composer-uncertain { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 7px; border: 1px solid #efd6a8; border-radius: 8px; padding: 7px 9px; color: #72572b; background: #fffaf0; font-size: 10px; line-height: 1.5; }
 
-.context-column { display: flex; flex-direction: column; border-left: 1px solid var(--line); background: var(--surface); }
+.context-column { display: flex; flex-direction: column; overflow: auto; overscroll-behavior: contain; border-left: 1px solid var(--line); background: var(--surface); }
 .context-header { display: flex; min-height: 84px; align-items: center; justify-content: space-between; border-bottom: 1px solid var(--line); padding: 15px 18px; }
 .eyebrow { margin: 0 0 4px; color: #91a098; font-size: 9px; font-weight: 750; letter-spacing: .09em; }
 .context-header h2 { margin: 0; font-size: 14px; font-weight: 700; }
@@ -260,7 +263,10 @@ button:focus-visible, a:focus-visible, [tabindex]:focus-visible {
 .list-tools .filter-pill { cursor: pointer; }
 .channel-filter select { max-width: 120px; border: 1px solid var(--line); border-radius: 8px; padding: 6px 22px 6px 8px; color: var(--ink-secondary); background: white; font-size: 10px; }
 .conversation-results { display: flex; min-height: 0; flex: 1; flex-direction: column; }
-.conversation-list { display: flex; min-height: 0; flex: 1; flex-direction: column; gap: 3px; overflow: auto; margin: 0; padding: 8px; list-style: none; }
+.conversation-list { display: flex; min-height: 0; flex: 1; flex-direction: column; gap: 3px; overflow: auto; overscroll-behavior: contain; margin: 0; padding: 8px; list-style: none; }
+.conversation-list > li { flex: 0 0 auto; }
+.conversation-list-sentinel { display: flex; justify-content: center; padding: 5px 0 9px; }
+.conversation-list-sentinel > div { display: flex; justify-content: center; color: var(--muted); font-size: 10px; }
 .conversation-card { display: flex; min-height: 76px; align-items: center; gap: 11px; border: 1px solid transparent; border-radius: 12px; padding: 10px 9px; color: inherit; text-decoration: none; }
 .conversation-card:hover { background: #f6f9f7; }
 .conversation-card.is-active { border-color: #d5e9df; background: #eff7f3; }
@@ -279,7 +285,6 @@ button:focus-visible, a:focus-visible, [tabindex]:focus-visible {
 .text-button { border: 0; padding: 6px 8px; color: var(--accent-strong); background: transparent; cursor: pointer; font-size: 11px; font-weight: 650; }
 .text-button:hover:not(:disabled) { text-decoration: underline; }
 .text-button:disabled { color: var(--muted); cursor: wait; }
-.load-more-wrap { display: flex; justify-content: center; padding: 8px 0 13px; }
 .list-pagination-error { flex-direction: column; align-items: center; margin: 6px 12px; }
 .mobile-back-button { display: none; width: 36px; height: 36px; flex: 0 0 36px; place-items: center; border: 1px solid var(--line); border-radius: 10px; color: var(--ink-secondary); }
 .message-history { display: flex; min-height: 0; flex: 1; flex-direction: column; gap: 12px; overflow: auto; padding: 20px clamp(16px, 4vw, 54px); scroll-behavior: smooth; }
@@ -352,7 +357,8 @@ button:focus-visible, a:focus-visible, [tabindex]:focus-visible {
 .summary-state-error { color: #914b45; }
 .summary-retry { display: inline-flex; min-height: 35px; align-items: center; gap: 7px; border: 1px solid var(--line); border-radius: 8px; padding: 0 11px; color: var(--ink-secondary); background: var(--surface); font-size: 11px; cursor: pointer; }
 .summary-retry:hover { background: var(--surface-hover); }
-.contacts-page { width: min(100%, 1280px); min-height: 100vh; margin: 0 auto; padding: 38px clamp(20px, 4vw, 48px) 48px; }
+.contacts-page { display: flex; width: min(100%, 1280px); height: 100vh; min-height: 0; flex-direction: column; overflow: hidden; margin: 0 auto; padding: 38px clamp(20px, 4vw, 48px) 24px; }
+.contacts-header, .contacts-privacy-note, .contacts-toolbar, .contacts-page > .contacts-error { flex: 0 0 auto; }
 .contacts-header { border-bottom: 1px solid var(--line); padding-bottom: 19px; }
 .contacts-header .eyebrow { display: flex; align-items: center; gap: 6px; margin: 0; color: var(--accent-strong); }
 .contacts-header h1 { margin: 10px 0 4px; font-size: 30px; font-weight: 730; letter-spacing: -.045em; line-height: 1.15; }
@@ -366,10 +372,11 @@ button:focus-visible, a:focus-visible, [tabindex]:focus-visible {
 .contacts-channel-filter { display: grid; min-width: 150px; gap: 4px; color: var(--muted); font-size: 10px; font-weight: 650; }
 .contacts-channel-filter select, .contacts-table select { min-height: 35px; border: 1px solid var(--line); border-radius: 8px; padding: 0 28px 0 9px; color: var(--ink-secondary); background: var(--surface); font-size: 11px; }
 .contacts-permission-state { margin-left: auto; padding-bottom: 9px; color: var(--muted); font-size: 10px; }
-.contacts-table-wrap { overflow: auto; border: 1px solid var(--line); border-radius: 12px; background: var(--surface); }
+.contacts-results { display: flex; min-height: 0; flex: 1; flex-direction: column; overflow: hidden; }
+.contacts-table-wrap { min-height: 0; flex: 1; overflow: auto; overscroll-behavior: contain; border: 1px solid var(--line); border-radius: 12px; background: var(--surface); }
 .contacts-table { width: 100%; min-width: 700px; border-collapse: collapse; text-align: left; }
 .contacts-table th, .contacts-table td { border-bottom: 1px solid #eef2ef; padding: 11px 14px; font-size: 11px; vertical-align: middle; }
-.contacts-table thead th { color: var(--muted); background: #fbfdfc; font-size: 10px; font-weight: 650; }
+.contacts-table thead th { position: sticky; z-index: 1; top: 0; color: var(--muted); background: #fbfdfc; font-size: 10px; font-weight: 650; }
 .contacts-table tbody th { color: var(--ink-secondary); font-weight: 650; }
 .contacts-table tbody tr:last-child th, .contacts-table tbody tr:last-child td { border-bottom: 0; }
 .contacts-name { display: block; overflow-wrap: anywhere; }
@@ -378,13 +385,16 @@ button:focus-visible, a:focus-visible, [tabindex]:focus-visible {
 .contacts-table select:disabled { color: var(--muted); background: #f6f8f6; cursor: not-allowed; }
 .contacts-open-link { display: inline-flex; align-items: center; gap: 5px; color: var(--accent-strong); font-size: 10px; font-weight: 650; text-decoration: none; white-space: nowrap; }
 .contacts-open-link:hover { text-decoration: underline; }
-.contacts-load-more, .contacts-state button { display: inline-flex; min-height: 36px; align-items: center; justify-content: center; gap: 7px; border: 1px solid var(--line); border-radius: 8px; margin: 13px auto 0; padding: 0 12px; color: var(--ink-secondary); background: var(--surface); font-size: 11px; cursor: pointer; }
+.contacts-load-more, .contacts-state button { display: inline-flex; min-height: 36px; align-items: center; justify-content: center; gap: 7px; border: 1px solid var(--line); border-radius: 8px; margin: 6px auto; padding: 0 12px; color: var(--ink-secondary); background: var(--surface); font-size: 11px; cursor: pointer; }
 .contacts-load-more:hover, .contacts-state button:hover { background: var(--surface-hover); }
 .contacts-load-more:disabled { color: var(--muted); cursor: wait; }
-.contacts-state { display: flex; min-height: 180px; flex-direction: column; align-items: center; justify-content: center; gap: 8px; border: 1px solid var(--line); border-radius: 12px; margin-top: 14px; padding: 22px; color: var(--muted); background: var(--surface); text-align: center; font-size: 12px; }
+.contacts-state { display: flex; min-height: 0; flex: 1; flex-direction: column; align-items: center; justify-content: center; gap: 8px; border: 1px solid var(--line); border-radius: 12px; margin-top: 14px; padding: 22px; color: var(--muted); background: var(--surface); text-align: center; font-size: 12px; }
 .contacts-state h2 { margin: 0; color: var(--ink); font-size: 14px; }
 .contacts-state p { margin: 0; }
 .contacts-state-error { color: #914b45; }
+.contacts-pagination-row td { text-align: center; }
+.contacts-load-more-sentinel { display: flex; justify-content: center; min-height: 42px; color: var(--muted); font-size: 10px; }
+.contacts-pagination-error { display: grid; justify-items: center; gap: 4px; color: #914b45; }
 .contacts-error { border: 1px solid #efd1ca; border-radius: 8px; margin: 10px 0; padding: 9px 11px; color: #914b45; background: #fff8f6; font-size: 11px; }
 
 .channels-page { width: min(100%, 1120px); min-height: 100vh; margin: 0 auto; padding: 38px clamp(20px, 4vw, 48px) 48px; }
@@ -605,7 +615,7 @@ button:focus-visible, a:focus-visible, [tabindex]:focus-visible {
   .rail-link { grid-template-rows: 24px 12px; gap: 3px; }
   .app-content { height: calc(100vh - 64px); min-height: 0; overflow: hidden; }
   .summary-page { height: 100%; min-height: 0; overflow: auto; padding: 24px 16px 92px; }
-  .contacts-page { height: 100%; min-height: 0; overflow: auto; padding: 24px 16px 92px; }
+  .contacts-page { height: 100%; min-height: 0; overflow: hidden; padding: 24px 16px 14px; }
   .channels-page { height: 100%; min-height: 0; overflow: auto; padding: 24px 16px 92px; }
   .assistant-page { height: 100%; min-height: 0; overflow: auto; padding: 24px 16px 92px; }
   .assistant-header { align-items: flex-start; flex-direction: column; gap: 8px; }
