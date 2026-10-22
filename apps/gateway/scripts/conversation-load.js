@@ -588,7 +588,7 @@ async function runMeasuredScenario(archive, dataset, runIndex, kind) {
 async function saturationScenario(snapshotPath, directory, dataset) {
     const dbPath = path.join(directory, 'saturation.db');
     await fsp.copyFile(snapshotPath, dbPath);
-    const archive = createArchive({ path: dbPath, timeoutMs: 60_000 });
+    const archive = createArchive({ path: dbPath, timeoutMs: FULL_VALIDATION_TIMEOUT_MS });
     try {
         await archive.ready;
         const messagesBefore = (await archive.diagnostics()).messages;
@@ -705,8 +705,11 @@ async function runFull({ reportPath, temporaryRoot } = {}) {
             const kind = i < profile.warmupRuns ? 'warmup' : 'measured';
             const index = kind === 'warmup' ? i : i - profile.warmupRuns;
             const runPath = path.join(workdir, `run-${i + 1}.db`);
+            stage = `${kind} ${index + 1} snapshot copy`;
+            process.stdout.write(`F2E.2: preparando copia para ${kind} ${index + 1}…\n`);
             await fsp.copyFile(snapshotPath, runPath);
-            const runArchive = createArchive({ path: runPath, timeoutMs: 60_000 });
+            stage = `${kind} ${index + 1} archive startup`;
+            const runArchive = createArchive({ path: runPath, timeoutMs: FULL_VALIDATION_TIMEOUT_MS });
             await runArchive.ready;
             process.stdout.write(`F2E.2: ${kind} ${index + 1} — 150 s de ingesta concurrente y 4.000 consultas…\n`);
             stage = `${kind} ${index + 1}`;

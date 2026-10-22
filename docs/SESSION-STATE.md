@@ -1661,3 +1661,14 @@ Cierres históricos: commits F2C.1/F2C.2/F2D/F2E.1 están en el log local; F2B.3
   `conversationLoad.test.js` 5/5, ESLint focal y `npm run typecheck` limpios.
 - Próximo paso exacto: repetir F2E.2 completo bajo `CPUQuota=200%`, `MemoryMax=4G`
   y sin swap; conservar reporte nuevo solo si todas las etapas y umbrales pasan.
+
+## F2E.2 — Timeout de apertura de copias — 2026-10-22
+
+- El segundo run pasó importación, validación, lectura del event tail y `VACUUM INTO`
+  (903 mensajes/s), pero la apertura de la copia del primer warmup terminó con
+  `ARCHIVE_START_TIMEOUT`. `initialize()` valida el archivo y las claves foráneas
+  en cada apertura; las copias de medición aún tenían 60 s.
+- Las copias de warmup/medición y saturación ahora también usan 20 min y reportan
+  etapa antes de copiar/abrir. El run no produjo informe y limpió temporales.
+- Siguiente unidad: repetir F2E.2 completo con el commit de este cambio. Reutilizar
+  el reporte fechado solo después de completar cinco escenarios y revisar umbrales.
