@@ -60,7 +60,9 @@ function inbound(accountId, providerMessageId, text, seconds) {
         content: { type: 'text', text }, legacyDispatch: { waitForTranscription: false,
             message: { channel: 'whatsapp', remoteId: `whatsapp:${DESTINATION}`, rawId: DESTINATION,
                 text, transcript: '', isAudio: false,
-                metadata: { phoneNumber: PHONE, pushName: 'Cliente de prueba', isFromMe: false, isAdminChannel: false } } } };
+                metadata: { phoneNumber: 'route-phone-must-not-return', lid: 'route-lid-must-not-return',
+                    pushName: 'Nombre público original', savedName: 'Nombre agenda original',
+                    isFromMe: false, isAdminChannel: false } } } };
 }
 
 class FakeWhatsAppAdapter extends ChannelAdapter {
@@ -131,9 +133,11 @@ test('F6.3 integrated flow: inbox, human takeover/reply, pending customer entry,
         if (String(url).endsWith('/invalidate-generation')) return { ok: true };
         throw new Error(`Unexpected fake transport URL: ${url}`);
     };
+    const routedMessages = [];
     dispatchPump = createLegacyDispatchPump({ archive, isReady: () => true, onError: (error, id) => {
         throw Object.assign(new Error(`F6.3 dispatch failed for ${id}: ${error?.code || error?.message}`), { cause: error });
     }, dispatch: async message => {
+        routedMessages.push(message);
         const state = await archive.controlState(conversationId);
         if (state.automationMode === 'human') return;
         const target = await control.readForIdentity({ accountId: account.id, channel: 'whatsapp',
@@ -222,6 +226,9 @@ test('F6.3 integrated flow: inbox, human takeover/reply, pending customer entry,
     assert.deepEqual(brainRequests[1].context.map(item => [item.author_kind, item.content]), [
         ['customer', 'consulta inicial'], ['ai', 'respuesta IA inicial'], ['operator', 'respuesta del operador']
     ]);
+    assert.deepEqual(routedMessages.at(-1).metadata, { isFromMe: false, isAdminChannel: false,
+        pushName: 'Nombre público original', savedName: 'Nombre agenda original', phoneNumber: PHONE });
+    assert.deepEqual(brainRequests.map(request => request.bot_profile), ['default', 'default']);
     assert.deepEqual(adapter.rawSends.map(send => send.text), [
         'respuesta IA inicial', 'respuesta del operador', 'respuesta IA tras el operador'
     ]);

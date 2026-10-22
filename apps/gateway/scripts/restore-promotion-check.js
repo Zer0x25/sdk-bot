@@ -65,6 +65,7 @@ function safeSummary(checkpoint) {
         searchIndexCount: checkpoint.searchIndexCount, searchIndexMismatchCount: checkpoint.searchIndexMismatchCount,
         assistantToolInvocationCount: checkpoint.assistantToolInvocationCount,
         telegramAdminInboxCount: checkpoint.telegramAdminInboxCount,
+        resumeMetadataCount: checkpoint.resumeMetadataCount,
         unresolvedOutboundCount: checkpoint.unresolvedOutboundCount,
         integrity: checkpoint.integrity, foreignKeys: checkpoint.foreignKeys };
 }
@@ -104,6 +105,10 @@ function compare(source, candidate) {
     if (source.telegramAdminInboxCount !== candidate.telegramAdminInboxCount
         || source.telegramAdminInboxSha256 !== candidate.telegramAdminInboxSha256) {
         blockers.push('TELEGRAM_ADMIN_INBOX_MISMATCH');
+    }
+    if (source.resumeMetadataCount !== candidate.resumeMetadataCount
+        || source.resumeMetadataSha256 !== candidate.resumeMetadataSha256) {
+        blockers.push('RESUME_METADATA_MISMATCH');
     }
     if (source.unresolvedOutboundCount > 0 || candidate.unresolvedOutboundCount > 0) {
         blockers.push('UNRESOLVED_OUTBOUND');

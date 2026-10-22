@@ -398,6 +398,9 @@ Esta es la v1 útil; publicar/desplegar es una acción separada, no automática.
   revisar salidas inciertas humanas/IA con API autenticada y evidencia archivada,
   sin reenvío automático; `process_pending` queda bloqueado hasta decidir.
   Evidencia: [BUG-075](BUG-075-OUTBOUND-RECONCILIATION.md).
+- [x] **Seguimiento BUG-076 — Metadatos de replay:** conservar solo nombres de
+  contacto por la ventana de `process_pending`, con purga y migración SQLite v16.
+  Evidencia: [BUG-076](BUG-076-RESUME-METADATA.md).
 
 **Aceptación:** paridad funcional documentada, sin perder OAuth, pairing, comandos,
 perfiles o reset por un cambio visual.

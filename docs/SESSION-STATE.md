@@ -1522,3 +1522,22 @@ Cierres históricos: commits F2C.1/F2C.2/F2D/F2E.1 están en el log local; F2B.3
   de servido; `git diff --check` limpio. Sin proveedor/canal real.
 - Commit local de cierre en esta unidad; no publicar. Siguiente punto: BUG-076,
   preservar o documentar metadatos mínimos de ruta en `process_pending`.
+
+## BUG-076 — Metadatos mínimos para `process_pending` — 2026-10-22
+
+- SQLite v16 guarda únicamente `pushName`/`savedName` en una columna separada
+  durante 24 horas desde `ingested_at`. El sobre completo se limpia tras el ACK;
+  omisiones y fallos de transcripción limpian los nombres al instante. El worker
+  purga al iniciar, cada minuto y antes de consultar/liberar pendientes.
+- La migración v15 backfillea solo rutas pendientes/esperando dentro de 24 horas.
+  `process_pending` usa los nombres retenidos; canal/destino/teléfono/LID operativo
+  se reconstruyen desde identidad canónica SQLite. Perfil y contexto mantienen
+  su snapshot y mensajes archivados. El checkpoint de restore incluye el digest
+  privado y bloquea diferencias sin exponerlo.
+- Evidencia: [BUG-076](BUG-076-RESUME-METADATA.md). Foco `legacyDispatch`, flujo
+  F6.3 y recovery: 14/14. Migraciones archive/control/search/outbox: 42/42.
+  `cd apps/gateway && npm run check`: lint/typecheck, Panel 44/44, build Vite,
+  servido 1/1 y Gateway 391/391. `git diff --check` limpio.
+- No se usó canal/proveedor real. Commit local en `main`, sin push.
+- Siguiente punto: F8.3, revisar y cerrar el runbook agregado de operación y
+  recuperación; actualizarlo con la retención v16 recién añadida.

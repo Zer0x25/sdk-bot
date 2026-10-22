@@ -229,6 +229,42 @@ test('BUG-046: restore gate detects admin inbox changes without exposing their d
     assert.equal('telegramAdminInboxSha256' in gate.result.source, false);
 });
 
+test('BUG-076: restore gate detects resume-name changes without exposing their digest', async t => {
+    const dir = await fs.mkdtemp(path.join(os.tmpdir(), 'sdkbot-resume-metadata-restore-'));
+    const sourceDirectory = path.join(dir, 'source'), snapshotDirectory = path.join(dir, 'snapshot');
+    const sourcePath = path.join(sourceDirectory, 'conversations.db');
+    const snapshotPath = path.join(snapshotDirectory, 'conversations.db');
+    const sourceAttachments = path.join(sourceDirectory, 'attachments');
+    const snapshotAttachments = path.join(snapshotDirectory, 'attachments');
+    const lockPath = path.join(dir, 'gateway.lock');
+    await fs.mkdir(sourceAttachments, { recursive: true });
+    await fs.mkdir(snapshotAttachments, { recursive: true });
+    const archive = createArchive({ path: sourcePath });
+    t.after(async () => { await archive.close().catch(() => {}); await fs.rm(dir, { recursive: true, force: true }); });
+    await archive.ready;
+    const account = await archive.registerAccount({ channel: 'whatsapp', providerKey: 'f84-resume-metadata-restore' });
+    const source = { ...inbound(account.id, 'resume-metadata', 'live'), legacyDispatch: {
+        waitForTranscription: false, message: { channel: 'whatsapp', remoteId: `whatsapp:${destination}`,
+            rawId: destination, text: 'recovery fixture resume-metadata', transcript: '', isAudio: false,
+            metadata: { pushName: 'Nombre privado', savedName: 'Agenda privada', phoneNumber: 'route-only',
+                isFromMe: false, isAdminChannel: false } }
+    } };
+    await archive.ingestBatch([source]);
+    const checkpoint = await archive.recoveryCheckpoint();
+    assert.equal(checkpoint.resumeMetadataCount, 1);
+    await archive.backup(snapshotPath);
+    await archive.close();
+
+    const damaged = new DatabaseSync(sourcePath);
+    damaged.prepare('UPDATE legacy_dispatch SET resume_metadata=?').run('{"pushName":"Nombre alterado"}');
+    damaged.close();
+    const gate = runGate(sourcePath, snapshotPath, lockPath, { sourceAttachments, snapshotAttachments });
+    assert.equal(gate.exitCode, 2);
+    assert.ok(gate.result.blockers.includes('RESUME_METADATA_MISMATCH'));
+    assert.equal(gate.result.source.resumeMetadataCount, 1);
+    assert.equal('resumeMetadataSha256' in gate.result.source, false);
+});
+
 test('restore gate detects attachment metadata purges that do not advance the event cursor', async t => {
     const dir = await fs.mkdtemp(path.join(os.tmpdir(), 'sdkbot-f84-attachment-ledger-'));
     const sourceDirectory = path.join(dir, 'source'), snapshotDirectory = path.join(dir, 'snapshot');

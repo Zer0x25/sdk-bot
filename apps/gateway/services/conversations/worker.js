@@ -11,7 +11,10 @@ const { normalizeSearchQuery } = require('./searchQuery');
 const schema = require('./schema');
 const MAX_ATTACHMENT_BYTES = 16 * 1024 * 1024;
 const ATTACHMENT_RETENTION_MS = 90 * 86400000;
+const RESUME_METADATA_RETENTION_MS = 24 * 60 * 60 * 1000;
+const RESUME_METADATA_CLEANUP_INTERVAL_MS = 60 * 1000;
 let db;
+let resumeMetadataSweepTimer;
 const READ_ONLY_METHODS = new Set(['snapshot','telegramCursor','pendingLegacyDispatches','controlState','controlAuthority','controlImportStatus','controlImportEntries',
     'pendingTelegramAdminInbox','telegramAdminInboxStatus',
     'controlPolicy','controlOperation','pendingControlOperations','controlTargets','controlByIdentity',
@@ -24,6 +27,30 @@ function fail(code) { throw Object.assign(new Error(code), { code }); }
 function one(sql, ...params) { return db.prepare(sql).get(...params); }
 function run(sql, ...params) { return db.prepare(sql).run(...params); }
 function all(sql, ...params) { return db.prepare(sql).all(...params); }
+function resumeNames(metadata) {
+    if (!metadata || typeof metadata !== 'object' || Array.isArray(metadata)) return {};
+    const names = {};
+    for (const key of ['pushName','savedName']) {
+        const value = metadata[key];
+        if (typeof value === 'string' && value.length > 0 && value.length <= 256 && value.isWellFormed()) names[key] = value;
+    }
+    return names;
+}
+function resumeMetadataFromRoute(payload) {
+    try {
+        const names = resumeNames(JSON.parse(payload)?.metadata);
+        return Object.keys(names).length ? JSON.stringify(names) : null;
+    } catch { return null; }
+}
+function parseResumeMetadata(value) {
+    if (typeof value !== 'string') return {};
+    try { return resumeNames(JSON.parse(value)); } catch { return {}; }
+}
+function expireResumeMetadata(now = Date.now()) {
+    const cutoff = new Date(now - RESUME_METADATA_RETENTION_MS).toISOString();
+    return run(`UPDATE legacy_dispatch SET resume_metadata=NULL WHERE resume_metadata IS NOT NULL
+        AND message_id IN (SELECT id FROM messages WHERE ingested_at < ?)`, cutoff).changes;
+}
 function transaction(fn) {
     db.exec('BEGIN IMMEDIATE');
     try { const result = fn(); db.exec('COMMIT'); return result; }
@@ -48,6 +75,7 @@ function recoveryCheckpoint() {
     const searchDigest = createHash('sha256');
     const assistantToolDigest = createHash('sha256');
     const telegramAdminInboxDigest = createHash('sha256');
+    const resumeMetadataDigest = createHash('sha256');
     const schemaVersion = one('PRAGMA user_version').user_version;
     let outboundIntentCount = 0;
     let unresolvedOutboundCount = 0;
@@ -56,6 +84,7 @@ function recoveryCheckpoint() {
     let searchIndexMismatchCount = 0;
     let assistantToolInvocationCount = 0;
     let telegramAdminInboxCount = 0;
+    let resumeMetadataCount = 0;
     // Schema v6 predates the durable outbox; keep it readable so the gate can
     // report the schema mismatch instead of failing before comparing metadata.
     if (schemaVersion >= 7) {
@@ -106,12 +135,20 @@ function recoveryCheckpoint() {
             telegramAdminInboxCount += 1;
         }
     }
+    if (schemaVersion >= 16) {
+        for (const row of db.prepare(`SELECT message_id,resume_metadata FROM legacy_dispatch
+            WHERE resume_metadata IS NOT NULL ORDER BY message_id`).iterate()) {
+            resumeMetadataDigest.update(stable(row)).update('\n');
+            resumeMetadataCount += 1;
+        }
+    }
     return { ...snapshot(), schemaVersion,
         controlAuthority: controlAuthority(), outboundIntentCount, outboundIntentSha256: digest.digest('hex'),
         unresolvedOutboundCount, attachmentCount, attachmentSha256: attachmentDigest.digest('hex'),
         searchIndexCount, searchIndexSha256: searchDigest.digest('hex'), searchIndexMismatchCount,
         assistantToolInvocationCount, assistantToolInvocationSha256: assistantToolDigest.digest('hex'),
         telegramAdminInboxCount, telegramAdminInboxSha256: telegramAdminInboxDigest.digest('hex'),
+        resumeMetadataCount, resumeMetadataSha256: resumeMetadataDigest.digest('hex'),
         integrity: one('PRAGMA integrity_check').integrity_check,
         foreignKeys: all('PRAGMA foreign_key_check').length };
 }
@@ -132,7 +169,7 @@ function initialize() {
         // committed WAL records or touching another process's snapshot.
         db = new DatabaseSync(`${pathToFileURL(file).href}?immutable=1`, { readOnly: true });
         const schemaVersion = one('PRAGMA user_version').user_version;
-        if (![6, 7, 8, 9, 10, 11, 12, 13, 14, 15].includes(schemaVersion)) fail('SCHEMA_VERSION_REQUIRED');
+        if (![6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16].includes(schemaVersion)) fail('SCHEMA_VERSION_REQUIRED');
         if (one("SELECT migration_id FROM control_import_migrations WHERE status IN ('cutover_applying','rolling_back') LIMIT 1")) {
             fail('CONTROL_CUTOVER_RECOVERY_REQUIRED');
         }
@@ -152,7 +189,7 @@ function initialize() {
     // SQLite owns the OS lock for the full connection lifetime; crash releases it.
     db.exec('BEGIN IMMEDIATE; COMMIT;');
     const version = one('PRAGMA user_version').user_version;
-    if (version > 15) fail('SCHEMA_TOO_NEW');
+    if (version > 16) fail('SCHEMA_TOO_NEW');
     if (version === 0) transaction(() => {
         db.exec(schema);
         run('INSERT INTO archive_meta VALUES(1,?,?)', randomUUID(), '0');
@@ -430,6 +467,21 @@ function initialize() {
         CREATE INDEX telegram_admin_inbox_pending ON telegram_admin_inbox(status,received_at,account_id,update_id);
         PRAGMA user_version=15;`);
     });
+    if (one('PRAGMA user_version').user_version === 15) transaction(() => {
+        db.exec(`ALTER TABLE legacy_dispatch ADD COLUMN resume_metadata TEXT
+            CHECK(resume_metadata IS NULL OR json_valid(resume_metadata));
+        CREATE INDEX legacy_dispatch_resume_metadata ON legacy_dispatch(message_id)
+            WHERE resume_metadata IS NOT NULL;`);
+        const cutoff = new Date(Date.now() - RESUME_METADATA_RETENTION_MS).toISOString();
+        const eligible = all(`SELECT d.message_id,d.payload FROM legacy_dispatch d
+            JOIN messages m ON m.id=d.message_id
+            WHERE d.status IN ('pending','waiting') AND m.ingested_at>=?`, cutoff);
+        for (const row of eligible) {
+            const resumeMetadata = resumeMetadataFromRoute(row.payload);
+            if (resumeMetadata) run('UPDATE legacy_dispatch SET resume_metadata=? WHERE message_id=?', resumeMetadata, row.message_id);
+        }
+        db.exec('PRAGMA user_version=16;');
+    });
     // A process can fail after claiming an admin command and before recording its
     // result. Never replay that ambiguous effect; preserve only its receipt.
     run(`UPDATE telegram_admin_inbox SET status='uncertain',payload=NULL,
@@ -456,7 +508,12 @@ function initialize() {
         transaction(() => pending.forEach(row => updateTranscription({ messageId: row.id, expectedStatus: 'pending', status: 'failed' })));
         after = pending[pending.length - 1].id;
     }
-    return { ...snapshot(), schemaVersion: 15, journalMode: one('PRAGMA journal_mode').journal_mode,
+    expireResumeMetadata();
+    resumeMetadataSweepTimer = setInterval(() => {
+        try { expireResumeMetadata(); } catch { /* Retry on the next interval or resume request. */ }
+    }, RESUME_METADATA_CLEANUP_INTERVAL_MS);
+    resumeMetadataSweepTimer.unref();
+    return { ...snapshot(), schemaVersion: 16, journalMode: one('PRAGMA journal_mode').journal_mode,
         synchronous: one('PRAGMA synchronous').synchronous, threadId: require('node:worker_threads').threadId };
 }
 function registerAccount(input) {
@@ -681,7 +738,8 @@ function legacyDispatch(input, message) {
     // small StandardMessage routing and contact envelope in this outbox.
     const routing = { channel: envelope.channel, remoteId: envelope.remoteId, rawId: envelope.rawId,
         isAudio: envelope.isAudio, metadata };
-    return { status: waiting ? 'waiting' : 'pending', payload: JSON.stringify(routing) };
+    return { status: waiting ? 'waiting' : 'pending', payload: JSON.stringify(routing),
+        resumeMetadata: resumeMetadataFromRoute(JSON.stringify(routing)) };
 }
 function ingest(input) {
     const identity = resolve(input.identity);
@@ -738,7 +796,8 @@ function ingest(input) {
     draft.source, now, draft.source, c.id);
     const event = appendMessageEvent(draft, aggregate, 'message.created', now);
     if (dispatch && c.requires_review === 0) {
-        run('INSERT INTO legacy_dispatch(message_id,status,payload,created_at) VALUES(?,?,?,?)', draft.id, dispatch.status, dispatch.payload, now);
+        run('INSERT INTO legacy_dispatch(message_id,status,payload,created_at,resume_metadata) VALUES(?,?,?,?,?)',
+            draft.id, dispatch.status, dispatch.payload, now, dispatch.resumeMetadata);
     }
     return { status: 'created', message: draft, event };
 }
@@ -939,14 +998,14 @@ function shouldProcessArchivedInbound(input) {
     const sequence = BigInt(row.inbound_seq), resumeAfter = BigInt(row.resume_after_inbound_seq);
     return sequence > resumeAfter || row.status === 'pending';
 }
-function legacyResumeRouting(message, conversationId) {
+function legacyResumeRouting(message, conversationId, resumeMetadata) {
     const identity = one(`SELECT a.channel,i.kind,i.exact_value AS rawId FROM conversations c
         JOIN accounts a ON a.id=c.account_id JOIN identities i ON i.id=c.canonical_id WHERE c.id=?`, conversationId);
     if (!identity) fail('PENDING_RESUME_MESSAGE_NOT_ELIGIBLE');
     const content = message.content;
     const text = resumeCandidateText(message);
     if (!text) fail('PENDING_RESUME_MESSAGE_NOT_ELIGIBLE');
-    const metadata = { isFromMe: false, isAdminChannel: false };
+    const metadata = { isFromMe: false, isAdminChannel: false, ...parseResumeMetadata(resumeMetadata) };
     if (identity.kind === 'whatsapp_jid' && identity.rawId.endsWith('@s.whatsapp.net')) {
         metadata.phoneNumber = identity.rawId.slice(0, -'@s.whatsapp.net'.length);
     } else if (identity.kind === 'whatsapp_lid') metadata.lid = identity.rawId.replace(/@lid$/, '');
@@ -989,16 +1048,18 @@ function releaseControl(input) {
     if (changed.status !== 'updated') return changed;
     const inboundSeq = row.inbound_seq;
     run('UPDATE conversations SET resume_after_inbound_seq=? WHERE id=?', inboundSeq, input.conversationId);
-    run(`UPDATE legacy_dispatch SET status='skipped',payload='{}'
+    run(`UPDATE legacy_dispatch SET status='skipped',payload='{}',resume_metadata=NULL
         WHERE status IN ('pending','waiting') AND message_id IN (
             SELECT id FROM messages WHERE conversation_id=? AND inbound_seq IS NOT NULL
                 AND (length(inbound_seq)<length(?) OR (length(inbound_seq)=length(?) AND inbound_seq<=?)))`,
     input.conversationId, inboundSeq, inboundSeq, inboundSeq);
     const resumedMessageIds = [];
     for (const messageId of selectedIds) {
-        const messageRow = one('SELECT payload FROM messages WHERE id=? AND conversation_id=?', messageId, input.conversationId);
+        const messageRow = one(`SELECT m.payload,d.resume_metadata FROM messages m
+            JOIN legacy_dispatch d ON d.message_id=m.id WHERE m.id=? AND m.conversation_id=?`,
+        messageId, input.conversationId);
         if (!messageRow) fail('PENDING_RESUME_MESSAGE_NOT_ELIGIBLE');
-        const payload = legacyResumeRouting(JSON.parse(messageRow.payload), input.conversationId);
+        const payload = legacyResumeRouting(JSON.parse(messageRow.payload), input.conversationId, messageRow.resume_metadata);
         const scheduled = run(`UPDATE legacy_dispatch SET status='pending',payload=?,attempts=0,last_error=NULL,dispatched_at=NULL
             WHERE message_id=? AND status='dispatched'`, payload, messageId);
         if (scheduled.changes !== 1) fail('PENDING_RESUME_MESSAGE_NOT_ELIGIBLE');
@@ -1744,7 +1805,7 @@ function beginControlImport(input) {
     const report = input.report;
     if (!report || report.schemaVersion !== 1 || report.dryRun !== true || !Array.isArray(report.entries)
         || !Array.isArray(report.blockers) || typeof report.cutoverAllowed !== 'boolean') fail('INVALID_IMPORT_REPORT');
-    if (![6, 7, 8, 9, 10, 11, 12, 13, 14, 15].includes(report.sourceManifest?.archive?.schemaVersion) || typeof report.sourceManifest.archive.dataEpoch !== 'string'
+    if (![6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16].includes(report.sourceManifest?.archive?.schemaVersion) || typeof report.sourceManifest.archive.dataEpoch !== 'string'
         || !/^(0|[1-9][0-9]*)$/.test(report.sourceManifest.archive.seq || '')) fail('INVALID_IMPORT_SNAPSHOT');
     const currentSnapshot = snapshot();
     if (report.sourceManifest.archive.dataEpoch !== currentSnapshot.dataEpoch || report.sourceManifest.archive.seq !== currentSnapshot.seq) {
@@ -2142,7 +2203,7 @@ function updateTranscription(input) {
         if (input.status === 'completed') {
             run("UPDATE legacy_dispatch SET status='pending' WHERE message_id=? AND status='waiting'", message.id);
         } else if (input.status === 'failed') {
-            run("UPDATE legacy_dispatch SET status='skipped',payload='{}' WHERE message_id=? AND status='waiting'", message.id);
+            run("UPDATE legacy_dispatch SET status='skipped',payload='{}',resume_metadata=NULL WHERE message_id=? AND status='waiting'", message.id);
         }
     }
     // Fingerprint, inboundSeq, activity and capture time refer to the original.
@@ -2554,6 +2615,7 @@ function eventPage(input) {
 }
 function dispatch(method, input) {
     if (workerData.readOnly && !READ_ONLY_METHODS.has(method)) fail('READ_ONLY_ARCHIVE');
+    if (!workerData.readOnly && ['pendingResumeMessages','releaseControl'].includes(method)) expireResumeMetadata();
     switch (method) {
         case 'purge': return transaction(() => purge(input));
         case 'snapshot': return snapshot();
@@ -2662,7 +2724,10 @@ function dispatch(method, input) {
             if (fs.existsSync(input)) fail('BACKUP_EXISTS');
             run('VACUUM INTO ?', input); fs.chmodSync(input, 0o600); return snapshot();
         }
-        case 'close': db.close(); db = null; return true;
+        case 'close':
+            if (resumeMetadataSweepTimer) clearInterval(resumeMetadataSweepTimer);
+            resumeMetadataSweepTimer = null;
+            db.close(); db = null; return true;
         default: fail('UNKNOWN_OPERATION');
     }
 }

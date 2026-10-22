@@ -175,10 +175,11 @@ test('v7 archives migrate to the current schema without altering control authori
         ALTER TABLE conversations DROP COLUMN handled_inbound_seq; ALTER TABLE conversations DROP COLUMN resume_after_inbound_seq;
         DROP TABLE telegram_admin_inbox;
         DROP TABLE assistant_tool_invocations;
+        DROP INDEX legacy_dispatch_resume_metadata; ALTER TABLE legacy_dispatch DROP COLUMN resume_metadata;
         PRAGMA user_version=7;`);
     db.close();
     const archive = await f.reopen();
-    assert.equal((await archive.ready).schemaVersion, 15);
+    assert.equal((await archive.ready).schemaVersion, 16);
     assert.deepEqual(await archive.controlAuthority(), { mode: 'legacy', migrationId: null, serviceReady: false, changedAt: null });
     assert.deepEqual(await archive.outboundIntents(), []);
 });

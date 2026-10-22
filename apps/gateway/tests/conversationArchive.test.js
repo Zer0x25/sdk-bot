@@ -67,7 +67,7 @@ test('event retention computes an exact 50,000-event replay window after each co
 test('worker: migration, WAL FULL, transaction, minimal event and durable session watermark after reopen', async t => {
     const { archive, dbPath } = await fixture(t);
     const info = await archive.ready;
-    assert.equal(info.schemaVersion, 15); assert.equal(info.journalMode, 'wal'); assert.equal(info.synchronous, 2);
+    assert.equal(info.schemaVersion, 16); assert.equal(info.journalMode, 'wal'); assert.equal(info.synchronous, 2);
     assert.ok(info.threadId > 0);
     const [created] = await archive.ingestBatch([message()]);
     assertValid('Message', created.message); assertValid('Event', created.event);
@@ -190,7 +190,8 @@ test('F5.1: v4 migration keeps conversations and stages conservative control def
         CREATE TABLE conversations (id TEXT PRIMARY KEY, aggregate_version TEXT NOT NULL DEFAULT '1', inbound_seq TEXT NOT NULL DEFAULT '0');
         CREATE TABLE events (seq TEXT PRIMARY KEY, conversation_id TEXT NOT NULL, message_id TEXT, created_at TEXT NOT NULL, payload TEXT NOT NULL);
         CREATE TABLE messages (id TEXT PRIMARY KEY, conversation_id TEXT, occurred_at TEXT NOT NULL DEFAULT '2026-01-01T00:00:00.000Z',
-            inbound_seq TEXT, payload TEXT NOT NULL);
+            ingested_at TEXT NOT NULL DEFAULT '2026-01-01T00:00:00.000Z', inbound_seq TEXT, payload TEXT NOT NULL);
+        CREATE TABLE legacy_dispatch (message_id TEXT PRIMARY KEY, status TEXT NOT NULL, payload TEXT NOT NULL, created_at TEXT NOT NULL);
         INSERT INTO archive_meta VALUES(1,'v4-epoch','0');
         PRAGMA user_version=4;`);
     db.prepare('INSERT INTO conversations(id,aggregate_version) VALUES(?,?)').run(conversationId, '7');
@@ -198,7 +199,7 @@ test('F5.1: v4 migration keeps conversations and stages conservative control def
     const archive = createArchive({ path: dbPath });
     t.after(() => archive.close());
     const ready = await archive.ready;
-    assert.equal(ready.schemaVersion, 15);
+    assert.equal(ready.schemaVersion, 16);
     assert.deepEqual(await archive.controlState(conversationId), {
         accessPolicy: 'neutral', automationMode: 'off', lifecycle: 'open', ownerId: null,
         controlVersion: '1', contextVersion: '1', status: 'confirmed', takenAt: null, handoffReason: null,
@@ -515,6 +516,7 @@ test('F6.2 and F7 summary migrations preserve v9 watermarks without replaying ol
     db.exec(`DROP TRIGGER IF EXISTS messages_search_insert; DROP TRIGGER IF EXISTS messages_search_update;
         DROP TRIGGER IF EXISTS messages_search_delete; DROP TABLE IF EXISTS message_search;
         DROP TABLE attachments; DROP INDEX messages_summary_period; DROP INDEX outbound_intents_summary_period;
+        DROP INDEX legacy_dispatch_resume_metadata; ALTER TABLE legacy_dispatch DROP COLUMN resume_metadata;
         ALTER TABLE conversations DROP COLUMN handled_inbound_seq;
         ALTER TABLE conversations DROP COLUMN resume_after_inbound_seq;
         DROP TABLE telegram_admin_inbox;
@@ -524,7 +526,7 @@ test('F6.2 and F7 summary migrations preserve v9 watermarks without replaying ol
 
     const migrated = createArchive({ path: dbPath });
     t.after(() => migrated.close());
-    assert.equal((await migrated.ready).schemaVersion, 15);
+    assert.equal((await migrated.ready).schemaVersion, 16);
     const row = await migrated.conversation(conversationId);
     assert.equal(row.handled_inbound_seq, '1');
     assert.equal(row.resume_after_inbound_seq, '1');

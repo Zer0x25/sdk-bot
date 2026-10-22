@@ -20,8 +20,11 @@ habilitado se conserva en `waiting` hasta `message.updated`: una transcripción
 completada lo promueve a `pending`; una fallida lo omite. El pump consulta filas
 pendientes después de que el canal abre y cada evento de adapter solo lo despierta.
 Por tanto, una caída tras el commit y antes de emitir el evento no requiere una
-redelivery del proveedor. El ACK terminal borra el sobre duplicado; el mensaje
-archivado mantiene su propia retención de 90 días y la fila de entrega cae con él.
+redelivery del proveedor. El ACK terminal borra el sobre duplicado de ruta. Desde
+BUG-076 queda solo `pushName`/`savedName` en una columna privada por hasta 24 horas,
+para reconstruir el contexto legacy de `process_pending`; el mensaje archivado
+mantiene su propia retención de 90 días y la fila de entrega cae con él. Véase
+[BUG-076](BUG-076-RESUME-METADATA.md).
 
 El pump serializa el consumo, limita cada lectura a 100 filas, espera a que el
 canal esté conectado y registra intentos/códigos acotados ante error. Mensajes que

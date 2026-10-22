@@ -58,9 +58,10 @@ test('F5.3 migrates an existing v5 archive in place and preserves staged control
             control_status TEXT NOT NULL,taken_at TEXT,handoff_reason TEXT,aggregate_version TEXT NOT NULL DEFAULT '1',
             requires_review INTEGER NOT NULL DEFAULT 0,inbound_seq TEXT NOT NULL DEFAULT '0');
         CREATE TABLE messages(id TEXT PRIMARY KEY,conversation_id TEXT,occurred_at TEXT NOT NULL DEFAULT '2026-01-01T00:00:00.000Z',
-            inbound_seq TEXT,payload TEXT NOT NULL);
+            ingested_at TEXT NOT NULL DEFAULT '2026-01-01T00:00:00.000Z',inbound_seq TEXT,payload TEXT NOT NULL);
         CREATE TABLE events(seq TEXT PRIMARY KEY,conversation_id TEXT NOT NULL,message_id TEXT,created_at TEXT NOT NULL,
             actor_id TEXT,payload TEXT NOT NULL);
+        CREATE TABLE legacy_dispatch(message_id TEXT PRIMARY KEY,status TEXT NOT NULL,payload TEXT NOT NULL,created_at TEXT NOT NULL);
         INSERT INTO archive_meta VALUES(1,'fixture-v5-epoch','7');
         INSERT INTO conversations(id,access_policy,automation_mode,lifecycle,control_version,context_version,control_status,
             handoff_reason,aggregate_version) VALUES('${conversationId}','neutral','human','open','4','2','confirmed','operator','9');
@@ -69,7 +70,7 @@ test('F5.3 migrates an existing v5 archive in place and preserves staged control
     t.after(() => fs.rm(dir, { recursive: true, force: true }));
     const archive = createArchive({ path: databasePath });
     t.after(() => archive.close());
-    assert.equal((await archive.ready).schemaVersion, 15);
+    assert.equal((await archive.ready).schemaVersion, 16);
     assert.deepEqual(await archive.controlState(conversationId), {
         accessPolicy: 'neutral', automationMode: 'human', lifecycle: 'open', ownerId: null,
         controlVersion: '4', contextVersion: '2', status: 'confirmed', takenAt: null, handoffReason: 'operator',
@@ -152,6 +153,7 @@ test('F5.4 v6 to v7 migration preserves the event timeline and permits audited g
         CREATE INDEX events_retention ON events(created_at);
         DROP TABLE telegram_admin_inbox;
         DROP TABLE assistant_tool_invocations;
+        DROP INDEX legacy_dispatch_resume_metadata; ALTER TABLE legacy_dispatch DROP COLUMN resume_metadata;
         PRAGMA user_version=6;`);
     db.close();
 
@@ -165,7 +167,7 @@ test('F5.4 v6 to v7 migration preserves the event timeline and permits audited g
 
     const migrated = createArchive({ path: databasePath });
     t.after(() => migrated.close());
-    assert.equal((await migrated.ready).schemaVersion, 15);
+    assert.equal((await migrated.ready).schemaVersion, 16);
     assert.deepEqual(await migrated.events({ after: '0' }), beforeEvents);
     const policy = await migrated.writeControlPolicy({ actorId: randomUUID(), expectedVersion: '1',
         globalMode: 'allowed_all', globalProfileKey: null });
@@ -178,7 +180,7 @@ test('F5.4 v6 to v7 migration preserves the event timeline and permits audited g
 
 test('F5.3 stages idempotently, preserves legacy authority and blocks unsafe deltas', async t => {
     const { archive } = await fixture(t, ['111', '222']);
-    assert.equal((await archive.ready).schemaVersion, 15);
+    assert.equal((await archive.ready).schemaVersion, 16);
     assert.deepEqual(await archive.controlAuthority(), { mode: 'legacy', migrationId: null, serviceReady: false, changedAt: null });
     const contacts = { alice: { phone: '111', estado: 'permitido' } };
     const first = await reportFor(archive, contacts);

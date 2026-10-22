@@ -11,7 +11,7 @@ const { createLegacyDispatchPump } = require('../services/conversations/legacyDi
 
 const envelope = (text = 'mensaje durable') => ({ waitForTranscription: false, message: {
     channel: 'telegram', remoteId: 'telegram:-77', rawId: '-77', text, transcript: '', isAudio: false,
-    metadata: { pushName: 'Persona', savedName: null, phoneNumber: null, lid: '-77',
+    metadata: { pushName: 'Persona', savedName: 'Nombre guardado', phoneNumber: 'secret-phone', lid: 'secret-lid',
         isBusiness: false, country: 'Desconocido', isFromMe: false, isAdminChannel: false }
 } });
 const telegramInput = (accountId, extra = {}) => ({ identity: { accountId, channel: 'telegram', kind: 'telegram_chat_id', exactValue: '-77' },
@@ -107,13 +107,69 @@ test('v2 migration adds the outbox but leaves unreceipted historic rows untouche
     oldVersion.close();
 
     archive = await f.open();
-    assert.equal((await archive.ready).schemaVersion, 15);
+    assert.equal((await archive.ready).schemaVersion, 16);
     assert.equal((await archive.diagnostics()).messages, 1);
     assert.equal((await archive.pendingLegacyDispatches()).length, 0);
 });
 
+test('BUG-076 keeps only replay names and expires them after the 24-hour window', async t => {
+    const f = await fixture(t);
+    let archive = await f.open();
+    const account = await archive.registerAccount({ channel: 'telegram', providerKey: 'telegram_bot:42' });
+    const [created] = await archive.ingestBatch([telegramInput(account.id, { legacyDispatch: envelope() })]);
+    const messageId = created.message.id;
+    await archive.markLegacyDispatched({ messageId });
+    await archive.close();
+
+    const db = new DatabaseSync(f.dbPath);
+    const stored = db.prepare(`SELECT d.payload,d.resume_metadata FROM legacy_dispatch d
+        JOIN messages m ON m.id=d.message_id WHERE d.message_id=?`).get(messageId);
+    assert.equal(stored.payload, '{}');
+    assert.deepEqual(JSON.parse(stored.resume_metadata), { pushName: 'Persona', savedName: 'Nombre guardado' });
+    assert.equal(stored.resume_metadata.includes('secret-phone'), false);
+    assert.equal(stored.resume_metadata.includes('secret-lid'), false);
+    db.prepare('UPDATE messages SET ingested_at=? WHERE id=?').run('2026-09-01T00:00:00.000Z', messageId);
+    db.close();
+
+    archive = await f.open();
+    assert.equal((await archive.ready).schemaVersion, 16);
+    await archive.close();
+    const expiredDb = new DatabaseSync(f.dbPath);
+    assert.equal(expiredDb.prepare('SELECT resume_metadata FROM legacy_dispatch WHERE message_id=?').get(messageId).resume_metadata, null);
+    expiredDb.close();
+});
+
+test('BUG-076 v15 migration backfills names only from recent pending route payloads', async t => {
+    const f = await fixture(t);
+    let archive = await f.open();
+    const account = await archive.registerAccount({ channel: 'telegram', providerKey: 'telegram_bot:42' });
+    const inputs = ['recent-pending','already-dispatched','expired-pending'].map((text, index) => telegramInput(account.id, {
+        providerMessageId: String(41 + index), content: { type: 'text', text }, legacyDispatch: envelope(text)
+    }));
+    const [recent, dispatched, expired] = await archive.ingestBatch(inputs);
+    await archive.markLegacyDispatched({ messageId: dispatched.message.id });
+    await archive.close();
+
+    const oldVersion = new DatabaseSync(f.dbPath);
+    oldVersion.exec('DROP INDEX legacy_dispatch_resume_metadata; ALTER TABLE legacy_dispatch DROP COLUMN resume_metadata;');
+    oldVersion.prepare('UPDATE messages SET ingested_at=? WHERE id=?').run('2026-09-01T00:00:00.000Z', expired.message.id);
+    oldVersion.exec('PRAGMA user_version=15;');
+    oldVersion.close();
+
+    archive = await f.open();
+    assert.equal((await archive.ready).schemaVersion, 16);
+    await archive.close();
+    const migratedDb = new DatabaseSync(f.dbPath);
+    const rows = migratedDb.prepare('SELECT message_id,resume_metadata FROM legacy_dispatch ORDER BY message_id').all();
+    const metadataById = new Map(rows.map(row => [row.message_id, row.resume_metadata]));
+    assert.deepEqual(JSON.parse(metadataById.get(recent.message.id)), { pushName: 'Persona', savedName: 'Nombre guardado' });
+    assert.equal(metadataById.get(dispatched.message.id), null);
+    assert.equal(metadataById.get(expired.message.id), null);
+    migratedDb.close();
+});
+
 test('outbox waits for completed audio transcription and skips failed transcription', async t => {
-    const { open } = await fixture(t);
+    const { open, dbPath } = await fixture(t);
     const archive = await open();
     const account = await archive.registerAccount({ channel: 'telegram', providerKey: 'telegram_bot:42' });
     const message = telegramInput(account.id, { providerMessageId: '42',
@@ -138,6 +194,10 @@ test('outbox waits for completed audio transcription and skips failed transcript
     await archive.updateTranscription({ messageId: failedId, expectedStatus: 'pending', status: 'failed' });
     assert.equal((await archive.pendingLegacyDispatches()).length, 0);
     assert.equal((await archive.diagnostics()).legacyDispatchWaiting, 0);
+    await archive.close();
+    const stored = new DatabaseSync(dbPath);
+    assert.equal(stored.prepare('SELECT resume_metadata FROM legacy_dispatch WHERE message_id=?').get(failedId).resume_metadata, null);
+    stored.close();
 });
 
 test('dispatch retries are bounded by durable ACK and channel readiness', async t => {
