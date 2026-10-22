@@ -78,6 +78,7 @@ export interface OutboundIntent {
     id: string; idempotencyKey: string; requestFingerprint: string; accountId: string | null;
     conversationId: string | null; channel: 'whatsapp' | 'telegram'; destination: string; actorId: string;
     source: 'human' | 'ai' | 'notice' | 'campaign' | 'command' | 'system'; payload: Record<string, unknown>;
+    resultExpired: boolean; redactedAt: string | null;
     controlSnapshot: { conversationId: string; controlVersion: string; contextVersion: string; policyVersion: string } | null;
     policy: Record<string, unknown> | null; state: 'intent' | 'sending' | 'accepted' | 'rejected' | 'delivery_unknown';
     providerMessageId: string | null; providerResult: unknown | null; errorCode: string | null;
@@ -151,6 +152,7 @@ export interface Archive {
     finishOutboundIntent(input: { idempotencyKey: string; state: 'accepted' | 'rejected' | 'delivery_unknown';
         providerMessageId?: string | null; providerResult?: unknown; errorCode?: string | null }): Promise<OutboundIntent>;
     outboundIntent(idempotencyKey: string): Promise<OutboundIntent | null>;
+    outboundIntentMatchesPayload(input: { idempotencyKey: string; payload: Record<string, unknown> }): Promise<boolean | null>;
     outboundIntents(input?: { conversationId?: string; state?: OutboundIntent['state'];
         sources?: OutboundIntent['source'][]; after?: { createdAt: string; id: string }; limit?: number }): Promise<OutboundIntent[]>;
     assistantToolInvocation(invocationKey: string): Promise<Contract<'AssistantToolAuditRecord'> | null>;
@@ -272,7 +274,7 @@ export interface Archive {
     diagnostics(): Promise<Contract<'EventCursor'> & { messages: number; events: number; quarantine: number; aliases: number; provenance: number;
         legacyDispatchPending: number; legacyDispatchWaiting: number; telegramAdminInbox: TelegramAdminInboxStatus; integrity: string; foreignKeys: number }>;
     purge(input?: { now?: string; limit?: number }): Promise<{ bodies: number; events: number; fingerprints: number; assistantToolInvocations: number;
-        telegramAdminInbox: number; remaining: boolean }>;
+        telegramAdminInbox: number; outboundExpired: number; outboundRedacted: number; outboundDeleted: number; remaining: boolean }>;
     backup(destination: string): Promise<Contract<'EventCursor'>>;
     close(): Promise<void>;
     queue(): { elements: number; bytes: number };

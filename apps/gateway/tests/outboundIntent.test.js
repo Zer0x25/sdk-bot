@@ -54,6 +54,95 @@ test('SendMessage persists intent first, replays accepted output locally, and re
     assert.equal(adapter.calls, 1);
 });
 
+test('terminal outbox content expires at 90 days while its idempotency tombstone lasts 180 days', async t => {
+    const f = await fixture(t);
+    const adapter = new FakeAdapter(f.archive, f.account.id);
+    const options = { source: 'notice', idempotencyKey: 'notify:retention-accepted' };
+    await adapter.sendMessage('telegram:99', 'aviso retenido', options);
+    const intent = await f.archive.outboundIntent(options.idempotencyKey);
+    const before = await f.archive.recoveryCheckpoint();
+    const day90 = new Date(Date.parse(intent.createdAt) + 90 * 86400000 + 1).toISOString();
+    const redaction = await f.archive.purge({ now: day90, limit: 500 });
+    assert.equal(redaction.outboundRedacted, 1);
+    assert.equal(redaction.outboundDeleted, 0);
+    const retained = await f.archive.outboundIntent(options.idempotencyKey);
+    assert.equal(retained.resultExpired, true);
+    assert.deepEqual(retained.payload, {});
+    assert.equal(retained.destination, '[redacted]');
+    assert.equal(retained.providerResult, null);
+    assert.equal(await f.archive.outboundIntentMatchesPayload({ idempotencyKey: options.idempotencyKey,
+        payload: { text: 'aviso retenido', options: {} } }), true);
+    assert.equal(await f.archive.outboundIntentMatchesPayload({ idempotencyKey: options.idempotencyKey,
+        payload: { text: 'otro aviso', options: {} } }), false);
+    const after = await f.archive.recoveryCheckpoint();
+    assert.equal(after.outboundIntentCount, before.outboundIntentCount);
+    assert.notEqual(after.outboundIntentSha256, before.outboundIntentSha256);
+    await assert.rejects(adapter.sendMessage('telegram:99', 'aviso retenido', options), { code: 'IDEMPOTENCY_RESULT_EXPIRED' });
+    await assert.rejects(adapter.sendMessage('telegram:99', 'otro aviso', options), { code: 'OUTBOUND_IDEMPOTENCY_CONFLICT' });
+    assert.equal(adapter.calls, 1);
+
+    const day180 = new Date(Date.parse(intent.createdAt) + 180 * 86400000).toISOString();
+    assert.equal((await f.archive.purge({ now: day180, limit: 500 })).outboundDeleted, 0);
+    const expired = await f.archive.purge({ now: new Date(Date.parse(day180) + 1).toISOString(), limit: 500 });
+    assert.equal(expired.outboundDeleted, 1);
+    assert.equal(await f.archive.outboundIntent(options.idempotencyKey), null);
+});
+
+test('delivery_unknown keeps a non-redeliverable tombstone until reconciliation', async t => {
+    const f = await fixture(t);
+    const adapter = new FakeAdapter(f.archive, f.account.id, async () => {
+        throw Object.assign(new Error('socket timeout'), { code: 'ETIMEDOUT' });
+    });
+    const options = { source: 'notice', idempotencyKey: 'notify:retention-unknown' };
+    await assert.rejects(adapter.sendMessage('telegram:88', 'posible salida', options), error => error.outboundState === 'delivery_unknown');
+    const intent = await f.archive.outboundIntent(options.idempotencyKey);
+    const day181 = new Date(Date.parse(intent.createdAt) + 181 * 86400000).toISOString();
+    const purge = await f.archive.purge({ now: day181, limit: 500 });
+    assert.equal(purge.outboundRedacted, 1);
+    assert.equal(purge.outboundDeleted, 0);
+    const retained = await f.archive.outboundIntent(options.idempotencyKey);
+    assert.equal(retained.state, 'delivery_unknown');
+    assert.equal(retained.resultExpired, true);
+    assert.deepEqual(retained.payload, {});
+    assert.equal(retained.destination, '[redacted]');
+    await assert.rejects(adapter.sendMessage('telegram:88', 'posible salida', options), { code: 'OUTBOUND_DELIVERY_UNKNOWN' });
+    assert.equal(adapter.calls, 1);
+    await f.archive.reconcileOutboundIntent({ idempotencyKey: options.idempotencyKey,
+        actorId: randomUUID(), state: 'rejected', note: 'Se confirmó que el canal no lo recibió.' });
+    assert.equal((await f.archive.outboundIntent(options.idempotencyKey)).state, 'rejected');
+    assert.equal((await f.archive.purge({ now: new Date(Date.parse(day181) + 1).toISOString(), limit: 500 })).outboundDeleted, 1);
+    assert.equal(await f.archive.outboundIntent(options.idempotencyKey), null);
+});
+
+test('unsent intents expire after 24 hours and cannot be claimed or sent after an outage', async t => {
+    const f = await fixture(t);
+    const actorId = '00000000-0000-4000-8000-000000000002';
+    const claimKey = 'notify:retention-claim-expired';
+    await f.archive.beginOutboundIntent({ idempotencyKey: claimKey, accountId: f.account.id,
+        channel: 'telegram', destination: '77', actorId, source: 'notice', payload: { text: 'en cola', options: {} } });
+    await f.archive.close();
+    const db = new DatabaseSync(f.dbPath);
+    db.prepare('UPDATE outbound_intents SET created_at=? WHERE idempotency_key=?')
+        .run(new Date(Date.now() - 24 * 60 * 60 * 1000 - 1).toISOString(), claimKey);
+    db.close();
+    await f.reopen();
+    const claim = await f.archive.claimOutboundIntent({ idempotencyKey: claimKey });
+    assert.equal(claim.status, 'rejected');
+    assert.equal(claim.errorCode, 'OUTBOUND_INTENT_EXPIRED');
+    const adapter = new FakeAdapter(f.archive, f.account.id);
+    await assert.rejects(adapter.sendMessage('telegram:77', 'en cola', { source: 'notice', idempotencyKey: claimKey }),
+        { code: 'OUTBOUND_INTENT_EXPIRED' });
+    assert.equal(adapter.calls, 0);
+
+    const sweepKey = 'notify:retention-sweep-expired';
+    const queued = await f.archive.beginOutboundIntent({ idempotencyKey: sweepKey, accountId: f.account.id,
+        channel: 'telegram', destination: '77', actorId, source: 'notice', payload: { text: 'sin enviar', options: {} } });
+    const expiredAt = new Date(Date.parse(queued.intent.createdAt) + 24 * 60 * 60 * 1000 + 1).toISOString();
+    const purge = await f.archive.purge({ now: expiredAt, limit: 500 });
+    assert.equal(purge.outboundExpired, 1);
+    assert.equal((await f.archive.outboundIntent(sweepKey)).errorCode, 'OUTBOUND_INTENT_EXPIRED');
+});
+
 test('concurrent duplicate sends claim one provider call and report the other as in progress', async t => {
     const f = await fixture(t); let release;
     const waiting = new Promise(resolve => { release = resolve; });
@@ -179,9 +268,32 @@ test('v7 archives migrate to the current schema without altering control authori
         PRAGMA user_version=7;`);
     db.close();
     const archive = await f.reopen();
-    assert.equal((await archive.ready).schemaVersion, 16);
+    assert.equal((await archive.ready).schemaVersion, 17);
     assert.deepEqual(await archive.controlAuthority(), { mode: 'legacy', migrationId: null, serviceReady: false, changedAt: null });
     assert.deepEqual(await archive.outboundIntents(), []);
+});
+
+test('v16 migration backfills payload fingerprints before outbox redaction is enabled', async t => {
+    const f = await fixture(t);
+    const input = { idempotencyKey: 'notify:v16-payload', accountId: f.account.id, channel: 'telegram',
+        destination: '55', actorId: '00000000-0000-4000-8000-000000000002', source: 'notice',
+        payload: { text: 'historial previo', options: {} } };
+    await f.archive.beginOutboundIntent(input);
+    await f.archive.close();
+    const db = new DatabaseSync(f.dbPath);
+    db.exec(`DROP INDEX outbound_intents_retention;
+        ALTER TABLE outbound_intents DROP COLUMN redacted_at;
+        ALTER TABLE outbound_intents DROP COLUMN payload_fingerprint;
+        PRAGMA user_version=16;`);
+    db.close();
+    const archive = await f.reopen();
+    assert.equal((await archive.ready).schemaVersion, 17);
+    assert.equal(await archive.outboundIntentMatchesPayload({ idempotencyKey: input.idempotencyKey, payload: input.payload }), true);
+    assert.equal(await archive.outboundIntentMatchesPayload({ idempotencyKey: input.idempotencyKey,
+        payload: { text: 'contenido distinto', options: {} } }), false);
+    const intent = await archive.outboundIntent(input.idempotencyKey);
+    assert.equal(intent.resultExpired, false);
+    assert.deepEqual(intent.payload, input.payload);
 });
 
 test('SQLite control gates customer AI sends while preserving the admin self-chat assistant', async t => {

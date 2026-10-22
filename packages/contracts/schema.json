@@ -1496,7 +1496,7 @@
         "conversationId": { "$ref": "#/$defs/Id" },
         "channel": { "type": "string", "enum": ["whatsapp", "telegram"] },
         "source": { "type": "string", "enum": ["human", "ai"] },
-        "text": { "$ref": "#/$defs/OutgoingText" },
+        "text": { "anyOf": [{ "$ref": "#/$defs/OutgoingText" }, { "type": "null" }] },
         "clientMessageId": { "anyOf": [{ "$ref": "#/$defs/Id" }, { "type": "null" }] },
         "createdAt": { "$ref": "#/$defs/Timestamp" },
         "sendingAt": { "anyOf": [{ "$ref": "#/$defs/Timestamp" }, { "type": "null" }] },

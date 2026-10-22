@@ -95,6 +95,9 @@ async function sendMessage(adapter, normalizedJid, text, options = {}) {
     let intent = begun.intent;
 
     if (begun.status === 'existing') {
+        if (intent.resultExpired && ['accepted','rejected'].includes(intent.state)) {
+            throw outboundError('IDEMPOTENCY_RESULT_EXPIRED', intent, intent.state);
+        }
         if (intent.state === 'accepted') return responseWithIntent(intent.providerResult, intent, true);
         if (intent.state === 'rejected') throw outboundError(intent.errorCode || 'OUTBOUND_REJECTED', intent, 'rejected');
         if (intent.state === 'delivery_unknown') throw outboundError('OUTBOUND_DELIVERY_UNKNOWN', intent, 'delivery_unknown');

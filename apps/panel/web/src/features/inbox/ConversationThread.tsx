@@ -534,7 +534,9 @@ export function ConversationThread(props: Props) {
                   return (
                     <li key={item.id}>
                       <p><strong>{item.source === 'ai' ? 'Salida de IA' : 'Salida del operador'}</strong> · {formatSearchTime(item.sendingAt ?? item.createdAt)}</p>
-                      <blockquote>{item.text}</blockquote>
+                      {item.text === null
+                        ? <p>El contenido venció por retención. Verifica el canal y registra la decisión con una nota.</p>
+                        : <blockquote>{item.text}</blockquote>}
                       {item.errorCode && <small>Código registrado: {item.errorCode}</small>}
                       <label>
                         ID remoto archivado

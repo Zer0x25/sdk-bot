@@ -107,7 +107,7 @@ test('v2 migration adds the outbox but leaves unreceipted historic rows untouche
     oldVersion.close();
 
     archive = await f.open();
-    assert.equal((await archive.ready).schemaVersion, 16);
+    assert.equal((await archive.ready).schemaVersion, 17);
     assert.equal((await archive.diagnostics()).messages, 1);
     assert.equal((await archive.pendingLegacyDispatches()).length, 0);
 });
@@ -132,7 +132,7 @@ test('BUG-076 keeps only replay names and expires them after the 24-hour window'
     db.close();
 
     archive = await f.open();
-    assert.equal((await archive.ready).schemaVersion, 16);
+    assert.equal((await archive.ready).schemaVersion, 17);
     await archive.close();
     const expiredDb = new DatabaseSync(f.dbPath);
     assert.equal(expiredDb.prepare('SELECT resume_metadata FROM legacy_dispatch WHERE message_id=?').get(messageId).resume_metadata, null);
@@ -151,13 +151,15 @@ test('BUG-076 v15 migration backfills names only from recent pending route paylo
     await archive.close();
 
     const oldVersion = new DatabaseSync(f.dbPath);
-    oldVersion.exec('DROP INDEX legacy_dispatch_resume_metadata; ALTER TABLE legacy_dispatch DROP COLUMN resume_metadata;');
+    oldVersion.exec(`DROP INDEX legacy_dispatch_resume_metadata; ALTER TABLE legacy_dispatch DROP COLUMN resume_metadata;
+        DROP INDEX outbound_intents_retention; ALTER TABLE outbound_intents DROP COLUMN redacted_at;
+        ALTER TABLE outbound_intents DROP COLUMN payload_fingerprint;`);
     oldVersion.prepare('UPDATE messages SET ingested_at=? WHERE id=?').run('2026-09-01T00:00:00.000Z', expired.message.id);
     oldVersion.exec('PRAGMA user_version=15;');
     oldVersion.close();
 
     archive = await f.open();
-    assert.equal((await archive.ready).schemaVersion, 16);
+    assert.equal((await archive.ready).schemaVersion, 17);
     await archive.close();
     const migratedDb = new DatabaseSync(f.dbPath);
     const rows = migratedDb.prepare('SELECT message_id,resume_metadata FROM legacy_dispatch ORDER BY message_id').all();

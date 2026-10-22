@@ -1558,3 +1558,22 @@ Cierres históricos: commits F2C.1/F2C.2/F2D/F2E.1 están en el log local; F2B.3
 - F8.3 completada en [runbook](F8.3-OPERACION-RECUPERACION.md). Siguiente punto:
   BUG-079, implementar retención acotada del outbox conservando idempotencia y
   evitando borrar intents activos o no conciliados.
+
+## Cierre BUG-079 — Retención del outbox — 2026-10-22
+
+- SQLite v17 migra el outbox con fingerprints de payload y marca de redacción.
+  Los intents en cola vencen a las 24 h; a 90 días se borran payload, destino,
+  resultado crudo y metadatos de control; los terminales se purgan a 180 días.
+  `delivery_unknown` conserva su tombstone no reejecutable hasta conciliación.
+- El replay terminal entre 90 y 180 días devuelve 410, y un payload distinto
+  sigue devolviendo conflicto 409. La conciliación posterior a la retención no
+  recrea contenido en el archivo; la UI indica que el texto venció.
+- La prueba de checkpoint confirma que la redacción cambia el digest sin borrar
+  la fila; migración v16→v17 vuelve a calcular fingerprints de filas existentes.
+- Verificación: raíz `npm run check` (contratos 19/19); `cd apps/gateway && npm
+  ci` para refrescar el contrato local; `npm run check` completo (Gateway
+  395/395, Panel 44/44, build servido 1/1), lint y typecheck; `git diff --check`.
+  Sin canal/proveedor real ni cambios runtime de producción.
+- BUG-079 cerrado en [evidencia](BUG-079-RETENCION-OUTBOX.md). Siguiente punto:
+  BUG-080, clasificar y fijar retención para recibos/cutover, cursores de lectura
+  y cuarentenas, preservando recuperaciones y revisiones pendientes.

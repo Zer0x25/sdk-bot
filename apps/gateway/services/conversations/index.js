@@ -105,6 +105,7 @@ function createArchive(options = {}) {
         finishOutboundIntent: input => call('finishOutboundIntent', input),
         outboundIntent: idempotencyKey => call('outboundIntent', idempotencyKey),
         outboundIntents: (input = {}) => call('outboundIntents', input),
+        outboundIntentMatchesPayload: input => call('outboundIntentMatchesPayload', input),
         assistantToolInvocation: invocationKey => call('assistantToolInvocation', invocationKey),
         assistantToolInvocations: (input = {}) => call('assistantToolInvocations', input),
         recordAssistantToolInvocation: input => call('recordAssistantToolInvocation', input),

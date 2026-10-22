@@ -751,7 +751,7 @@ export interface components {
             sendingAt: components["schemas"]["Timestamp"] | null;
             /** @enum {string} */
             source: "human" | "ai";
-            text: components["schemas"]["OutgoingText"];
+            text: components["schemas"]["OutgoingText"] | null;
             updatedAt: components["schemas"]["Timestamp"];
         };
         OutboundReconciliationQuery: {

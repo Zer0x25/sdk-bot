@@ -11,6 +11,9 @@ const { normalizeSearchQuery } = require('./searchQuery');
 const schema = require('./schema');
 const MAX_ATTACHMENT_BYTES = 16 * 1024 * 1024;
 const ATTACHMENT_RETENTION_MS = 90 * 86400000;
+const OUTBOUND_RESULT_RETENTION_MS = 90 * 86400000;
+const OUTBOUND_IDEMPOTENCY_RETENTION_MS = 180 * 86400000;
+const OUTBOUND_INTENT_MAX_AGE_MS = 24 * 60 * 60 * 1000;
 const RESUME_METADATA_RETENTION_MS = 24 * 60 * 60 * 1000;
 const RESUME_METADATA_CLEANUP_INTERVAL_MS = 60 * 1000;
 let db;
@@ -19,7 +22,7 @@ const READ_ONLY_METHODS = new Set(['snapshot','telegramCursor','pendingLegacyDis
     'pendingTelegramAdminInbox','telegramAdminInboxStatus',
     'controlPolicy','controlOperation','pendingControlOperations','controlTargets','controlByIdentity',
     'pendingResumeMessages','shouldProcessArchivedInbound',
-    'outboundIntent','outboundIntents',
+    'outboundIntent','outboundIntents','outboundIntentMatchesPayload',
     'conversation','conversations','conversationRows','conversationView','conversationAddress','accounts','messages','messagePage','searchMessages','messageByProviderId','aiContext',
     'events','eventsPage','diagnostics','recoveryCheckpoint','summary','attachmentTarget','attachment','attachmentRegistry','pendingAttachmentDeletions',
     'assistantToolInvocation','assistantToolInvocations','close']);
@@ -169,7 +172,7 @@ function initialize() {
         // committed WAL records or touching another process's snapshot.
         db = new DatabaseSync(`${pathToFileURL(file).href}?immutable=1`, { readOnly: true });
         const schemaVersion = one('PRAGMA user_version').user_version;
-        if (![6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16].includes(schemaVersion)) fail('SCHEMA_VERSION_REQUIRED');
+        if (![6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17].includes(schemaVersion)) fail('SCHEMA_VERSION_REQUIRED');
         if (one("SELECT migration_id FROM control_import_migrations WHERE status IN ('cutover_applying','rolling_back') LIMIT 1")) {
             fail('CONTROL_CUTOVER_RECOVERY_REQUIRED');
         }
@@ -189,7 +192,7 @@ function initialize() {
     // SQLite owns the OS lock for the full connection lifetime; crash releases it.
     db.exec('BEGIN IMMEDIATE; COMMIT;');
     const version = one('PRAGMA user_version').user_version;
-    if (version > 16) fail('SCHEMA_TOO_NEW');
+    if (version > 17) fail('SCHEMA_TOO_NEW');
     if (version === 0) transaction(() => {
         db.exec(schema);
         run('INSERT INTO archive_meta VALUES(1,?,?)', randomUUID(), '0');
@@ -482,6 +485,18 @@ function initialize() {
         }
         db.exec('PRAGMA user_version=16;');
     });
+    if (one('PRAGMA user_version').user_version === 16) transaction(() => {
+        db.exec(`ALTER TABLE outbound_intents ADD COLUMN payload_fingerprint TEXT NOT NULL
+            DEFAULT '0000000000000000000000000000000000000000000000000000000000000000'
+            CHECK(length(payload_fingerprint)=64 AND payload_fingerprint NOT GLOB '*[^a-f0-9]*');
+        ALTER TABLE outbound_intents ADD COLUMN redacted_at TEXT;
+        CREATE INDEX outbound_intents_retention ON outbound_intents(state,created_at,id);`);
+        for (const row of all('SELECT id,payload FROM outbound_intents')) {
+            const payloadFingerprint = createHash('sha256').update(stable(JSON.parse(row.payload))).digest('hex');
+            run('UPDATE outbound_intents SET payload_fingerprint=? WHERE id=?', payloadFingerprint, row.id);
+        }
+        db.exec('PRAGMA user_version=17;');
+    });
     // A process can fail after claiming an admin command and before recording its
     // result. Never replay that ambiguous effect; preserve only its receipt.
     run(`UPDATE telegram_admin_inbox SET status='uncertain',payload=NULL,
@@ -513,7 +528,7 @@ function initialize() {
         try { expireResumeMetadata(); } catch { /* Retry on the next interval or resume request. */ }
     }, RESUME_METADATA_CLEANUP_INTERVAL_MS);
     resumeMetadataSweepTimer.unref();
-    return { ...snapshot(), schemaVersion: 16, journalMode: one('PRAGMA journal_mode').journal_mode,
+    return { ...snapshot(), schemaVersion: 17, journalMode: one('PRAGMA journal_mode').journal_mode,
         synchronous: one('PRAGMA synchronous').synchronous, threadId: require('node:worker_threads').threadId };
 }
 function registerAccount(input) {
@@ -1150,6 +1165,7 @@ function outboundIntentFromRow(row) {
     return { id: row.id, idempotencyKey: row.idempotency_key, requestFingerprint: row.request_fingerprint,
         accountId: row.account_id, conversationId: row.conversation_id, channel: row.channel,
         destination: row.destination, actorId: row.actor_id, source: row.source, payload: JSON.parse(row.payload),
+        resultExpired: row.redacted_at != null, redactedAt: row.redacted_at,
         controlSnapshot: row.control_snapshot ? JSON.parse(row.control_snapshot) : null,
         policy: row.policy ? JSON.parse(row.policy) : null, state: row.state,
         providerMessageId: row.provider_message_id, providerResult: row.provider_result ? JSON.parse(row.provider_result) : null,
@@ -1160,6 +1176,16 @@ function outboundIntentFromRow(row) {
 function outboundIntent(idempotencyKey) {
     if (typeof idempotencyKey !== 'string' || !idempotencyKey.length || idempotencyKey.length > 256) fail('INVALID_IDEMPOTENCY_KEY');
     return outboundIntentFromRow(one('SELECT * FROM outbound_intents WHERE idempotency_key=?', idempotencyKey));
+}
+function outboundIntentMatchesPayload(input) {
+    if (!input || typeof input.idempotencyKey !== 'string' || !input.idempotencyKey.length || input.idempotencyKey.length > 256) {
+        fail('INVALID_IDEMPOTENCY_KEY');
+    }
+    if (!input.payload || typeof input.payload !== 'object' || Array.isArray(input.payload)) fail('INVALID_OUTBOUND_PAYLOAD');
+    const row = one('SELECT payload_fingerprint FROM outbound_intents WHERE idempotency_key=?', input.idempotencyKey);
+    if (!row) return null;
+    const fingerprint = createHash('sha256').update(stable(input.payload)).digest('hex');
+    return row.payload_fingerprint === fingerprint;
 }
 function outboundIntents(input = {}) {
     if (input.conversationId != null) assertValid('Id', input.conversationId);
@@ -1351,6 +1377,7 @@ function beginOutboundIntent(input) {
         actorId: input.actorId, channel: input.channel, controlSnapshot: input.controlSnapshot ?? null,
         conversationId: input.conversationId ?? null, destination: input.destination, payload: input.payload,
         policy: normalizedPolicy ?? null, source: input.source })).digest('hex');
+    const payloadFingerprint = createHash('sha256').update(payload).digest('hex');
     const prior = one('SELECT * FROM outbound_intents WHERE idempotency_key=?', input.idempotencyKey);
     if (prior) {
         if (prior.request_fingerprint !== fingerprint) fail('OUTBOUND_IDEMPOTENCY_CONFLICT');
@@ -1358,17 +1385,24 @@ function beginOutboundIntent(input) {
     }
     const now = new Date().toISOString(), id = randomUUID();
     run(`INSERT INTO outbound_intents(id,idempotency_key,request_fingerprint,account_id,conversation_id,channel,destination,
-        actor_id,source,payload,control_snapshot,policy,state,provider_message_id,provider_result,error_code,
+        actor_id,source,payload,payload_fingerprint,control_snapshot,policy,state,provider_message_id,provider_result,error_code,
         reconciliation_note,reconciled_by,reconciled_at,created_at,updated_at,sending_at,completed_at)
-        VALUES(?,?,?,?,?,?,?,?,?,?,?,?,'intent',NULL,NULL,NULL,NULL,NULL,NULL,?,?,NULL,NULL)`,
+        VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,'intent',NULL,NULL,NULL,NULL,NULL,NULL,?,?,NULL,NULL)`,
     id, input.idempotencyKey, fingerprint, input.accountId ?? null, input.conversationId ?? input.controlSnapshot?.conversationId ?? null,
-    input.channel, input.destination, input.actorId, input.source, payload, controlSnapshot, policy, now, now);
+    input.channel, input.destination, input.actorId, input.source, payload, payloadFingerprint, controlSnapshot, policy, now, now);
     return { status: 'created', intent: outboundIntent(input.idempotencyKey) };
 }
 function claimOutboundIntent(input) {
     const current = outboundIntent(input?.idempotencyKey);
     if (!current) fail('OUTBOUND_INTENT_MISSING');
     if (current.state !== 'intent') return { status: current.state, intent: current };
+    if (Date.parse(current.createdAt) < Date.now() - OUTBOUND_INTENT_MAX_AGE_MS) {
+        const now = new Date().toISOString();
+        run(`UPDATE outbound_intents SET state='rejected',error_code='OUTBOUND_INTENT_EXPIRED',updated_at=?,completed_at=?
+            WHERE idempotency_key=? AND state='intent'`, now, now, input.idempotencyKey);
+        const expired = outboundIntent(input.idempotencyKey);
+        return { status: 'rejected', errorCode: 'OUTBOUND_INTENT_EXPIRED', intent: expired };
+    }
     if (current.source === 'ai') {
         const authority = controlAuthority();
         const adminSelfIntent = current.policy?.scope === 'admin_self_chat' && !current.controlSnapshot;
@@ -1519,8 +1553,10 @@ function reconcileOutboundIntentRow(row, input, requireConversation = false) {
     if (input.state === 'accepted' && original.conversationId && ['human','ai'].includes(original.source)) {
         if (!providerMessageId) fail('OUTBOUND_MESSAGE_CORRELATION_REQUIRED');
         assertValid('ProviderMessageId', providerMessageId);
-        if (original.source === 'human') materializeHumanOutbound(original, providerMessageId, now);
-        else materializeAutomationOutbound(original, providerMessageId, now);
+        if (!original.resultExpired) {
+            if (original.source === 'human') materializeHumanOutbound(original, providerMessageId, now);
+            else materializeAutomationOutbound(original, providerMessageId, now);
+        }
     }
     run(`UPDATE outbound_intents SET state=?,provider_message_id=?,error_code=NULL,reconciliation_note=?,reconciled_by=?,
         reconciled_at=?,updated_at=?,completed_at=? WHERE id=? AND state='delivery_unknown'`,
@@ -1805,7 +1841,7 @@ function beginControlImport(input) {
     const report = input.report;
     if (!report || report.schemaVersion !== 1 || report.dryRun !== true || !Array.isArray(report.entries)
         || !Array.isArray(report.blockers) || typeof report.cutoverAllowed !== 'boolean') fail('INVALID_IMPORT_REPORT');
-    if (![6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16].includes(report.sourceManifest?.archive?.schemaVersion) || typeof report.sourceManifest.archive.dataEpoch !== 'string'
+    if (![6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17].includes(report.sourceManifest?.archive?.schemaVersion) || typeof report.sourceManifest.archive.dataEpoch !== 'string'
         || !/^(0|[1-9][0-9]*)$/.test(report.sourceManifest.archive.seq || '')) fail('INVALID_IMPORT_SNAPSHOT');
     const currentSnapshot = snapshot();
     if (report.sourceManifest.archive.dataEpoch !== currentSnapshot.dataEpoch || report.sourceManifest.archive.seq !== currentSnapshot.seq) {
@@ -2591,9 +2627,24 @@ function purge(input) {
     const telegramAdminInbox = run(`DELETE FROM telegram_admin_inbox WHERE rowid IN
         (SELECT rowid FROM telegram_admin_inbox WHERE status IN ('completed','uncertain') AND received_at<? LIMIT ?)`,
     cutoff(180), limit).changes;
+    const outboundExpired = run(`UPDATE outbound_intents SET state='rejected',error_code='OUTBOUND_INTENT_EXPIRED',
+        updated_at=?,completed_at=? WHERE id IN (SELECT id FROM outbound_intents
+        WHERE state='intent' AND created_at<? ORDER BY created_at,id LIMIT ?)`,
+    now, now, cutoff(1), limit).changes;
+    const outboundRedacted = run(`UPDATE outbound_intents SET destination='[redacted]',payload='{}',provider_result=NULL,
+        control_snapshot=NULL,policy=CASE WHEN json_extract(policy,'$.handledThroughInboundSeq') IS NULL THEN NULL
+            ELSE json_object('handledThroughInboundSeq',json_extract(policy,'$.handledThroughInboundSeq')) END,
+        redacted_at=? WHERE id IN (SELECT id FROM outbound_intents
+        WHERE state IN ('accepted','rejected','delivery_unknown') AND redacted_at IS NULL AND created_at<?
+        ORDER BY created_at,id LIMIT ?)`, now, cutoff(OUTBOUND_RESULT_RETENTION_MS / 86400000), limit).changes;
+    const outboundDeleted = run(`DELETE FROM outbound_intents WHERE id IN (SELECT id FROM outbound_intents
+        WHERE state IN ('accepted','rejected') AND created_at<? ORDER BY created_at,id LIMIT ?)`,
+    cutoff(OUTBOUND_IDEMPOTENCY_RETENTION_MS / 86400000), limit).changes;
     return { bodies, events, fingerprints, assistantToolInvocations, telegramAdminInbox,
         remaining: bodies === limit || events === limit || fingerprints === limit
-            || assistantToolInvocations === limit || telegramAdminInbox === limit };
+            || assistantToolInvocations === limit || telegramAdminInbox === limit
+            || outboundExpired === limit || outboundRedacted === limit || outboundDeleted === limit,
+        outboundExpired, outboundRedacted, outboundDeleted };
 }
 function eventPage(input) {
     const after = input.after ?? '0';
@@ -2662,6 +2713,7 @@ function dispatch(method, input) {
         case 'finishOutboundIntent': return transaction(() => finishOutboundIntent(input));
         case 'outboundIntent': return outboundIntent(input);
         case 'outboundIntents': return outboundIntents(input ?? {});
+        case 'outboundIntentMatchesPayload': return outboundIntentMatchesPayload(input);
         case 'assistantToolInvocation': return assistantToolInvocation(input);
         case 'assistantToolInvocations': return assistantToolInvocations(input ?? {});
         case 'recordAssistantToolInvocation': return transaction(() => recordAssistantToolInvocation(input));

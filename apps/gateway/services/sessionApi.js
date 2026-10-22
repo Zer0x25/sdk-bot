@@ -572,6 +572,8 @@ function archiveBoundary(error) {
         OUTBOUND_ACCOUNT_CHANGED: [409, 'CHANNEL_NOT_READY', 'La cuenta del canal cambió antes del envío.'],
         OUTBOUND_ACCOUNT_UNAVAILABLE: [409, 'CHANNEL_NOT_READY', 'La cuenta del canal no está disponible.'],
         OUTBOUND_IDEMPOTENCY_CONFLICT: [409, 'IDEMPOTENCY_KEY_REUSED', 'El identificador del mensaje ya se usó con otro contenido.'],
+        OUTBOUND_INTENT_EXPIRED: [410, 'OUTBOUND_INTENT_EXPIRED', 'El envío pendiente venció sin iniciar. Crea una respuesta nueva.'],
+        IDEMPOTENCY_RESULT_EXPIRED: [410, 'IDEMPOTENCY_RESULT_EXPIRED', 'El resultado de este envío venció. Actualiza el hilo antes de crear otra respuesta.'],
         OUTBOUND_INTENT_MISSING: [404, 'NOT_FOUND', 'No se encontró la salida incierta de esta conversación.'],
         OUTBOUND_INTENT_NOT_RECONCILABLE: [409, 'OUTBOUND_RECONCILIATION_CONFLICT', 'Esta salida no admite conciliación desde la conversación.'],
         OUTBOUND_RECONCILIATION_CONFLICT: [409, 'OUTBOUND_RECONCILIATION_CONFLICT', 'La salida ya cambió. Actualiza el hilo antes de conciliarla.'],
@@ -940,7 +942,8 @@ function createSessionApi(getPolicy, archive, getContacts = () => ({}), getChann
                 const hasMore = page.length > limit;
                 const items = page.slice(0, limit).map(intent => ({
                     id: intent.id, conversationId: intent.conversationId, channel: intent.channel, source: intent.source,
-                    text: intent.payload?.text, clientMessageId: intent.policy?.clientMessageId ?? null,
+                    text: typeof intent.payload?.text === 'string' ? intent.payload.text : null,
+                    clientMessageId: intent.policy?.clientMessageId ?? null,
                     createdAt: intent.createdAt, sendingAt: intent.sendingAt, updatedAt: intent.updatedAt,
                     errorCode: intent.errorCode
                 }));
@@ -1057,10 +1060,14 @@ function createSessionApi(getPolicy, archive, getContacts = () => ({}), getChann
                 const idempotencyKey = `panel_${context.actor.id}_${conversationId}_${request.clientMessageId}`;
                 const existing = await archive.outboundIntent(idempotencyKey);
                 if (existing) {
+                    const samePayload = await archive.outboundIntentMatchesPayload({ idempotencyKey,
+                        payload: { text: request.text, options: {} } });
                     if (existing.source !== 'human' || existing.actorId !== context.actor.id
-                        || existing.conversationId !== conversationId || existing.payload?.text !== request.text
-                        || existing.policy?.clientMessageId !== request.clientMessageId) {
+                        || existing.conversationId !== conversationId || samePayload !== true) {
                         throw new BoundaryError(409, 'IDEMPOTENCY_KEY_REUSED', 'El identificador del mensaje ya se usó con otro contenido.');
+                    }
+                    if (existing.resultExpired && existing.state !== 'delivery_unknown') {
+                        throw new BoundaryError(410, 'IDEMPOTENCY_RESULT_EXPIRED', 'El resultado de este envío venció. Actualiza el hilo antes de crear otra respuesta.');
                     }
                     if (existing.state === 'accepted') {
                         const message = existing.providerMessageId

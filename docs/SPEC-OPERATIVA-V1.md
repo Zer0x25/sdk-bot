@@ -207,11 +207,15 @@ metadatos. El gate offline de F8.4 compara también el ledger de metadatos, pero
 valida por sí solo que los bytes estén completos en el backup.
 
 Las huellas dentro de 180 días evitan recrear un mensaje purgado por redelivery.
-Repetir una intención cuyo resultado ya fue purgado devuelve
-`410 IDEMPOTENCY_RESULT_EXPIRED`, nunca la ejecuta otra vez. Tras 180 días esa
-garantía vence; un cliente antiguo debe resincronizar y no reenviar automáticamente.
-No se almacenan cuerpos indefinidamente por tener un envío delivery_unknown;
-se conserva solo su huella/estado mínimo hasta el plazo aplicable.
+En el outbox, un intent que aún no inició transporte vence a las 24 horas. Los
+resultados terminales mantienen una huella de idempotencia hasta 180 días; su
+contenido, destino y resultado crudo se eliminan a los 90 días junto con el plazo
+de cuerpos del archivo. Repetir una intención terminal cuyo resultado venció
+devuelve `410 IDEMPOTENCY_RESULT_EXPIRED`, nunca la ejecuta otra vez. Al cumplir
+180 días se purgan intents terminales y vence esa garantía; un cliente antiguo
+debe resincronizar y no reenviar automáticamente. Un `delivery_unknown` conserva
+su estado/huellas no reejecutables hasta conciliación, pero pierde contenido,
+destino y resultado crudo a los 90 días.
 
 Borrar contexto crea un nuevo contextVersion y límite de mensajes/contexto: la
 proyección no vuelve a importar ese tramo del archivo. Purgar un cuerpo invalida

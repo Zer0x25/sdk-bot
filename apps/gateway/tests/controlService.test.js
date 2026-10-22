@@ -9,6 +9,7 @@ const { createArchive } = require('../services/conversations');
 const { buildControlImportReport } = require('../services/conversations/controlImport');
 const { createControlService, LEGACY_ADMIN_ACTOR } = require('../services/conversations/controlService');
 const { createSessionApi, capabilityFor, projectConversation } = require('../services/sessionApi');
+const ChannelAdapter = require('../core/ChannelAdapter');
 const { setControlService } = require('../services/stateService');
 const { state } = require('../config');
 const chatControlCommands = require('../handlers/commands/chatControl');
@@ -292,7 +293,7 @@ test('BUG-075 authenticated reconciliation correlates accepted output before adv
         content: { type: 'text', text: intent.payload.text } }]);
 
     let providerSendCalls = 0;
-    const route = createSessionApi(() => ({ globalMode: 'allowed_all', globalPaused: false, policyVersion: '1' }),
+    let route = createSessionApi(() => ({ globalMode: 'allowed_all', globalPaused: false, policyVersion: '1' }),
         archive, () => ({}), undefined, null, () => { providerSendCalls += 1; throw new Error('reconciliation must not send'); });
     async function request(method, pathname, body = null, requestActor = actor) {
         let status, response;
@@ -345,6 +346,50 @@ test('BUG-075 authenticated reconciliation correlates accepted output before adv
     assert.equal((await archive.pendingResumeMessages({ conversationId })).uncertainOutboundCount, 0);
     assert.equal((await archive.conversation(conversationId)).handled_inbound_seq, inboundSeq);
     assert.equal(providerSendCalls, 0);
+
+    const latestControl = await archive.controlState(conversationId);
+    const latestPolicy = await archive.controlPolicy();
+    const expiredIntent = await archive.beginOutboundIntent({ idempotencyKey: 'human-reconcile-expired-001',
+        accountId, conversationId, channel: 'whatsapp', destination: '111@s.whatsapp.net', actorId: actor.id,
+        source: 'human', payload: { text: 'contenido vencido' },
+        controlSnapshot: { conversationId, controlVersion: latestControl.controlVersion,
+            contextVersion: latestControl.contextVersion, policyVersion: latestPolicy.policyVersion },
+        policy: { handledThroughInboundSeq: inboundSeq, clientMessageId: randomUUID() } });
+    assert.equal((await archive.claimOutboundIntent({ idempotencyKey: expiredIntent.intent.idempotencyKey })).status, 'claimed');
+    await archive.finishOutboundIntent({ idempotencyKey: expiredIntent.intent.idempotencyKey, state: 'delivery_unknown' });
+    await archive.purge({ now: new Date(Date.parse(expiredIntent.intent.createdAt) + 90 * 86400000 + 1).toISOString() });
+    const redactedList = await request('GET', listPath);
+    assert.equal(redactedList.status, 200, JSON.stringify(redactedList.response));
+    assert.equal(redactedList.response.items.length, 1);
+    assert.equal(redactedList.response.items[0].text, null);
+    const redactedRow = await archive.outboundIntent(expiredIntent.intent.idempotencyKey);
+    const lateAcceptance = await request('POST', `/v1/conversations/${conversationId}/outbound-intents/${redactedRow.id}/reconcile`,
+        { state: 'accepted', providerMessageId: 'provider-after-retention', note: 'Verifiqué el envío en el canal.' });
+    assert.equal(lateAcceptance.status, 200);
+    assert.equal((await archive.outboundIntent(expiredIntent.intent.idempotencyKey)).state, 'accepted');
+    assert.equal(await archive.messageByProviderId({ conversationId, providerMessageId: 'provider-after-retention' }), null);
+
+    providerSendCalls = 0;
+    const panelAdapter = Object.assign(new ChannelAdapter('whatsapp'), { archive, accountId,
+        async sendMessageRaw() { providerSendCalls += 1; return { key: { id: `panel-provider-${providerSendCalls}` } }; } });
+    route = createSessionApi(() => ({ globalMode: 'allowed_all', globalPaused: false, policyVersion: '1' }), archive,
+    () => ({}), () => 'connected', createControlService(archive, { drainConversation: () => ({ drained: true }) }),
+    () => panelAdapter);
+    const sendBody = { expectedVersion: latestControl.controlVersion, clientMessageId: randomUUID(), text: 'respuesta con clave durable' };
+    const panelSendPath = `/v1/conversations/${conversationId}/messages`;
+    const firstPanelSend = await request('POST', panelSendPath, sendBody);
+    assert.equal(firstPanelSend.status, 202);
+    assert.equal(providerSendCalls, 1);
+    const panelKey = `panel_${actor.id}_${conversationId}_${sendBody.clientMessageId}`;
+    const panelIntent = await archive.outboundIntent(panelKey);
+    await archive.purge({ now: new Date(Date.parse(panelIntent.createdAt) + 90 * 86400000 + 1).toISOString() });
+    const expiredPanelReplay = await request('POST', panelSendPath, sendBody);
+    assert.equal(expiredPanelReplay.status, 410);
+    assert.equal(expiredPanelReplay.response.code, 'IDEMPOTENCY_RESULT_EXPIRED');
+    const conflictingPanelReplay = await request('POST', panelSendPath, { ...sendBody, text: 'texto diferente' });
+    assert.equal(conflictingPanelReplay.status, 409);
+    assert.equal(conflictingPanelReplay.response.code, 'IDEMPOTENCY_KEY_REUSED');
+    assert.equal(providerSendCalls, 1);
 });
 
 test('BUG-075 rejected reconciliation clears the delivery block without marking inbound handled', async t => {
