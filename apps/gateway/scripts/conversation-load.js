@@ -10,8 +10,8 @@ const { performance, monitorEventLoopDelay } = require('node:perf_hooks');
 const { setTimeout: delay } = require('node:timers/promises');
 const { assertValid } = require('@sdk-bot/contracts');
 const { createArchive } = require('../services/conversations');
+const { REPO_ROOT } = require('../lib/repoPaths');
 
-const REPO_ROOT = path.resolve(__dirname, '../..');
 const FIXTURE_PATH = path.join(REPO_ROOT, 'docs/fixtures/v1-acceptance.json');
 const SCHEMA_PATH = path.join(REPO_ROOT, 'packages/contracts/schema.json');
 const MAX_QUEUE_ITEMS = 1000;

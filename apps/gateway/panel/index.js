@@ -27,9 +27,10 @@ const { resolveActor } = require('./identity');
 const { serveConversationsApp } = require('./webApp');
 const { actorId, requireCapability } = require('../lib/panelContext');
 const { BoundaryError, sendError } = require('../lib/httpBoundary');
+const { GATEWAY_STATE_DIR } = require('../lib/repoPaths');
 
 // Carga gateway/panel/.env (no versionado) si existe. No sobreescribe env ya definidas.
-const DOTENV = path.join(__dirname, '.env');
+const DOTENV = path.join(GATEWAY_STATE_DIR, 'panel', '.env');
 if (fs.existsSync(DOTENV)) {
     for (const line of fs.readFileSync(DOTENV, 'utf8').split('\n')) {
         const m = line.match(/^\s*([A-Z0-9_]+)\s*=\s*(.*)\s*$/);

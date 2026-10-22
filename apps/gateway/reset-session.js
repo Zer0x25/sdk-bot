@@ -1,8 +1,9 @@
 const fs = require('fs');
 const path = require('path');
 const readline = require('readline');
+const { GATEWAY_STATE_DIR } = require('./lib/repoPaths');
 
-const AUTH_DIR = process.env.SDK_AUTH_DIR || path.join(__dirname, 'auth_info_baileys');
+const AUTH_DIR = process.env.SDK_AUTH_DIR || path.join(GATEWAY_STATE_DIR, 'auth_info_baileys');
 
 function askConfirmation(question) {
     const rl = readline.createInterface({

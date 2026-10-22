@@ -3,8 +3,9 @@ const pino = require('pino');
 const path = require('path');
 const fs = require('fs');
 const os = require('os');
+const { GATEWAY_STATE_DIR } = require('../lib/repoPaths');
 
-const LOG_DIR = path.join(__dirname, '..', 'logs');
+const LOG_DIR = process.env.SDK_ADMIN_WEB_LOG_GATEWAY || path.join(GATEWAY_STATE_DIR, 'logs');
 const TEST_MODE = process.env.SDK_BOT_TEST === '1' || process.execArgv.includes('--test');
 const TEST_LOG_FILE = process.env.SDK_TEST_LOG_PATH || path.join(os.tmpdir(), `sdk-bot-test-${process.pid}.log`);
 const LOG_FILE = TEST_MODE ? TEST_LOG_FILE : path.join(LOG_DIR, 'gateway.log');

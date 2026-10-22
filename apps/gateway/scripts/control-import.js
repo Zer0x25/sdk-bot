@@ -4,6 +4,7 @@ const { createHash } = require('node:crypto');
 const { createArchive } = require('../services/conversations');
 const { buildControlImportReport } = require('../services/conversations/controlImport');
 const { readJsonSource, readProfileKeys, assertGatewayStopped, allConversationRows } = require('./control-import-dry-run');
+const { GATEWAY_STATE_DIR, BRAIN_STATE_DIR } = require('../lib/repoPaths');
 
 function safeErrorCode(error) {
     return typeof error?.code === 'string' && /^[A-Z0-9_]{1,64}$/.test(error.code) ? error.code : 'CONTROL_IMPORT_FAILED';
@@ -103,11 +104,11 @@ async function run(args = process.argv.slice(2)) {
         return 0;
     }
     const paths = {
-        contacts: process.env.SDK_CONTACTS_DB_PATH || path.join(__dirname, '..', 'contacts_db.json'),
-        settings: process.env.SDK_SETTINGS_DB_PATH || path.join(__dirname, '..', 'settings_db.json'),
-        profiles: process.env.SDK_BRAIN_PROFILES_DIR || path.resolve(__dirname, '../../brain/profiles'),
-        database: process.env.SDK_CONVERSATIONS_DB_PATH || path.join(__dirname, '..', 'data', 'conversations.db'),
-        lock: process.env.SDK_GATEWAY_LOCK_PATH || path.join(__dirname, '..', '.gateway.lock')
+        contacts: process.env.SDK_CONTACTS_DB_PATH || path.join(GATEWAY_STATE_DIR, 'contacts_db.json'),
+        settings: process.env.SDK_SETTINGS_DB_PATH || path.join(GATEWAY_STATE_DIR, 'settings_db.json'),
+        profiles: process.env.SDK_BRAIN_PROFILES_DIR || path.join(BRAIN_STATE_DIR, 'profiles'),
+        database: process.env.SDK_CONVERSATIONS_DB_PATH || path.join(GATEWAY_STATE_DIR, 'data', 'conversations.db'),
+        lock: process.env.SDK_GATEWAY_LOCK_PATH || path.join(GATEWAY_STATE_DIR, '.gateway.lock')
     };
     let archive;
     let sourceManifest = {};

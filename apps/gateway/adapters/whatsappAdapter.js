@@ -14,11 +14,12 @@ const internalBus = require('../services/internalBus');
 const { getSettingsDB, saveSettingsDB } = require('../services/db');
 const { transcribeAudio, MAX_AUDIO_BYTES } = require('../services/stt');
 const { num } = require('../tuning');
+const { GATEWAY_STATE_DIR } = require('../lib/repoPaths');
 
 const log = cat('WHATSAPP');
 const logError = cat('ERROR');
 
-const AUTH_DIR = process.env.SDK_AUTH_DIR || path.join(__dirname, '..', 'auth_info_baileys');
+const AUTH_DIR = process.env.SDK_AUTH_DIR || path.join(GATEWAY_STATE_DIR, 'auth_info_baileys');
 
 class WhatsappAdapter extends ChannelAdapter {
     constructor({ archive, makeSocket = makeWASocket, loadAuth = useMultiFileAuthState, download = downloadMediaMessage, transcribe = transcribeAudio } = {}) {

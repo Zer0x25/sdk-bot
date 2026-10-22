@@ -25,6 +25,7 @@ const { execFile } = require('child_process');
 const { CONTACTS_FILE_PATH, SETTINGS_FILE_PATH } = require('../config');
 const { cat, errMsg } = require('./logger');
 const { statePaths: conversationPaths } = require('./conversations/paths');
+const { GATEWAY_STATE_DIR, BRAIN_STATE_DIR } = require('../lib/repoPaths');
 
 const logError = cat('ERROR');
 
@@ -35,12 +36,12 @@ const logError = cat('ERROR');
  * @property {string} path — ruta absoluta a borrar
  */
 
-const AUTH_DIR = () => process.env.SDK_AUTH_DIR || path.join(__dirname, '..', 'auth_info_baileys');
-const BROADCAST_DB = () => process.env.SDK_BROADCAST_DB_PATH || path.join(__dirname, '..', 'broadcast_db.json');
-const QUEUE_FILE = () => process.env.SDK_MESSAGE_QUEUE_PATH || path.join(__dirname, '..', 'queue', 'pending_messages.jsonl');
-const BRAIN_MEMORY_DB = () => process.env.BRAIN_MEMORY_DB || path.join(__dirname, '..', '..', 'brain', 'memory.db');
-const GATEWAY_LOG_DIR = () => process.env.SDK_ADMIN_WEB_LOG_GATEWAY || path.join(__dirname, '..', 'logs');
-const BRAIN_LOG_DIR = () => process.env.SDK_ADMIN_WEB_LOG_BRAIN || path.join(__dirname, '..', '..', 'brain', 'logs');
+const AUTH_DIR = () => process.env.SDK_AUTH_DIR || path.join(GATEWAY_STATE_DIR, 'auth_info_baileys');
+const BROADCAST_DB = () => process.env.SDK_BROADCAST_DB_PATH || path.join(GATEWAY_STATE_DIR, 'broadcast_db.json');
+const QUEUE_FILE = () => process.env.SDK_MESSAGE_QUEUE_PATH || path.join(GATEWAY_STATE_DIR, 'queue', 'pending_messages.jsonl');
+const BRAIN_MEMORY_DB = () => process.env.BRAIN_MEMORY_DB || path.join(BRAIN_STATE_DIR, 'memory.db');
+const GATEWAY_LOG_DIR = () => process.env.SDK_ADMIN_WEB_LOG_GATEWAY || path.join(GATEWAY_STATE_DIR, 'logs');
+const BRAIN_LOG_DIR = () => process.env.SDK_ADMIN_WEB_LOG_BRAIN || path.join(BRAIN_STATE_DIR, 'logs');
 
 let wiping = false;
 let beforeReset = async () => {};
@@ -64,8 +65,8 @@ function isWiping() {
 /** @returns {{gateway: string, brain: string}} */
 function lockFiles() {
     return {
-        gateway: process.env.SDK_GATEWAY_LOCK_PATH || path.join(__dirname, '..', '.gateway.lock'),
-        brain: process.env.SDK_BRAIN_LOCK_PATH || path.join(__dirname, '..', '..', 'brain', '.brain.lock')
+        gateway: process.env.SDK_GATEWAY_LOCK_PATH || path.join(GATEWAY_STATE_DIR, '.gateway.lock'),
+        brain: process.env.SDK_BRAIN_LOCK_PATH || path.join(BRAIN_STATE_DIR, '.brain.lock')
     };
 }
 

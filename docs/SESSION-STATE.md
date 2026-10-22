@@ -1055,3 +1055,23 @@ Cierres históricos: commits F2C.1/F2C.2/F2D/F2E.1 están en el log local; F2B.3
   cargó). El contenedor e imagen temporales se eliminaron. `git diff --check` pasó.
 - No se inició Gateway ni se contactó a un canal. Siguiente subunidad: F8.1b,
   mover Gateway con sus rutas de estado y credenciales preservadas.
+
+## Fase 8.1b — Gateway dentro de `apps/` — 2026-10-22
+
+- Los 161 archivos versionados de `gateway/` se movieron a `apps/gateway/`.
+  Archivos ignorados de sesiones, datos, logs y dependencias no se movieron.
+  `apps/gateway/lib/repoPaths.js` mantiene los defaults de estado en las rutas
+  existentes `gateway/` y `brain/`; no se hizo migración de datos.
+- El paquete independiente ahora consume contracts con `file:../../packages/contracts`.
+  Docker, CI, launchers Linux/Windows/Termux y sus instrucciones ejecutan el nuevo
+  entrypoint. Compose mantiene los volúmenes y archivos de estado existentes.
+- Verificación: prueba de rutas por defecto 1/1; `npm run check` en
+  `apps/gateway/` (lint, typecheck, 38 tests del panel, build Vite y 321 tests del
+  gateway); `bash -n` de los launchers; Compose `config --quiet`; smoke Gateway +
+  panel en puertos/estado temporales con transporte WhatsApp simulado; build real
+  de `deploy/docker/gateway.Dockerfile`; `git diff --check`.
+- El smoke no detuvo ni reemplazó los procesos activos del checkout. No se
+  conectó a proveedores, no se publicó imagen y no se hizo push. F8.1 sigue en
+  progreso; el panel sigue anidado en `apps/gateway/panel/` y el brain en `brain/`.
+- Siguiente subunidad: F8.1c, mover el proceso y frontend del panel a `apps/panel/`
+  manteniendo sus dependencias y rutas de estado.

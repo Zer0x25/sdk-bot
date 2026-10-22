@@ -25,7 +25,7 @@
   "license": "ISC",
   "description": "WhatsApp Multi-Bot Gateway with Smart Sync & Metadata",
   "dependencies": {
-    "@sdk-bot/contracts": "file:../packages/contracts",
+    "@sdk-bot/contracts": "file:../../packages/contracts",
     "@whiskeysockets/baileys": "^7.0.0-rc14",
     "pino": "^10.3.1",
     "pino-roll": "^4.0.0",

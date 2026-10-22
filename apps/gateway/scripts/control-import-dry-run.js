@@ -3,6 +3,7 @@ const fs = require('node:fs/promises');
 const path = require('node:path');
 const { createHash } = require('node:crypto');
 const { createArchive } = require('../services/conversations');
+const { GATEWAY_STATE_DIR, BRAIN_STATE_DIR } = require('../lib/repoPaths');
 const { buildControlImportReport } = require('../services/conversations/controlImport');
 
 function safeErrorCode(error) {
@@ -85,11 +86,11 @@ async function main() {
     }
     const excludeContactsWithoutConversation = args.includes('--exclude-no-conversation');
     const preserveAmbiguousQuarantine = args.includes('--preserve-ambiguous-blocked');
-    const contactsPath = process.env.SDK_CONTACTS_DB_PATH || path.join(__dirname, '..', 'contacts_db.json');
-    const settingsPath = process.env.SDK_SETTINGS_DB_PATH || path.join(__dirname, '..', 'settings_db.json');
-    const profilesPath = process.env.SDK_BRAIN_PROFILES_DIR || path.resolve(__dirname, '../../brain/profiles');
-    const databasePath = process.env.SDK_CONVERSATIONS_DB_PATH || path.join(__dirname, '..', 'data', 'conversations.db');
-    const gatewayLockPath = process.env.SDK_GATEWAY_LOCK_PATH || path.join(__dirname, '..', '.gateway.lock');
+    const contactsPath = process.env.SDK_CONTACTS_DB_PATH || path.join(GATEWAY_STATE_DIR, 'contacts_db.json');
+    const settingsPath = process.env.SDK_SETTINGS_DB_PATH || path.join(GATEWAY_STATE_DIR, 'settings_db.json');
+    const profilesPath = process.env.SDK_BRAIN_PROFILES_DIR || path.join(BRAIN_STATE_DIR, 'profiles');
+    const databasePath = process.env.SDK_CONVERSATIONS_DB_PATH || path.join(GATEWAY_STATE_DIR, 'data', 'conversations.db');
+    const gatewayLockPath = process.env.SDK_GATEWAY_LOCK_PATH || path.join(GATEWAY_STATE_DIR, '.gateway.lock');
     let archive;
     let manifest = {};
     try {

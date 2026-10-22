@@ -2,6 +2,7 @@
 const path = require('path');
 const fs = require('fs');
 const { num } = require('./tuning');
+const { GATEWAY_STATE_DIR, BRAIN_STATE_DIR } = require('./lib/repoPaths');
 
 // URL de la API del Cerebro (FastAPI).
 // Lee BRAIN_API_BASE por env; fallback a :5100 (estándar dev playground).
@@ -25,7 +26,7 @@ const STT_TIMEOUT_MS = num('STT_TIMEOUT_MS', 60000);
 function getBrainApiKey() {
     if (process.env.BRAIN_API_KEY) return process.env.BRAIN_API_KEY;
     try {
-        const envPath = path.join(__dirname, '..', 'brain', '.env');
+        const envPath = path.join(BRAIN_STATE_DIR, '.env');
         const line = fs.readFileSync(envPath, 'utf-8')
             .split('\n')
             .find(l => l.trim().startsWith('BRAIN_API_KEY='));
@@ -37,8 +38,8 @@ function getBrainApiKey() {
 // Rutas de archivos de bases de datos.
 // En tests se redirigen con env vars (SDK_CONTACTS_DB_PATH / SDK_SETTINGS_DB_PATH)
 // para que tmpPaths.js NUNCA reescriba este archivo fuente (ver bug F3 en 351fa1a).
-const CONTACTS_FILE_PATH = process.env.SDK_CONTACTS_DB_PATH || path.join(__dirname, 'contacts_db.json');
-const SETTINGS_FILE_PATH = process.env.SDK_SETTINGS_DB_PATH || path.join(__dirname, 'settings_db.json');
+const CONTACTS_FILE_PATH = process.env.SDK_CONTACTS_DB_PATH || path.join(GATEWAY_STATE_DIR, 'contacts_db.json');
+const SETTINGS_FILE_PATH = process.env.SDK_SETTINGS_DB_PATH || path.join(GATEWAY_STATE_DIR, 'settings_db.json');
 
 // Estado Global del Bot
 // Revisión de la política efectiva durante esta época de proceso. F5 trasladará

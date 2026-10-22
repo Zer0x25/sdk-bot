@@ -30,6 +30,7 @@ const http = require('http');
 const fs = require('fs');
 const path = require('path');
 const { URL } = require('url');
+const { GATEWAY_STATE_DIR, BRAIN_STATE_DIR } = require('../lib/repoPaths');
 const { createVerifier } = require('../lib/panelContext');
 const { readBytes, sendError, BoundaryError } = require('../lib/httpBoundary');
 const { createSessionApi } = require('./sessionApi');
@@ -143,14 +144,14 @@ async function setContactPerfil(key, perfil, context = {}) {
 
 // Rutas de logs con override por env (tests con archivos fake, nunca tocar los reales)
 const LOG_DIRS = {
-    get gateway() { return process.env.SDK_ADMIN_WEB_LOG_GATEWAY || path.join(__dirname, '..', 'logs'); },
-    get brain() { return process.env.SDK_ADMIN_WEB_LOG_BRAIN || path.join(__dirname, '..', '..', 'brain', 'logs'); }
+    get gateway() { return process.env.SDK_ADMIN_WEB_LOG_GATEWAY || path.join(GATEWAY_STATE_DIR, 'logs'); },
+    get brain() { return process.env.SDK_ADMIN_WEB_LOG_BRAIN || path.join(BRAIN_STATE_DIR, 'logs'); }
 };
 const LOG_PATTERNS = { gateway: /^gateway(\.\d+)?\.log(\.\d+)?$/, brain: /^brain(\.\d+)?\.log(\.\d+)?$/ };
 const LINE_CAP = 8192;
 
 // --- estado del QR (idéntico al de adminWebServer, ahora en el bus) ---
-const AUTH_DIR_RESOLVER = () => process.env.SDK_AUTH_DIR || path.join(__dirname, '..', 'auth_info_baileys');
+const AUTH_DIR_RESOLVER = () => process.env.SDK_AUTH_DIR || path.join(GATEWAY_STATE_DIR, 'auth_info_baileys');
 /** @type {any} */
 let activeSock = null;
 let socketGeneration = 0;
@@ -490,7 +491,7 @@ async function reloadTelegramAdapter() {
  * @returns {{success: boolean, message: string}}
  */
 function startBrainProcess() {
-    const brainDir = path.join(__dirname, '..', '..', 'brain');
+    const brainDir = BRAIN_STATE_DIR;
     const env = Object.assign({}, process.env, {
         BRAIN_PORT: process.env.BRAIN_PORT || 5100,
         BRAIN_HOST: process.env.BRAIN_HOST || '0.0.0.0',

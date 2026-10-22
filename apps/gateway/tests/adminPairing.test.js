@@ -4,6 +4,7 @@ const assert = require('node:assert');
 const fs = require('fs');
 const os = require('os');
 const path = require('path');
+const { BRAIN_STATE_DIR } = require('../lib/repoPaths');
 
 // Auth dir temporal para el reset: DEBE setearse ANTES del require (SDK_AUTH_DIR
 // se resuelve en runtime, pero la disciplina evita apuntar al auth real).
@@ -477,7 +478,7 @@ test('POST /reset con clean:true borra TODO el estado (factory reset F7)', async
     for (const p of paths) assert.ok(!fs.existsSync(p), `borrado: ${p}`);
 
     // Los perfiles SOUL jamás se tocan
-    assert.ok(fs.existsSync(path.join(__dirname, '..', '..', 'brain', 'profiles', 'default.md')), 'perfil SOUL intacto');
+    assert.ok(fs.existsSync(path.join(BRAIN_STATE_DIR, 'profiles', 'default.md')), 'perfil SOUL intacto');
 
     // Reset en curso → el segundo intento queda bloqueado
     const again = await (await fetch(`http://127.0.0.1:${port}/reset`, {

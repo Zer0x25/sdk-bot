@@ -34,21 +34,21 @@ jobs:
         node: ['22.22.2', '24']
     defaults:
       run:
-        working-directory: gateway
+        working-directory: apps/gateway
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
         with:
           node-version: ${{ matrix.node }}
           cache: npm
-          cache-dependency-path: gateway/package-lock.json
+          cache-dependency-path: apps/gateway/package-lock.json
       - run: npm ci
       - run: npm run lint
       - run: npm run typecheck
       - run: npm run panel:check
       - run: npm run spike:sqlite
       - run: npm test
-      - run: bash ../deploy/linux/tests/dev-smoke.sh
+      - run: bash ../../deploy/linux/tests/dev-smoke.sh
 
   brain:
     name: Brain (ruff + pytest)

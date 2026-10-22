@@ -10,8 +10,9 @@ const readline = require('readline');
 const { spawn } = require('child_process');
 const { getStatePaths, performFactoryReset, lockFiles } = require('./services/factoryReset');
 const { createResetGuard, ResetGuardError } = require('./services/resetProcessGuard');
+const { BRAIN_STATE_DIR } = require('./lib/repoPaths');
 
-const BRAIN_DIR = path.join(__dirname, '..', 'brain');
+const BRAIN_DIR = BRAIN_STATE_DIR;
 
 function processOwners() {
     const locks = lockFiles();

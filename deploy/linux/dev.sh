@@ -15,12 +15,15 @@
 set -uo pipefail
 
 REPO="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
-PID_DIR="/tmp/sdk-bot-dev"
+GATEWAY_APP="$REPO/apps/gateway"
+GATEWAY_STATE="$REPO/gateway"
+PID_DIR="${SDK_BOT_DEV_PID_DIR:-/tmp/sdk-bot-dev}"
 mkdir -p "$PID_DIR"
 
 BRAIN_PORT="${BRAIN_PORT:-5100}"
 ADMIN_WEB_PORT="${ADMIN_WEB_PORT:-5201}"
 STATUS_PORT="${STATUS_PORT:-5300}"
+INTERNAL_BUS_PORT="${INTERNAL_BUS_PORT:-5400}"
 BRAIN_HOST="${BRAIN_HOST:-0.0.0.0}"
 ADMIN_WEB_HOST="${ADMIN_WEB_HOST:-0.0.0.0}"
 STATUS_HOST="${STATUS_HOST:-0.0.0.0}"
@@ -66,12 +69,12 @@ ensure_brain_deps() {
 }
 
 ensure_gateway_deps() {
-    if [ ! -d "$REPO/gateway/node_modules/eslint" ] || [ ! -d "$REPO/gateway/node_modules/typescript" ] ||
-        [ ! -f "$REPO/gateway/node_modules/@sdk-bot/contracts/index.js" ] ||
-        ! cmp -s "$REPO/packages/contracts/schema.json" "$REPO/gateway/node_modules/@sdk-bot/contracts/schema.json" ||
-        ! cmp -s "$REPO/packages/contracts/index.js" "$REPO/gateway/node_modules/@sdk-bot/contracts/index.js"; then
+    if [ ! -d "$GATEWAY_APP/node_modules/eslint" ] || [ ! -d "$GATEWAY_APP/node_modules/typescript" ] ||
+        [ ! -f "$GATEWAY_APP/node_modules/@sdk-bot/contracts/index.js" ] ||
+        ! cmp -s "$REPO/packages/contracts/schema.json" "$GATEWAY_APP/node_modules/@sdk-bot/contracts/schema.json" ||
+        ! cmp -s "$REPO/packages/contracts/index.js" "$GATEWAY_APP/node_modules/@sdk-bot/contracts/index.js"; then
         log "📦 Instalando devDeps del gateway (NODE_ENV=development)..."
-        (cd "$REPO/gateway" && NODE_ENV=development npm ci)
+        (cd "$GATEWAY_APP" && NODE_ENV=development npm ci)
     fi
 }
 
@@ -91,9 +94,9 @@ launch_brain() {
 launch_gateway() {
     ensure_gateway_deps
     wait_port_free "$STATUS_PORT"
-    wait_port_free 5400
-    cd "$REPO/gateway"
-    NODE_ENV=development SDK_ADMIN_WEB_ENABLED=0 ADMIN_WEB_PORT="$ADMIN_WEB_PORT" STATUS_PORT="$STATUS_PORT" \
+    wait_port_free "$INTERNAL_BUS_PORT"
+    cd "$GATEWAY_APP"
+    NODE_ENV=development SDK_ADMIN_WEB_ENABLED=0 ADMIN_WEB_PORT="$ADMIN_WEB_PORT" STATUS_PORT="$STATUS_PORT" INTERNAL_BUS_PORT="$INTERNAL_BUS_PORT" \
         BRAIN_API_BASE="http://127.0.0.1:$BRAIN_PORT" ADMIN_WEB_HOST="$ADMIN_WEB_HOST" STATUS_HOST="$STATUS_HOST" \
         nohup npm start > /tmp/sdk-bot-gateway.log 2>&1 &
     echo $! > "$PID_DIR/gateway.pid"
@@ -103,10 +106,10 @@ launch_gateway() {
 launch_panel() {
     ensure_gateway_deps
     wait_port_free "$ADMIN_WEB_PORT"
-    cd "$REPO/gateway/panel"
+    cd "$GATEWAY_APP/panel"
     NODE_ENV=development ADMIN_WEB_PORT="$ADMIN_WEB_PORT" ADMIN_WEB_HOST="$ADMIN_WEB_HOST" \
-        GATEWAY_INTERNAL_URL="http://127.0.0.1:5400" \
-        NODE_PATH="$REPO/gateway/node_modules" \
+        GATEWAY_INTERNAL_URL="http://127.0.0.1:$INTERNAL_BUS_PORT" \
+        NODE_PATH="$GATEWAY_APP/node_modules" \
         nohup node index.js > /tmp/sdk-bot-panel.log 2>&1 &
     echo $! > "$PID_DIR/panel.pid"
     log "🖥️ panel -> pid $(cat "$PID_DIR/panel.pid") (log: /tmp/sdk-bot-panel.log)"
@@ -189,19 +192,21 @@ cmd_down() {
     # Por si quedó algo en los puertos (lanzado manualmente)
     kill_by_port "$ADMIN_WEB_PORT" panel
     kill_by_port "$STATUS_PORT" gateway
+    kill_by_port "$INTERNAL_BUS_PORT" gateway-bus
     kill_by_port "$BRAIN_PORT" brain
     # Espera a que los binds se liberen (evita EADDRINUSE en el próximo up)
     wait_port_free "$ADMIN_WEB_PORT"
     wait_port_free "$STATUS_PORT"
+    wait_port_free "$INTERNAL_BUS_PORT"
     wait_port_free "$BRAIN_PORT"
     # Libera locks de instancia única que queden colgados (el brain se autoprotege)
-    rm -f "$REPO/gateway/.gateway.lock" "$REPO/brain/.brain.lock"
+    rm -f "${SDK_GATEWAY_LOCK_PATH:-$GATEWAY_STATE/.gateway.lock}" "${SDK_BRAIN_LOCK_PATH:-$REPO/brain/.brain.lock}"
     log "✅ detenido (locks liberados)."
 }
 
 cmd_status() {
     local ok=0 fail=0
-    for svc in brain:5100 gateway:5300 panel:5201; do
+    for svc in "brain:$BRAIN_PORT" "gateway:$STATUS_PORT" "panel:$ADMIN_WEB_PORT"; do
         local name="${svc%%:*}" port="${svc##*:}"
         if curl -s -m 4 -o /dev/null "http://127.0.0.1:$port/health" 2>/dev/null; then
             log "✅ $name :$port up"
@@ -225,14 +230,14 @@ cmd_manual() {
             exec env NODE_ENV=development BRAIN_PORT="$BRAIN_PORT" BRAIN_HOST="$BRAIN_HOST" venv/bin/python main.py
             ;;
         gateway)
-            cd "$REPO/gateway"
-            exec env NODE_ENV=development SDK_ADMIN_WEB_ENABLED=0 ADMIN_WEB_PORT="$ADMIN_WEB_PORT" STATUS_PORT="$STATUS_PORT" \
+            cd "$GATEWAY_APP"
+            exec env NODE_ENV=development SDK_ADMIN_WEB_ENABLED=0 ADMIN_WEB_PORT="$ADMIN_WEB_PORT" STATUS_PORT="$STATUS_PORT" INTERNAL_BUS_PORT="$INTERNAL_BUS_PORT" \
                 BRAIN_API_BASE="http://127.0.0.1:$BRAIN_PORT" ADMIN_WEB_HOST="$ADMIN_WEB_HOST" STATUS_HOST="$STATUS_HOST" npm start
             ;;
         panel)
-            cd "$REPO/gateway/panel"
+            cd "$GATEWAY_APP/panel"
             exec env NODE_ENV=development ADMIN_WEB_PORT="$ADMIN_WEB_PORT" ADMIN_WEB_HOST="$ADMIN_WEB_HOST" \
-                GATEWAY_INTERNAL_URL="http://127.0.0.1:5400" node index.js
+                GATEWAY_INTERNAL_URL="http://127.0.0.1:$INTERNAL_BUS_PORT" NODE_PATH="$GATEWAY_APP/node_modules" node index.js
             ;;
         ambos)
             printf 'Abre dos terminales y ejecuta:\n'

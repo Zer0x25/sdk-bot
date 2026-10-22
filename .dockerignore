@@ -2,7 +2,9 @@
 .github
 node_modules
 gateway/node_modules
+apps/gateway/node_modules
 gateway/panel/web/dist
+apps/gateway/panel/web/dist
 brain/venv
 stt/venv
 apps/stt/venv

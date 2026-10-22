@@ -44,7 +44,7 @@ un marcador visible aunque todavía no pueda abrirse o descargarse.
 | Envío IA | `services/brainService.js`: petición, esperas, typing y varios globos | Falta barrera común de validación antes de cada envío. |
 | Memoria prematura | `brain/main.py`: /chat llama append_exchange antes de entregar al gateway | Una generación cancelada puede quedar en contexto como si se hubiera enviado. |
 | Envíos directos | `internalBus.js`: /notify usa activeSock.sendMessage; otros servicios llaman al adapter | Converger en un caso de uso con auditoría e idempotencia. |
-| UI | `gateway/panel/public/`: ES Modules y CSS sin build | Sin bandeja ni cliente tipado para conversaciones. |
+| UI | `apps/gateway/panel/public/`: ES Modules y CSS sin build | Sin bandeja ni cliente tipado para conversaciones. |
 | Documentación | ROADMAP declaraba pendientes índices ya presentes en contactsRepository.js; ARCHITECTURE tenía OAuth desactualizado | Confirmar con código/pruebas; no marcar validaciones reales como realizadas. |
 
 En esa baseline, upsertMessage del store RAM no tenía llamadas y las guardas
@@ -168,7 +168,12 @@ Vite funciona en desarrollo/build. En producción el proceso del panel sirve el
 build: no se agrega un servicio de frontend. CI puede distribuir artefactos a
 Termux. No se requiere SSR para esta consola privada.
 
-La transición comienza en `gateway/panel/web`: el bundle se sirve en `/inbox` por
+La adopción de `apps/` está en curso. El código Gateway vive en `apps/gateway/`;
+`gateway/` conserva su estado runtime y credenciales. `repoPaths.js` resuelve
+ambos directorios para que mover código no cambie las rutas de datos. El panel
+sigue bajo `apps/gateway/panel/` hasta su subunidad F8.1c.
+
+La transición comienza en `apps/gateway/panel/web`: el bundle se sirve en `/inbox` por
 el mismo proceso OAuth del panel y requiere `PANEL_CONVERSATIONS_UI_ENABLED=true`.
 El valor por defecto es apagado; `/` conserva el panel anterior. Con OAuth activo,
 la nueva ruta exige sesión, mientras `/api/*` legacy y su UI requieren el grant

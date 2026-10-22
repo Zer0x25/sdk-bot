@@ -42,7 +42,7 @@ cd "$REPO/brain"
 pip install -r requirements-termux.txt
 
 echo "🌐 4/6 Dependencias del gateway (Node)..."
-cd "$REPO/gateway"
+cd "$REPO/apps/gateway"
 npm install
 
 if [ ! -f "$REPO/brain/.env" ]; then
@@ -76,8 +76,8 @@ cat > "$SVDIR/sdk-gateway/run" <<EOF
 #!/bin/sh
 LOG="$HOME/logs/sdk-gateway.log"
 mkdir -p "$HOME/logs"
-cd "$REPO/gateway"
-export NODE_PATH="$REPO/gateway/node_modules:\$NODE_PATH"
+cd "$REPO/apps/gateway"
+export NODE_PATH="$REPO/apps/gateway/node_modules:\$NODE_PATH"
 export STATUS_PORT=${STATUS_PORT:-5300}
 export BRAIN_API_BASE=${BRAIN_API_BASE:-http://127.0.0.1:5100}
 export INTERNAL_BUS_PORT=${INTERNAL_BUS_PORT:-5400}

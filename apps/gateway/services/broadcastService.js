@@ -22,11 +22,12 @@ const { state, registerSentMessage } = require('../config');
 const { getContactsDB } = require('./db');
 const { cat, errMsg } = require('./logger');
 const { num } = require('../tuning');
+const { GATEWAY_STATE_DIR } = require('../lib/repoPaths');
 
 const log = cat('BROADCAST');
 const logError = cat('ERROR');
 
-const DB_FILE = process.env.SDK_BROADCAST_DB_PATH || path.join(__dirname, '..', 'broadcast_db.json');
+const DB_FILE = process.env.SDK_BROADCAST_DB_PATH || path.join(GATEWAY_STATE_DIR, 'broadcast_db.json');
 const DAILY_LIMIT = Number(process.env.SDK_BROADCAST_DAILY_LIMIT || 2);
 const CONFIRMATION_TTL_MS = num('GATEWAY_BROADCAST_CONFIRMATION_TTL_MS', 60000); // 1 minuto para confirmar con "si" (tunable vía .env.tuning)
 

@@ -407,8 +407,9 @@ son necesarios para una fase previa y pasan sus mismas comprobaciones.
 
 - [ ] Mover gateway, panel, brain y STT a apps/ uno a uno; imports/entrypoints y
   perfiles siguen funcionando. Compartir solo contratos/testkit, no estados runtime.
-  En progreso: F8.1a mueve STT a `apps/stt/`; gateway, panel y brain permanecen
-  pendientes hasta sus propias verificaciones.
+  En progreso: F8.1a movió STT a `apps/stt/`; F8.1b mueve Gateway a
+  `apps/gateway/` y conserva los datos en `gateway/` y `brain/`. Panel y brain
+  quedan pendientes hasta sus propias verificaciones.
 - [ ] Migrar settings/campañas restantes por repositorios con corte verificable;
   retirar accesos JSON directos. Revisar locks y release-please al mover paquetes.
 - [ ] Actualizar Dockerfiles multi-stage, Compose, CI, launchers de Linux/Windows/

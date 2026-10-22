@@ -13,7 +13,7 @@ el **Programador de tareas** de Windows (arrancar al inicio, reiniciar en fallo)
 cd C:\ruta\a\SDK-Bot\brain
 python -m venv venv
 venv\Scripts\pip install -r requirements.txt
-cd ..\gateway
+cd ..\apps\gateway
 npm install
 # crear brain\.env con las API keys (copia de brain\.env.example si existe)
 ```
@@ -31,7 +31,7 @@ deploy\windows\startBrain.bat
 deploy\windows\startGateway.bat
 
 # Terminal 3 — Panel Web (opcional, puerto :5201)
-cd C:\ruta\a\SDK-Bot\gateway\panel
+cd C:\ruta\a\SDK-Bot\apps\gateway\panel
 node index.js
 # Acceso en el navegador: http://localhost:5201
 ```
@@ -53,6 +53,6 @@ node index.js
 ## Re-sincronizar libreta (QR nuevo)
 
 ```powershell
-cd C:\ruta\a\SDK-Bot\gateway
+cd C:\ruta\a\SDK-Bot\apps\gateway
 npm run reset
 ```

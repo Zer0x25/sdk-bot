@@ -3,6 +3,7 @@ const assert = require('node:assert');
 const fs = require('fs');
 const os = require('os');
 const path = require('path');
+const { BRAIN_STATE_DIR } = require('../lib/repoPaths');
 
 // Timers cortos para probar lectura/expiración rápido + wipe a temporales
 process.env.SDK_RESET_CLEAN_READ_MS = '50';
@@ -107,7 +108,7 @@ test('palabra mágica tras el timer de lectura → ejecuta el reset limpio compl
         }
     }
     // Perfiles SOUL intactos
-    assert.ok(fs.existsSync(path.join(__dirname, '..', '..', 'brain', 'profiles', 'default.md')));
+    assert.ok(fs.existsSync(path.join(BRAIN_STATE_DIR, 'profiles', 'default.md')));
 
     // Proceso por morir: cualquier mensaje se consume y un nuevo pedido avisa
     assert.strictEqual(await tryCleanConfirm('hola', fakeSock, JID), true);

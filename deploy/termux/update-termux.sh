@@ -14,7 +14,7 @@ cd "$REPO"
 
 # La dependencia file: se empaqueta: un cambio de contracts también exige instalar.
 gateway_dependency_hash() {
-    sha256sum gateway/package.json gateway/package-lock.json gateway/.npmrc \
+    sha256sum apps/gateway/package.json apps/gateway/package-lock.json apps/gateway/.npmrc \
         packages/contracts/package.json packages/contracts/index.js \
         packages/contracts/index.d.ts packages/contracts/generated.d.ts \
         packages/contracts/schema.json packages/contracts/openapi.json | sha256sum | cut -d' ' -f1
@@ -34,7 +34,7 @@ if [ "$pkg_before" = "$pkg_after" ]; then
     echo "    gateway: manifests/contratos sin cambios — npm ci omitido."
 else
     echo "    gateway: manifests/contratos cambiaron — npm ci..."
-    (cd gateway && npm ci)
+    (cd apps/gateway && npm ci)
 fi
 if [ "$req_before" = "$req_after" ]; then
     echo "    brain: requirements sin cambios — pip omitido."

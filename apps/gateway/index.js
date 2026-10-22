@@ -1,5 +1,6 @@
 const path = require('path');
 const fs = require('fs');
+const { GATEWAY_STATE_DIR } = require('./lib/repoPaths');
 const { state } = require('./config');
 const { bulkUpsertContactsMetadata, cleanContactsDB, contactStore, contactIdentityFromRaw } = require('./services/contactsRepository');
 const contactSyncQueue = require('./services/contactSyncQueue');
@@ -50,7 +51,7 @@ function noteFault(kind, err) {
 process.on('unhandledRejection', (err) => noteFault('unhandledRejection', err));
 process.on('uncaughtException', (err) => noteFault('uncaughtException', err));
 
-const GATEWAY_LOCK_FILE = process.env.SDK_GATEWAY_LOCK_PATH || path.join(__dirname, '.gateway.lock');
+const GATEWAY_LOCK_FILE = process.env.SDK_GATEWAY_LOCK_PATH || path.join(GATEWAY_STATE_DIR, '.gateway.lock');
 
 function isProcessAlive(pid) {
     if (!pid) return false;

@@ -12,7 +12,7 @@ npm run contracts:generate
 ```
 
 El workspace raíz contiene `packages/*`. Gateway sigue siendo paquete independiente:
-`cd gateway && npm ci && npm run check`. Desde F1B consume el paquete como
+`cd apps/gateway && npm ci && npm run check`. Desde F1B consume el paquete como
 `file:../packages/contracts`; gateway/.npmrc usa install-links=true para empaquetarlo
 con sus dependencias, sin symlink ni instalación raíz en producción. Docker copia
 el paquete antes de npm ci. Tras cambiar fuente/tipos de contracts, repetir npm ci

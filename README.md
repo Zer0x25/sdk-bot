@@ -5,7 +5,7 @@
 ## Bandeja de conversaciones
 
 La bandeja nueva está implementada como una aplicación React/TypeScript en
-`gateway/panel/web`. Se abre en `/inbox`, lee conversaciones e historial desde la
+`apps/gateway/panel/web`. Se abre en `/inbox`, lee conversaciones e historial desde la
 API autenticada y recibe actualizaciones en vivo. También permite tomar control,
 responder como operador y devolverlo a la IA con selección explícita de mensajes
 pendientes. El panel anterior se conserva en `/`; la nueva bandeja está apagada
@@ -22,10 +22,10 @@ Usa Node.js 22.13.0 o superior. Desde la raíz del repositorio:
 
 ```bash
 # Solo si faltan las dependencias del gateway o cambió su lockfile
-(cd gateway && npm ci)
+(cd apps/gateway && npm ci)
 
 # Recompila después de cambiar la interfaz; el launcher no hace el build
-(cd gateway && npm run panel:build)
+(cd apps/gateway && npm run panel:build)
 
 # Arranca el stack local con /inbox habilitada
 PANEL_CONVERSATIONS_UI_ENABLED=true bash deploy/linux/dev.sh up all
@@ -97,7 +97,7 @@ y [F4.3: actualización en vivo](docs/F4.3-STREAM-INBOX.md).
 
 ```
 SDK-Bot/
-├── gateway/                      # Capa de Mensajería (Node.js + Adapter Hub)
+├── apps/gateway/                 # Código del Gateway y del proceso del panel
 │   ├── index.js                  # Orquestador del Hub (adapters, pipeline, bus interno :5400)
 │   ├── core/                     # Interfaces abstractas (ChannelAdapter, StandardMessage)
 │   ├── adapters/                 # Adaptadores de red (whatsappAdapter, telegramAdapter)
@@ -133,7 +133,8 @@ SDK-Bot/
 │   ├── settings_db.json.example  # Plantilla de configuración global
 │   ├── *.json.example            # Plantillas de ejemplo para despliegues limpios
 │   └── auth_info_baileys/        # Sesión y estado de WhatsApp (gitignored)
-├── brain/                        # Capa de Inteligencia (Python + FastAPI)
+├── gateway/                      # Estado runtime (sesión, DB, credenciales, logs y locks)
+├── brain/                        # Código y estado de la Capa de Inteligencia (Python + FastAPI)
 │   ├── main.py                   # Aplicación FastAPI modularizada (/chat, /reset-memory, /profiles, :5100)
 │   ├── config.py                 # API Keys y modelos (Groq, OpenRouter, Gemini)
 │   ├── memory.py                 # Gestor de memoria persistente SQLite (brain/memory.db)
@@ -184,7 +185,7 @@ venv\Scripts\python.exe main.py
 
 ### 2. Iniciar Gateway WhatsApp (Node.js):
 ```bash
-cd gateway
+cd apps/gateway
 export NODE_ENV=development
 npm start
 # o: node index.js
@@ -194,7 +195,7 @@ npm start
 
 ### 3. Iniciar Panel Web (Opcional, proceso independiente):
 ```bash
-cd gateway/panel
+cd apps/gateway/panel
 export NODE_ENV=development
 node index.js
 # Acceso en el navegador: http://localhost:5201 (o tu IP / Tailscale en el puerto 5201)
@@ -275,7 +276,7 @@ bash deploy/termux/setup-termux.sh           # dependencias + runit + boot autom
 deploy\windows\startBrain.bat    # terminal 1 (siempre primero)
 deploy\windows\startGateway.bat  # terminal 2
 # Para el panel web (opcional):
-cd gateway\panel && node index.js # terminal 3
+cd apps\gateway\panel && node index.js # terminal 3
 ```
 
 ### 5. Desarrollo en Linux — lanzamiento manual:
@@ -307,7 +308,7 @@ instancia manual y los contenedores de producción sobre la misma sesión.
 
 ### 6. Re-sincronizar Libreta Completa de Contactos (Fresh QR):
 ```bash
-cd gateway
+cd apps/gateway
 npm run reset          # interactivo: pide confirmación y luego genera QR
 npm run reset -- --yes # no interactivo: borra la sesión y sale (el gateway ya corriendo regenera el QR)
 ```

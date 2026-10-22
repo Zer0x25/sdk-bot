@@ -120,8 +120,8 @@ exec /data/data/com.termux/files/usr/bin/python main.py
 #!/bin/sh
 LOG=/data/data/com.termux/files/home/logs/sdk-gateway.log
 mkdir -p /data/data/com.termux/files/home/logs
-cd /data/data/com.termux/files/home/SDK-Bot/gateway
-export NODE_PATH=/data/data/com.termux/files/home/SDK-Bot/gateway/node_modules:$NODE_PATH
+cd /data/data/com.termux/files/home/SDK-Bot/apps/gateway
+export NODE_PATH=/data/data/com.termux/files/home/SDK-Bot/apps/gateway/node_modules:$NODE_PATH
 exec node index.js 2>&1 | awk '{ print strftime("%Y-%m-%d %H:%M:%S"), $0; fflush() }' >> "$LOG"
 ```
 
@@ -143,7 +143,7 @@ pip install -r requirements.txt
 
 ### Gateway (Node)
 ```bash
-cd ~/SDK-Bot/gateway
+cd ~/SDK-Bot/apps/gateway
 npm install
 # Dependencias: @whiskeysockets/baileys, pino, qrcode, qrcode-terminal
 ```
@@ -262,7 +262,7 @@ pip install -r requirements-termux.txt
 
 ### 9.4 Dependencias del gateway (Node)
 ```bash
-cd ~/SDK-Bot/gateway
+cd ~/SDK-Bot/apps/gateway
 npm install
 # baileys, pino, qrcode, qrcode-terminal se instalan sin problema en Termux
 ```
@@ -297,8 +297,8 @@ cat > $SVDIR/sdk-gateway/run <<'EOF'
 #!/bin/sh
 LOG=/data/data/com.termux/files/home/logs/sdk-gateway.log
 mkdir -p /data/data/com.termux/files/home/logs
-cd /data/data/com.termux/files/home/SDK-Bot/gateway
-export NODE_PATH=/data/data/com.termux/files/home/SDK-Bot/gateway/node_modules:$NODE_PATH
+cd /data/data/com.termux/files/home/SDK-Bot/apps/gateway
+export NODE_PATH=/data/data/com.termux/files/home/SDK-Bot/apps/gateway/node_modules:$NODE_PATH
 exec node index.js 2>&1 | awk '{ print strftime("%Y-%m-%d %H:%M:%S"), $0; fflush() }' >> "$LOG"
 EOF
 
@@ -340,8 +340,8 @@ debe quedar detrás de `try/except ImportError`. `requirements-termux.txt` omite
 ### 10.2 El gateway no arranca tras un pull: falta `npm install`
 **Síntoma:** `Cannot find module 'pino-roll'` al arrancar el gateway.
 **Causa:** `git pull` NO ejecuta `npm install`; un cambio en
-`gateway/package.json` (p.ej. `pino-roll` de F1) deja `node_modules` desincronizado.
-**Solución:** `cd gateway && npm install` antes de reiniciar. El
+`apps/gateway/package.json` (p.ej. `pino-roll` de F1) deja `node_modules` desincronizado.
+**Solución:** `cd apps/gateway && npm install` antes de reiniciar. El
 `update-termux.sh` ya lo hace solo (compara el hash de `package.json` antes y
 después del pull). El `package-lock.json` versionado evita que el lock se
 corrompa con la resolución de Termux.

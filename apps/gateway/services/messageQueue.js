@@ -14,11 +14,12 @@ const fs = require('fs');
 const path = require('path');
 const crypto = require('crypto');
 const { cat, errMsg } = require('./logger');
+const { GATEWAY_STATE_DIR } = require('../lib/repoPaths');
 
 const log = cat('STORAGE');
 const logError = cat('ERROR');
 
-const QUEUE_FILE = process.env.SDK_MESSAGE_QUEUE_PATH || path.join(__dirname, '..', 'queue', 'pending_messages.jsonl');
+const QUEUE_FILE = process.env.SDK_MESSAGE_QUEUE_PATH || path.join(GATEWAY_STATE_DIR, 'queue', 'pending_messages.jsonl');
 const MAX_QUEUE_ITEMS = Number(process.env.SDK_MESSAGE_QUEUE_MAX || 50);
 const MAX_QUEUE_AGE_MS = 24 * 60 * 60 * 1000; // 24h: mensajes más viejos se descartan
 

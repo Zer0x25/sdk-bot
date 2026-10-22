@@ -2,7 +2,7 @@
 /**
  * 🎛️ TUNING CENTRALIZADO DEL GATEWAY (Opción A, sin nuevas dependencias).
  *
- * Lee el archivo .env.tuning de la RAÍZ del repo (hermano de gateway/).
+ * Lee el archivo .env.tuning de la raíz del repo (dos niveles arriba de apps/gateway/).
  * Esa es la única fuente de constantes tunables; NO contiene secretos.
  *
  * Reglas:
@@ -16,8 +16,9 @@
  */
 const fs = require('fs');
 const path = require('path');
+const { REPO_ROOT } = require('./lib/repoPaths');
 
-const TUNING_PATH = path.join(__dirname, '..', '.env.tuning');
+const TUNING_PATH = path.join(REPO_ROOT, '.env.tuning');
 
 /** @type {Record<string, string>} */
 const _cache = {};

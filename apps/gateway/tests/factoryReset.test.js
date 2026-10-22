@@ -3,6 +3,7 @@ const assert = require('node:assert');
 const fs = require('fs');
 const os = require('os');
 const path = require('path');
+const { BRAIN_STATE_DIR } = require('../lib/repoPaths');
 
 // Env vars de TODAS las rutas de estado apuntando a temporales: el wipe
 // debe tocar exactamente esos archivos y NINGÚN otro (perfiles, otros).
@@ -97,7 +98,7 @@ test('performFactoryReset recrea los dirs de logs y reporta como missing el rest
     const stranger = path.join(tmp, 'no-tocar.txt');
     fs.writeFileSync(stranger, 'x');
     assert.ok(fs.existsSync(stranger), 'archivo ajeno intacto');
-    assert.ok(fs.existsSync(path.join(__dirname, '..', '..', 'brain', 'profiles', 'default.md')), 'perfil SOUL intacto');
+    assert.ok(fs.existsSync(path.join(BRAIN_STATE_DIR, 'profiles', 'default.md')), 'perfil SOUL intacto');
 });
 
 test('flag wiping: setWiping/isWiping controlados (los flushes lo consultan)', () => {
