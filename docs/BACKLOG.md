@@ -49,7 +49,7 @@ salvo indicación contraria. La evidencia detallada y líneas están en la basel
 | BUG-032 | P1 | Cerrado F2B.2: dos connect con loadAuth asíncrono podían instalar primero el socket nuevo y luego uno obsoleto. | Reproducción en 4bb4ec3 confirma sustitución; revisión monotónica de conexión descarta auth atrasado. | Test overlapping connect pasa; mismo commit de cierre F2B.2. |
 | BUG-033 | P1 | Cerrado F2B.3: STT legacy no actualizaba el audio archivado. | Reproducción de 7d99f36 deja cinco audios not_requested tras terminar. Ahora se guarda pending/completed/failed y message.updated sobre el ID original antes de legacy. | Mismo ID/huella, redelivery JID/LID, fallo/exceso, purga sin recreación, restart y resultado incierto sin retry probados; MULTIMEDIA-WHATSAPP-F2B3. |
 | BUG-034 | P2 | Cerrado F2B.3: caption se guardaba como texto perdiendo tipo de adjunto. | Reproducción de 7d99f36 confirma type=text. Caption opcional en contrato multimedia y normalización con wrappers; copia gateway refrescada. | Tipos/validadores Node22/24, captions literales, límite/oversized y dedup. Texto antiguo sigue legible; forma incompatible nueva se conserva en revisión, sin inventar el tipo perdido. |
-| BUG-035 | P2 | Abierto: el solicitante de pairing invoca connect sin await y puede pedir código antes de terminar loadAuth/crear socket; refresh también pierde el Promise. | Inspección en index.js, setPairingCodeRequester y setQrRefresh. No se probó pairing real. | F8 antes de aceptación de pairing: prueba con auth suspendido espera socket y propaga fallo; mantener pairing activo sin segundo socket. No bloquea captura de cuenta ya autenticada. |
+| BUG-035 | P2 | Cerrado: el solicitante podía pedir pairing antes de que terminara `connect()`; el refresh QR también descartaba la promesa de conexión. | Callbacks de pairing esperan `connect()`, propagan fallos y preservan el socket durante una ventana QR vigente. | Auth suspendido prueba espera de socket/código y propagación de error; refresh espera conexión y no crea otro socket con QR activo. Sin pairing real. [Evidencia](BUG-035-PAIRING-ASYNC.md). |
 | BUG-036 | P1 | Cerrado F2B.3: audios live iniciaban descargas/STT sin límite propio y bufferizaban el adjunto completo antes de validar tamaño. | Reproducción anterior inicia cinco transcripciones bloqueadas simultáneas. Coordinador actual limita cuatro trabajos sin cola, deadline 150 s y acumulación por stream hasta límite de bytes. | Timeout/saturación y proveedor que ignora abort conservando su plaza, exceso de stream sin STT, captura no bloqueada y desconexión probados. No garantiza cancelación física de Baileys: BUG-037 separado. |
 | BUG-037 | P2 | Abierto: Baileys 7.0.0-rc14 getHttpStream omite signal al llamar fetch; abort lógico no garantiza detener descarga física/handles del proveedor. | Reproducción con fetch sustituido y signal ya abortado confirma ausencia de signal, sin red. Inspección del pipe interno tampoco acredita destrucción del origen. | F8, antes de aceptar STT real: frontera/pin de descarga que preserve abort y timeout; HTTP local que no envía headers/body debe cerrar request/stream al cancelar/vencer, sin handles crecientes. No parchear fetch global/node_modules. No bloquea actualización durable offline F2B.3; resultados tardíos bloqueados y plazas conservadas hasta terminar el trabajo. |
 | BUG-038 | P1 | Cerrado F2C.1: reconnect/disconnect invalidaban el loop pero dejaban vivo el request getUpdates anterior; audio tardío podía emitir con un ciclo/token sustituido. | Reproducción anterior deja A pendiente tras abrir B. Ciclo actual cancela y espera cierre local antes del siguiente; generación/token capturados y revalidados tras audio. | Connect superados, cierre demorado y STT suspendido probados, sin lectura solapada ni efecto tardío de entrada. No cierra el dispatcher común ni BUG-050/F5. |
@@ -109,8 +109,9 @@ salvo indicación contraria. La evidencia detallada y líneas están en la basel
 - Antes de declarar paridad de comandos Telegram, resolver BUG-008 (resolución
   exacta en el camino legacy); BUG-046 ya se cerró en F2C.3. BUG-010 y
   BUG-011 también requieren aceptación explícita si esos caminos legacy se conservan.
-- La tarea de pairing de canales debe cubrir BUG-035; no agregar reintentos
-  automáticos al test de token mientras BUG-072 siga abierto. BUG-075 entra en F7
+- BUG-035 ya cierra la carrera async de pairing; la aceptación real de proveedor
+  sigue sin probarse. No agregar reintentos automáticos al test de token mientras
+  BUG-072 siga abierto. BUG-075 entra en F7
   solo si se expone conciliación de `delivery_unknown`; BUG-076 antes de exigir
   paridad de contexto para replays antiguos.
 - BUG-006/007 ya están cerrados con evidencia F5.5/F5.7/F5.8; se corrigió su estado
@@ -134,7 +135,8 @@ reciente; F3 debe detectar cursores expirados; BUG-046 ya está cerrado en F2C.3
 BUG-043 está cerrado; BUG-050 sigue P1/F5; BUG-051 es puerta antes de migrar
 un archivo preexistente. BUG-010 sigue parcial.
 F2B.3 conserva BUG-033/034/036 cerrados y BUG-037 P2/F8 antes de STT real.
-BUG-035 pairing queda F8; F3.1 cierra BUG-056/057. BUG-024 sigue antes de
+BUG-035 async pairing queda cerrado; aceptación real sigue pendiente. F3.1 cierra
+BUG-056/057. BUG-024 sigue antes de
 operadores limitados; BUG-014 antes de Python paralelo. F3.2 implementa replay SSE
 y `resync.required` para cursores expirados sin retener el archivo sin límite. F4.1
 cierra BUG-058/059/060 de UI y BUG-061 de instalación Docker detrás de CA. La

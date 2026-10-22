@@ -1395,3 +1395,17 @@ Cierres históricos: commits F2C.1/F2C.2/F2D/F2E.1 están en el log local; F2B.3
 - Commit local de esta unidad; no publicar.
 - Siguiente punto ejecutable del backlog: BUG-035, esperar `connect()` completo y
   propagar su fallo antes de solicitar código/abrir refresh de pairing.
+
+## BUG-035 — Espera asíncrona de pairing — 2026-10-22
+
+- `createWhatsappPairingCallbacks` hace que el pairing por código espere la
+  conexión cuando el socket está cerrado y propague los errores de `connect`.
+  Refresh devuelve/espera la misma promesa; una ventana QR vigente no crea un
+  segundo socket.
+- Evidencia: [BUG-035-PAIRING-ASYNC](BUG-035-PAIRING-ASYNC.md).
+- Verificación focal: `tests/whatsappPairing.test.js`, `tests/adminPairing.test.js`
+  y `tests/whatsappCapture.test.js`, 45/45; Gateway lint y typecheck; diff limpio.
+  Sin cuenta ni transporte WhatsApp real.
+- Commit local de esta unidad; no publicar.
+- Siguiente prioridad local: BUG-008 (resolución exacta de identidad Telegram en
+  el camino legacy, antes de cualquier mutación de contactos).

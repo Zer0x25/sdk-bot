@@ -19,6 +19,7 @@ const { setControlService } = require('./services/stateService');
 
 const WhatsappAdapter = require('./adapters/whatsappAdapter');
 const TelegramAdapter = require('./adapters/telegramAdapter');
+const { createWhatsappPairingCallbacks } = require('./services/whatsappPairing');
 
 chatStore.configure({
     maxPerChat: Number(process.env.GATEWAY_PRELOAD_MAX_PER_CHAT) || 200,
@@ -290,19 +291,12 @@ async function startGateway() {
     broadcastService.setSock(whatsapp);
     internalBus.setSock(whatsapp);
     
-    internalBus.setQrRefresh(() => {
-        // No recrear el socket si ya hay un QR vigente o un pairing en curso:
-        // connect({freshQr:true}) destruye el socket actual y eso cortaba el
-        // stream justo cuando WhatsApp iba a abrir la sesion -> 515 "restart required".
-        // El bus ya bloquea esto en /qr/refresh, pero el adapter tambien debe
-        // protegerse si se llama por otra via.
-        if (internalBus.isQrWindowOpen && internalBus.isQrWindowOpen()) {
-            log.info('🔌 [BUS] Refresh ignorado: ya hay una ventana QR vigente (pairing en curso).');
-            return Promise.resolve();
-        }
-        log.info('🔌 [BUS] Refresco de QR pedido desde el panel: recreando socket de pairing…');
-        whatsapp.connect({ freshQr: true });
+    const whatsappPairing = createWhatsappPairingCallbacks({
+        whatsapp,
+        isQrWindowOpen: internalBus.isQrWindowOpen,
+        log: message => log.info(`🔌 [BUS] ${message}`)
     });
+    internalBus.setQrRefresh(whatsappPairing.refreshQr);
 
     // Reset de pairing desde el panel: reconectar WhatsApp en caliente (nuevo
     // QR) sin matar el gateway. En dev no hay systemd que lo reviva, y el panel
@@ -312,16 +306,7 @@ async function startGateway() {
         return whatsapp.connect({ freshQr: true });
     });
     
-    internalBus.setPairingCodeRequester(async (number) => {
-        if (whatsapp.isSessionRegistered()) {
-            throw new Error('La sesión ya está registrada; resetea antes de pedir otro código.');
-        }
-        if (whatsapp.readyState === 3) {
-            log.info('🔌 [BUS] Socket cerrado: recreando para pedir código de pairing…');
-            whatsapp.connect();
-        }
-        return await whatsapp.requestPairingCode(number);
-    });
+    internalBus.setPairingCodeRequester(whatsappPairing.requestCode);
 
     // Guardar/cambiar el token de Telegram desde el panel reconecta el
     // adaptador en caliente, sin reiniciar el gateway.
