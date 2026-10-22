@@ -22,6 +22,8 @@ export type SendMessageResponse = Contract<'SendMessageResponse'>;
 export type SendMessageRequest = Contract<'SendMessageRequest'>;
 export type PendingResumeResponse = Contract<'PendingResumeResponse'>;
 export type SummaryResponse = Contract<'SummaryResponse'>;
+export type ConversationAssistanceRequest = Contract<'ConversationAssistanceRequest'>;
+export type ConversationAssistanceResponse = Contract<'ConversationAssistanceResponse'>;
 export type AutomationProfilesResponse = Contract<'AutomationProfilesResponse'>;
 export type UpdateConversationRequest = Contract<'UpdateConversationRequest'>;
 
@@ -120,7 +122,9 @@ async function postJson<T>(pathname: string, body: unknown, idempotencyKey?: str
             ? 'El proveedor pudo haber recibido el mensaje. Revisa el chat antes de volver a enviarlo.'
             : code === 'CONTROL_OWNER_CONFLICT' ? 'La conversación pertenece a otro operador.'
               : code === 'CONTROL_VERSION_CONFLICT' ? 'El control cambió. Actualiza el chat e inténtalo de nuevo.'
+              : code === 'CURSOR_EXPIRED' ? 'El hilo cambió durante la generación. Actualiza el historial y vuelve a preparar la asistencia.'
                 : code === 'CHANNEL_NOT_READY' ? 'El canal no está conectado. Conservamos el borrador.'
+                  : code === 'ASSISTANCE_UNAVAILABLE' ? 'La asistencia no está disponible ahora. No se creó ningún mensaje.'
                   : 'No se pudo completar la acción. Conservamos el borrador.';
     throw new PanelApiError(response.status, code, message);
   }
@@ -162,6 +166,10 @@ export function getConversations(input: {
 
 export function getConversation(conversationId: string, signal?: AbortSignal) {
   return getJson<ConversationResponse>(`/conversations/${encodeURIComponent(conversationId)}`, signal);
+}
+
+export function prepareConversationAssistance(conversationId: string, request: ConversationAssistanceRequest) {
+  return postJson<ConversationAssistanceResponse>(`/conversations/${encodeURIComponent(conversationId)}/assistance`, request);
 }
 
 export function getOperation(operationId: string, signal?: AbortSignal) {

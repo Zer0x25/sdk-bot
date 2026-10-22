@@ -455,6 +455,7 @@ test('proxy valida cada respuesta v1 con su contrato y no deja pasar rutas sin e
     assert.equal(responseContract('GET', '/v1/conversations/00000000-0000-4000-8000-000000000001/search', 200), 'MessageSearchResponse');
     assert.equal(responseContract('GET', '/v1/conversations/00000000-0000-4000-8000-000000000001/pending-resume', 200), 'PendingResumeResponse');
     assert.equal(responseContract('GET', '/v1/operations/00000000-0000-4000-8000-000000000001', 200), 'Operation');
+    assert.equal(responseContract('POST', '/v1/conversations/00000000-0000-4000-8000-000000000001/assistance', 200), 'ConversationAssistanceResponse');
     assert.equal(responseContract('POST', '/v1/conversations/00000000-0000-4000-8000-000000000001/messages', 202), 'SendMessageResponse');
     assert.equal(responseContract('POST', '/v1/conversations/00000000-0000-4000-8000-000000000001/read', 200), 'ReadResponse');
     assert.equal(responseContract('POST', '/v1/conversations/00000000-0000-4000-8000-000000000001/takeover', 200), 'TakeoverConfirmedResponse');
@@ -485,7 +486,13 @@ test('proxy conserva las respuestas exitosas de takeover, envío y release v1', 
         id: crypto.randomUUID(), conversationId, actorId: actor.id, type: 'takeover',
         status: 'taking_control', controlVersion: '2', uncertainMessageIds: [], createdAt: at, completedAt: null
     };
+    const messageId = crypto.randomUUID();
     const cases = [
+        { method: 'POST', path: `/v1/conversations/${conversationId}/assistance`, status: 200,
+            body: { conversationId, contextVersion: '1', throughMessageId: messageId,
+                snapshot: { dataEpoch: crypto.randomUUID(), seq: '1' },
+                summaryPoints: [{ text: 'Consulta disponibilidad.', references: [{ messageId, occurredAt: at, authorKind: 'customer' }] }],
+                draft: '¿Para qué horario?', draftReferences: [{ messageId, occurredAt: at, authorKind: 'customer' }] } },
         { method: 'POST', path: `/v1/conversations/${conversationId}/messages`, status: 202,
             body: { messageId: crypto.randomUUID(), clientMessageId: crypto.randomUUID() } },
         { method: 'POST', path: `/v1/conversations/${conversationId}/takeover`, status: 200,

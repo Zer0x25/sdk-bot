@@ -1242,6 +1242,74 @@
       "additionalProperties": false,
       "description": "Página FTS estable ligada a la época y secuencia exactas del archivo."
     },
+    "ConversationAssistanceRequest": {
+      "type": "object",
+      "properties": {
+        "expectedContextVersion": { "$ref": "#/$defs/Version" },
+        "expectedSnapshot": { "$ref": "#/$defs/EventCursor" }
+      },
+      "required": ["expectedContextVersion", "expectedSnapshot"],
+      "additionalProperties": false,
+      "description": "Genera ayuda sobre el contexto confirmado y la época/secuencia que ve el operador."
+    },
+    "ConversationAssistanceReference": {
+      "type": "object",
+      "properties": {
+        "messageId": { "$ref": "#/$defs/Id" },
+        "occurredAt": { "$ref": "#/$defs/Timestamp" },
+        "authorKind": {
+          "type": "string",
+          "enum": ["customer", "ai", "operator", "external_self", "system", "unknown"]
+        }
+      },
+      "required": ["messageId", "occurredAt", "authorKind"],
+      "additionalProperties": false
+    },
+    "ConversationAssistancePoint": {
+      "type": "object",
+      "properties": {
+        "text": { "type": "string", "minLength": 1, "maxLength": 600, "format": "unicode-text", "x-maxUtf8Bytes": 2400 },
+        "references": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/ConversationAssistanceReference" },
+          "minItems": 1,
+          "maxItems": 5
+        }
+      },
+      "required": ["text", "references"],
+      "additionalProperties": false
+    },
+    "ConversationAssistanceResponse": {
+      "type": "object",
+      "properties": {
+        "conversationId": { "$ref": "#/$defs/Id" },
+        "contextVersion": { "$ref": "#/$defs/Version" },
+        "throughMessageId": { "$ref": "#/$defs/Id" },
+        "snapshot": { "$ref": "#/$defs/EventCursor" },
+        "summaryPoints": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/ConversationAssistancePoint" },
+          "minItems": 1,
+          "maxItems": 6
+        },
+        "draft": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 4096,
+          "pattern": "\\S",
+          "format": "unicode-text",
+          "x-maxUtf8Bytes": 16384
+        },
+        "draftReferences": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/ConversationAssistanceReference" },
+          "minItems": 1,
+          "maxItems": 5
+        }
+      },
+      "required": ["conversationId", "contextVersion", "throughMessageId", "snapshot", "summaryPoints", "draft", "draftReferences"],
+      "additionalProperties": false
+    },
     "TakeoverRequest": {
       "type": "object",
       "properties": {

@@ -595,6 +595,45 @@
         ]
       }
     },
+    "/conversations/{conversationId}/assistance": {
+      "post": {
+        "operationId": "prepareConversationAssistance",
+        "description": "Genera puntos de resumen y un borrador con referencias validadas al contexto confirmado. Requiere admin:write y conversations:read. No escribe en el historial ni envía al canal.",
+        "parameters": [
+          {
+            "name": "conversationId",
+            "in": "path",
+            "required": true,
+            "schema": { "$ref": "#/components/schemas/Id" }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": { "$ref": "#/components/schemas/ConversationAssistanceRequest" }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Resumen y borrador no enviados, ligados al snapshot de mensajes citado.",
+            "content": {
+              "application/json": {
+                "schema": { "$ref": "#/components/schemas/ConversationAssistanceResponse" }
+              }
+            }
+          },
+          "401": { "$ref": "#/components/responses/401" },
+          "403": { "$ref": "#/components/responses/403" },
+          "404": { "$ref": "#/components/responses/404" },
+          "409": { "$ref": "#/components/responses/409" },
+          "410": { "$ref": "#/components/responses/410" },
+          "422": { "$ref": "#/components/responses/422" },
+          "503": { "$ref": "#/components/responses/503" }
+        }
+      }
+    },
     "/conversations/{conversationId}/takeover": {
       "post": {
         "operationId": "takeControl",
@@ -1100,6 +1139,18 @@
       },
       "MessageSearchResponse": {
         "$ref": "./schema.json#/$defs/MessageSearchResponse"
+      },
+      "ConversationAssistanceRequest": {
+        "$ref": "./schema.json#/$defs/ConversationAssistanceRequest"
+      },
+      "ConversationAssistanceReference": {
+        "$ref": "./schema.json#/$defs/ConversationAssistanceReference"
+      },
+      "ConversationAssistancePoint": {
+        "$ref": "./schema.json#/$defs/ConversationAssistancePoint"
+      },
+      "ConversationAssistanceResponse": {
+        "$ref": "./schema.json#/$defs/ConversationAssistanceResponse"
       },
       "SessionResponse": {
         "$ref": "./schema.json#/$defs/SessionResponse"

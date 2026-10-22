@@ -164,6 +164,22 @@ test('summary contracts require explicit UTC bounds and expose only bounded aggr
     metrics, byChannel: [{ channel: 'whatsapp', ...metrics, phone: '+56900000000' }], snapshot: cursor });
 });
 
+test('operator assistance binds each summary point and unsent draft to thread message IDs', () => {
+  const sourceId = id(55);
+  const reference = { messageId: sourceId, occurredAt: now, authorKind: 'customer' };
+  accept('ConversationAssistanceRequest', { expectedContextVersion: '3', expectedSnapshot: cursor });
+  reject('ConversationAssistanceRequest', { expectedContextVersion: '3', expectedSnapshot: cursor, message: 'forged context' });
+  const response = {
+    conversationId: id(1), contextVersion: '3', throughMessageId: sourceId, snapshot: cursor,
+    summaryPoints: [{ text: 'Pregunta por disponibilidad.', references: [reference] }],
+    draft: 'Sí, tenemos disponibilidad. ¿Para qué fecha la necesitas?', draftReferences: [reference]
+  };
+  accept('ConversationAssistanceResponse', response);
+  reject('ConversationAssistanceResponse', { ...response,
+    summaryPoints: [{ ...response.summaryPoints[0], references: [] }] });
+  reject('ConversationAssistanceResponse', { ...response, draftReferences: [{ ...reference, messageId: 'not-a-message-id' }] });
+});
+
 test('automation profile inventory exposes names only and conversation profile updates support global inheritance', () => {
   accept('AutomationProfile', { key: 'default', name: 'Predeterminado' });
   reject('AutomationProfile', { key: 'default', name: 'Predeterminado', description: 'prompt privado' });

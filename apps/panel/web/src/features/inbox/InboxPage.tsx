@@ -17,6 +17,7 @@ import {
   releaseConversation,
   sendConversationMessage,
   getSearchMessages,
+  prepareConversationAssistance,
   takeoverConversation,
   updateConversationLifecycle,
   type ControlResponse,
@@ -24,7 +25,9 @@ import {
   type Message,
   type MessageSearchHit,
   type Channel,
-  type PageCursor
+  type PageCursor,
+  type ConversationAssistanceResponse,
+  type ConversationAssistanceRequest
 } from './api';
 
 function asError(value: unknown) {
@@ -160,6 +163,18 @@ export function InboxPage() {
   const selectedConversation = conversationQuery.data?.conversation;
   const accounts = accountsQuery.data?.items ?? [];
   const selectedAccount = accounts.find(account => account.id === selectedConversation?.accountId);
+  const assistanceMutation = useMutation<ConversationAssistanceResponse, Error, {
+    conversationId: string;
+    request: ConversationAssistanceRequest;
+  }>({
+    mutationFn: input => prepareConversationAssistance(input.conversationId, input.request),
+    onError: (error, input) => {
+      if (error instanceof PanelApiError && error.code === 'CURSOR_EXPIRED') {
+        void queryClient.invalidateQueries({ queryKey: ['inbox', 'conversation', input.conversationId] });
+        void queryClient.invalidateQueries({ queryKey: ['inbox', 'messages', input.conversationId] });
+      }
+    }
+  });
   const conversationError = conversationQuery.isError ? asError(conversationQuery.error) : null;
   const messageError = messagesQuery.isError
     ? asError(messagesQuery.error)
@@ -426,6 +441,20 @@ export function InboxPage() {
     submitMessage(uncertainSend.text, crypto.randomUUID(), true);
   }
 
+  function prepareAssistance() {
+    if (!conversationId || !selectedConversation || !conversationQuery.data) return;
+    assistanceMutation.mutate({ conversationId, request: {
+      expectedContextVersion: selectedConversation.control.contextVersion,
+      expectedSnapshot: conversationQuery.data.snapshot
+    } });
+  }
+
+  function useAssistedDraft(text: string) {
+    if (draft.trim() && draft !== text
+      && !window.confirm('Esto reemplazará el borrador actual del compositor. ¿Quieres continuar?')) return;
+    setDraft(text);
+  }
+
   const actor = sessionQuery.data?.actor;
   const control = selectedConversation?.control;
   const canOverrideOwner = Boolean(control?.ownerId && actor && actor.id !== control.ownerId
@@ -448,6 +477,20 @@ export function InboxPage() {
   const canSend = Boolean(actor?.capabilities.includes('messages:send') && selectedAccount?.capabilities.reply
     && selectedAccount.status === 'connected' && controlConfirmed && control?.automationMode === 'human'
     && control.lifecycle === 'open' && !selectedConversation?.requiresReview && ownerCanAct);
+  const effectiveAccessAllowed = control?.accessPolicy === 'allowed'
+    || control?.accessPolicy === 'neutral' && sessionQuery.data?.policy.globalMode === 'allowed_all';
+  const canAssist = Boolean(actor?.capabilities.includes('admin:write') && actor.capabilities.includes('conversations:read')
+    && selectedAccount?.channel === 'whatsapp' && effectiveAccessAllowed && controlConfirmed
+    && control?.lifecycle === 'open' && !control?.requiresReview && !selectedConversation?.requiresReview);
+  const currentAssistanceBusy = assistanceMutation.isPending && assistanceMutation.variables?.conversationId === conversationId;
+  const currentAssistanceError = assistanceMutation.isError && assistanceMutation.variables?.conversationId === conversationId
+    ? asError(assistanceMutation.error) : null;
+  const storedAssistance = assistanceMutation.data;
+  const currentAssistance = storedAssistance && assistanceMutation.variables?.conversationId === conversationId
+    && storedAssistance.contextVersion === selectedConversation?.control.contextVersion
+    && storedAssistance.snapshot.dataEpoch === conversationQuery.data?.snapshot.dataEpoch
+    && storedAssistance.snapshot.seq === conversationQuery.data?.snapshot.seq
+    ? storedAssistance : undefined;
   const currentUncertainSend = uncertainSends.find(item => item.conversationId === conversationId) ?? null;
   const currentSendPending = sendMutation.isPending && sendMutation.variables?.conversationId === conversationId;
   const sendError = sendMutation.isError && sendMutation.variables?.conversationId === conversationId && !currentUncertainSend
@@ -533,6 +576,12 @@ export function InboxPage() {
         canResolve={canResolve}
         canReopen={canReopen}
         canSend={canSend}
+        canAssist={canAssist}
+        assistance={currentAssistance}
+        assistanceLoading={currentAssistanceBusy}
+        assistanceError={currentAssistanceError}
+        onPrepareAssistance={prepareAssistance}
+        onUseAssistedDraft={useAssistedDraft}
         controlBusy={currentControlBusy || Boolean(pendingTakeoverId)}
         controlError={currentControlError}
         controlNotice={controlNotice}

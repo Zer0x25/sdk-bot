@@ -89,11 +89,16 @@ function jsonResponse(value: unknown, status = 200) {
   });
 }
 
-function installApiMock(options: { empty?: boolean; listError?: boolean; pagination?: boolean; listPagination?: boolean; cursorExpired?: boolean; media?: boolean; mediaAvailable?: boolean } = {}) {
+function installApiMock(options: { empty?: boolean; listError?: boolean; pagination?: boolean; listPagination?: boolean; cursorExpired?: boolean; media?: boolean; mediaAvailable?: boolean; assistant?: boolean } = {}) {
   let markedRead = false;
   const projectedConversation = () => markedRead ? { ...conversation, unreadCount: 0 } : conversation;
   const fetchMock = vi.fn(async (input: RequestInfo | URL, _init?: RequestInit) => {
     const url = new URL(String(input), 'http://panel.local');
+    if (url.pathname === '/api/v1/session' && options.assistant) {
+      return jsonResponse({ actor: { id: 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa', displayName: 'Operador',
+        capabilities: ['conversations:read', 'admin:write', 'messages:send'] },
+      policy: { globalMode: 'allowed_all', globalPaused: false, policyVersion: '1' }, snapshot });
+    }
     if (url.pathname === '/api/v1/accounts') return jsonResponse({ items: [account] });
     if (url.pathname === '/api/v1/summary') {
       const from = url.searchParams.get('from') || timestamp;
@@ -132,6 +137,12 @@ function installApiMock(options: { empty?: boolean; listError?: boolean; paginat
     }
     if (url.pathname === `/api/v1/conversations/${conversationId}/search`) {
       return jsonResponse({ items: [{ message: olderMessage, snippet: '<mark>pedido</mark> confirmado' }], nextCursor: null, snapshot });
+    }
+    if (url.pathname === `/api/v1/conversations/${conversationId}/assistance`) {
+      const reference = { messageId: latestMessage.id, occurredAt: latestMessage.occurredAt, authorKind: 'customer' };
+      return jsonResponse({ conversationId, contextVersion: '1', throughMessageId: latestMessage.id, snapshot,
+        summaryPoints: [{ text: 'Consulta disponibilidad para el viernes.', references: [reference] }],
+        draft: 'Sí, tenemos disponibilidad para el viernes. ¿Qué horario te acomoda?', draftReferences: [reference] });
     }
     if (url.pathname === `/api/v1/conversations/${conversationId}/messages`) {
       if (options.pagination && url.searchParams.has('cursor')) {
@@ -259,6 +270,32 @@ describe('inbox shell and real API integration', () => {
       expect(JSON.parse(String(readRequest?.[1]?.body)).throughInboundSeq).toBe('1');
       expect(document.querySelector('.unread-count')).toBeNull();
     });
+  });
+
+  it('shows referenced WhatsApp assistance and copies the draft without sending it', async () => {
+    const fetchMock = installApiMock({ assistant: true });
+    const user = userEvent.setup();
+    renderApp(`/inbox/${conversationId}`);
+
+    expect(await screen.findByText('¿En qué puedo ayudarte?')).toBeInTheDocument();
+    await user.click(await screen.findByRole('button', { name: 'Preparar resumen y borrador' }));
+    const panel = await screen.findByRole('region', { name: 'Resumen y borrador de asistencia' });
+    expect(within(panel).getByText('Consulta disponibilidad para el viernes.')).toBeInTheDocument();
+    expect(within(panel).getByText('Sí, tenemos disponibilidad para el viernes. ¿Qué horario te acomoda?')).toBeInTheDocument();
+    expect(screen.getByText(/se enviará al Brain y proveedor configurados/)).toBeInTheDocument();
+
+    const request = fetchMock.mock.calls.find(([input]) =>
+      new URL(String(input), 'http://panel.local').pathname === `/api/v1/conversations/${conversationId}/assistance`);
+    expect(request?.[1]?.method).toBe('POST');
+    expect(JSON.parse(String(request?.[1]?.body))).toEqual({ expectedContextVersion: '1', expectedSnapshot: snapshot });
+    await user.click(within(panel).getByRole('button', { name: 'Usar borrador en el compositor' }));
+    expect(screen.getByRole('textbox', { name: 'Escribir mensaje' })).toHaveValue(
+      'Sí, tenemos disponibilidad para el viernes. ¿Qué horario te acomoda?');
+    await user.click(within(panel).getAllByRole('button', { name: /Cliente/ })[0]);
+    expect(document.activeElement).toHaveAttribute('id', `thread-message-${latestMessage.id}`);
+    expect(fetchMock.mock.calls.some(([input, init]) =>
+      new URL(String(input), 'http://panel.local').pathname === `/api/v1/conversations/${conversationId}/messages`
+        && init?.method === 'POST')).toBe(false);
   });
 
   it('searches messages in the selected conversation and renders snippets as plain text', async () => {

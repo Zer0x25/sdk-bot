@@ -462,7 +462,8 @@ comprensible si el archivo expiró o no está disponible.
 
 **Depende de:** contexto/autoría robustos y política explícita de capacidades.
 
-- [ ] Resúmenes, borradores y propuestas de respuesta con referencias al hilo.
+- [x] Resúmenes, borradores y propuestas de respuesta con referencias al hilo.
+  [Evidencia F10.1](F10.1-ASISTENCIA-OPERADOR.md).
 - [ ] Contratos de herramientas: schemas, permisos, timeout, auditoría, idempotencia
   y separación read/write. Gateway ejecuta; brain solicita sin acceder a canales.
 - [ ] ADR para efectos externos/equipos si se solicitan; no activar automáticamente

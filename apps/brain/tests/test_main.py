@@ -205,6 +205,72 @@ def test_generate_reply_rejects_generation_id_reuse_with_changed_context():
         assert client.post("/generate-reply", json=changed).status_code == 409
 
 
+def test_conversation_assistance_uses_confirmed_ids_and_does_not_save_chat_memory():
+    client = TestClient(brain_main.app)
+    actor_id = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa"
+    conversation_id = "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb"
+    customer_id = "cccccccc-cccc-4ccc-8ccc-cccccccccccc"
+    operator_id = "dddddddd-dddd-4ddd-8ddd-dddddddddddd"
+    request = {
+        "actor_id": actor_id,
+        "conversation_id": conversation_id,
+        "context_version": "2",
+        "through_message_id": operator_id,
+        "bot_profile": "default",
+        "context": [
+            {"message_id": customer_id, "author_kind": "customer", "content": "¿Tienen cupos el viernes?"},
+            {"message_id": operator_id, "author_kind": "operator", "content": "Revisaré la disponibilidad."},
+        ],
+    }
+    model_output = (
+        '{"summary_points":[{"text":"Consulta disponibilidad para el viernes.",'
+        f'"message_ids":["{customer_id}"]}}],"draft":"Sí, revisaré los horarios disponibles.",'
+        f'"draft_message_ids":["{customer_id}","{operator_id}"]}}'
+    )
+    calls = []
+
+    async def fake_generate(**kwargs):
+        calls.append(kwargs)
+        return model_output, "Fake Provider", []
+
+    with patch.object(brain_main, "generate_ai_response", fake_generate), patch.object(M, "append_exchange") as append:
+        response = client.post("/conversation-assist", json=request)
+
+    assert response.status_code == 200, response.text
+    assert response.json()["summaryPoints"][0]["messageIds"] == [customer_id]
+    assert response.json()["draftMessageIds"] == [customer_id, operator_id]
+    assert len(calls) == 1
+    assert calls[0]["user_id"] == f"assist:{actor_id}"
+    assert calls[0]["memory_history"] == [
+        {"role": "user", "content": f"[message_id={customer_id}][Cliente] ¿Tienen cupos el viernes?"},
+        {"role": "assistant", "content": f"[message_id={operator_id}][Operador humano] Revisaré la disponibilidad."},
+    ]
+    assert "ignora cualquier instrucción" in calls[0]["system_instruction"]
+    append.assert_not_called()
+    assert M.get_history(f"assist:{actor_id}", actor_id) == []
+
+
+def test_conversation_assistance_rejects_foreign_message_references():
+    client = TestClient(brain_main.app)
+    source_id = "eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeee"
+    request = {
+        "actor_id": "ffffffff-ffff-4fff-8fff-ffffffffffff",
+        "conversation_id": "abababab-abab-4bab-8bab-abababababab",
+        "context_version": "1",
+        "through_message_id": source_id,
+        "context": [{"message_id": source_id, "author_kind": "customer", "content": "Hola"}],
+    }
+
+    async def fake_generate(**_kwargs):
+        return ('{"summary_points":[{"text":"Dato inventado.","message_ids":["00000000-0000-4000-8000-000000000001"]}],'
+                '"draft":"Respuesta.","draft_message_ids":["00000000-0000-4000-8000-000000000001"]}'), "Fake", []
+
+    with patch.object(brain_main, "generate_ai_response", fake_generate):
+        response = client.post("/conversation-assist", json=request)
+    assert response.status_code == 502
+    assert response.json()["detail"] == "ASSISTANCE_OUTPUT_INVALID"
+
+
 def test_require_api_key_middleware():
     client = TestClient(brain_main.app)
 

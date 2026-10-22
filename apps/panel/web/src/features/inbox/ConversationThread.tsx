@@ -1,8 +1,8 @@
 import { useEffect, useLayoutEffect, useRef, useState } from 'react';
 import type { KeyboardEvent } from 'react';
 import { Link } from 'react-router-dom';
-import { ArrowLeft, Bell, Bot, MessageSquareText, Search, SendHorizontal, UserRound } from 'lucide-react';
-import type { Account, Actor, Conversation, Message, MessageSearchHit, PendingResumeResponse } from './api';
+import { ArrowLeft, Bell, Bot, MessageSquareText, Search, SendHorizontal, Sparkles, UserRound } from 'lucide-react';
+import type { Account, Actor, Conversation, ConversationAssistanceResponse, Message, MessageSearchHit, PendingResumeResponse } from './api';
 import { PanelApiError } from './api';
 
 interface Props {
@@ -41,6 +41,12 @@ interface Props {
   canResolve: boolean;
   canReopen: boolean;
   canSend: boolean;
+  canAssist: boolean;
+  assistance?: ConversationAssistanceResponse;
+  assistanceLoading: boolean;
+  assistanceError: Error | null;
+  onPrepareAssistance(): void;
+  onUseAssistedDraft(text: string): void;
   controlBusy: boolean;
   controlError: Error | null;
   controlNotice: string | null;
@@ -138,7 +144,8 @@ export function ConversationThread(props: Props) {
     hasOlder, loadingOlder, readError, newMessagesCount,
     onMessagesSeen, onAtLatestChange, onLoadOlder, onRetryDetail, onRetryMessages, onRetryRead,
     onMessageSearchInputChange, onLoadMoreMessageSearch, onRetryMessageSearch,
-    actor, account, canTakeover, canRelease, canResolve, canReopen, canSend, controlBusy, controlError,
+    actor, account, canTakeover, canRelease, canResolve, canReopen, canSend, canAssist, assistance,
+    assistanceLoading, assistanceError, onPrepareAssistance, onUseAssistedDraft, controlBusy, controlError,
     controlNotice, releaseOptionsOpen, pendingResume, pendingResumeLoading, pendingResumeError, selectedPendingIds,
     onTakeover, onRelease, onOpenPendingResume, onTogglePendingResume, onReleaseFutureOnly,
     onReleaseSelectedPending, onCancelReleaseOptions, onResolve, onReopen, draft, onDraftChange, sendBusy, sendError,
@@ -243,6 +250,13 @@ export function ConversationThread(props: Props) {
     catch { olderLoadPending.current = false; }
   }
 
+  function focusAssistanceReference(messageId: string) {
+    const target = document.getElementById(`thread-message-${messageId}`);
+    if (!target) return;
+    target.scrollIntoView?.({ behavior: 'smooth', block: 'center' });
+    target.focus({ preventScroll: true });
+  }
+
   return (
     <section className={`thread-column${conversationId ? ' is-open' : ''}`} aria-label="Historial del chat">
       <header className="thread-header">
@@ -327,6 +341,13 @@ export function ConversationThread(props: Props) {
               <span>{controlLabel}</span>
             </div>
             <div className="thread-control-buttons">
+              {canAssist && (
+                <button className="thread-control-button" type="button" onClick={onPrepareAssistance}
+                  disabled={assistanceLoading || messagesLoading || messages.length === 0}>
+                  <Sparkles aria-hidden="true" size={15} />
+                  {assistanceLoading ? 'Preparando…' : 'Preparar resumen y borrador'}
+                </button>
+              )}
               {control?.status === 'taking_control' && <span className="control-pending" role="status">Tomando control…</span>}
               {canTakeover && control?.automationMode !== 'human' && (
                 <button className="thread-control-button is-primary" type="button" onClick={onTakeover} disabled={controlBusy}>
@@ -344,6 +365,47 @@ export function ConversationThread(props: Props) {
           </div>
           {controlNotice && <div className="thread-inline-status" role="status">{controlNotice}</div>}
           {controlError && <div className="thread-inline-error" role="alert">{controlError.message}</div>}
+          {canAssist && <p className="assistant-disclosure">Al preparar la asistencia, el texto reciente de este chat se enviará al Brain y proveedor configurados. El resumen y el borrador no se guardan ni se envían al canal.</p>}
+          {assistanceError && <div className="thread-inline-error" role="alert">{assistanceError.message}</div>}
+          {assistance && (
+            <section className="conversation-assistance-panel" aria-label="Resumen y borrador de asistencia">
+              <div className="assistance-heading">
+                <h3>Resumen del hilo</h3>
+              </div>
+              <ol className="assistance-summary-list">
+                {assistance.summaryPoints.map((point, index) => (
+                  <li key={`${index}-${point.references[0]?.messageId}`}>
+                    <p>{point.text}</p>
+                    <div className="assistance-citations" aria-label="Referencias del resumen">
+                      {point.references.map(reference => (
+                        <button key={reference.messageId} className="assistance-citation" type="button"
+                          onClick={() => focusAssistanceReference(reference.messageId)}
+                          title={`Mensaje ${reference.messageId}`}>
+                          {authorNames[reference.authorKind]} · {formatSearchTime(reference.occurredAt)}
+                        </button>
+                      ))}
+                    </div>
+                  </li>
+                ))}
+              </ol>
+              <div className="assistance-draft">
+                <h4>Borrador de respuesta</h4>
+                <p>{assistance.draft}</p>
+                <div className="assistance-citations" aria-label="Referencias del borrador">
+                  {assistance.draftReferences.map(reference => (
+                    <button key={reference.messageId} className="assistance-citation" type="button"
+                      onClick={() => focusAssistanceReference(reference.messageId)}
+                      title={`Mensaje ${reference.messageId}`}>
+                      {authorNames[reference.authorKind]} · {formatSearchTime(reference.occurredAt)}
+                    </button>
+                  ))}
+                </div>
+                <button className="thread-control-button is-primary" type="button" onClick={() => onUseAssistedDraft(assistance.draft)}>
+                  Usar borrador en el compositor
+                </button>
+              </div>
+            </section>
+          )}
           {releaseOptionsOpen && (
             <section className="release-policy-panel" aria-label="Elegir cómo devolver el control a la IA">
               <h3>Devolver el control a la IA</h3>
@@ -452,7 +514,7 @@ export function ConversationThread(props: Props) {
                   const quoted = message.replyToId ? messageById.get(message.replyToId) : undefined;
                   return (
                   <li key={message.id} className={`message-row ${message.direction === 'outbound' ? 'is-outbound' : 'is-inbound'}`}>
-                    <article className="message-bubble">
+                    <article id={`thread-message-${message.id}`} className="message-bubble" tabIndex={-1}>
                       <div className="message-author">{authorNames[message.authorKind]}</div>
                       {(message.replyToId || message.replyPreview) && (
                         <blockquote className="message-quote" aria-label="Mensaje citado">

@@ -34,6 +34,7 @@ const { GATEWAY_STATE_DIR, BRAIN_STATE_DIR } = require('../lib/repoPaths');
 const { createVerifier } = require('../lib/panelContext');
 const { readBytes, sendError, BoundaryError } = require('../lib/httpBoundary');
 const { createSessionApi } = require('./sessionApi');
+const { requestConversationAssistance } = require('./brainService');
 const { getGlobalPolicy } = require('../config');
 const verifiedBodies = new WeakMap();
 const { spawn } = require('child_process');
@@ -1110,7 +1111,8 @@ function startInternalBus(opts = {}) {
     const verify = createVerifier({ secret });
     const sessionApi = createSessionApi(() => { getSettingsDB(); return getGlobalPolicy(); }, opts.archive,
         getContactsDB, opts.getChannelStatus, opts.controlService, opts.getAdapter,
-        async () => (await getAvailableProfiles()) || [], opts.attachmentStore);
+        async () => (await getAvailableProfiles()) || [], opts.attachmentStore,
+        opts.assistConversation || requestConversationAssistance);
     const server = http.createServer(async (req, res) => {
         let u;
         try { u = new URL(req.url || '/', 'http://gateway.local'); }

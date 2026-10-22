@@ -65,6 +65,23 @@ export interface paths {
         patch: operations["updateConversation"];
         trace?: never;
     };
+    "/conversations/{conversationId}/assistance": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** @description Genera puntos de resumen y un borrador con referencias validadas al contexto confirmado. Requiere admin:write y conversations:read. No escribe en el historial ni envía al canal. */
+        post: operations["prepareConversationAssistance"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/conversations/{conversationId}/messages": {
         parameters: {
             query?: never;
@@ -307,6 +324,32 @@ export interface components {
             lastActivityAt: components["schemas"]["Timestamp"] | null;
             requiresReview: boolean;
             unreadCount: number;
+        };
+        ConversationAssistancePoint: {
+            references: components["schemas"]["ConversationAssistanceReference"][];
+            /** Format: unicode-text */
+            text: string;
+        };
+        ConversationAssistanceReference: {
+            /** @enum {string} */
+            authorKind: "customer" | "ai" | "operator" | "external_self" | "system" | "unknown";
+            messageId: components["schemas"]["Id"];
+            occurredAt: components["schemas"]["Timestamp"];
+        };
+        /** @description Genera ayuda sobre el contexto confirmado y la época/secuencia que ve el operador. */
+        ConversationAssistanceRequest: {
+            expectedContextVersion: components["schemas"]["Version"];
+            expectedSnapshot: components["schemas"]["EventCursor"];
+        };
+        ConversationAssistanceResponse: {
+            contextVersion: components["schemas"]["Version"];
+            conversationId: components["schemas"]["Id"];
+            /** Format: unicode-text */
+            draft: string;
+            draftReferences: components["schemas"]["ConversationAssistanceReference"][];
+            snapshot: components["schemas"]["EventCursor"];
+            summaryPoints: components["schemas"]["ConversationAssistancePoint"][];
+            throughMessageId: components["schemas"]["Id"];
         };
         /** @description Forma de proyección; elegibilidad/cancelación/barrera se verifican en servicio de dominio F5. */
         ConversationControl: {
@@ -993,6 +1036,39 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["TakeoverConfirmedResponse"];
+                };
+            };
+            401: components["responses"]["401"];
+            403: components["responses"]["403"];
+            404: components["responses"]["404"];
+            409: components["responses"]["409"];
+            410: components["responses"]["410"];
+            422: components["responses"]["422"];
+            503: components["responses"]["503"];
+        };
+    };
+    prepareConversationAssistance: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                conversationId: components["schemas"]["Id"];
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ConversationAssistanceRequest"];
+            };
+        };
+        responses: {
+            /** @description Resumen y borrador no enviados, ligados al snapshot de mensajes citado. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ConversationAssistanceResponse"];
                 };
             };
             401: components["responses"]["401"];

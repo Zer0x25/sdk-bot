@@ -1317,3 +1317,25 @@ Cierres históricos: commits F2C.1/F2C.2/F2D/F2E.1 están en el log local; F2B.3
 - Commit local de esta unidad creado; no publicar.
 - Siguiente punto: Fase 10, primera entrega vertical de resúmenes/borradores y
   propuestas de respuesta con referencias verificables al hilo.
+
+## Fase 10.1 — Asistencia al operador con referencias al hilo — 2026-10-22
+
+- Bandeja y contrato v1 preparan resumen y borrador solo para WhatsApp con
+  `admin:write` + `conversations:read`, SQLite como autoridad lista, conversación
+  permitida/abierta/confirmada y sin revisión. Telegram queda fuera por su uso
+  administrativo.
+- El Gateway forma contexto reciente desde SQLite (hasta 40 mensajes, 24.000
+  caracteres; texto, captions y transcripciones), enlaza la solicitud al snapshot
+  y `contextVersion`, valida de nuevo snapshot, control y política al finalizar y
+  reconstruye referencias solo con IDs del contexto fuente. Brain valida JSON e
+  IDs y no persiste memoria. La UI muestra divulgación del proveedor, citas
+  navegables y copia el borrador al compositor solo por acción del operador; esta
+  ruta no crea mensajes ni intenciones de salida.
+- Evidencia: [F10.1-ASISTENCIA-OPERADOR.md](F10.1-ASISTENCIA-OPERADOR.md).
+- Verificación: contratos 18/18; `cd apps/gateway && npm run check` con lint,
+  typecheck, panel 41/41, build, integración 1/1 y Gateway 351/351; Brain Ruff
+  limpio y 32/32; `git diff --check`. Sin proveedor real ni canales iniciados.
+- Commit local de esta unidad creado; no publicar.
+- Siguiente punto: F10.2, contratos de herramientas con schemas, permisos,
+  timeout, auditoría, idempotencia y separación read/write; Gateway ejecuta y
+  Brain solicita sin acceso a canales.

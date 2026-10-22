@@ -18,6 +18,7 @@ function capabilityFor(method, pathname) {
     if (method === 'GET' && (/^\/v1\/(session|accounts|profiles|summary|conversations(?:\/[^/]+(?:\/(?:messages|pending-resume|search))?)?|operations\/[^/]+|events)$/.test(pathname)
         || /^\/v1\/attachments\/[0-9a-f-]{36}$/.test(pathname))) return 'conversations:read';
     if (method === 'POST' && /^\/v1\/conversations\/[^/]+\/(takeover|release)$/.test(pathname)) return 'control:write';
+    if (method === 'POST' && /^\/v1\/conversations\/[^/]+\/assistance$/.test(pathname)) return 'admin:write';
     if (method === 'POST' && /^\/v1\/conversations\/[^/]+\/messages$/.test(pathname)) return 'messages:send';
     if (method === 'POST' && /^\/v1\/conversations\/[^/]+\/read$/.test(pathname)) return 'conversations:read';
     if (method === 'PATCH' && /^\/v1\/conversations\/[^/]+$/.test(pathname)) return 'conversations:write';
@@ -578,8 +579,8 @@ function archiveBoundary(error) {
     return new BoundaryError(503, 'SERVICE_UNAVAILABLE', 'Archivo de conversaciones no disponible.');
 }
 
-/** @param {() => any} getPolicy @param {any} archive @param {() => any} [getContacts] @param {(channel:string,accountId:string) => any} [getChannelStatus] @param {any} [controlService] @param {(channel:string,accountId:string) => any} [getAdapter] @param {() => Promise<any[]>} [getProfiles] @param {any} [attachmentStore] */
-function createSessionApi(getPolicy, archive, getContacts = () => ({}), getChannelStatus = (_channel, _accountId) => 'disconnected', controlService = null, getAdapter = () => null, getProfiles = async () => [], attachmentStore = null) {
+/** @param {() => any} getPolicy @param {any} archive @param {() => any} [getContacts] @param {(channel:string,accountId:string) => any} [getChannelStatus] @param {any} [controlService] @param {(channel:string,accountId:string) => any} [getAdapter] @param {() => Promise<any[]>} [getProfiles] @param {any} [attachmentStore] @param {((input:any) => Promise<any>) | null} [assistConversation] */
+function createSessionApi(getPolicy, archive, getContacts = () => ({}), getChannelStatus = (_channel, _accountId) => 'disconnected', controlService = null, getAdapter = () => null, getProfiles = async () => [], attachmentStore = null, assistConversation = null) {
     const readRevisions = new Map();
     return async function route(req, res, context, pathname, requestBody = Buffer.alloc(0)) {
         const capability = capabilityFor(req.method, pathname);
@@ -719,6 +720,135 @@ function createSessionApi(getPolicy, archive, getContacts = () => ({}), getChann
                     snapshot: startSnapshot, scope, position: nextPosition }) : null;
                 const body = assertValid('ConversationsResponse', {
                     items: items.map(item => item.conversation), nextCursor, snapshot: startSnapshot
+                });
+                return send(res, 200, body, context.requestId);
+            }
+            const assistance = /^\/v1\/conversations\/([^/]+)\/assistance$/.exec(pathname);
+            if (req.method === 'POST' && assistance) {
+                rejectQuery(req);
+                requireCapability(context.actor, 'conversations:read');
+                if (!archive || typeof assistConversation !== 'function') {
+                    throw new BoundaryError(503, 'ASSISTANCE_UNAVAILABLE', 'La asistencia del operador no está disponible.');
+                }
+                const conversationId = conversationPathId(assistance[1]);
+                let request;
+                try { request = JSON.parse(requestBody.toString('utf8')); }
+                catch { throw invalid('Cuerpo JSON inválido.'); }
+                if (!validate('ConversationAssistanceRequest', request).valid) throw invalid('Solicitud de asistencia inválida.');
+                const row = await archive.conversationView({ conversationId, actorId: context.actor.id });
+                if (!row) throw new BoundaryError(404, 'NOT_FOUND', 'Conversación no encontrada.');
+                if (row.channel !== 'whatsapp') {
+                    throw new BoundaryError(409, 'ASSISTANCE_CHANNEL_UNAVAILABLE', 'La asistencia de cliente solo está habilitada para conversaciones de WhatsApp.');
+                }
+                const isAssistanceAllowed = (value, activePolicy) => {
+                    const allowed = value?.accessPolicy === 'allowed'
+                        || value?.accessPolicy === 'neutral' && activePolicy.globalMode === 'allowed_all';
+                    return allowed && value?.lifecycle === 'open' && !value.requiresReview && value.status === 'confirmed';
+                };
+                const authority = await archive.controlAuthority();
+                if (authority.mode !== 'sqlite' || !authority.serviceReady) {
+                    throw new BoundaryError(503, 'CONTROL_SERVICE_NOT_READY', 'El servicio de control de conversaciones no está listo.');
+                }
+                const control = await archive.controlState(conversationId);
+                if (!control) throw new BoundaryError(404, 'NOT_FOUND', 'Conversación no encontrada.');
+                const policy = getPolicy();
+                if (!isAssistanceAllowed(control, policy)) {
+                    throw new BoundaryError(409, 'ASSISTANCE_NOT_ALLOWED', 'La política o el estado de esta conversación no permite preparar una respuesta.');
+                }
+                const matchesExpectedSnapshot = value => value.dataEpoch === request.expectedSnapshot.dataEpoch
+                    && value.seq === request.expectedSnapshot.seq;
+                const startSnapshot = await archive.snapshot();
+                if (!matchesExpectedSnapshot(startSnapshot)) {
+                    throw new BoundaryError(410, 'CURSOR_EXPIRED', 'El chat cambió; actualiza el historial antes de preparar la asistencia.');
+                }
+                let archiveContext;
+                try {
+                    archiveContext = await archive.aiContext({ conversationId,
+                        expectedContextVersion: request.expectedContextVersion, limit: 80 });
+                } catch (error) {
+                    const errorCode = /** @type {{code?: string}} */ (error)?.code;
+                    if (errorCode === 'AI_CONTEXT_VERSION_STALE') {
+                        throw new BoundaryError(410, 'CURSOR_EXPIRED', 'El contexto del chat cambió; actualízalo antes de preparar la asistencia.');
+                    }
+                    throw error;
+                }
+                if (!archiveContext?.throughMessageId) {
+                    throw new BoundaryError(409, 'ASSISTANCE_CONTEXT_EMPTY', 'Todavía no hay mensajes disponibles para preparar la asistencia.');
+                }
+                const sourceMessages = [];
+                for (const message of archiveContext.messages) {
+                    if (message.deletedAt || !['customer', 'ai', 'operator'].includes(message.authorKind)) continue;
+                    const content = message.content;
+                    const text = content.type === 'text' ? content.text
+                        : content.type === 'oversized' ? '' : content.transcript || content.caption || '';
+                    if (typeof text !== 'string' || !text.trim()) continue;
+                    sourceMessages.push({ messageId: message.id, authorKind: message.authorKind,
+                        occurredAt: message.occurredAt, content: text.trim() });
+                }
+                const boundedContext = [];
+                let remainingChars = 24000;
+                for (const message of sourceMessages.slice(-40).reverse()) {
+                    if (remainingChars <= 0) break;
+                    const content = message.content.slice(0, Math.min(4000, remainingChars));
+                    if (!content.trim()) continue;
+                    boundedContext.push({ ...message, content });
+                    remainingChars -= content.length;
+                }
+                boundedContext.reverse();
+                if (!boundedContext.length) {
+                    throw new BoundaryError(409, 'ASSISTANCE_CONTEXT_EMPTY', 'El hilo reciente no contiene texto o transcripciones para resumir.');
+                }
+                const contextSnapshot = await archive.snapshot();
+                if (!matchesExpectedSnapshot(contextSnapshot)) {
+                    throw new BoundaryError(410, 'CURSOR_EXPIRED', 'El chat cambió; actualiza el historial antes de preparar la asistencia.');
+                }
+                let generated;
+                try {
+                    generated = await assistConversation({ actorId: context.actor.id, conversationId,
+                        contextVersion: archiveContext.contextVersion, throughMessageId: archiveContext.throughMessageId,
+                        botProfile: control.profileKey || policy.globalProfileKey || 'default',
+                        context: boundedContext.map(({ messageId, authorKind, content }) => ({ messageId, authorKind, content })) });
+                } catch {
+                    throw new BoundaryError(503, 'ASSISTANCE_UNAVAILABLE', 'No se pudo generar la asistencia. No se creó ningún mensaje.');
+                }
+                const endSnapshot = await archive.snapshot();
+                if (!matchesExpectedSnapshot(endSnapshot)) {
+                    throw new BoundaryError(410, 'CURSOR_EXPIRED', 'El chat cambió durante la generación; descarta el resultado y vuelve a intentarlo.');
+                }
+                const endAuthority = await archive.controlAuthority();
+                if (endAuthority.mode !== 'sqlite' || !endAuthority.serviceReady) {
+                    throw new BoundaryError(503, 'CONTROL_SERVICE_NOT_READY', 'El servicio de control de conversaciones no está listo.');
+                }
+                const endControl = await archive.controlState(conversationId);
+                const endPolicy = getPolicy();
+                if (!endControl || !isAssistanceAllowed(endControl, endPolicy)) {
+                    throw new BoundaryError(409, 'ASSISTANCE_NOT_ALLOWED', 'La política o el estado de esta conversación cambió durante la generación.');
+                }
+                if (endControl.contextVersion !== archiveContext.contextVersion
+                    || endControl.controlVersion !== control.controlVersion
+                    || endPolicy.policyVersion !== policy.policyVersion) {
+                    throw new BoundaryError(410, 'CURSOR_EXPIRED', 'El control o la política cambiaron durante la generación; actualiza el chat y vuelve a intentarlo.');
+                }
+                const byId = new Map(boundedContext.map(message => [message.messageId, message]));
+                const references = ids => {
+                    if (!Array.isArray(ids) || ids.length < 1 || ids.length > 5 || new Set(ids).size !== ids.length
+                        || ids.some(id => typeof id !== 'string' || !byId.has(id))) {
+                        throw new BoundaryError(503, 'ASSISTANCE_RESPONSE_INVALID', 'El servicio de asistencia devolvió referencias que no pertenecen a este hilo.');
+                    }
+                    return ids.map(messageId => {
+                        const source = byId.get(messageId);
+                        return { messageId, occurredAt: source.occurredAt, authorKind: source.authorKind };
+                    });
+                };
+                if (!generated || !Array.isArray(generated.summaryPoints) || generated.summaryPoints.length < 1
+                    || generated.summaryPoints.length > 6 || typeof generated.draft !== 'string') {
+                    throw new BoundaryError(503, 'ASSISTANCE_RESPONSE_INVALID', 'El servicio de asistencia devolvió una respuesta inválida.');
+                }
+                const body = assertValid('ConversationAssistanceResponse', {
+                    conversationId, contextVersion: archiveContext.contextVersion, throughMessageId: archiveContext.throughMessageId,
+                    snapshot: contextSnapshot,
+                    summaryPoints: generated.summaryPoints.map(point => ({ text: point.text, references: references(point.messageIds) })),
+                    draft: generated.draft, draftReferences: references(generated.draftMessageIds)
                 });
                 return send(res, 200, body, context.requestId);
             }

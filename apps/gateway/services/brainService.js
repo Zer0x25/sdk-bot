@@ -141,6 +141,21 @@ async function requestBrain(payload, jobSignal = null, endpoint = BRAIN_API_URL)
     return data;
 }
 
+/** Prepares operator-facing assistance without replaying, storing or sending it. */
+async function requestConversationAssistance(payload) {
+    const response = await fetch(`${BRAIN_API_BASE}/conversation-assist`, {
+        method: 'POST',
+        headers: authHeaders({ 'Content-Type': 'application/json' }),
+        signal: AbortSignal.timeout(90000),
+        body: JSON.stringify(payload)
+    });
+    let data;
+    try { data = await response.json(); }
+    catch { throw new Error('AI_ASSISTANCE_RESPONSE_INVALID'); }
+    if (!response.ok || data?.error) throw new Error('AI_ASSISTANCE_UNAVAILABLE');
+    return data;
+}
+
 async function invalidateBrainGeneration(generationId, contextVersion) {
     try {
         await fetch(`${BRAIN_API_BASE}/invalidate-generation`, {
@@ -655,6 +670,7 @@ function startBrainHealthWatch() {
 
 module.exports = {
     processAIChat,
+    requestConversationAssistance,
     clearAIMemory,
     getAvailableProfiles,
     getProfileDetail,
