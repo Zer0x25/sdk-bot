@@ -1023,3 +1023,18 @@ Cierres históricos: commits F2C.1/F2C.2/F2D/F2E.1 están en el log local; F2B.3
   pasó. Sin cambios de contratos y sin proveedores externos.
 - Evidencia: [F7.5-SISTEMA](F7.5-SISTEMA.md). No se hizo push ni despliegue.
   Siguiente unidad: F7.6, inventario de paridad.
+
+## Fase 7.6 — Inventario de paridad — 2026-10-22
+
+- Se compararon las pestañas legacy Dashboard, WhatsApp, Telegram, Contactos,
+  Perfiles y Logs con las rutas React. El documento distingue funciones migradas,
+  nuevas, omitidas deliberadamente y disponibles solo en `/`.
+- El panel legacy se mantiene para administradores: conserva métricas de diagnóstico
+  que aún no están en React, búsqueda por teléfono/LID y contactos antiguos sin
+  conversación. La página React omite la prueba de envío Telegram; configurar el
+  canal con Chat ID manual sigue cubierto. No se retiraron rutas ni se llamó al bot.
+- La suite de frontera ejecutada en F7.5 verifica que OAuth conserva la separación:
+  solo lectura v1 no habilita `/api/*` ni UI legacy y `admin:write` sí. F7.6 es
+  documental; no se repitieron pruebas de runtime. Evidencia:
+  [F7.6-PARIDAD-PANEL](F7.6-PARIDAD-PANEL.md).
+- No se hizo push ni despliegue. Siguiente fase: F8, estructura final y operación.

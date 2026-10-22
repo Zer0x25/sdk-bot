@@ -367,8 +367,10 @@ Esta es la v1 útil; publicar/desplegar es una acción separada, no automática.
   diagnóstico y mantenimiento; se conserva la doble confirmación del factory reset.
   La UI evita reintentar una operación cuyo resultado no se confirmó. Evidencia:
   [F7.5](F7.5-SISTEMA.md).
-- [ ] Inventario de paridad: cada función antigua sustituida, descontinuada de forma
-  expresa o aún disponible. Retirar panel viejo después de esa comprobación.
+- [x] **F7.6 — Inventario de paridad:** cada función antigua queda identificada
+  como migrada, deliberadamente fuera de React o disponible en el panel legacy.
+  `/` se mantiene mientras existan detalles y operaciones legacy-only. Evidencia:
+  [F7.6](F7.6-PARIDAD-PANEL.md).
 
 **Aceptación:** paridad funcional documentada, sin perder OAuth, pairing, comandos,
 perfiles o reset por un cambio visual.
