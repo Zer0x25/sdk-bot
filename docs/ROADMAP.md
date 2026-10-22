@@ -26,6 +26,9 @@ F2B.2 conecta captura base WA y F2B.3 completa enriquecimiento multimedia durabl
 F2C.1 completa dueño único del polling/descubrimiento Telegram.
 F2C.2 completa la captura base TG con cursor durable y namespace exacto.
 F2C.3 cierra el inbox durable de updates administrativos (BUG-046).
+BUG-008 cierra la resolución legacy con identidad completa y rechazo de sufijos
+ambiguos; los comandos administrativos Telegram responden por Telegram y siguen
+dirigiendo el objetivo a WhatsApp. Evidencia: [BUG-008](BUG-008-RESOLUCION-IDENTIDAD-LEGACY.md).
 F2D completa replay durable hasta el handler tras el commit (BUG-045). F2E.1 ya
 registra salidas aceptadas y deduplica ecos WA; conserva autoría external_self.
 F2E.2 cierra la carga sintética completa y F3.1 implementa la API autenticada de

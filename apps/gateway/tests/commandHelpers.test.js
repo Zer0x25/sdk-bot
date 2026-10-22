@@ -4,6 +4,7 @@ const {
     sanitizeMarkdown,
     parsePhoneOrLid,
     isValidTargetId,
+    whatsappTargetContext,
     usageOf,
     syntaxError,
     chunkAdminText,
@@ -15,6 +16,14 @@ test('parsePhoneOrLid: teléfono formateado nativo -> dígitos puros', () => {
     assert.strictEqual(parsePhoneOrLid('+56-9-4252-3669'), '56942523669');
     assert.strictEqual(parsePhoneOrLid('(56) 9 4252 3669'), '56942523669');
     assert.strictEqual(parsePhoneOrLid('56942523669'), '56942523669');
+});
+
+test('Telegram admin commands resolve customer targets through the WhatsApp account', () => {
+    assert.deepStrictEqual(whatsappTargetContext({ channelName: 'whatsapp', accountId: 'wa-account' }),
+        { channel: 'whatsapp', accountId: 'wa-account' });
+    assert.deepStrictEqual(whatsappTargetContext({ channelName: 'telegram', accountId: 'tg-account' }),
+        { channel: 'whatsapp', accountId: null });
+    assert.deepStrictEqual(whatsappTargetContext(null), { channel: 'whatsapp', accountId: null });
 });
 
 test('parsePhoneOrLid: comodín y casos límite', () => {

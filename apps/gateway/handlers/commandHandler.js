@@ -11,7 +11,7 @@ const { num } = require('../tuning');
  * 🧩 Definición de un comando admin en la tabla de registro
  * @typedef {Object} CommandDef
  * @property {string[]} aliases
- * @property {(ctx: {adapter: any, remoteJid: string, queryParam: string, rawMsg: any}) => (string|null) | Promise<string|null>} run
+ * @property {(ctx: {adapter: any, targetAdapter?: any, remoteJid: string, queryParam: string, rawMsg: any}) => (string|null) | Promise<string|null>} run
  */
 
 /** @type {CommandDef[]} */
@@ -66,8 +66,9 @@ function getCommandStats() {
  * @param {any} adapter
  * @param {import('../services/metadataService.js').UserMetadata} metadata
  * @param {any} [rawMsg]
+ * @param {any} [targetAdapter]
  */
-async function handleAdminCommand(textMessage, remoteJid, adapter, metadata, rawMsg = null) {
+async function handleAdminCommand(textMessage, remoteJid, adapter, metadata, rawMsg = null, targetAdapter = null) {
     commandStats.adminCommands += 1;
     commandStats.lastCommandAt = new Date().toISOString();
 
@@ -96,7 +97,10 @@ async function handleAdminCommand(textMessage, remoteJid, adapter, metadata, raw
     const def = commandRegistry.get(command);
     let adminResponse;
     if (def) {
-        adminResponse = await def.run({ adapter, remoteJid, queryParam, rawMsg });
+        const whatsappAdapter = targetAdapter?.channelName === 'whatsapp' || targetAdapter?.channel === 'whatsapp'
+            ? targetAdapter
+            : adapter?.channelName === 'whatsapp' || adapter?.channel === 'whatsapp' ? adapter : null;
+        adminResponse = await def.run({ adapter, targetAdapter: whatsappAdapter, remoteJid, queryParam, rawMsg });
     } else {
         adminResponse = `⚠️ Comando no reconocido: *${command}*. Usa \`/e\` o \`/estado\` para ver el menú.`;
     }

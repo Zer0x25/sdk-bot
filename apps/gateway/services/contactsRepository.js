@@ -50,7 +50,10 @@ const contactStore = new Map();
 // -------------------------------------------------------------
 let phoneIndex = new Map();   // phone -> clave del registro
 let lidIndex = new Map();     // lid   -> clave del registro
-let digitsIndex = new Map();  // clave/phone/lid en dígitos puros -> clave (para comandos admin)
+let digitsIndex = new Map();  // dígitos puros exactos -> todas las claves coincidentes
+let phonesByKey = new Map();  // aliases phone por fila, para retirar valores reemplazados
+let lidsByKey = new Map();    // aliases lid por fila, para retirar valores reemplazados
+let digitsByKey = new Map();  // identidades indexadas por fila, para retirar aliases reemplazados
 
 // Mantenimiento INCREMENTAL: los índices se actualizan O(1) en cada
 // upsert/bulk (indexAdd/indexRemove) y solo se reconstruyen por completo
@@ -64,14 +67,45 @@ function rebuildIndexes(db) {
     phoneIndex = new Map();
     lidIndex = new Map();
     digitsIndex = new Map();
+    phonesByKey = new Map();
+    lidsByKey = new Map();
+    digitsByKey = new Map();
     if (!db || typeof db !== 'object') return;
     for (const [k, item] of Object.entries(db)) {
         if (!item || typeof item !== 'object') continue;
-        if (item.phone) phoneIndex.set(item.phone, k);
-        if (item.lid) lidIndex.set(item.lid, k);
-        const d = String(k).replace(/[^0-9]/g, '');
-        if (d) digitsIndex.set(d, k);
+        indexAdd(k, item);
     }
+}
+
+function identityValues(key, record) {
+    const values = [record?.phone, record?.lid].filter(value => typeof value === 'string' && value.length);
+    if (values.length) return values;
+    const rawKey = String(key).replace(/^whatsapp:/i, '');
+    return /^(?:\+?\d+|\d+(?::\d+)?@(?:s\.whatsapp\.net|lid))$/i.test(rawKey) ? [rawKey] : [];
+}
+
+function addDigitsIndex(value, key) {
+    const digits = String(value || '').replace(/[^0-9]/g, '');
+    if (!digits) return;
+    let keys = digitsIndex.get(digits);
+    if (!keys) { keys = new Set(); digitsIndex.set(digits, keys); }
+    keys.add(key);
+}
+
+function removeDigitsIndex(value, key) {
+    const digits = String(value || '').replace(/[^0-9]/g, '');
+    if (!digits) return;
+    const keys = digitsIndex.get(digits);
+    if (!keys) return;
+    keys.delete(key);
+    if (!keys.size) digitsIndex.delete(digits);
+}
+
+function removeAliases(index, aliasesByKey, key) {
+    for (const alias of aliasesByKey.get(key) || []) {
+        if (index.get(alias) === key) index.delete(alias);
+    }
+    aliasesByKey.delete(key);
 }
 
 function ensureIndexes() {
@@ -87,18 +121,33 @@ function markIndexesDirty() {
 // Mantenimiento incremental O(1) tras mutar un registro (upsert/bulk)
 function indexAdd(key, record) {
     if (!key || !record || typeof record !== 'object') return;
-    if (record.phone) phoneIndex.set(record.phone, key);
-    if (record.lid) lidIndex.set(record.lid, key);
-    const d = String(key).replace(/[^0-9]/g, '');
-    if (d) digitsIndex.set(d, key);
+    removeAliases(phoneIndex, phonesByKey, key);
+    removeAliases(lidIndex, lidsByKey, key);
+    if (record.phone) {
+        phoneIndex.set(record.phone, key);
+        phonesByKey.set(key, [record.phone]);
+    }
+    if (record.lid) {
+        lidIndex.set(record.lid, key);
+        lidsByKey.set(key, [record.lid]);
+    }
+    for (const digits of digitsByKey.get(key) || []) removeDigitsIndex(digits, key);
+    const values = [...new Set(identityValues(key, record)
+        .map(value => String(value).replace(/[^0-9]/g, ''))
+        .filter(Boolean))];
+    for (const digits of values) addDigitsIndex(digits, key);
+    digitsByKey.set(key, values);
 }
 
 function indexRemove(key, record) {
     if (!key || !record || typeof record !== 'object') return;
-    if (record.phone && phoneIndex.get(record.phone) === key) phoneIndex.delete(record.phone);
-    if (record.lid && lidIndex.get(record.lid) === key) lidIndex.delete(record.lid);
-    const d = String(key).replace(/[^0-9]/g, '');
-    if (d && digitsIndex.get(d) === key) digitsIndex.delete(d);
+    removeAliases(phoneIndex, phonesByKey, key);
+    removeAliases(lidIndex, lidsByKey, key);
+    const values = digitsByKey.get(key) || identityValues(key, record)
+        .map(value => String(value).replace(/[^0-9]/g, ''))
+        .filter(Boolean);
+    for (const digits of values) removeDigitsIndex(digits, key);
+    digitsByKey.delete(key);
 }
 
 // Los índices RAM siempre espejan la caché actual (se reconstruyen si la
@@ -113,19 +162,33 @@ function findExistingKey(phoneNumber, lid) {
     return null;
 }
 
-// Búsqueda por dígitos puros (comandos admin: /p /i /q /n, estados, perfiles).
-// Índice RAM de dígitos puros; scan completo solo si no hubo match exacto.
-function findKeyByDigits(cleanTarget) {
-    if (!cleanTarget) return null;
+// Resolución legacy conservadora. Un target debe coincidir con la identidad
+// completa; un substring solo informa que el input era parcial y nunca elige
+// un contacto. Si varias filas comparten los mismos dígitos, se devuelve ambigüedad.
+function resolveContactKeyByDigits(cleanTarget) {
+    if (typeof cleanTarget !== 'string' || !/^\d+$/.test(cleanTarget)) return { status: 'missing', keys: [] };
     ensureIndexes();
-    if (digitsIndex.has(cleanTarget)) return digitsIndex.get(cleanTarget);
+    const exact = [...(digitsIndex.get(cleanTarget) || [])].sort();
+    if (exact.length === 1) return { status: 'found', key: exact[0], keys: exact };
+    if (exact.length > 1) return { status: 'ambiguous', keys: exact };
+
     const db = getContactsDB();
-    return Object.keys(db).find(k => {
-        const item = db[k];
-        const cleanPhone = item.phone ? item.phone.replace(/[^0-9]/g, '') : '';
-        const cleanLid = item.lid ? item.lid.replace(/[^0-9]/g, '') : '';
-        return cleanPhone.includes(cleanTarget) || cleanLid.includes(cleanTarget) || k === cleanTarget;
-    }) ?? null;
+    const partial = new Set();
+    for (const [key, item] of Object.entries(db)) {
+        const values = identityValues(key, item)
+            .map(value => String(value || '').replace(/[^0-9]/g, ''))
+            .filter(Boolean);
+        if (values.some(value => value !== cleanTarget && value.includes(cleanTarget))) partial.add(key);
+    }
+    const keys = [...partial].sort();
+    if (keys.length === 1) return { status: 'partial', keys };
+    if (keys.length > 1) return { status: 'ambiguous', keys };
+    return { status: 'missing', keys: [] };
+}
+
+function findKeyByDigits(cleanTarget) {
+    const result = resolveContactKeyByDigits(cleanTarget);
+    return result.status === 'found' ? result.key : null;
 }
 
 function isJunkJid(jid) {
@@ -362,6 +425,7 @@ module.exports = {
     isJunkJid,
     contactIdentityFromRaw,
     findExistingKey,
+    resolveContactKeyByDigits,
     findKeyByDigits,
     cleanContactsDB,
     isHandoffActive,

@@ -153,6 +153,16 @@ function resolveTarget(queryParam, cmd) {
 }
 
 /**
+ * Admin commands manage the WhatsApp contact list even when entered through
+ * the administrative Telegram bot. The source adapter is for replies; target
+ * identity always belongs to the active WhatsApp account.
+ */
+function whatsappTargetContext(adapter) {
+    const isWhatsapp = adapter?.channelName === 'whatsapp' || adapter?.channel === 'whatsapp';
+    return { channel: 'whatsapp', accountId: isWhatsapp ? adapter.accountId || null : null };
+}
+
+/**
  * 🌐 Devuelve el Modo Global actual del bot.
  * Centraliza la expresión `state.GLOBAL_MODE || settings.globalMode` (Fase 2).
  * `state.GLOBAL_MODE` siempre es un string no vacío (default 'ignored_all' en
@@ -199,6 +209,7 @@ module.exports = {
     parsePhoneOrLid,
     isValidTargetId,
     resolveTarget,
+    whatsappTargetContext,
     getGlobalMode,
     summarizeListCounts,
     buildMenu,

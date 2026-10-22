@@ -5,13 +5,15 @@ const { withTempDbPaths } = require('./helpers/tmpPaths');
 const tmp = withTempDbPaths();
 after(() => tmp.restore());
 
-const { getContactsDB } = require('../services/db');
-const { cleanContactsDB, upsertContactMetadata, bulkUpsertContactsMetadata, findExistingKey, findKeyByDigits, isJunkJid } = require('../services/contactsRepository');
+const { getContactsDB, saveContactsDB } = require('../services/db');
+const { cleanContactsDB, upsertContactMetadata, bulkUpsertContactsMetadata, findExistingKey,
+    resolveContactKeyByDigits, findKeyByDigits, isJunkJid } = require('../services/contactsRepository');
 
 beforeEach(() => {
-    // Reset de la caché en memoria antes de cada test (misma DB vacía)
+    // Reemplazar la caché vacía también reconstruye los índices derivados.
     const db = getContactsDB();
     Object.keys(db).forEach(k => delete db[k]);
+    saveContactsDB({ ...db });
 });
 
 test('isJunkJid: grupos, broadcast, canales y status', () => {
@@ -52,13 +54,38 @@ test('upsertContactMetadata: rechaza junk, sin identidad o sin IDs', () => {
     assert.strictEqual(upsertContactMetadata({}), null);
 });
 
-test('findExistingKey / findKeyByDigits: índices RAM', () => {
+test('findExistingKey / exact contact resolution: RAM indexes never match numeric suffixes', () => {
     upsertContactMetadata({ phoneNumber: '56911112222', lid: '272048244940855', pushName: 'A' });
     assert.strictEqual(findExistingKey('56911112222', null), '56911112222');
     assert.strictEqual(findExistingKey(null, '272048244940855'), '56911112222');
     assert.strictEqual(findKeyByDigits('56911112222'), '56911112222');
     assert.strictEqual(findKeyByDigits('272048244940855'), '56911112222');
+    assert.deepStrictEqual(resolveContactKeyByDigits('56911112222'),
+        { status: 'found', key: '56911112222', keys: ['56911112222'] });
+    assert.deepStrictEqual(resolveContactKeyByDigits('911112222'),
+        { status: 'partial', keys: ['56911112222'] });
+    assert.strictEqual(findKeyByDigits('911112222'), null);
     assert.strictEqual(findKeyByDigits('9999999'), null);
+});
+
+test('exact identity collision is reported as ambiguous instead of choosing the last index entry', () => {
+    const contacts = getContactsDB();
+    contacts.first = { phone: '56911112222', estado: 'neutro' };
+    contacts.second = { lid: '56911112222', estado: 'neutro' };
+    saveContactsDB({ ...contacts }); // replace cache and force an index rebuild
+    assert.deepStrictEqual(resolveContactKeyByDigits('56911112222'),
+        { status: 'ambiguous', keys: ['first', 'second'] });
+    assert.strictEqual(findKeyByDigits('56911112222'), null);
+});
+
+test('identity replacement removes the old exact lookup from the incremental index', () => {
+    upsertContactMetadata({ phoneNumber: '56911112222', lid: '272048244940855' }, 'whatsapp:stable-contact');
+    upsertContactMetadata({ phoneNumber: '56899998888', lid: '272048244940855' }, 'whatsapp:stable-contact');
+    assert.strictEqual(findExistingKey('56911112222', null), null);
+    assert.strictEqual(findExistingKey('56899998888', null), 'whatsapp:stable-contact');
+    assert.deepStrictEqual(resolveContactKeyByDigits('56911112222'), { status: 'missing', keys: [] });
+    assert.deepStrictEqual(resolveContactKeyByDigits('56899998888'),
+        { status: 'found', key: 'whatsapp:stable-contact', keys: ['whatsapp:stable-contact'] });
 });
 
 test('cleanContactsDB: elimina entradas fantasma y basura', () => {

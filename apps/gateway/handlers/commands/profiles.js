@@ -6,7 +6,7 @@ const { cat, safeErrorLabel } = require("../../services/logger");
 const { downloadMediaMessage } = require('@whiskeysockets/baileys');
 const { setCurrentProfile, setContactProfile } = require('../../services/stateService');
 const { getAvailableProfiles, getProfileDetail, exportProfileFile, importProfileFile, deleteProfileFile } = require('../../services/brainService');
-const { usageOf, syntaxError, extractPhoneFromQuoted } = require('../commandHelpers');
+const { usageOf, syntaxError, extractPhoneFromQuoted, whatsappTargetContext } = require('../commandHelpers');
 
 const log = cat("COMANDO");
 const logError = cat("ERROR");
@@ -65,7 +65,7 @@ async function handleProfileUpload(adapter, remoteJid, docMessage, msgKey) {
     }
 }
 
-async function runPerfil({ adapter, remoteJid, queryParam, rawMsg }) {
+async function runPerfil({ adapter, targetAdapter, remoteJid, queryParam, rawMsg }) {
     const profiles = await getAvailableProfiles();
 
     if (!queryParam) {
@@ -141,9 +141,7 @@ async function runPerfil({ adapter, remoteJid, queryParam, rawMsg }) {
     }
 
     if (contactTarget) {
-        const res = await setContactProfile(contactTarget, profileKey, {
-            channel: adapter?.channel || 'whatsapp', accountId: adapter?.accountId || null
-        });
+        const res = await setContactProfile(contactTarget, profileKey, whatsappTargetContext(targetAdapter));
         if (res.success) {
             return `🎭 Perfil *${valid.nombre}* (\`${profileKey}\`) asignado al contacto:\n\`${res.target}\``;
         }

@@ -3,13 +3,13 @@
  */
 const { getContactsDB } = require('../../services/db');
 const { setNumberState, ignoreAllAgendaContacts } = require('../../services/stateService');
-const { resolveTarget, syntaxError, getGlobalMode, summarizeListCounts } = require('../commandHelpers');
+const { resolveTarget, syntaxError, getGlobalMode, summarizeListCounts, whatsappTargetContext } = require('../commandHelpers');
 
-async function runIgnorar({ queryParam, adapter }) {
+async function runIgnorar({ queryParam, targetAdapter }) {
     if (!queryParam) return resolveTarget(null, 'ignorar').error;
 
     if (queryParam.toLowerCase() === 'agenda') {
-        const res = await ignoreAllAgendaContacts({ channel: adapter?.channel || 'whatsapp', accountId: adapter?.accountId || null });
+        const res = await ignoreAllAgendaContacts(whatsappTargetContext(targetAdapter));
         return `🚫 *Ignorado Masivo de Agenda Ejecutado:*\nSe agregaron *${res.addedCount}* contactos de tu libreta a la Lista de Ignorados.\nTotal ignorados en lista: *${res.totalIgnored}*.`;
     }
 
@@ -20,14 +20,14 @@ async function runIgnorar({ queryParam, adapter }) {
 
     const t = resolveTarget(queryParam, 'ignorar');
     if (!t.ok) return t.error;
-    const res = await setNumberState(t.targetId, 'ignored', { channel: adapter?.channel || 'whatsapp', accountId: adapter?.accountId || null });
+    const res = await setNumberState(t.targetId, 'ignored', whatsappTargetContext(targetAdapter));
     if (res.success) {
         return `🚫 ID/Número \`${res.target}\` asignado a la *Lista de Ignorados* (reubicado de permitidos si existía).`;
     }
     return syntaxError('ignorar', `No pude ignorar *${t.targetId}*.`);
 }
 
-async function runPermitir({ queryParam, adapter }) {
+async function runPermitir({ queryParam, targetAdapter }) {
     if (!queryParam) return resolveTarget(null, 'permitir').error;
 
     if (queryParam === '*' || queryParam.toLowerCase() === 'all') {
@@ -37,14 +37,14 @@ async function runPermitir({ queryParam, adapter }) {
 
     const t = resolveTarget(queryParam, 'permitir');
     if (!t.ok) return t.error;
-    const res = await setNumberState(t.targetId, 'allowed', { channel: adapter?.channel || 'whatsapp', accountId: adapter?.accountId || null });
+    const res = await setNumberState(t.targetId, 'allowed', whatsappTargetContext(targetAdapter));
     if (res.success) {
         return `✅ ID/Número \`${res.target}\` asignado a la *Lista de Permitidos* (reubicado de ignorados si existía).`;
     }
     return syntaxError('permitir', `No pude permitir *${t.targetId}*.`);
 }
 
-async function runQuitar({ queryParam, adapter }) {
+async function runQuitar({ queryParam, targetAdapter }) {
     if (!queryParam) return resolveTarget(null, 'quitar').error;
 
     if (queryParam === '*') {
@@ -54,7 +54,7 @@ async function runQuitar({ queryParam, adapter }) {
 
     const t = resolveTarget(queryParam, 'quitar');
     if (!t.ok) return t.error;
-    const res = await setNumberState(t.targetId, 'neutral', { channel: adapter?.channel || 'whatsapp', accountId: adapter?.accountId || null });
+    const res = await setNumberState(t.targetId, 'neutral', whatsappTargetContext(targetAdapter));
     if (res.success) {
         return `🔄 ID/Número \`${res.target}\` removido de ambas listas. Regresado a *Estado 0 (Neutro)*.`;
     }

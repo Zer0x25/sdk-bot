@@ -317,7 +317,7 @@ async function handleIncomingMessage(stdMsg, { onDurableComplete } = {}) {
 
     switch (decision.type) {
         case 'admin_command': {
-            await handleAdminCommand(decision.text, remoteJid, adapter, metadata, stdMsg);
+            await handleAdminCommand(decision.text, remoteJid, adapter, metadata, stdMsg, getAdapter('whatsapp'));
             return;
         }
 

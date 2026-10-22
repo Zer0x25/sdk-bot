@@ -1409,3 +1409,19 @@ Cierres históricos: commits F2C.1/F2C.2/F2D/F2E.1 están en el log local; F2B.3
 - Commit local de esta unidad; no publicar.
 - Siguiente prioridad local: BUG-008 (resolución exacta de identidad Telegram en
   el camino legacy, antes de cualquier mutación de contactos).
+
+## BUG-008 — Resolución exacta de identidad legacy — 2026-10-22
+
+- Comandos legacy ahora aceptan solo una identidad completa de teléfono/LID;
+  sufijos y colisiones se rechazan antes de mutar estado, perfil, nombre o
+  contexto. Los índices retiran aliases de teléfono/LID reemplazados.
+- Telegram sigue como canal administrativo: las respuestas conservan ese adapter
+  y el objetivo se resuelve en WhatsApp. SQLite mantiene el resolver por
+  canal/cuenta; el fallback JSON antiguo solo representa la libreta WhatsApp.
+- Evidencia: [BUG-008](BUG-008-RESOLUCION-IDENTIDAD-LEGACY.md).
+- Verificación: Gateway `npm run check`, lint/typecheck, Panel 42/42, build,
+  prueba de servido 1/1 y Gateway 378/378; focales 29/29; `git diff --check`.
+  Sin proveedores ni canales reales.
+- Commit local de esta unidad; no publicar.
+- Siguiente punto ejecutable del backlog: BUG-010, acotar envíos legacy de
+  Telegram sin repetir envíos con resultado incierto.

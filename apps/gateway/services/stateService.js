@@ -1,7 +1,7 @@
 // @ts-check
 const { state } = require('../config');
 const { getSettingsDB, saveSettingsDB, getContactsDB, saveContactsDB } = require('./db');
-const { findKeyByDigits } = require('./contactsRepository');
+const { resolveContactKeyByDigits } = require('./contactsRepository');
 const { summarizeListCounts } = require('../handlers/commandHelpers');
 
 /** @type {any} */
@@ -63,8 +63,18 @@ async function setNumberState(targetId, stateType, context = {}) {
     const cleanTarget = String(targetId).replace(/[^0-9]/g, '');
     if (!cleanTarget) return { success: false, message: "ID no válido" };
 
+    if ((context.channel || 'whatsapp') !== 'whatsapp') {
+        return { success: false, code: 'LEGACY_CHANNEL_UNSUPPORTED',
+            message: 'El control Telegram requiere la autoridad SQLite activa.' };
+    }
+
     const db = getContactsDB();
-    const existingKey = findKeyByDigits(cleanTarget);
+    const resolution = resolveContactKeyByDigits(cleanTarget);
+    if (resolution.status === 'partial' || resolution.status === 'ambiguous') {
+        return { success: false, code: 'IDENTITY_AMBIGUOUS',
+            message: 'Indica el número o LID completo; el sufijo coincide con varias identidades o no es exacto.' };
+    }
+    const existingKey = resolution.status === 'found' ? resolution.key : null;
 
     if (existingKey) {
         // Mapeo del stateType al campo "estado" string
@@ -149,8 +159,18 @@ async function setContactProfile(targetId, profileKey, context = {}) {
     const cleanTarget = String(targetId).replace(/[^0-9]/g, '');
     if (!cleanTarget) return { success: false, message: "ID no válido" };
 
+    if ((context.channel || 'whatsapp') !== 'whatsapp') {
+        return { success: false, code: 'LEGACY_CHANNEL_UNSUPPORTED',
+            message: 'La asignación de perfil Telegram requiere la autoridad SQLite activa.' };
+    }
+
     const db = getContactsDB();
-    const existingKey = findKeyByDigits(cleanTarget);
+    const resolution = resolveContactKeyByDigits(cleanTarget);
+    if (resolution.status === 'partial' || resolution.status === 'ambiguous') {
+        return { success: false, code: 'IDENTITY_AMBIGUOUS',
+            message: 'Indica el número o LID completo; el sufijo coincide con varias identidades o no es exacto.' };
+    }
+    const existingKey = resolution.status === 'found' ? resolution.key : null;
 
     const cleanProfile = (profileKey === 'default' || profileKey === 'none' || !profileKey) ? null : profileKey;
 

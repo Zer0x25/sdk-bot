@@ -2,7 +2,8 @@
  * 🔍 CATEGORÍA 3: LIBRETA Y AGENDA DE CONTACTOS (/buscar /nombre /contactos /sincronizar /exportar)
  */
 const { getContactsDB, saveContactsDB } = require('../../services/db');
-const { contactStore, isJunkJid, cleanContactsDB, upsertContactMetadata, bulkUpsertContactsMetadata, findKeyByDigits, contactIdentityFromRaw } = require('../../services/contactsRepository');
+const { contactStore, isJunkJid, cleanContactsDB, upsertContactMetadata, bulkUpsertContactsMetadata,
+    resolveContactKeyByDigits, contactIdentityFromRaw } = require('../../services/contactsRepository');
 const { getCountryFromPhone } = require('../../services/metadataService');
 const { parsePhoneOrLid, isValidTargetId, usageOf, syntaxError, sanitizeMarkdown } = require('../commandHelpers');
 
@@ -45,7 +46,11 @@ function runNombre({ queryParam }) {
     }
 
     const db = getContactsDB();
-    const existingKey = findKeyByDigits(nameTarget);
+    const resolution = resolveContactKeyByDigits(nameTarget);
+    if (resolution.status === 'partial' || resolution.status === 'ambiguous') {
+        return syntaxError('nombre', `Indica el número o LID completo; *${sanitizeMarkdown(nameTarget)}* no identifica un contacto único.`);
+    }
+    const existingKey = resolution.status === 'found' ? resolution.key : null;
 
     if (existingKey) {
         db[existingKey].savedName = customName;
