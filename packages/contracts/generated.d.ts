@@ -246,7 +246,7 @@ export interface components {
             items: components["schemas"]["AutomationProfile"][];
         };
         /** @enum {string} */
-        Capability: "conversations:read" | "messages:send" | "control:write" | "control:override" | "conversations:write";
+        Capability: "conversations:read" | "messages:send" | "control:write" | "control:override" | "conversations:write" | "admin:write";
         /** @enum {string} */
         Channel: "whatsapp" | "telegram";
         ChannelCapabilities: {

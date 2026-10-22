@@ -4,6 +4,7 @@ import { AppShell } from './AppShell';
 import { InboxPage } from '../features/inbox/InboxPage';
 import { SummaryPage } from '../features/summary/SummaryPage';
 import { ContactsPage } from '../features/contacts/ContactsPage';
+import { ChannelsPage } from '../features/channels/ChannelsPage';
 import { SectionPlaceholder } from '../features/navigation/SectionPlaceholder';
 
 export function createAppQueryClient() {
@@ -26,7 +27,7 @@ export default function App({ queryClient = defaultQueryClient }: { queryClient?
             <Route path="/summary" element={<SummaryPage />} />
             <Route path="/:conversationId" element={<InboxPage />} />
             <Route path="/contacts" element={<ContactsPage />} />
-            <Route path="/channels" element={<SectionPlaceholder title="Canales" />} />
+            <Route path="/channels" element={<ChannelsPage />} />
             <Route path="/system" element={<SectionPlaceholder title="Sistema" />} />
             <Route path="*" element={<Navigate to="/" replace />} />
           </Routes>

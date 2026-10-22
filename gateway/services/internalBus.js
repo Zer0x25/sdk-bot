@@ -898,6 +898,11 @@ function routeApi(req, res, pathname, params) {
         sendJson(res, 200, { token: s.telegramToken || '', chatId: s.telegramChatId || '' });
         return;
     }
+    if (pathname === '/telegram/settings/meta' && req.method === 'GET') {
+        const s = getSettingsDB();
+        sendJson(res, 200, { configured: !!s.telegramToken, chatIdConfigured: !!s.telegramChatId });
+        return;
+    }
     if (pathname === '/telegram/settings' && req.method === 'POST') {
         readBody(req).then(async (b) => {
             const token = String(b.token || '').trim();

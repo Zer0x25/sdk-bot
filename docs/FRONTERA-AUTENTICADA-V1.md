@@ -1,7 +1,7 @@
 # Frontera autenticada v1 — F1B
 
-Fecha: 2026-10-19. Sesión y autenticación implementadas, sin archivo operativo ni
-bandeja todavía. Conserva procesos/transportes únicos de ADR-001/002/003.
+Fecha inicial: 2026-10-19; actualización de permisos legacy: 2026-10-22. Sesión y
+autenticación implementadas; conserva procesos/transportes únicos de ADR-001/002/003.
 
 ## Identidad y permisos
 
@@ -29,15 +29,19 @@ PANEL_ACTOR_GRANTS es JSON de servidor por google:<sub>:
 
 ```json
 {
-  "google:123456": ["conversations:read", "messages:send", "control:write", "conversations:write"]
+  "google:123456": ["conversations:read", "messages:send", "control:write", "conversations:write", "admin:write"]
 }
 ```
 
-Sin entrada: solo conversations:read; [] deniega todo v1. Grants inválidos dan 503.
-control:override es capacidad expresa, no viene por defecto. Las rutas futuras
-ya tienen puerta de capacidad, pero devuelven 404 tras ella hasta implementarse.
-No hay takeover ni envío v1 habilitados. Legacy conserva administrador completo;
-estos grants no convierten el panel anterior en roles de equipo (BUG-024).
+Sin entrada: solo conversations:read; [] deniega todo v1 y el acceso al panel legacy.
+Grants inválidos dan 503. control:override es capacidad expresa, no viene por
+defecto. Las rutas v1 tienen puertas de capacidad y alcance independientes.
+La UI React `/inbox/*` requiere sesión; las rutas `/api/*` legacy y la UI legacy
+requieren además `admin:write` explícito. El proxy legacy conserva su identidad
+técnica; el panel valida el grant antes de firmar y reenviar la solicitud. Esta
+puerta cierra BUG-024; no añade roles parciales a los endpoints legacy.
+Takeover, liberación y envío v1 están implementados en F5–F6; la capacidad
+correspondiente sigue exigida por cada ruta. Ver [F6.4](F6.4-SMOKE-CANAL.md).
 
 Dev v1 exige NODE_ENV=development, OAuth desactivado y PANEL_DEV_ACTOR=true.
 Identidad estable dev:local y grants de esa clave. No hay fallback por IP,

@@ -1,6 +1,6 @@
 # Estado de continuidad — SDK-Bot
 
-Actualización: 2026-10-20. El checkout se sincronizó con `origin/main` en
+Actualización: 2026-10-22. El checkout se sincronizó con `origin/main` en
 `df1f111` antes de iniciar F5. F4.2 se fusionó en main en 7526edc (PR #4).
 BUG-064 y BUG-065 están cerrados y sus arreglos pasaron CI. Release PR #2 actualizó
 el manifiesto a 0.3.0 en 9b0d0b5; PR #6 fusionó la versión 0.4.0 en bfe3fa9.
@@ -962,3 +962,23 @@ Cierres históricos: commits F2C.1/F2C.2/F2D/F2E.1 están en el log local; F2B.3
   denegación de escritura a actor de solo lectura y asignación de perfil con CAS.
 - No se hizo push ni despliegue. Siguiente unidad: F7.3 Canales; cubrir pairing
   existente sin iniciar una segunda instancia ni alterar QR/código vigentes.
+
+## Fase 7.3 — Canales — 2026-10-22
+
+- `/inbox/channels` muestra el estado de WhatsApp y Telegram desde cuentas v1.
+  Pairing WhatsApp reutiliza el único gateway: SSE QR con vencimiento visible,
+  solicitud por código restaurada, expiración informativa y bloqueo de controles
+  mientras otro método está activo. No se agregó inicio de gateway ni transporte.
+- Telegram se presenta solo como canal administrativo. La pantalla escribe token
+  y Chat ID reingresados por el administrador; nunca lee sus valores guardados.
+  `/telegram/settings/meta` responde solo `configured` y `chatIdConfigured`. No
+  hay botón de prueba ni ejecución de `/telegram/test` desde React.
+- BUG-024 cerrado: con OAuth, `admin:write` explícito habilita `/api/*` legacy y
+  su UI; sesiones de solo lectura conservan `/inbox/*`. Pruebas verifican que
+  status, QR, logs, command y reset se deniegan antes del proxy, incluso con
+  `X-Status-Token`, mientras una cuenta administrativa autorizada pasa.
+- Verificación: raíz `npm run check` pasó (17 contratos). Gateway `npm run check`
+  pasó ESLint, typecheck, 21 pruebas React, build y prueba de montaje, más 320
+  pruebas Gateway. `panelBoundary.test.js` y `telegram.test.js` pasaron 32/32.
+  Se usaron solo datos/stubs; no se inició pairing real ni se envió Telegram.
+- No se hizo push ni despliegue. Siguiente unidad: F7.4 Asistente.

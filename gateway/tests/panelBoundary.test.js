@@ -78,6 +78,8 @@ test('actor OAuth usa sub verificado y grants del servidor; dev explícito solo 
     assert.deepEqual(resolveActor(session, { oauthEnabled: true, nodeEnv: 'production', devActor: 'true' }), actor);
     const configured = resolveActor(session, { oauthEnabled: true, nodeEnv: 'production', grants: '{"google:123":[]}' });
     assert.deepEqual(configured.capabilities, []);
+    const admin = resolveActor(session, { oauthEnabled: true, nodeEnv: 'production', grants: '{"google:123":["conversations:read","admin:write"]}' });
+    assert.deepEqual(admin.capabilities, ['conversations:read', 'admin:write']);
     for (const sessionValue of [null, { email: 'old-session@example.invalid' }, { sub: '123', verified: false }]) {
         rejectsCode(() => resolveActor(sessionValue, { oauthEnabled: true, nodeEnv: 'production', devActor: 'true' }), 401);
     }
@@ -216,10 +218,50 @@ test('panel y bus reales: sesión sin tokens, headers falsificados no sustituyen
         await errorResponse(await fetch(panel.url + '/api/v1/conversations/test/takeover', { method: 'POST', body: '{}', headers: {
             cookie: cookie(), origin: 'https://external.invalid', 'x-status-token': 'fake-status-token'
         } }), 403);
-        const legacy = await fetch(panel.url + '/api/status', { headers: { cookie: cookie({ sub: undefined, verified: undefined }) } });
-        assert.equal(legacy.status, 200);
-        assert.equal((await legacy.json()).status, 'ok');
+        await errorResponse(await fetch(panel.url + '/api/status', { headers: { cookie: cookie() } }), 403);
     } finally { await panel.close(); await close(bus); restore(); }
+});
+
+test('OAuth: lectura v1 no abre API ni UI legacy; admin:write habilita el panel anterior', async () => {
+    const upstreamRequests = [];
+    const upstream = http.createServer((req, res) => {
+        upstreamRequests.push(`${req.method} ${req.url}`);
+        res.writeHead(200, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify(req.url === '/status' ? { status: 'ok' } : { success: true }));
+    });
+    const upstreamUrl = await listen(upstream);
+    const readonly = await panelFixture({
+        GATEWAY_INTERNAL_URL: upstreamUrl,
+        PANEL_CONVERSATIONS_UI_ENABLED: 'true',
+        PANEL_ACTOR_GRANTS: '{"google:123":["conversations:read"]}'
+    });
+    try {
+        for (const [path, init] of [
+            ['/api/status', {}], ['/api/qr', {}], ['/api/logs?component=gateway', {}],
+            ['/api/command', { method: 'POST', headers: { 'content-type': 'application/json', 'x-status-token': 'fake-status-token' }, body: '{"command":"/estado"}' }],
+            ['/api/reset', { method: 'POST', headers: { 'content-type': 'application/json', 'x-status-token': 'fake-status-token' }, body: '{"confirm":true}' }],
+            ['/', {}], ['/js/app.js', {}]
+        ]) {
+            await errorResponse(await fetch(readonly.url + path, { ...init, headers: { ...init.headers, cookie: cookie() } }), 403);
+        }
+        const inbox = await fetch(readonly.url + '/inbox', { headers: { cookie: cookie() } });
+        assert.ok([200, 503].includes(inbox.status), `React inbox should remain reachable; got ${inbox.status}`);
+        assert.deepEqual(upstreamRequests, []);
+    } finally { await readonly.close(); }
+
+    const admin = await panelFixture({
+        GATEWAY_INTERNAL_URL: upstreamUrl,
+        PANEL_ACTOR_GRANTS: '{"google:123":["conversations:read","admin:write"]}'
+    });
+    try {
+        const status = await fetch(admin.url + '/api/status', { headers: { cookie: cookie() } });
+        assert.equal(status.status, 200);
+        assert.deepEqual(await status.json(), { status: 'ok' });
+        const legacyUi = await fetch(admin.url + '/', { headers: { cookie: cookie() } });
+        assert.equal(legacyUi.status, 200);
+        assert.match(await legacyUi.text(), /SDK-Bot · Panel/);
+        assert.deepEqual(upstreamRequests, ['GET /status']);
+    } finally { await admin.close(); await close(upstream); }
 });
 
 test('panel: dev requiere opt-in y producción sin OAuth nunca recibe actor v1', async () => {
@@ -510,7 +552,10 @@ test('una URL absoluta del cliente nunca cambia el upstream configurado', async 
     const outside = http.createServer((_req, res) => { outsideHits += 1; res.end('outside'); });
     const outsideUrl = await listen(outside);
     const internal = http.createServer((_req, res) => { res.end('{"status":"internal"}'); });
-    const panel = await panelFixture({ GATEWAY_INTERNAL_URL: await listen(internal), SDK_PANEL_GATEWAY_SECRET: '' });
+    const panel = await panelFixture({
+        GATEWAY_INTERNAL_URL: await listen(internal), SDK_PANEL_GATEWAY_SECRET: '',
+        PANEL_ACTOR_GRANTS: '{"google:123":["conversations:read","admin:write"]}'
+    });
     try {
         const result = await new Promise((resolve, reject) => {
             const req = http.request(panel.url, { path: outsideUrl + '/api/status', headers: { cookie: cookie() } }, res => {

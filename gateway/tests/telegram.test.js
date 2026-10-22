@@ -38,6 +38,18 @@ test('GET /telegram/settings - devuelve config vacía inicialmente', async () =>
     assert.strictEqual(j.chatId, '');
 });
 
+test('GET /telegram/settings/meta indica si está configurado sin devolver secretos', async () => {
+    const empty = await (await fetch(`${API_BASE}/telegram/settings/meta`)).json();
+    assert.deepStrictEqual(empty, { configured: false, chatIdConfigured: false });
+
+    saveSettingsDB({ globalMode: 'ignored_all', telegramToken: 'fixture-token-not-for-output', telegramChatId: '12345' });
+    const configured = await (await fetch(`${API_BASE}/telegram/settings/meta`)).json();
+    assert.deepStrictEqual(configured, { configured: true, chatIdConfigured: true });
+    assert.ok(!JSON.stringify(configured).includes('fixture-token-not-for-output'));
+    assert.ok(!JSON.stringify(configured).includes('12345'));
+    saveSettingsDB({ globalMode: 'ignored_all' });
+});
+
 test('POST /telegram/settings - guarda config correctamente', async () => {
     const r = await fetch(`${API_BASE}/telegram/settings`, {
         method: 'POST',

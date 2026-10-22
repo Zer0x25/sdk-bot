@@ -90,7 +90,8 @@
         "messages:send",
         "control:write",
         "control:override",
-        "conversations:write"
+        "conversations:write",
+        "admin:write"
       ]
     },
     "Actor": {

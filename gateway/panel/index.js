@@ -25,7 +25,7 @@ const { URL } = require('url');
 const { proxy: proxyRequest } = require('./proxy');
 const { resolveActor } = require('./identity');
 const { serveConversationsApp } = require('./webApp');
-const { actorId } = require('../lib/panelContext');
+const { actorId, requireCapability } = require('../lib/panelContext');
 const { BoundaryError, sendError } = require('../lib/httpBoundary');
 
 // Carga gateway/panel/.env (no versionado) si existe. No sobreescribe env ya definidas.
@@ -205,6 +205,24 @@ function proxy(req, res, targetPath) {
     });
 }
 
+function resolvePanelActor(session) {
+    return resolveActor(session, {
+        oauthEnabled: OAUTH_ENABLED, nodeEnv: NODE_ENV,
+        authRequired: AUTH_REQUIRED,
+        devActor: process.env.PANEL_DEV_ACTOR, grants: process.env.PANEL_ACTOR_GRANTS
+    });
+}
+
+function requireLegacyAdmin(session, res) {
+    try {
+        requireCapability(resolvePanelActor(session), 'admin:write');
+        return true;
+    } catch (error) {
+        sendError(res, error);
+        return false;
+    }
+}
+
 function serveStatic(req, res, pathname) {
     let rel = pathname === '/' ? '/index.html' : pathname;
     const file = path.join(WEB_DIR, path.normalize(rel).replace(/^(\.\.[/\\])+/, ''));
@@ -364,11 +382,7 @@ const server = http.createServer(async (req, res) => {
         const requestId = crypto.randomUUID();
         try {
             const session = parseSession(req);
-            const actor = resolveActor(session, {
-                oauthEnabled: OAUTH_ENABLED, nodeEnv: NODE_ENV,
-                authRequired: AUTH_REQUIRED,
-                devActor: process.env.PANEL_DEV_ACTOR, grants: process.env.PANEL_ACTOR_GRANTS
-            });
+            const actor = resolvePanelActor(session);
             // Tokens de status no sustituyen sesión ni evitan el control de origen v1.
             if (['POST', 'PUT', 'DELETE', 'PATCH'].includes(req.method || '') && !isOriginAuthorized(req)) {
                 throw new BoundaryError(403, 'FORBIDDEN', 'Origen de escritura no autorizado.');
@@ -434,10 +448,12 @@ const server = http.createServer(async (req, res) => {
 
     // Autenticado:
     if (pathname.startsWith('/api/')) {
+        if (!requireLegacyAdmin(session, res)) return;
         const busPath = (u.pathname + u.search).replace(/^\/api/, '') || '/';
         return proxy(req, res, busPath);
     }
     if (serveConversationsApp(res, pathname, { enabled: CONVERSATIONS_UI_ENABLED })) return;
+    if (!requireLegacyAdmin(session, res)) return;
     return serveStatic(req, res, pathname);
 });
 

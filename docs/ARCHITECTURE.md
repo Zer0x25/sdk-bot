@@ -1,6 +1,6 @@
 # SDK-Bot: arquitectura de la plataforma de conversaciones
 
-Fecha: 2026-10-20. Estado: **diseño para implementación incremental**.
+Fecha: 2026-10-22. Estado: **diseño para implementación incremental**.
 El código todavía usa `gateway/`, `brain/`, `stt/` y un panel estático.
 Las carpetas, tablas, servicios y endpoints de destino no existen todavía,
 salvo indicación expresa. F1A implementa `packages/contracts` y workspace raíz
@@ -169,10 +169,12 @@ Termux. No se requiere SSR para esta consola privada.
 
 La transición comienza en `gateway/panel/web`: el bundle se sirve en `/inbox` por
 el mismo proceso OAuth del panel y requiere `PANEL_CONVERSATIONS_UI_ENABLED=true`.
-El valor por defecto es apagado; `/` conserva el panel anterior. Docker compila el
-bundle en una etapa con dependencias de desarrollo y lo copia a la imagen runtime,
-que instala solo dependencias de producción. F4.1 entrega el shell navegable; lista,
-historial y eventos reales se conectan en las unidades siguientes de F4.
+El valor por defecto es apagado; `/` conserva el panel anterior. Con OAuth activo,
+la nueva ruta exige sesión, mientras `/api/*` legacy y su UI requieren el grant
+servidor `admin:write`. Docker compila el bundle en una etapa con dependencias de
+desarrollo y lo copia a la imagen runtime, que instala solo dependencias de
+producción. F4.1 entrega el shell navegable; lista, historial y eventos reales se
+conectan en las unidades siguientes de F4.
 
 Resultado y límites del experimento de almacenamiento:
 [SQLITE-SPIKE.md](SQLITE-SPIKE.md). F2A ya implementa worker y repositorios

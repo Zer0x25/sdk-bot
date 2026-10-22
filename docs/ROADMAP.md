@@ -1,6 +1,6 @@
 # Hoja de ruta: plataforma de conversaciones SDK-Bot
 
-Actualización: 2026-10-20. Arquitectura: [ARCHITECTURE.md](ARCHITECTURE.md).
+Actualización: 2026-10-22. Arquitectura: [ARCHITECTURE.md](ARCHITECTURE.md).
 Decisión: [ADR-005](adr/005-plataforma-conversaciones.md).
 Estado por sesión: [SESSION-STATE.md](SESSION-STATE.md).
 Prompt reutilizable: [PROMPT-CONTINUIDAD.md](PROMPT-CONTINUIDAD.md).
@@ -212,8 +212,8 @@ de control y atribución de autoría outbound quedan para F5.
 - [x] F3.2: probar autorización SSE, proxy, desconexión, cierre de recursos y falta
   temporal del gateway. Los grants activos duran como máximo 30 s y se revalidan
   al reconectar.
-  Resolver BUG-024 antes de operadores limitados: grants v1 deben acompañarse de
-  autorización administrativa legacy.
+  F7.3 cerró BUG-024: la UI y todas las rutas legacy requieren `admin:write`
+  explícito; el acceso de solo lectura a la nueva bandeja queda disponible.
 
 **Aceptación F3.1:** respuestas de lectura conformes al contrato; páginas sin
 duplicados con timestamps iguales; cursores de lista se invalidan ante cambios de
@@ -353,8 +353,12 @@ Esta es la v1 útil; publicar/desplegar es una acción separada, no automática.
 
 - [x] Resumen orientado a decisiones con métricas reales y periodos explícitos (unidad F7.1).
 - [x] Contactos con permisos/perfiles y ficha compartida con bandeja (unidad F7.2).
-- [ ] Canales con pairing existente, ventana QR de 140s, código manual y estados
-  restaurables. No alterar exclusión QR/código ni crear otro gateway.
+- [x] **F7.3 — Canales:** estado de WhatsApp/Telegram desde API autenticada; pairing
+  WhatsApp QR/código reutiliza el bus existente, restaura estados activos y respeta
+  ventana QR de 140s/exclusión QR-código. No crea otra instancia. Telegram queda
+  identificado como administrativo, con configuración sin lectura del token y sin
+  ejecutar prueba de envío. BUG-024 cerrado con `admin:write`. Evidencia:
+  [F7.3](F7.3-CANALES.md).
 - [ ] Asistente: perfiles, editor, cambios sin guardar e importación/exportación.
 - [ ] Sistema: logs, terminal, diagnóstico y mantenimiento; preservar confirmación
   de factory reset. Campañas tienen su espacio cuando haya flujo completo.
