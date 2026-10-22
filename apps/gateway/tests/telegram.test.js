@@ -124,6 +124,24 @@ test('TELEGRAM_MENU_COMMANDS es la única fuente del menú del bot', () => {
     assert.strictEqual(adapter.MENU_COMMANDS, undefined, 'el adaptador no define su propio menú');
 });
 
+test('BUG-010: legacy Telegram sends and menu updates settle on deadline without retry', async () => {
+    const calls = [];
+    https.request = options => {
+        const req = new EventEmitter();
+        req.write = () => {};
+        req.end = () => { calls.push(options.path); };
+        req.destroy = error => process.nextTick(() => { req.emit('error', error); req.emit('close'); });
+        return req;
+    };
+
+    await assert.rejects(telegramService.sendTelegramMessage('aviso de prueba', 'fixture-token', '555', true, 25),
+        { code: 'TG_REQUEST_TIMEOUT' });
+    await assert.rejects(telegramService.updateTelegramMenu('fixture-token', 25), { code: 'TG_REQUEST_TIMEOUT' });
+    assert.equal(calls.length, 2);
+    assert.ok(calls[0].endsWith('/sendMessage'));
+    assert.ok(calls[1].endsWith('/setMyCommands'));
+});
+
 test('classifyPollResponse distingue ok / auth (401/404) / error', () => {
     assert.strictEqual(telegramService.classifyPollResponse({ ok: true, result: [] }), 'ok');
     assert.strictEqual(telegramService.classifyPollResponse({ ok: false, error_code: 401 }), 'auth');

@@ -3,7 +3,7 @@ const { test } = require('node:test');
 const assert = require('node:assert/strict');
 const http = require('node:http');
 const https = require('node:https');
-const { requestJson } = require('../services/telegramHttp');
+const { requestText, requestJson } = require('../services/telegramHttp');
 const originalGet = https.get, originalRequest = https.request;
 
 async function fixture(t, handler) {
@@ -24,6 +24,21 @@ test('absolute deadline closes request without headers or with a stalled body, w
         await assert.rejects(requestJson({ path: '/botSYNTHETIC/getUpdates', timeoutMs: 30 }), error => error.code === 'TG_REQUEST_TIMEOUT' && !error.message.includes('SYNTHETIC'));
         // The client promise settles on close; the server observes it shortly after.
         await new Promise(r => setTimeout(r, 10)); assert.equal(f.sockets.size, 0);
+    }
+});
+
+test('BUG-010: bounded raw Telegram sends close stalled requests and never retry', async t => {
+    for (const headers of [false, true]) {
+        let posts = 0;
+        const f = await fixture(t, (req, res) => {
+            posts++;
+            if (headers) { res.writeHead(200); res.write('{'); }
+        });
+        await assert.rejects(requestText({ path: '/botFIXTURE/sendMessage', method: 'POST',
+            body: { chat_id: '700', text: 'fixture' }, timeoutMs: 30 }), { code: 'TG_REQUEST_TIMEOUT' });
+        await new Promise(r => setTimeout(r, 10));
+        assert.equal(posts, 1);
+        assert.equal(f.sockets.size, 0);
     }
 });
 

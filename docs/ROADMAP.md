@@ -29,6 +29,9 @@ F2C.3 cierra el inbox durable de updates administrativos (BUG-046).
 BUG-008 cierra la resolución legacy con identidad completa y rechazo de sufijos
 ambiguos; los comandos administrativos Telegram responden por Telegram y siguen
 dirigiendo el objetivo a WhatsApp. Evidencia: [BUG-008](BUG-008-RESOLUCION-IDENTIDAD-LEGACY.md).
+BUG-010 acota envíos, presencia, menú y helpers Telegram; un timeout de envío
+durable queda incierto y bloquea reenvío con la misma clave. Evidencia:
+[BUG-010](BUG-010-TIMEOUTS-SALIDA-TELEGRAM.md).
 F2D completa replay durable hasta el handler tras el commit (BUG-045). F2E.1 ya
 registra salidas aceptadas y deduplica ecos WA; conserva autoría external_self.
 F2E.2 cierra la carga sintética completa y F3.1 implementa la API autenticada de

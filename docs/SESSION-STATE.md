@@ -1425,3 +1425,19 @@ Cierres históricos: commits F2C.1/F2C.2/F2D/F2E.1 están en el log local; F2B.3
 - Commit local de esta unidad; no publicar.
 - Siguiente punto ejecutable del backlog: BUG-010, acotar envíos legacy de
   Telegram sin repetir envíos con resultado incierto.
+
+## BUG-010 — Deadlines de salida Telegram — 2026-10-22
+
+- Adapter: `sendMessage` queda limitado a 10 s y presencia a 3 s. Menú y helper
+  de notificaciones legacy usan 8 s. Solo el rechazo explícito de Markdown HTTP
+  400 conserva su fallback sin formato y valida la cuenta antes del segundo POST.
+- Un envío que vence queda `delivery_unknown`; la clave idempotente impide que
+  otra llamada lo reenvíe automáticamente. Respuestas limitadas a 8 MiB y UTF-8
+  estricto.
+- Evidencia: [BUG-010](BUG-010-TIMEOUTS-SALIDA-TELEGRAM.md).
+- Verificación: Gateway `npm run check`, lint/typecheck, Panel 42/42, build,
+  servido 1/1 y Gateway 381/381; focales Telegram 31/31, incluida la regresión
+  de outbox; `git diff --check`. Sin Telegram real.
+- Commit local de esta unidad; no publicar.
+- Siguiente punto ejecutable: BUG-011, preservar la elegibilidad de control al
+  usar `/humano` y `/ia` con `ignored_all`.

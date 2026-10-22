@@ -9,73 +9,44 @@
  * el adaptador emite StandardMessage y el gateway enruta los comandos del
  * admin al adminCommandRunner. Este módulo queda solo con helpers sin estado.
  */
-const https = require('https');
 const { getSettingsDB } = require('./db');
 const { cat } = require('./logger');
+const { num } = require('../tuning');
+const { requestText, parseTelegramJson } = require('./telegramHttp');
 
 const log = cat('TELEGRAM');
+const TELEGRAM_ADMIN_REQUEST_TIMEOUT_MS = num('TELEGRAM_ADMIN_REQUEST_TIMEOUT_MS', 8000);
 
 /**
  * @param {string} message
  * @param {string|null} [overrideToken]
  * @param {string|null} [overrideChatId]
  * @param {boolean} [useMarkdown]
+ * @param {number} [timeoutMs]
  * @returns {Promise<any>}
  */
-function sendTelegramMessage(message, overrideToken = null, overrideChatId = null, useMarkdown = true) {
-    return new Promise((resolve, reject) => {
-        const settings = getSettingsDB();
-        const token = overrideToken || settings.telegramToken;
-        const chatId = overrideChatId || settings.telegramChatId;
+async function sendTelegramMessage(message, overrideToken = null, overrideChatId = null, useMarkdown = true,
+    timeoutMs = TELEGRAM_ADMIN_REQUEST_TIMEOUT_MS) {
+    const settings = getSettingsDB();
+    const token = overrideToken || settings.telegramToken;
+    const chatId = overrideChatId || settings.telegramChatId;
 
-        if (!token || !chatId) {
-            return reject(new Error('No hay configuración de Telegram (Token o Chat ID faltante)'));
-        }
+    if (!token || !chatId) throw new Error('No hay configuración de Telegram (Token o Chat ID faltante)');
 
-        const payload = {
-            chat_id: chatId,
-            text: message
-        };
-        if (useMarkdown) {
-            payload.parse_mode = 'Markdown';
-        }
+    const payload = { chat_id: chatId, text: message };
+    if (useMarkdown) payload.parse_mode = 'Markdown';
+    const response = await requestText({ path: `/bot${token}/sendMessage`, method: 'POST', body: payload, timeoutMs });
 
-        const data = JSON.stringify(payload);
-
-        const req = https.request({
-            hostname: 'api.telegram.org',
-            family: 4,
-            port: 443,
-            path: `/bot${token}/sendMessage`,
-            method: 'POST',
-            headers: {
-                'Content-Type': 'application/json',
-                'Content-Length': Buffer.byteLength(data)
-            }
-        }, (res) => {
-            let body = '';
-            res.on('data', chunk => body += chunk);
-            res.on('end', () => {
-                if (res.statusCode === 200) {
-                    if (useMarkdown) log.info('Notificación enviada a Telegram.');
-                    resolve(JSON.parse(body));
-                } else {
-                    if (useMarkdown && res.statusCode === 400 && body.includes("can't parse entities")) {
-                        sendTelegramMessage(message, token, chatId, false).then(resolve).catch(reject);
-                    } else {
-                        const error = Object.assign(new Error(`TELEGRAM_HTTP_${res.statusCode}`), {
-                            code: `TELEGRAM_HTTP_${res.statusCode}`, status: res.statusCode
-                        });
-                        reject(error);
-                    }
-                }
-            });
+    if (useMarkdown && response.statusCode === 400 && response.body.includes("can't parse entities")) {
+        return sendTelegramMessage(message, token, chatId, false, timeoutMs);
+    }
+    if (response.statusCode !== 200) {
+        throw Object.assign(new Error(`TELEGRAM_HTTP_${response.statusCode}`), {
+            code: `TELEGRAM_HTTP_${response.statusCode}`, status: response.statusCode
         });
-
-        req.on('error', (e) => reject(e));
-        req.write(data);
-        req.end();
-    });
+    }
+    if (useMarkdown) log.info('Notificación enviada a Telegram.');
+    return parseTelegramJson(response.body);
 }
 
 /**
@@ -110,27 +81,9 @@ function classifyPollResponse(payload) {
     return 'error';
 }
 
-function updateTelegramMenu(token) {
-    return new Promise((resolve, reject) => {
-        const data = JSON.stringify({ commands: TELEGRAM_MENU_COMMANDS });
-        const req = https.request({
-            hostname: 'api.telegram.org',
-            family: 4,
-            port: 443,
-            path: `/bot${token}/setMyCommands`,
-            method: 'POST',
-            headers: {
-                'Content-Type': 'application/json',
-                'Content-Length': Buffer.byteLength(data)
-            }
-        }, (res) => {
-            res.on('data', () => {});
-            res.on('end', resolve);
-        });
-        req.on('error', reject);
-        req.write(data);
-        req.end();
-    });
+async function updateTelegramMenu(token, timeoutMs = TELEGRAM_ADMIN_REQUEST_TIMEOUT_MS) {
+    await requestText({ path: `/bot${token}/setMyCommands`, method: 'POST',
+        body: { commands: TELEGRAM_MENU_COMMANDS }, timeoutMs });
 }
 
 module.exports = {

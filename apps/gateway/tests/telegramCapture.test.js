@@ -64,11 +64,12 @@ function transport() {
     return { calls, getUpdates };
 }
 
-async function runAdapter(t, archive, { token = 'token_fixture_A', botId = 42, network = transport(), sendHttpRequest, getMe } = {}) {
+async function runAdapter(t, archive, { token = 'token_fixture_A', botId = 42, network = transport(), sendHttpRequest, getMe,
+    sendTimeoutMs, presenceTimeoutMs } = {}) {
     saveSettingsDB({ telegramToken: token, telegramChatId: '555', globalMode: 'ignored_all' });
     const adapter = new TelegramAdapter({ archive, getMe: getMe || (async () => ({ ok: true,
         result: { id: botId, is_bot: true } })), getUpdates: network.getUpdates,
-    updateMenu: async () => {}, retryMs: 10, sendHttpRequest });
+    updateMenu: async () => {}, retryMs: 10, sendHttpRequest, sendTimeoutMs, presenceTimeoutMs });
     const seen = [];
     adapter.on('message', msg => seen.push(msg));
     await adapter.connect();
@@ -126,6 +127,21 @@ function controlledSendTransport() {
     } };
 }
 
+function stalledSendTransport() {
+    const calls = [];
+    return { calls, request(options, _callback) {
+        let payload = '';
+        const req = new EventEmitter();
+        req.write = chunk => { payload += chunk; };
+        req.end = chunk => {
+            if (chunk) payload += chunk;
+            calls.push({ options, payload: JSON.parse(payload) });
+        };
+        req.destroy = error => process.nextTick(() => { req.emit('error', error); req.emit('close'); });
+        return req;
+    } };
+}
+
 test('send result normalization requires the exact private chat and excludes admin/group destinations', () => {
     const result = { message_id: MESSAGE_BIG, date: 1792368000, text: 'sent', chat: { id: '700', type: 'private' } };
     assert.deepEqual(normalizeSentMessage(result, 'account', '700', '555'), {
@@ -161,6 +177,25 @@ test('accepted Telegram Bot API sends enter the archive; HTTP 200 ok:false is re
     assert.equal(sender.calls.length - previousCalls, 2);
     assert.equal(sender.calls[previousCalls].payload.parse_mode, 'Markdown');
     assert.equal('parse_mode' in sender.calls[previousCalls + 1].payload, false);
+});
+
+test('BUG-010: stalled Telegram send becomes delivery_unknown once; presence also has a deadline', async t => {
+    const { archive } = await archiveFixture(t);
+    const sender = stalledSendTransport();
+    const { adapter } = await runAdapter(t, archive, { sendHttpRequest: sender.request,
+        sendTimeoutMs: 25, presenceTimeoutMs: 25 });
+    const options = { source: 'notice', idempotencyKey: 'bug-010-timeout-send' };
+    await assert.rejects(adapter.sendMessage('telegram:700', 'puede haberse enviado', options), error =>
+        error.code === 'TG_SEND_TIMEOUT' && error.outboundState === 'delivery_unknown');
+    assert.equal(sender.calls.length, 1);
+    const [intent] = await archive.outboundIntents();
+    assert.equal(intent.idempotencyKey, options.idempotencyKey);
+    assert.equal(intent.state, 'delivery_unknown');
+
+    await assert.rejects(adapter.sendMessage('telegram:700', 'puede haberse enviado', options), { code: 'OUTBOUND_DELIVERY_UNKNOWN' });
+    assert.equal(sender.calls.length, 1, 'an uncertain send is not submitted again');
+    await assert.rejects(adapter.sendPresenceUpdate('composing', 'telegram:700'), { code: 'TG_REQUEST_TIMEOUT' });
+    assert.equal(sender.calls.length, 2);
 });
 
 test('BUG-043: a Markdown retry is blocked after Telegram rotates to another account', async t => {

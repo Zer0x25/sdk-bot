@@ -8,7 +8,7 @@ const { updateTelegramMenu, classifyPollResponse } = require('../services/telegr
 const { transcribeAudio } = require('../services/stt');
 const { num } = require('../tuning');
 const { cat, safeErrorLabel } = require('../services/logger');
-const { requestJson, failure, parseTelegramJson } = require('../services/telegramHttp');
+const { requestText, requestJson, failure, parseTelegramJson } = require('../services/telegramHttp');
 const { verifiedBotId, normalizeUpdates, createTelegramCapture, normalizeSentMessage, decimalId } = require('../services/conversations/telegramCapture');
 const { setTimeout: delay, setImmediate: yieldLoop } = require('node:timers/promises');
 
@@ -35,9 +35,10 @@ function telegramMediaDescriptor(message) {
 }
 
 class TelegramAdapter extends ChannelAdapter {
-    /** @param {{archive?:any, attachmentStore?:any, getMe?:(input:any)=>Promise<any>, getUpdates?:(input:any)=>Promise<any>, updateMenu?:(token:string)=>Promise<any>, transcribe?:(buffer:Buffer,name:string,options:any)=>Promise<any>, sendHttpRequest?:(options:any,callback:(response:any)=>void)=>any, pollTimeoutMs?:number, retryMs?:number, discoveryTimeoutMs?:number}} [options] */
+    /** @param {{archive?:any, attachmentStore?:any, getMe?:(input:any)=>Promise<any>, getUpdates?:(input:any)=>Promise<any>, updateMenu?:(token:string)=>Promise<any>, transcribe?:(buffer:Buffer,name:string,options:any)=>Promise<any>, sendHttpRequest?:(options:any,callback:(response:any)=>void)=>any, pollTimeoutMs?:number, retryMs?:number, discoveryTimeoutMs?:number, sendTimeoutMs?:number, presenceTimeoutMs?:number}} [options] */
     constructor({ archive, attachmentStore, getMe = requestBotIdentity, getUpdates = requestUpdates, updateMenu = updateTelegramMenu, transcribe = transcribeAudio,
-        sendHttpRequest = (...args) => https.request(...args), pollTimeoutMs = 35000, retryMs = 5000, discoveryTimeoutMs = 1500 } = {}) {
+        sendHttpRequest = (...args) => https.request(...args), pollTimeoutMs = 35000, retryMs = 5000, discoveryTimeoutMs = 1500,
+        sendTimeoutMs = num('TELEGRAM_SEND_TIMEOUT_MS', 10000), presenceTimeoutMs = num('TELEGRAM_PRESENCE_TIMEOUT_MS', 3000) } = {}) {
         super('telegram');
         this.pollerActive = false;
         this.lastUpdateId = null;
@@ -60,6 +61,8 @@ class TelegramAdapter extends ChannelAdapter {
         this.pollTimeoutMs = pollTimeoutMs;
         this.retryMs = retryMs;
         this.discoveryTimeoutMs = discoveryTimeoutMs;
+        this.sendTimeoutMs = sendTimeoutMs;
+        this.presenceTimeoutMs = presenceTimeoutMs;
         this.lifecycle = Promise.resolve();
         /** @type {Promise<any>} */
         this.pollRequest = Promise.resolve();
@@ -389,56 +392,38 @@ class TelegramAdapter extends ChannelAdapter {
             throw Object.assign(failure('TG_CONNECTION_CHANGED', 'La cuenta de Telegram cambió antes del envío.'), { outboundOutcome: 'rejected' });
         }
         const tgChatId = normalizedJid.replace('telegram:', '');
-        const send = useMarkdown => new Promise((resolve, reject) => {
+        const send = async useMarkdown => {
             const payload = { chat_id: tgChatId, text: text };
             if (useMarkdown) payload.parse_mode = 'Markdown';
-
-            const data = JSON.stringify(payload);
-            const req = this.sendHttpRequest({
-                hostname: 'api.telegram.org',
-                family: 4,
-                port: 443,
-                path: `/bot${token}/sendMessage`,
-                method: 'POST',
-                headers: {
-                    'Content-Type': 'application/json',
-                    'Content-Length': Buffer.byteLength(data)
+            try {
+                const response = await requestText({ path: `/bot${token}/sendMessage`, method: 'POST', body: payload,
+                    timeoutMs: this.sendTimeoutMs, requestImpl: this.sendHttpRequest });
+                if (useMarkdown && response.statusCode === 400 && response.body.includes("can't parse entities")) {
+                    const sameSession = this.isGeneration(generation, token) && this.accountId === accountId;
+                    if (!sameSession) throw Object.assign(failure('TG_CONNECTION_CHANGED', 'La conexión de Telegram cambió antes del reintento.'), { outboundOutcome: 'rejected' });
+                    // A retry is allowed only after Telegram explicitly rejected
+                    // Markdown; transport timeouts never enter this path.
+                    return await send(false);
                 }
-            }, (res) => {
-                const chunks = [];
-                res.on('data', chunk => chunks.push(Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk)));
-                res.on('end', async () => {
-                    let body;
-                    try { body = new TextDecoder('utf-8', { fatal: true }).decode(Buffer.concat(chunks)); }
-                    catch { reject(failure('TG_SEND_RESPONSE_INVALID')); return; }
-                    if (useMarkdown && res.statusCode === 400 && body.includes("can't parse entities")) {
-                        const sameSession = this.isGeneration(generation, token) && this.accountId === accountId;
-                        if (!sameSession) {
-                            reject(Object.assign(failure('TG_CONNECTION_CHANGED', 'La conexión de Telegram cambió antes del reintento.'), { outboundOutcome: 'rejected' }));
-                            return;
-                        }
-                        // Retry only while the original token/account still owns the adapter.
-                        send(false).then(resolve).catch(reject);
-                        return;
-                    }
-                    let bodyJson;
-                    try { bodyJson = parseTelegramJson(body); }
-                    catch { reject(failure('TG_SEND_RESPONSE_INVALID')); return; }
-                    if (res.statusCode === 200 && bodyJson?.ok === true) {
-                        await this.archiveAcceptedSend(accountId, tgChatId, bodyJson.result, adminChatId);
-                        resolve(bodyJson);
-                    } else {
-                        const definite = bodyJson?.ok === false || (res.statusCode >= 400 && res.statusCode < 500);
-                        reject(Object.assign(failure(definite ? 'TG_SEND_REJECTED' : 'TG_SEND_HTTP_ERROR',
-                            `Telegram rechazó el envío (${res.statusCode}).`), { outboundOutcome: definite ? 'rejected' : 'unknown' }));
-                    }
-                });
-            });
-
-            req.on('error', reject);
-            req.write(data);
-            req.end();
-        });
+                let bodyJson;
+                try { bodyJson = parseTelegramJson(response.body); }
+                catch { throw failure('TG_SEND_RESPONSE_INVALID'); }
+                if (response.statusCode === 200 && bodyJson?.ok === true) {
+                    await this.archiveAcceptedSend(accountId, tgChatId, bodyJson.result, adminChatId);
+                    return bodyJson;
+                }
+                const definite = response.statusCode >= 400 && response.statusCode < 500
+                    || response.statusCode < 400 && bodyJson?.ok === false;
+                throw Object.assign(failure(definite ? 'TG_SEND_REJECTED' : 'TG_SEND_HTTP_ERROR',
+                    `Telegram rechazó el envío (${response.statusCode}).`), { outboundOutcome: definite ? 'rejected' : 'unknown' });
+            } catch (error) {
+                const caught = /** @type {any} */ (error);
+                if (caught?.outboundOutcome) throw caught;
+                const code = caught?.code === 'TG_REQUEST_TIMEOUT' ? 'TG_SEND_TIMEOUT'
+                    : caught?.code || 'TG_SEND_REQUEST_FAILED';
+                throw Object.assign(failure(code, 'No se confirmó el resultado del envío Telegram.'), { outboundOutcome: 'unknown' });
+            }
+        };
 
         return send(options.useMarkdown !== false);
     }
@@ -449,27 +434,9 @@ class TelegramAdapter extends ChannelAdapter {
         if (status !== 'composing') return; // we only simulate composing
         
         const tgChatId = normalizedJid.replace('telegram:', '');
-        const data = JSON.stringify({ chat_id: tgChatId, action: 'typing' });
-
-        return new Promise((resolve, reject) => {
-            const req = https.request({
-                hostname: 'api.telegram.org',
-                family: 4,
-                port: 443,
-                path: `/bot${this.token}/sendChatAction`,
-                method: 'POST',
-                headers: {
-                    'Content-Type': 'application/json',
-                    'Content-Length': Buffer.byteLength(data)
-                }
-            }, (res) => {
-                res.on('data', () => {});
-                res.on('end', resolve);
-            });
-            req.on('error', reject);
-            req.write(data);
-            req.end();
-        });
+        await requestText({ path: `/bot${this.token}/sendChatAction`, method: 'POST',
+            body: { chat_id: tgChatId, action: 'typing' }, timeoutMs: this.presenceTimeoutMs,
+            requestImpl: this.sendHttpRequest });
     }
 
     async requestPairingCode() {
