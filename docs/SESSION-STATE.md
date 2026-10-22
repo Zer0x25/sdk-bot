@@ -864,9 +864,7 @@ Cierres históricos: commits F2C.1/F2C.2/F2D/F2E.1 están en el log local; F2B.3
   en un panel adicional de loopback y luego se cerró; el actor del panel original
   conservó sus capacidades. El chat de prueba quedó `neutral/off` y
   `globalMode=ignored_all` se verificó al final. La evidencia no inspeccionó el
-  payload de contexto live. Telegram y la validación completa de teclado, compositor
-  y controles móviles siguen pendientes; F6.4/Fase 6 no se cierran aún. Ver
-  [F6.4](F6.4-SMOKE-CANAL.md).
+  payload de contexto live. Ver [F6.4](F6.4-SMOKE-CANAL.md).
 
 ## Revisión del backlog antes de F7
 
@@ -893,9 +891,22 @@ Cierres históricos: commits F2C.1/F2C.2/F2D/F2E.1 están en el log local; F2B.3
 - `cd gateway && npm run panel:check`: typecheck pasa, 13 pruebas Vitest pasan,
   build Vite pasa y `panelWebBuild.test.js` pasa 1/1. `/inbox/` respondió HTTP 200;
   las cuentas WA y TG reportaron estado `connected`.
-- La inspección visual no se pudo ejecutar porque CUA reportó inventario vacío de
-  aplicaciones y navegadores. El contexto de una generación live no se instrumentó
-  y el smoke de Telegram sigue sin ejecutar. F6.4 no se cierra: falta validar hilo,
-  compositor, controles, teclado y móvil en navegador; registrar el contexto live
-  sin guardar texto privado; y completar el alcance de canal pendiente. La instancia
-  queda disponible en loopback para continuar.
+- En la primera inspección visual CUA reportó inventario vacío de aplicaciones y
+  navegadores. El contexto de una generación live no se instrumentó y el smoke de
+  Telegram seguía sin ejecutar; la instancia quedó disponible en loopback.
+- En la continuación del 2026-10-22 se recibió un segundo marcador WA live durante
+  `human`; `pending-resume` mostró un candidato y cero salidas inciertas. Se procesó
+  la selección explícita y el archivo confirmó una respuesta IA `external_self`
+  enviada una vez. Se permitió temporalmente solo ese chat, con `globalMode` aún
+  `ignored_all`; al terminar quedó `neutral/off`, `status=confirmed`, cola y
+  trabajos en vuelo en cero. El panel de escritura adicional se cerró.
+- Se corrigió el layout móvil: con un hilo seleccionado, 390 × 844 y 320 × 844 px
+  mostraron historial y compositor sin overflow ni solapamiento con la navegación;
+  a 390 × 844 px el compositor estuvo habilitado durante takeover humano. El build
+  de la bandeja pasó con `npm run panel:build`. La revisión completa del orden Tab
+  sigue pendiente.
+- El marcador de Telegram se envió al chat administrativo/self-chat, enrutado por
+  `self_chat_ai`; su respuesta legacy no cuenta como smoke de cliente. No se
+  registró el payload de contexto del proveedor. F6.4/Fase 6 siguen abiertas por
+  el smoke de cliente Telegram, el contexto live y el orden completo de teclado.
+  [Evidencia](F6.4-SMOKE-CANAL.md).

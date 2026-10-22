@@ -282,7 +282,7 @@ button:focus-visible, a:focus-visible, [tabindex]:focus-visible {
 }
 
 @media (max-width: 760px) {
-  .app-frame { flex-direction: column-reverse; }
+  .app-frame { display: block; height: 100vh; min-height: 100vh; overflow: hidden; }
   .workspace-rail { position: fixed; right: 0; bottom: 0; left: 0; width: 100%; height: 64px; flex: 0 0 64px; flex-direction: row; justify-content: center; padding: 6px 10px; box-shadow: 0 -8px 24px rgb(20 46 38 / 8%); }
   .brand-mark, .rail-footer { display: none; }
   .rail-navigation { width: auto; flex-direction: row; justify-content: center; gap: 12px; margin: 0; }
@@ -290,12 +290,12 @@ button:focus-visible, a:focus-visible, [tabindex]:focus-visible {
   .rail-link.is-active::before { top: -8px; left: 50%; width: 22px; height: 3px; transform: translateX(-50%); border-radius: 0 0 4px 4px; }
   .rail-link-label { position: static; width: auto; height: auto; overflow: visible; clip: auto; margin-top: -11px; font-size: 8px; }
   .rail-link { grid-template-rows: 24px 12px; gap: 3px; }
-  .app-content, .inbox-layout { min-height: calc(100vh - 64px); }
-  .inbox-layout { display: block; }
-  .conversation-column { min-height: calc(100vh - 64px); border-right: 0; }
+  .app-content { height: calc(100vh - 64px); min-height: 0; overflow: hidden; }
+  .inbox-layout { display: block; height: 100%; min-height: 0; overflow: hidden; }
+  .conversation-column { height: 100%; min-height: 0; border-right: 0; }
   .thread-column, .context-column { display: none; }
   .inbox-layout.has-selected-chat .conversation-column { display: none; }
-  .thread-column.is-open { display: flex; min-height: calc(100vh - 64px); }
+  .thread-column.is-open { display: flex; height: 100%; min-height: 0; overflow: hidden; }
   .mobile-back-button { display: grid; }
   .conversation-header { padding: 22px 18px 15px; }
   .conversation-empty { max-width: 300px; }
