@@ -5,6 +5,13 @@ based on [Conventional Commits](https://www.conventionalcommits.org/) and this
 file is maintained automatically by
 [release-please](https://github.com/googleapis/release-please).
 
+## [0.6.1](https://github.com/Zer0x25/sdk-bot/compare/v0.6.0...v0.6.1) (2026-10-22)
+
+
+### Bug Fixes
+
+* **ci:** run Release Please PR checks on first attempt ([#14](https://github.com/Zer0x25/sdk-bot/issues/14)) ([a97c655](https://github.com/Zer0x25/sdk-bot/commit/a97c655808e0d5f9ec614628632b529c528c32aa))
+
 ## [0.6.0](https://github.com/Zer0x25/sdk-bot/compare/v0.5.0...v0.6.0) (2026-10-21)
 
 
