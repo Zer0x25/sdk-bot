@@ -1154,3 +1154,20 @@ Cierres históricos: commits F2C.1/F2C.2/F2D/F2E.1 están en el log local; F2B.3
   persistencia JSON. Los archivos y rutas runtime se conservan; no hay migración
   de formato de datos. Siguiente punto: runbook de backup/restauración, retención,
   exportación/purga y rollback (Fase 8).
+
+## Fase 8.3a — Backup offline y ensayo aislado — 2026-10-22
+
+- `docs/F8.3-OPERACION-RECUPERACION.md` inventaría el estado en volúmenes,
+  describe la captura offline del volumen sensible con checksum y fija el límite
+  de restauración: la copia se extrae a un volumen nuevo, nunca encima del estado
+  activo. El worker puede reaplicar retención y rotar epoch en una copia SQLite;
+  la promoción productiva queda pendiente hasta reconciliar el delta posterior.
+- No existe aún un job de backup programado, destino externo configurado ni CLI de
+  recuperación completa. El runbook lo declara explícitamente; no se operó Docker
+  de producción ni se leyeron archivos runtime reales.
+- Verificación: `SDK_BOT_TEST=1 node --test tests/conversationArchive.test.js`
+  (21/21: backup con WAL, rechazo de destino existente, restore con epoch nuevo e
+  independencia del origen); roundtrip tar/checksum/listado/extracción con fixture
+  temporal; `bash -n` en los dos bloques del runbook; `git diff --check`.
+- F8.3a queda documentada. Siguiente punto: F8.3b, retención, exportación y purga;
+  después siguen rollback de código/datos y minimización de métricas/logs.
