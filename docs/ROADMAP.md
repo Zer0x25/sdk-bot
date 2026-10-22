@@ -337,8 +337,9 @@ Compositor todavía no ofrece enviar.
   humana, segunda entrada y release con `process_pending`; la respuesta IA figura
   enviada una vez. El 2026-10-22 también se verificó el hilo/compositor móvil a
   390 × 844 y 320 × 844 px; `ignored_all` quedó activo y el chat volvió a
-  `neutral/off`. Siguen pendientes la inspección del contexto live, el orden
-  completo del teclado. Las dos parejas teléfono/LID ambiguas permanecen en
+  `neutral/off`. El recorrido Tab completo y el foco de `Tomar control` quedaron
+  verificados; solo sigue pendiente inspeccionar el contexto live. Las dos parejas
+  teléfono/LID ambiguas permanecen en
   cuarentena. Estado y evidencia: [F6.4](F6.4-SMOKE-CANAL.md).
 
 **Aceptación:** flujo operativo completo, reinicios/reconexión, móvil y teclado.

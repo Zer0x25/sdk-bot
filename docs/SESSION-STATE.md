@@ -903,11 +903,14 @@ Cierres históricos: commits F2C.1/F2C.2/F2D/F2E.1 están en el log local; F2B.3
 - Se corrigió el layout móvil: con un hilo seleccionado, 390 × 844 y 320 × 844 px
   mostraron historial y compositor sin overflow ni solapamiento con la navegación;
   a 390 × 844 px el compositor estuvo habilitado durante takeover humano. El build
-  de la bandeja pasó con `npm run panel:build`. La revisión completa del orden Tab
-  sigue pendiente.
+  de la bandeja pasó con `npm run panel:build`. En la continuación, Tab recorrió
+  los 64 elementos alcanzables del hilo con foco visible en todos; incluyó
+  devolución de control, resolución, historial y compositor. `Tomar control`
+  también recibió foco visible en modo pausado. El hilo se restauró a atención
+  pausada y el panel temporal se cerró.
 - Telegram se reserva para administración. El marcador enviado al chat
   administrativo/self-chat se enrutó por `self_chat_ai` y produjo una respuesta
   legacy; queda como observación de esa ruta. El smoke de atención a clientes TG
   no aplica al alcance acordado. No se registró el payload de contexto del
-  proveedor. F6.4/Fase 6 siguen abiertas por el contexto live y el orden completo
-  de teclado. [Evidencia](F6.4-SMOKE-CANAL.md).
+  proveedor. F6.4/Fase 6 siguen abiertas únicamente por inspeccionar ese contexto
+  live. [Evidencia](F6.4-SMOKE-CANAL.md).
