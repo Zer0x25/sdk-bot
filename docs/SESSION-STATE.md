@@ -1359,3 +1359,22 @@ Cierres históricos: commits F2C.1/F2C.2/F2D/F2E.1 están en el log local; F2B.3
 - F10.3 sigue condicional: no se pidieron integraciones ni acciones externas.
   Siguiente punto: F10.4, evaluaciones sintéticas de control humano, separación
   entre notas y mensajes entregados, aislamiento entre cuentas y límites explícitos.
+
+## Fase 10.4 — Evaluaciones sintéticas de asistencia — 2026-10-22
+
+- Gateway ejecuta tres escenarios contra la ruta real y SQLite temporal: asistencia
+  bajo control humano sin cambios de snapshot/mensajes/outbox; borrador visible como
+  borrador y ausente del archivo/outbox; aislamiento de búsqueda entre dos cuentas
+  WhatsApp y rechazo de citas al mensaje ajeno.
+- Brain ejecuta el caso sintético de una pregunta sin precio conocido con el
+  proveedor sustituido; verifica que el prompt pide no inventar y solicitar el dato
+  faltante. No mide obediencia ni precisión estadística de un proveedor real.
+- Evidencia: [F10.4-EVALUACIONES-SINTETICAS.md](F10.4-EVALUACIONES-SINTETICAS.md).
+- Verificación: contratos 19/19; Gateway lint/typecheck, panel 42/42, build,
+  integración 1/1 y Gateway 359/359; Brain Ruff limpio y 35/35; `git diff --check`.
+  Sin proveedor real ni canales iniciados. La primera ejecución concurrente tuvo
+  un fallo de captura en `logPrivacy.test.js`; la prueba aislada pasó y Gateway
+  completo aislado pasó 359/359.
+- F10.3 sigue condicional; no se solicitó habilitar efectos externos. No hay F11 ni
+  otro siguiente punto definido en ROADMAP.md; revisar BACKLOG y priorizar con el
+  usuario antes de abrir una nueva unidad.

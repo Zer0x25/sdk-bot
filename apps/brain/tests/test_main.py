@@ -335,6 +335,40 @@ def test_conversation_assistance_final_uses_gateway_search_result_ids_as_evidenc
     )
 
 
+def test_f10_4_synthetic_missing_fact_case_keeps_uncertainty_in_the_operator_draft():
+    client = TestClient(brain_main.app)
+    customer_id = "21212121-2121-4212-8212-212121212121"
+    request = {
+        "actorId": "22222222-2222-4222-8222-222222222222",
+        "conversationId": "23232323-2323-4323-8323-232323232323",
+        "contextVersion": "1",
+        "throughMessageId": customer_id,
+        "botProfile": "default",
+        "context": [{"messageId": customer_id, "authorKind": "customer",
+            "content": "¿Cuánto cuesta el envío al norte?"}],
+        "phase": "final",
+        "toolResults": [{"toolName": "conversation.search_messages", "invocationKey": "a" * 64,
+            "snapshot": {"dataEpoch": "24242424-2424-4424-8424-242424242424", "seq": "3"}, "hits": []}],
+    }
+    calls = []
+
+    async def fake_generate(**kwargs):
+        calls.append(kwargs)
+        return ('{"kind":"final","summary_points":[{"text":"Pregunta por el costo del envío al norte; '
+                'el hilo no indica un precio.","message_ids":["' + customer_id + '"]}],'
+                '"draft":"No tengo un precio confirmado en esta conversación. ¿Me indicas el destino exacto '
+                'para revisarlo?","draft_message_ids":["' + customer_id + '"]}'), "Fake Provider", []
+
+    with patch.object(brain_main, "generate_ai_response", fake_generate):
+        response = client.post("/conversation-assist", json=request)
+
+    assert response.status_code == 200, response.text
+    assert "No tengo un precio confirmado" in response.json()["draft"]
+    assert "No inventes precios, políticas, fechas ni compromisos" in calls[0]["system_instruction"]
+    assert "si falta un dato necesario, pregunta por él en el borrador" in calls[0]["system_instruction"]
+    assert "No añadas hechos que no estén en los mensajes o resultados de búsqueda" in calls[0]["message"]
+
+
 def test_require_api_key_middleware():
     client = TestClient(brain_main.app)
 

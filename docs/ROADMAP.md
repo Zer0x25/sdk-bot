@@ -470,8 +470,9 @@ comprensible si el archivo expiró o no está disponible.
 - [ ] ADR para efectos externos/equipos si se solicitan; no activar automáticamente
   CRM, calendarios, mensajes externos ni cambiar SDK/proveedores por disponibilidad.
   Condicional: no hay efectos externos solicitados; nada se habilita en F10.2.
-- [ ] Evaluaciones con conversaciones sintéticas: no enviar en human, no confundir
+- [x] Evaluaciones con conversaciones sintéticas: no enviar en human, no confundir
   notas con mensajes entregados, no usar datos de otra cuenta y reconocer límites.
+  [Evidencia F10.4](F10.4-EVALUACIONES-SINTETICAS.md).
 
 **Aceptación:** asistencia comprobable que respeta control humano y permisos.
 

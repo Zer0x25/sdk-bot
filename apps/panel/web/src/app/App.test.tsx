@@ -283,6 +283,7 @@ describe('inbox shell and real API integration', () => {
     const panel = await screen.findByRole('region', { name: 'Resumen y borrador de asistencia' });
     expect(within(panel).getByText('Consulta disponibilidad para el viernes.')).toBeInTheDocument();
     expect(within(panel).getByText('Sí, tenemos disponibilidad para el viernes. ¿Qué horario te acomoda?')).toBeInTheDocument();
+    expect(within(panel).getByRole('heading', { name: 'Borrador de respuesta' })).toBeInTheDocument();
     expect(screen.getByText(/se enviará al Brain y proveedor configurados/)).toBeInTheDocument();
 
     const request = fetchMock.mock.calls.find(([input]) =>
