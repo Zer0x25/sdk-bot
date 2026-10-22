@@ -359,7 +359,10 @@ Esta es la v1 útil; publicar/desplegar es una acción separada, no automática.
   identificado como administrativo, con configuración sin lectura del token y sin
   ejecutar prueba de envío. BUG-024 cerrado con `admin:write`. Evidencia:
   [F7.3](F7.3-CANALES.md).
-- [ ] Asistente: perfiles, editor, cambios sin guardar e importación/exportación.
+- [x] **F7.4 — Asistente:** perfiles con vista de solo lectura por metadatos v1 y
+  edición protegida por `admin:write`, cambios sin guardar con confirmación,
+  importación/exportación Markdown, recarga, prompt compilado y borrado confirmado.
+  Evidencia: [F7.4](F7.4-ASISTENTE.md).
 - [ ] Sistema: logs, terminal, diagnóstico y mantenimiento; preservar confirmación
   de factory reset. Campañas tienen su espacio cuando haya flujo completo.
 - [ ] Inventario de paridad: cada función antigua sustituida, descontinuada de forma
@@ -383,6 +386,15 @@ sin controles de edición. La ficha de Bandeja muestra los mismos valores. `GET
 /profiles` entrega solo claves/nombres, y la actualización valida el inventario de
 perfiles en ControlService. No se añadieron operadores con grants limitados ni se
 usaron rutas legacy para estas acciones; BUG-024 conserva su alcance explícito.
+
+**Unidad F7.4 — Asistente:** `/inbox/assistant` preserva la paridad de perfiles
+Markdown con protección de permisos. Las sesiones de solo lectura consultan solo
+metadatos v1; `admin:write` habilita el contenido y las operaciones legacy ya
+protegidas desde F7.3. Se conservan borradores al rechazar una operación y se
+confirma antes de descartarlos, sobrescribir claves existentes o eliminar perfiles.
+La importación y exportación trabajan con archivos locales; exportar incluye el
+texto editado aunque aún no se haya guardado. El brain mantiene la validación de las
+secciones requeridas y el perfil `default` no se puede eliminar. Véase [F7.4](F7.4-ASISTENTE.md).
 
 ## Fase 8 — Estructura final y operación
 

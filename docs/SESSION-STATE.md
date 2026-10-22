@@ -982,3 +982,23 @@ Cierres históricos: commits F2C.1/F2C.2/F2D/F2E.1 están en el log local; F2B.3
   pruebas Gateway. `panelBoundary.test.js` y `telegram.test.js` pasaron 32/32.
   Se usaron solo datos/stubs; no se inició pairing real ni se envió Telegram.
 - No se hizo push ni despliegue. Siguiente unidad: F7.4 Asistente.
+
+## Fase 7.4 — Asistente — 2026-10-22
+
+- `/inbox/assistant` reemplaza el placeholder con lista y editor de perfiles
+  Markdown. La sesión sin `admin:write` ve solo claves/nombres mediante `/v1/profiles`
+  y no solicita contenido ni llama rutas legacy. La edición usa rutas `/api/*` ya
+  cerradas por la frontera OAuth de F7.3.
+- El borrador protege los cambios al cambiar de perfil y navegar, y avisa ante
+  recarga/cierre. Importa `.md`/`.txt` local hasta 900.000 bytes; exporta desde el
+  borrador actual, incluso con cambios pendientes. Incluye guardar, confirmación
+  antes de sobrescribir una clave, recarga, prompt compilado y eliminación
+  confirmada; `default` conserva su protección. Las restricciones de formato las
+  valida el brain y un rechazo conserva el borrador.
+- Pruebas de componente con APIs simuladas: 9 casos para permisos, lectura, edición,
+  cambios sin guardar, navegación cancelada, guardado exitoso/rechazado, reemplazo,
+  importación/exportación, recarga, prompt y eliminación. No se conectó brain live.
+- Verificación: `cd gateway && npm run check` pasó ESLint, typecheck Gateway/React,
+  30 pruebas React, build Vite y montaje bajo `/inbox`, más 320 pruebas Gateway.
+  No cambiaron contratos y no se ejecutó un proveedor real.
+- No se hizo push ni despliegue. Siguiente unidad: F7.5 Sistema.
